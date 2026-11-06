@@ -10,6 +10,7 @@
 //! | Rust                                  | Upstream                                  |
 //! |---------------------------------------|-------------------------------------------|
 //! | [`Surface::drop_curve`] | `SmSurface::DropCurve` (the virtual call: plane override, else the base body) |
+//! | [`Surface::drop_curve_face_tested`] | `SmSurface::DropCurve` of a face-owned surface (the start drop's `PointClassify` trim test on the caller's face) |
 //! | [`Surface::drop_curve_base`], [`DropCurveOut`] | `SmSurface::DropCurve` (the base body, called non-virtually) |
 //!
 //! Deviations:
@@ -42,13 +43,23 @@
 //!   `NULL`), and two curve `EvaluatePoint`s (the curve's scaled zero and the end gap
 //!   check) are read after an ignored failure (uninitialised points): here those
 //!   errors propagate (plan/upstream-issues.md UB-129).
-//! - **`bDegenSurfV`** tests the domain's `XLength`, as upstream (plan/upstream-issues.md
-//!   WR-100).
+//! - **`bDegenSurfV`** tests the domain's `XLength`, as upstream (WR-100); with
+//!   `Kernel::fixes.drop_curve_v_domain_degeneracy` it tests `YLength` instead (WR-100
+//!   addendum 2026-10-31).
+//! - **Exact UV curve on a cylinder (opt-in).** With
+//!   `Kernel::fixes.cylinder_plane_section_trims_exact` (WR-680, #2109), a curve lying
+//!   on a cylinder (a plane section) gets its exact rational UV curve in its own
+//!   parameter (`surface_drop_lib::cylinder_section`) once the domain checks pass,
+//!   before the start point is dropped; the outputs and the record are those of a
+//!   successful drop of that one curve. A curve it does not apply to is traced as
+//!   upstream.
 //! - **Temporary state.** The out-of-bounds convergence upstream enables on the surface
 //!   for the call (`SmTemporaryChangeValue`) runs on an evaluation copy with the flag
 //!   set. The surface cache flags (`m_bPointTestEnabled` off, `m_bProcessBoundaryCurves`
-//!   on) are the defaults of an unowned surface's cache in the port; a face-owned
-//!   surface's point solve is [`SolidError::Unported`] (`query.face_p2`) there. The
+//!   on) are modelled by the start point drop keeping every solution
+//!   ([`Surface::global_point_solve_point_test_off`], `SmSurfaceDropLib.cpp:4310-4316`;
+//!   through the caller's context, its point-test-off variant) unless the caller's face
+//!   test replaces it. The
 //!   curve cache is built fresh (`make_curve_cache`); a failed build is
 //!   `SM_ERR_NULL_POINTER` (`NER`).
 //! - **Offset surface.** `SmOffsetSurface(1.0, *this, FALSE, lSingularities)` is a
@@ -85,9 +96,11 @@ use crate::math::{max2, min2, EFF_ZERO, EFF_ZERO_PARAM};
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::SurfParamType;
 use crate::surface::plane::PlaneDropCurve;
+use crate::surface::surface::p1::SurfaceSolveContext;
 use crate::surface::surface::p2::{
     CreateUvTrimCurvePathType, DropCurveFailArgs, SurfaceKind, UNSURE,
 };
+use crate::surface::surface::p4::FaceTest;
 use crate::surface::surface::p7::approx_derivative_lengths;
 use crate::surface::surface::Surface;
 use crate::surface::surface_point_solve::p2::with_out_of_bounds_enabled;
@@ -102,20 +115,29 @@ use super::p2::{
 };
 
 /// `SM_ERR_NOT_CONVERGING` (`SmMessages.h`).
-pub const SM_ERR_NOT_CONVERGING: i32 = 1022;
+pub use crate::error::SM_ERR_NOT_CONVERGING;
 
 /// `SM_ERR_DEGENERATE_SURFACE` (`SmMessages.h`): the drop domain is degenerate.
-pub const SM_ERR_DEGENERATE_SURFACE: i32 = 1034;
+pub use crate::error::SM_ERR_DEGENERATE_SURFACE;
 
 /// `SM_ERR_BAD_FIND_DEGEN_PARAM` (`SmMessages.h`): `FindDegenParamForDirection` failed
 /// for a start point on a pole (recorded only).
-pub const SM_ERR_BAD_FIND_DEGEN_PARAM: i32 = 1036;
+pub use crate::error::SM_ERR_BAD_FIND_DEGEN_PARAM;
 
 /// Most drop points the span subdivision stack of [`Surface::drop_curve_base`] holds
 /// (upstream: unbounded).
 pub const MAX_SPAN_DEPTH: usize = 64;
 
 const OP: &str = "intersect::surface_drop_lib::Surface::drop_curve_base";
+
+/// The caller's face-aware solving service for a drop: the context that builds the
+/// surface's cache (and classifies against its face) and the surface's handle in it.
+pub struct DropSolveContext<'a, O: SolutionObject> {
+    /// The operation-scoped cache and face service.
+    pub solver: &'a mut dyn SurfaceSolveContext<O>,
+    /// The handle naming the dropped-onto surface in its cache.
+    pub handle: Option<O>,
+}
 
 /// What [`Surface::drop_curve_base`] made (`DropCurve`'s outputs).
 #[derive(Debug, Clone)]
@@ -134,7 +156,7 @@ pub struct DropCurveOut {
 fn status_of(e: &SolidError) -> i32 {
     match e {
         SolidError::Upstream { code, .. } => *code,
-        SolidError::InvalidInput { .. } => SM_ERR_INVALID_INPUT,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => SM_ERR_INVALID_INPUT,
         SolidError::NotConverged { .. } => SM_ERR_NOT_CONVERGING,
         _ => SM_ERR,
     }
@@ -347,7 +369,7 @@ impl Surface {
         creating_uv_trim_curve: bool,
     ) -> Result<PlaneDropCurve> {
         if let SurfaceKind::Plane(p) = self.kind() {
-            return p.drop_curve(
+            return p.drop_curve_owned_by(
                 k,
                 uv_domain,
                 curve,
@@ -355,7 +377,7 @@ impl Surface {
                 approx_tol_3d,
                 keep_all_drop_curves,
                 creating_uv_trim_curve,
-                self.owner(),
+                self,
             );
         }
         let d = self.drop_curve_base::<O>(
@@ -396,7 +418,199 @@ impl Surface {
         interval: &Extent1d,
         approx_tol_3d: f64,
         keep_all_drop_curves: bool,
+        record: Option<DropFailRecord<'_, O>>,
+    ) -> Result<DropCurveOut> {
+        self.drop_curve_base_in(
+            k,
+            uv_domain,
+            curve,
+            interval,
+            approx_tol_3d,
+            keep_all_drop_curves,
+            record,
+            None,
+            None,
+        )
+    }
+
+    /// [`Surface::drop_curve_base`] whose start point drop's trim test is `classify`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Surface::drop_curve_base`], and those of `classify`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn drop_curve_base_face_tested<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        uv_domain: &Extent2d,
+        curve: &Curve,
+        interval: &Extent1d,
+        approx_tol_3d: f64,
+        keep_all_drop_curves: bool,
+        record: Option<DropFailRecord<'_, O>>,
+        classify: FaceTest<'_>,
+    ) -> Result<DropCurveOut> {
+        self.drop_curve_base_in(
+            k,
+            uv_domain,
+            curve,
+            interval,
+            approx_tol_3d,
+            keep_all_drop_curves,
+            record,
+            Some(classify),
+            None,
+        )
+    }
+
+    /// [`Surface::drop_curve_base`] under the caller's face context: the start point
+    /// drop's cache lookup (`smsurf_GetSurfaceCache` of a face-owned surface) is built
+    /// by `context`, so the face's trim boundary test is available.
+    ///
+    /// # Errors
+    ///
+    /// As [`Surface::drop_curve_base`], and those of the context.
+    #[allow(clippy::too_many_arguments)]
+    pub fn drop_curve_base_with_context<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        uv_domain: &Extent2d,
+        curve: &Curve,
+        interval: &Extent1d,
+        approx_tol_3d: f64,
+        keep_all_drop_curves: bool,
+        record: Option<DropFailRecord<'_, O>>,
+        context: DropSolveContext<'_, O>,
+    ) -> Result<DropCurveOut> {
+        self.drop_curve_base_in(
+            k,
+            uv_domain,
+            curve,
+            interval,
+            approx_tol_3d,
+            keep_all_drop_curves,
+            record,
+            None,
+            Some(context),
+        )
+    }
+
+    /// [`Surface::drop_curve`] under the caller's face context (see
+    /// [`Surface::drop_curve_base_with_context`]); the plane override runs with the
+    /// same context for its general fallback.
+    ///
+    /// # Errors
+    ///
+    /// As [`Surface::drop_curve`], and those of the context.
+    #[allow(clippy::too_many_arguments)]
+    pub fn drop_curve_with_context<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        uv_domain: &Extent2d,
+        curve: &Curve,
+        interval: &Extent1d,
+        approx_tol_3d: f64,
+        keep_all_drop_curves: bool,
+        record: Option<DropFailRecord<'_, O>>,
+        creating_uv_trim_curve: bool,
+        context: DropSolveContext<'_, O>,
+    ) -> Result<PlaneDropCurve> {
+        if let SurfaceKind::Plane(p) = self.kind() {
+            return p.drop_curve_owned_by_with_context(
+                k,
+                uv_domain,
+                curve,
+                interval,
+                approx_tol_3d,
+                keep_all_drop_curves,
+                creating_uv_trim_curve,
+                self,
+                Some(context),
+            );
+        }
+        let d = self.drop_curve_base_with_context::<O>(
+            k,
+            uv_domain,
+            curve,
+            interval,
+            approx_tol_3d,
+            keep_all_drop_curves,
+            record,
+            context,
+        )?;
+        Ok(PlaneDropCurve {
+            max_drop_to_surf: d.max_drop_to_surf,
+            max_approx_dev: d.max_approx_dev,
+            uv_curves: d.uv_curves.into_iter().map(Curve::from).collect(),
+        })
+    }
+
+    /// [`Surface::drop_curve`] of a face's surface by a caller that holds the face: the
+    /// start point drop's trim boundary test (`pFace->PointClassify` in
+    /// `GlobalPointSolve`'s fast drop) is `classify`, as in
+    /// [`Surface::global_point_solve_face_tested`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Surface::drop_curve`], and those of `classify`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn drop_curve_face_tested<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        uv_domain: &Extent2d,
+        curve: &Curve,
+        interval: &Extent1d,
+        approx_tol_3d: f64,
+        keep_all_drop_curves: bool,
+        record: Option<DropFailRecord<'_, O>>,
+        creating_uv_trim_curve: bool,
+        classify: FaceTest<'_>,
+    ) -> Result<PlaneDropCurve> {
+        if let SurfaceKind::Plane(p) = self.kind() {
+            return p.drop_curve_owned_by_face_tested(
+                k,
+                uv_domain,
+                curve,
+                interval,
+                approx_tol_3d,
+                keep_all_drop_curves,
+                creating_uv_trim_curve,
+                self,
+                classify,
+            );
+        }
+        let d = self.drop_curve_base_in::<O>(
+            k,
+            uv_domain,
+            curve,
+            interval,
+            approx_tol_3d,
+            keep_all_drop_curves,
+            record,
+            Some(classify),
+            None,
+        )?;
+        Ok(PlaneDropCurve {
+            max_drop_to_surf: d.max_drop_to_surf,
+            max_approx_dev: d.max_approx_dev,
+            uv_curves: d.uv_curves.into_iter().map(Curve::from).collect(),
+        })
+    }
+
+    /// [`Surface::drop_curve_base`] whose start point drop's trim test is `face_test`
+    /// (`None`: the surface's own, as [`Surface::global_point_solve`]).
+    #[allow(clippy::too_many_arguments)]
+    fn drop_curve_base_in<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        uv_domain: &Extent2d,
+        curve: &Curve,
+        interval: &Extent1d,
+        approx_tol_3d: f64,
+        keep_all_drop_curves: bool,
         mut record: Option<DropFailRecord<'_, O>>,
+        face_test: Option<FaceTest<'_>>,
+        context: Option<DropSolveContext<'_, O>>,
     ) -> Result<DropCurveOut> {
         // `SmApproxTol3d sApproxTol3d`: the constructor maps SM_USE_DEFAULT to zone/2
         // and stores fabs (SmTol.cpp:109, SmTol.h:167-168), so upstream runs with |tol|.
@@ -425,11 +639,16 @@ impl Surface {
         let s_uv_domain = if uv_domain.x_length() >= EFF_ZERO && uv_domain.y_length() >= EFF_ZERO {
             *uv_domain
         } else {
-            self.natural_uv_domain()
+            self.natural_uv_domain_with_nurb(k)?
         };
         let degen_surf_u = s_uv_domain.x_length() < EFF_ZERO;
-        let degen_surf_v = s_uv_domain.x_length() < EFF_ZERO; // (sic) WR-100
-        let contained = s_uv_domain.is_contained_by(&self.natural_uv_domain(), EFF_ZERO);
+        let degen_surf_v = if k.fixes.drop_curve_v_domain_degeneracy {
+            s_uv_domain.y_length() < EFF_ZERO
+        } else {
+            s_uv_domain.x_length() < EFF_ZERO // (sic) WR-100, pinned C++ behaviour
+        };
+        let contained =
+            s_uv_domain.is_contained_by(&self.natural_uv_domain_with_nurb(k)?, EFF_ZERO);
 
         let mut fs: FailState<'_, O> = FailState {
             uv_domain: *uv_domain,
@@ -485,7 +704,7 @@ impl Surface {
         }
 
         // UV Tolerances - proportional to surface 3d/UV mapping size
-        let srf_nat_domain = self.natural_uv_domain();
+        let srf_nat_domain = self.natural_uv_domain_with_nurb(k)?;
         let project_size = approx_derivative_lengths(k, self, &srf_nat_domain)?;
         let uv_tol_x = approx_tol_3d / (project_size.x + 1.0);
         let uv_tol_y = approx_tol_3d / (project_size.y + 1.0);
@@ -538,23 +757,90 @@ impl Surface {
         fs.singularities = u64::from(singularities);
         fs.approx_singularities = u64::from(sings.approx_singular);
 
+        // Opt-in (#2109, WR-680): a curve lying on a cylinder (a plane section) gets its
+        // exact rational UV curve in its own parameter instead of the traced fit; one
+        // that does not check out is traced below as upstream.
+        if k.fixes.cylinder_plane_section_trims_exact {
+            if let Some(uv_curve) =
+                super::cylinder_section::exact_uv_curve(k, this, &s_uv_domain, curve, &s_interval)?
+            {
+                let (drop_to_surf, approx_dev) =
+                    uv_curve_gap(k, this, &uv_curve, curve, approx_tol_3d)?;
+                out.max_drop_to_surf = drop_to_surf;
+                out.max_approx_dev = approx_dev;
+                out.uv_curves.push(uv_curve);
+                let path = path_of(record.as_ref());
+                fs.set(
+                    &mut record,
+                    4,
+                    SM_SUCCESS,
+                    path,
+                    &FailOut {
+                        rd_max_drop: out.max_drop_to_surf,
+                        rd_max_dev: out.max_approx_dev,
+                        max_drop: out.max_drop_to_surf,
+                        solutions: None,
+                        ctrl_poly: None,
+                        knots: None,
+                        uv_curves: Some(&out.uv_curves),
+                    },
+                );
+                default_path(&mut record, CreateUvTrimCurvePathType::DropCurveOkay);
+                return Ok(out);
+            }
+        }
+
         // set sStart's Curve Start Point, 1stDeriv, and 2nd Deriv
         let pd = curve.evaluate(k, start.t, 2, true, true)?;
         for (dst, src) in start.crv_pd.iter_mut().zip(pd.iter()) {
             *dst = *src;
         }
 
-        // Drop curve StartPoint to surface (SM_SO_MINIMIZE, all solutions)
-        let mut solutions: SolutionArray<O> = this.global_point_solve(
-            k,
-            fs.surface, // `this`'s handle when the caller gave a record (minimize ignores it)
-            &s_uv_domain,
-            SolverOperation::Minimize,
-            start.crv_pd[0],
-            max2(approx_tol_3d / 100.0, EFF_ZERO),
-            None,
-            SolutionRequested::All,
-        )?;
+        // Drop curve StartPoint to surface (SM_SO_MINIMIZE, all solutions; the cache's
+        // point testing is off for the whole call, `sChange1`, SmSurfaceDropLib.cpp:4315:
+        // the face's cache comes from the context, its trims are not tested)
+        let mut solutions: SolutionArray<O> = if let Some(ctx) = context {
+            let mut solutions = SolutionArray::new();
+            this.global_point_solve_into_with_context_point_test_off(
+                k,
+                ctx.handle,
+                None,
+                ctx.solver,
+                &s_uv_domain,
+                SolverOperation::Minimize,
+                start.crv_pd[0],
+                max2(approx_tol_3d / 100.0, EFF_ZERO),
+                None,
+                SolutionRequested::All,
+                &mut solutions,
+            )?;
+            solutions
+        } else if let Some(classify) = face_test {
+            this.global_point_solve_face_tested(
+                k,
+                fs.surface,
+                &s_uv_domain,
+                SolverOperation::Minimize,
+                start.crv_pd[0],
+                max2(approx_tol_3d / 100.0, EFF_ZERO),
+                None,
+                SolutionRequested::All,
+                classify,
+            )?
+        } else {
+            // the cache's point testing is off for the whole call (`sChange1`,
+            // SmSurfaceDropLib.cpp:4315): GlobalPointSolve keeps every solution
+            this.global_point_solve_point_test_off(
+                k,
+                fs.surface, // `this`'s handle when the caller gave a record (minimize ignores it)
+                &s_uv_domain,
+                SolverOperation::Minimize,
+                start.crv_pd[0],
+                max2(approx_tol_3d / 100.0, EFF_ZERO),
+                None,
+                SolutionRequested::All,
+            )?
+        };
 
         // there should always be at least one solution
         if solutions.is_empty() {
@@ -667,7 +953,7 @@ impl Surface {
                         start.uv_pd[0] = d.uv;
                         d.converged
                     }
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => false,
                 };
 
@@ -801,6 +1087,11 @@ impl Surface {
         let num_drop_points = solutions.len();
         let mut curve_cache = None;
         for ii in 0..num_drop_points {
+            // a trace from this start point that is abandoned must not leave its drop
+            // distances in the reported maximums
+            let max_drop_to_surf_before_trace = max_drop_to_surf;
+            let max_approx_dev_before_trace = max_approx_dev;
+
             // set Start
             start.t = s_interval.min();
             start.uv_pd[0] = start_uv(&solutions, ii)?;
@@ -850,7 +1141,7 @@ impl Surface {
             if curve_cache.is_none() {
                 curve_cache = Some(match make_curve_cache::<()>(k, curve, None) {
                     Ok(c) => c,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => return Err(SolidError::null_pointer(OP)),
                 });
             }
@@ -936,7 +1227,7 @@ impl Surface {
                     &mut end,
                 ) {
                     Ok(c) => c,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(e) => status_of(&e),
                 };
                 if ret_status == SM_SUCCESS {
@@ -1023,6 +1314,8 @@ impl Surface {
                         default_path(&mut record, CreateUvTrimCurvePathType::DropStartPointFail);
                         ctrl_poly.clear();
                         knots.clear();
+                        max_drop_to_surf = max_drop_to_surf_before_trace;
+                        max_approx_dev = max_approx_dev_before_trace;
                         break;
                     }
                 }
@@ -1117,7 +1410,7 @@ impl Surface {
                             &mut end,
                         ) {
                             Ok(c) => c,
-                            Err(e) if e.is_unported() => return Err(e),
+                            Err(e) if e.is_unported_or_cancelled() => return Err(e),
                             Err(e) => status_of(&e),
                         };
                         if ret_status == SM_SUCCESS {
@@ -1145,6 +1438,8 @@ impl Surface {
                         );
                         ctrl_poly.clear();
                         knots.clear();
+                        max_drop_to_surf = max_drop_to_surf_before_trace;
+                        max_approx_dev = max_approx_dev_before_trace;
                         stop_spans = true;
                         break;
                     }
@@ -1256,6 +1551,7 @@ impl Surface {
 mod tests {
     use super::*;
     use crate::geom::vector2d::Vec2;
+    use crate::nurbs::b_spline_surface::BSplineSurface;
     use crate::nurbs::crv_basic::Curve as NurbCurve;
     use crate::nurbs::math::{CPoint, NOW};
     use crate::surface::plane::Plane;
@@ -1370,5 +1666,163 @@ mod tests {
             run(crate::geom::tol::USE_DEFAULT),
             run(k.tolerances.zone_tol_3d / 2.0)
         );
+    }
+
+    // ---- WR-100: the V degeneracy test ------------------------------------------------
+
+    const WR100_NORMAL_KNOTS: [f64; 6] = [0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+    const WR100_TINY_KNOTS: [f64; 6] = [0.0, 0.0, 0.0, 1.0e-15, 1.0e-15, 1.0e-15];
+
+    /// The WR-100 witness surface (fixture `natural_domain_degeneracy.json`): a
+    /// non-rational degree 2x2 B-spline over a 3x3 net, its `u`/`v` knot vectors given.
+    fn wr100_surface(u: [f64; 6], v: [f64; 6]) -> Surface {
+        let net = vec![
+            vec![
+                CPoint::new(0.0, 0.0, 0.0, NOW),
+                CPoint::new(0.0, 0.5, 0.1, NOW),
+                CPoint::new(0.0, 1.0, 0.0, NOW),
+            ],
+            vec![
+                CPoint::new(0.5, 0.0, 0.1, NOW),
+                CPoint::new(0.5, 0.5, 0.2, NOW),
+                CPoint::new(0.5, 1.0, 0.1, NOW),
+            ],
+            vec![
+                CPoint::new(1.0, 0.0, 0.0, NOW),
+                CPoint::new(1.0, 0.5, 0.1, NOW),
+                CPoint::new(1.0, 1.0, 0.0, NOW),
+            ],
+        ];
+        Surface::from(
+            BSplineSurface::from_data(2, 2, 2, 2, 5, 5, &net, &u, &v).expect("witness surface"),
+        )
+    }
+
+    /// [`Surface::drop_curve`] (the public dispatch, not the private base) with the
+    /// witness point curve at `(10, 10, 10)` over `domain` and a failure record.
+    fn wr100_drop(
+        k: &Kernel,
+        surface: &Surface,
+        domain: [f64; 4],
+    ) -> (Result<PlaneDropCurve>, DropCurveFail<NoObject>) {
+        let mut fail: DropCurveFail<NoObject> = DropCurveFail::default();
+        let r = surface.drop_curve::<NoObject>(
+            k,
+            &Extent2d::from_bounds(domain[0], domain[1], domain[2], domain[3]),
+            &point_curve(Point3::new(10.0, 10.0, 10.0)),
+            &Extent1d::from_min_max(0.0, 1.0),
+            1.0e-4,
+            true,
+            Some(DropFailRecord {
+                fail: &mut fail,
+                surface: None,
+                curve: None,
+            }),
+            true,
+        );
+        (r, fail)
+    }
+
+    /// The V-degenerate witness: `sm_FixupKnotVector` collapses the `1e-15` span, so the
+    /// natural domain is `[0,0,1,0]` (U length 1, V length 0), not a `1e-15` span. The
+    /// natural lengths classify the degeneracy independently of the record's flags.
+    #[test]
+    fn wr100_v_domain_degeneracy_flag_reports_a_degenerate_v_surface() {
+        let mut k = Kernel::default();
+        k.fixes.drop_curve_v_domain_degeneracy = true;
+        let srf = wr100_surface(WR100_NORMAL_KNOTS, WR100_TINY_KNOTS);
+        let nat = srf.natural_uv_domain_with_nurb(&k).expect("natural domain");
+        assert_eq!((nat.x_length(), nat.y_length()), (1.0, 0.0));
+        assert!(nat.x_length() >= EFF_ZERO);
+        assert!(nat.y_length() < EFF_ZERO);
+
+        let (r, fail) = wr100_drop(&k, &srf, [0.0, 1.0, 1.0, 1.0]);
+        assert!(matches!(r, Err(SolidError::Upstream { code: SM_ERR, .. })));
+        assert_eq!(fail.fail_status, SM_ERR_DEGENERATE_SURFACE);
+        assert_eq!(
+            fail.create_path_type,
+            CreateUvTrimCurvePathType::DegenSurfaceFail
+        );
+        assert_eq!((fail.degen_surf_u, fail.degen_surf_v), (0, 1));
+    }
+
+    /// The U-degenerate counterpart: U length 0 (degenerate) and V length 1, so with the
+    /// fix the record's V flag is 0. The status and path were already `1034 / 17`:
+    /// the U flag alone triggered the early exit; the wrong V flag only coincided.
+    #[test]
+    fn wr100_u_domain_degeneracy_keeps_its_status_and_clears_the_v_flag() {
+        let mut k = Kernel::default();
+        k.fixes.drop_curve_v_domain_degeneracy = true;
+        let srf = wr100_surface(WR100_TINY_KNOTS, WR100_NORMAL_KNOTS);
+        let nat = srf.natural_uv_domain_with_nurb(&k).expect("natural domain");
+        assert_eq!((nat.x_length(), nat.y_length()), (0.0, 1.0));
+        assert!(nat.x_length() < EFF_ZERO);
+        assert!(nat.y_length() >= EFF_ZERO);
+
+        let (r, fail) = wr100_drop(&k, &srf, [1.0, 0.0, 1.0, 1.0]);
+        assert!(matches!(r, Err(SolidError::Upstream { code: SM_ERR, .. })));
+        assert_eq!(fail.fail_status, SM_ERR_DEGENERATE_SURFACE);
+        assert_eq!(
+            fail.create_path_type,
+            CreateUvTrimCurvePathType::DegenSurfaceFail
+        );
+        assert_eq!((fail.degen_surf_u, fail.degen_surf_v), (1, 0));
+    }
+
+    /// The positive control: both natural lengths are 1, so neither degeneracy applies
+    /// and the fix changes nothing (same `1020 / 19` first-drop failure and zero flags
+    /// with it off and on).
+    #[test]
+    fn wr100_normal_domain_is_unaffected_by_the_v_domain_fix() {
+        let srf = wr100_surface(WR100_NORMAL_KNOTS, WR100_NORMAL_KNOTS);
+        let run = |fix: bool| {
+            let mut k = Kernel::default();
+            k.fixes.drop_curve_v_domain_degeneracy = fix;
+            let nat = srf.natural_uv_domain_with_nurb(&k).expect("natural domain");
+            assert_eq!((nat.x_length(), nat.y_length()), (1.0, 1.0));
+            let (r, fail) = wr100_drop(&k, &srf, [0.0, 0.0, 1.0, 1.0]);
+            // `FirstDropUncontainedFail` returns the (empty) output, not an error.
+            assert!(r
+                .expect("first drop failure returns the output")
+                .uv_curves
+                .is_empty());
+            (
+                fail.fail_status,
+                fail.create_path_type,
+                fail.degen_surf_u,
+                fail.degen_surf_v,
+            )
+        };
+        assert_eq!(run(false), run(true));
+        assert_eq!(
+            run(true),
+            (
+                SM_ERR_OUTSIDE_OF_DOMAIN,
+                CreateUvTrimCurvePathType::FirstDropUncontainedFail,
+                0,
+                0
+            )
+        );
+    }
+
+    /// Off by default the V-degenerate witness keeps the pinned C++ result (`1020 / 19`,
+    /// both flags 0): the V flag copies the U test, which passes.
+    #[test]
+    fn wr100_v_domain_degeneracy_is_off_by_default() {
+        let k = Kernel::default();
+        assert!(!k.fixes.drop_curve_v_domain_degeneracy);
+        let srf = wr100_surface(WR100_NORMAL_KNOTS, WR100_TINY_KNOTS);
+        let (r, fail) = wr100_drop(&k, &srf, [0.0, 1.0, 1.0, 1.0]);
+        // `FirstDropUncontainedFail` returns the (empty) output, not an error.
+        assert!(r
+            .expect("first drop failure returns the output")
+            .uv_curves
+            .is_empty());
+        assert_eq!(fail.fail_status, SM_ERR_OUTSIDE_OF_DOMAIN);
+        assert_eq!(
+            fail.create_path_type,
+            CreateUvTrimCurvePathType::FirstDropUncontainedFail
+        );
+        assert_eq!((fail.degen_surf_u, fail.degen_surf_v), (0, 0));
     }
 }

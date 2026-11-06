@@ -66,7 +66,11 @@
 //!   STEP interval are bounded: where upstream would loop forever (a shift that no
 //!   longer changes the midpoint, from STEP angles beyond about 2^61 (~2.3e18) degrees) or for more
 //!   than [`MAX_PERIOD_SHIFTS`] shifts, the set-up returns
-//!   [`SolidError::NotConverged`] with the converter left impossible.
+//!   [`SolidError::NotConverged`] with the converter left impossible and the saved
+//!   STEP interval restored, so the temporary full-circle domain does not leak.
+//!   With the opt-in `Kernel::fixes.ellipse_open_arc_keeps_end_angle` (WR-719, the
+//!   fork's cbeb14b) an open arc's end angles are its ends' own polar angles rather than
+//!   `STEPInversion`'s, whose seam rule turns an end just short of 360 into 0.
 //! - **Notifications.** `SmBSplineCurve::SetFromGwNurb` and `Transform` send
 //!   `SM_NO_POST_EDIT`, whose `SmEllipse::Notify` override rebuilds the polar
 //!   converter (status ignored); the port calls [`Ellipse::set_up_polar_conversion`]
@@ -100,6 +104,7 @@
 use crate::curve::curve::p1::GlobalPointSolveOptions;
 use crate::curve::curve::p2::{self as curve_base, CIRCLE_TYPE, ELLIPSE_TYPE};
 use crate::curve::curve::p3::local_curve_solve;
+use crate::curve::curve::p4::is_closed_base;
 use crate::curve::line::{CurveLocationType, Line};
 use crate::error::{ignore_status, Result, SolidError};
 use crate::geom::assert_array::labels::POLAR_CONVERSION_TYPE;
@@ -118,7 +123,8 @@ use crate::geom::tol::{
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
 use crate::math::{
-    max2, min2, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_DEG, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI, TWO_PI,
+    max2, min2, rad_to_deg, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_DEG, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI,
+    TWO_PI,
 };
 use crate::nurbs::b_spline_curve::{BSplineCurve, BSplineCurveForm};
 use crate::nurbs::b_spline_surface::p1::SurfParamType;
@@ -140,10 +146,12 @@ const SINE_10DEG: f64 = 0.173_648_177_666_930_35;
 
 /// An index into a table that upstream reads unchecked.
 fn table(v: &[f64], i: usize, operation: &'static str) -> Result<f64> {
-    v.get(i).copied().ok_or(SolidError::invalid_input(
-        operation,
-        "polar conversion table is shorter than its knot list",
-    ))
+    v.get(i).copied().ok_or_else(|| {
+        SolidError::invalid_input(
+            operation,
+            "polar conversion table is shorter than its knot list",
+        )
+    })
 }
 
 // ---- back-edges -----------------------------------------------------------------------
@@ -601,7 +609,7 @@ impl PolarConversion {
             &mut written,
         ) {
             Ok((t, _)) => Ok(Some(t)),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => Ok(written),
         }
     }
@@ -1883,7 +1891,9 @@ impl Ellipse {
             let solutions2: Vec<Solution<O>> =
                 match line_global_point_solve(line, other_interval, *ip, tol * 10.0) {
                     Ok(s) => s,
-                    Err(e @ SolidError::Unported { .. }) => return Err(e),
+                    Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => {
+                        return Err(e)
+                    }
                     Err(_) => return Ok(out),
                 };
 
@@ -1894,7 +1904,9 @@ impl Ellipse {
             let solutions1: Vec<Solution<O>> =
                 match ellipse_global_point_solve(k, self, interval, *ip, tol * 10.0) {
                     Ok(s) => s,
-                    Err(e @ SolidError::Unported { .. }) => return Err(e),
+                    Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => {
+                        return Err(e)
+                    }
                     Err(_) => return Ok(out),
                 };
 
@@ -2084,10 +2096,34 @@ pub(crate) fn set_up_polar_conversion(
 
         // Get Polar angle about ZAxis from XAxis in degrees.
         let pnt1 = e.base.evaluate_point(lowest_angle_param)?;
-        let (mut lowest_deg, _) = e.step_inversion(k, pnt1, false, 0.0);
-
         let pnt2 = e.base.evaluate_point(highest_angle_param)?;
-        let (mut highest_deg, _) = e.step_inversion(k, pnt2, false, 0.0);
+
+        // With the opt-in fix (WR-719, the fork's cbeb14b): STEPInversion() on the full
+        // circle set above takes a point at its seam's end (360, to its zone tolerance /
+        // 100 and 1e-4 deg) as the seam's start (0): right for a closed curve, whose end
+        // is its start, but an open arc ending that near the seam (an ellipse trimmed
+        // 1.2e-6 deg short of 360) had its end angle made 360, its analytic domain then
+        // disagreeing with its NURB by the gap. An open arc's ends are their own polar
+        // angles, as STEPInversion() computes them before that rule.
+        let (mut lowest_deg, mut highest_deg);
+        if !k.fixes.ellipse_open_arc_keeps_end_angle
+            || is_closed_base(k, &e.base, &e.base.natural_interval(), 0.0)?
+        {
+            lowest_deg = e.step_inversion(k, pnt1, false, 0.0).0;
+            highest_deg = e.step_inversion(k, pnt2, false, 0.0).0;
+        } else {
+            let own_angle = |pnt: Point3| {
+                let vec = pnt - e.position.origin();
+                let mut angle = (e.radius_x / e.radius_y * vec.dot(e.position.y_axis()))
+                    .atan2(vec.dot(e.position.x_axis()));
+                if angle < 0.0 {
+                    angle += TWO_PI;
+                }
+                rad_to_deg(angle)
+            };
+            lowest_deg = own_angle(pnt1);
+            highest_deg = own_angle(pnt2);
+        }
 
         // STEPInversion will snap dHighestDeg to Min param according to tolerance.
         // Only account for noise here. [B630]
@@ -2110,6 +2146,7 @@ pub(crate) fn set_up_polar_conversion(
             let next_mid = this_mid - 360.0;
             shifts += 1;
             if next_mid == this_mid || shifts > MAX_PERIOD_SHIFTS {
+                e.set_step_interval(anal_ivl);
                 return Err(stuck());
             }
             lowest_deg -= 360.0;
@@ -2120,6 +2157,7 @@ pub(crate) fn set_up_polar_conversion(
             let next_mid = this_mid + 360.0;
             shifts += 1;
             if next_mid == this_mid || shifts > MAX_PERIOD_SHIFTS {
+                e.set_step_interval(anal_ivl);
                 return Err(stuck());
             }
             lowest_deg += 360.0;
@@ -2340,13 +2378,23 @@ mod tests {
             assert!(e.polar.is_polar_conversion_possible());
         }
         // Upstream never ends: adding a turn no longer changes the midpoint.
-        let mut e = arc(9.223_372_036_854_776e18);
-        let err = e.set_up_polar_conversion(&k).unwrap_err();
-        assert!(matches!(err, SolidError::NotConverged { .. }), "{err:?}");
-        assert!(!e.polar.is_polar_conversion_possible());
         // Representable shifts beyond the bound stop as well.
-        let mut e = arc(1e12);
-        assert!(e.set_up_polar_conversion(&k).is_err());
+        for start in [
+            9.223_372_036_854_776e18,
+            -9.223_372_036_854_776e18,
+            1e12,
+            -1e12,
+        ] {
+            let mut e = arc(start);
+            let original = e.step_interval();
+            for _ in 0..2 {
+                let err = e.set_up_polar_conversion(&k).unwrap_err();
+                assert!(matches!(err, SolidError::NotConverged { .. }), "{err:?}");
+                assert!(!e.polar.is_polar_conversion_possible());
+                assert_eq!(e.step_interval().min(), original.min());
+                assert_eq!(e.step_interval().max(), original.max());
+            }
+        }
     }
 
     #[test]

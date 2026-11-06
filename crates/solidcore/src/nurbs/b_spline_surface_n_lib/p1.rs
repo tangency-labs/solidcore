@@ -15,14 +15,14 @@
 //! | [`BSplineSurface::approximate_offset_surface`], [`BSplineSurface::approximate_offset_surface_with`], [`OffsetParamType`] | `ApproximateOffsetSurface` |
 //! | [`create_non_rational_curve`]                         | `sm_CreateNonRationalCurve` (static)             |
 //! | [`create_coons_srf`], [`CoonsWarning`]                | `sm_CreateCoonsSrf` (static)                     |
-//! | [`BSplineSurface::create_coons_patch`]                | `CreateCoonsPatch`                               |
-//! | [`BSplineSurface::create_extended_surface`]           | `CreateExtendedSurface` (distance from each side) |
-//! | [`BSplineSurface::create_extended_surface_dir`]       | `CreateExtendedSurface` (with `SmSurfParamType`) |
+//! | [`BSplineSurface::create_coons_patch`], [`BSplineSurface::create_coons_patch_on_faces`] | `CreateCoonsPatch` |
+//! | `face_side_twist` (private)                           | the fork's `sm_FaceSideTwist` (static)           |
 //! | [`BSplineSurface::join_surface`]                      | `JoinSurface`                                    |
 //! | [`BSplineSurface::create_n_sided_patch`]              | `CreateNSidedPatch`                              |
 //! | [`BSplineSurface::create_ruled_surface`]              | `CreateRuledSurface`                             |
 //! | [`make_knots`]                                        | `sm_MakeKnots` (static)                          |
 //! | [`BSplineSurface::create_sweep_surface`]              | `CreateSweepSurface` (single section)            |
+//! | [`BSplineSurface::create_sweep_surface_with_placements`] | `CreateSweepSurface` with the fork's `pOptPlacements` |
 //! | [`BSplineSurface::create_swung_surface`]              | `CreateSwungSurface`                             |
 //! | [`BSplineSurface::evaluate_point_on_extended_surface`] | `EvaluatePointOnExtendedSurface`                |
 //! | [`BSplineSurface::reparameterize`]                    | `Reparameterize`                                 |
@@ -30,7 +30,7 @@
 //! | [`check_trim_boundaries`]                             | `sm_CheckTrimBoundaries` (static)                |
 //! | [`BSplineSurface::expand_boundary_span`]              | `ExpandBoundarySpan`                             |
 //! | [`check_zero_surface_derivs`]                         | `sm_check_zero_surface_derivs` (static)          |
-//! | [`BSplineSurface::evaluate_simple`]                   | `EvaluateSimple`                                 |
+//! | [`BSplineSurface::evaluate_simple`], [`BSplineSurface::evaluate_simple_first_into`] | `EvaluateSimple` |
 //! | [`BSplineSurface::evaluate_point`]                    | `EvaluatePoint`                                  |
 //!
 //! The other functions of the file (`CreateSkinnedSurface`, `CreateCornerBlend`,
@@ -74,6 +74,11 @@
 //!   `sm_CheckTrimBoundaries`' negative "not set" indices are `None`.
 //! - **`sm_CreateCoonsSrf`** returns its warning level (`lWarning`, only logged
 //!   upstream) as [`CoonsWarning`]; `CreateCoonsPatch` ignores it as upstream.
+//! - **Face sides** (not upstream; WR-613, the fork's tangency-labs/smlib@7fd9fb0):
+//!   [`create_coons_srf`] and [`BSplineSurface::create_coons_patch_on_faces`] take the
+//!   fork's `lFaceSides` bits ([`COONS_FACE_LEFT`] ..), which give a corner between a
+//!   face side and another side that side's twist; `0` (all
+//!   [`BSplineSurface::create_coons_patch`] callers) is upstream.
 //! - **`CreateNSidedPatch`** unitizes the caller's center normal in place, as upstream
 //!   (`Unitize`'s status is ignored, so a zero vector becomes `(0, 0, 1)`).
 //! - **`EvaluateSimple`** returns the derivative matrix `D[i][j]` (`i <= u`, `j <= v`
@@ -93,24 +98,18 @@
 //!   `NER` for other curve types) and the caller's
 //!   [`Surface`](crate::surface::surface::Surface) as base surface (with its kind and
 //!   owner, as upstream's `SmSurface*`).
-//! - **`CreateExtendedSurface`** halves the extension distance after each failed
-//!   extension until it drops below `dDist / 100`, which never happens for a zero or
-//!   NaN distance (upstream then loops forever); the port stops after
-//!   [`MAX_EXTEND_HALVINGS`] halvings with [`SolidError::NotConverged`]. After a
-//!   successful extension it doubles the distance until it reaches `dDist / 2`, which
-//!   a negative distance never does (it doubles towards `-inf`, upstream HANG-16); the
-//!   port stops after [`MAX_EXTEND_DOUBLINGS`] doublings with the same error.
 //! - **`N_LinearMultiplyCrv`** returns nothing upstream; its port fails only for a
 //!   degree-0 cross-boundary derivative (no Greville abscissae), which
 //!   [`create_coons_srf`] passes on.
 //! - Status values upstream ignores stay ignored: the reparametrisation of
 //!   `ApproximateOffsetSurface` and `RebuildSTEPFromNURBParameters`, a no-op for a
 //!   plain B-spline.
+//! - Cancellation: `approximate_offset_surface_cancellable` (crate-private) passes a cancel token (#2136, #2372) to `N_SrfOffset`; the public wrappers pass none.
 
 use crate::error::{Result, SolidError};
+use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
-use crate::geom::geom_utility::p2::ContinuityType;
 use crate::geom::tol::are_same;
 use crate::geom::vector2d::Point2;
 use crate::geom::vector3d::{Point3, Vec3};
@@ -127,31 +126,18 @@ use crate::nurbs::knots::{Side, MAX_DEGREE};
 use crate::nurbs::math::{
     combine2_pts, power_basis_srf_eval_pts, srf_power_basis_eval_derivs, CPoint,
 };
-use crate::nurbs::srf_adv::p1::{eval_pt_derivs_unbounded, extend_by_dist};
-use crate::nurbs::srf_adv::p2::SrfContinuity;
+use crate::nurbs::srf_adv::p1::eval_pt_derivs_unbounded;
 use crate::nurbs::srf_adv::p3::{
     create_swung_srf, create_trans_sweep_srf, extend_by_param_dist, ExtendContinuity,
 };
 use crate::nurbs::srf_adv::p4::create_coons_srf as bilinear_coons_srf;
-use crate::nurbs::srf_adv::p6::{create_sweep_scale, fill_n_sided_hole, SweepScaleOptions};
+use crate::nurbs::srf_adv::p6::{
+    create_sweep_scale_traced, fill_n_sided_hole_with, SweepScaleOptions, SweepTrace,
+};
 use crate::nurbs::srf_basic::{size_arrays, Direction, Surface, SurfaceIndices};
 use crate::nurbs::srf_common::ruled_srf;
 use crate::nurbs::srf_tool::p3::{join, make_compatible as make_surfaces_compatible};
 use crate::nurbs::srf_tool::p4::make_compatible_uv;
-
-/// Largest number of distance halvings of one side of
-/// [`BSplineSurface::create_extended_surface_dir`] (upstream has no bound and loops
-/// forever for a zero or NaN distance; halving a positive distance reaches zero after
-/// fewer than 1100 steps).
-pub const MAX_EXTEND_HALVINGS: usize = 1100;
-
-/// Largest number of distance doublings of one side of
-/// [`BSplineSurface::create_extended_surface_dir`]. A positive distance is doubled back
-/// at most once more than it was halved, so only a negative distance reaches this:
-/// upstream doubles it away from the loop's exit (`dExtDist < dDist/2.0`) towards
-/// `-inf` and loops forever while the extensions succeed (`plan/upstream-issues.md`
-/// HANG-16).
-pub const MAX_EXTEND_DOUBLINGS: usize = MAX_EXTEND_HALVINGS + 1;
 
 const OP_BUILD_CURVE: &str = "nurbs::b_spline_surface_n_lib::p1::build_nlib_curve";
 const OP_NLIB_CURVE: &str = "nurbs::b_spline_surface_n_lib::p1::create_nlib_curve";
@@ -161,8 +147,6 @@ const OP_OFFSET: &str =
 const OP_NONRAT: &str = "nurbs::b_spline_surface_n_lib::p1::create_non_rational_curve";
 const OP_COONS_SRF: &str = "nurbs::b_spline_surface_n_lib::p1::create_coons_srf";
 const OP_COONS: &str = "nurbs::b_spline_surface_n_lib::p1::BSplineSurface::create_coons_patch";
-const OP_EXTEND: &str =
-    "nurbs::b_spline_surface_n_lib::p1::BSplineSurface::create_extended_surface_dir";
 const OP_JOIN: &str = "nurbs::b_spline_surface_n_lib::p1::BSplineSurface::join_surface";
 const OP_NSIDED: &str = "nurbs::b_spline_surface_n_lib::p1::BSplineSurface::create_n_sided_patch";
 const OP_RULED: &str = "nurbs::b_spline_surface_n_lib::p1::BSplineSurface::create_ruled_surface";
@@ -211,25 +195,6 @@ fn surface_nurb<'a>(surface: &'a BSplineSurface, operation: &'static str) -> Res
 
 // ---- unported SmSurface methods ------------------------------------------------------
 
-/// `SmSurface::IsSingularity(uv, dir)`: whether `uv` is a singularity and its
-/// direction.
-fn is_singularity(k: &Kernel, srf: &BSplineSurface, uv: Point2) -> Result<(bool, SurfParamType)> {
-    // the SmSurface body (surface.surface_p5), on a surface holding a copy
-    let surface = crate::surface::surface::Surface::from(srf.clone_exact());
-    let s = surface.is_singularity(k, uv, crate::math::EFF_ZERO, false)?;
-    Ok((s.singular, s.direction))
-}
-
-/// `SmSurface::IsClosed(domain, dir)`.
-fn is_closed(
-    k: &Kernel,
-    srf: &BSplineSurface,
-    domain: &Extent2d,
-    dir: SurfParamType,
-) -> Result<bool> {
-    Ok(crate::surface::surface::p7::base_is_closed(k, srf, domain, dir, None, false)?.0)
-}
-
 /// The curves dropped by `SmSurface::DropCurve` (with its two distance outputs, which
 /// the caller here ignores).
 struct DroppedCurves {
@@ -244,20 +209,24 @@ struct DroppedCurves {
 /// with the surface's owner) for a plane, the base body
 /// ([`crate::surface::surface::Surface::drop_curve_base`]) otherwise. The surface is
 /// the caller's (a face's surface keeps its owner).
-fn drop_curve(
+fn drop_curve<O: crate::geom::solution_array::SolutionObject>(
     k: &Kernel,
     srf: &crate::surface::surface::Surface,
     domain: &Extent2d,
     curve: &BSplineCurve,
     interval: &Extent1d,
     approx_tol: f64,
+    context: Option<crate::intersect::surface_drop_lib::p3::DropSolveContext<'_, O>>,
 ) -> Result<DroppedCurves> {
     use crate::curve::curve::{Curve as AnyCurve, CurveKind};
 
     let curve = AnyCurve::from(curve.clone());
-    let out = srf.drop_curve::<crate::surface::surface::p4::NoObject>(
-        k, domain, &curve, interval, approx_tol, true, None, true,
-    )?;
+    let out = match context {
+        Some(context) => srf.drop_curve_with_context::<O>(
+            k, domain, &curve, interval, approx_tol, true, None, true, context,
+        )?,
+        None => srf.drop_curve::<O>(k, domain, &curve, interval, approx_tol, true, None, true)?,
+    };
     // the drop gives `SmBSplineCurve`s (for a plane a UV `SmLine` or B-spline)
     let uv_curves = out
         .uv_curves
@@ -400,6 +369,34 @@ fn match_cross_derivative(
     Ok(mis_match)
 }
 
+/// [`create_coons_srf`]'s face-side bit for the left boundary curve (`lr[0]`).
+pub const COONS_FACE_LEFT: u32 = 1;
+/// [`create_coons_srf`]'s face-side bit for the right boundary curve (`lr[1]`).
+pub const COONS_FACE_RIGHT: u32 = 2;
+/// [`create_coons_srf`]'s face-side bit for the bottom boundary curve (`bt[0]`).
+pub const COONS_FACE_BOTTOM: u32 = 4;
+/// [`create_coons_srf`]'s face-side bit for the top boundary curve (`bt[1]`).
+pub const COONS_FACE_TOP: u32 = 8;
+
+/// The fork's `sm_FaceSideTwist` (WR-613): the twist at a Coons corner between a u side
+/// (`(u_bit, u_twist)`, its bit and twist) and a v side (`(v_bit, v_twist)`) when
+/// exactly one of them lies on a face of the body (`face_sides`): the other (the
+/// blend's) side's twist. Otherwise `t` is left as it is.
+fn face_side_twist(
+    face_sides: u32,
+    (u_bit, u_twist): (u32, Vec3),
+    (v_bit, v_twist): (u32, Vec3),
+    t: &mut Vec3,
+) {
+    let u_face = (face_sides & u_bit) != 0;
+    let v_face = (face_sides & v_bit) != 0;
+    if u_face && !v_face {
+        *t = v_twist;
+    } else if v_face && !u_face {
+        *t = u_twist;
+    }
+}
+
 /// The average twist of two cross-boundary derivative derivatives at a corner; sets
 /// `warning` to [`CoonsWarning::TwistMismatch`] when they differ by more than
 /// `twist_tol`.
@@ -442,6 +439,12 @@ fn bezier_knots() -> Vec<f64> {
 /// derivatives meeting there. The surface is the sum of the u- and v-direction
 /// blends minus their tensor product, all made compatible.
 ///
+/// `face_sides` (not upstream; WR-613, the fork's tangency-labs/smlib@7fd9fb0) marks
+/// the boundary curves that lie on a face of the body ([`COONS_FACE_LEFT`],
+/// [`COONS_FACE_RIGHT`], [`COONS_FACE_BOTTOM`], [`COONS_FACE_TOP`]): a corner between
+/// one of them and an unmarked side takes the unmarked side's twist, so the patch meets
+/// the marked side's cross-boundary derivative there. `0` is upstream.
+///
 /// Returns the surface and the warning level.
 ///
 /// # Errors
@@ -453,6 +456,7 @@ pub fn create_coons_srf(
     mtol: f64,
     lr: &mut [Curve; 4],
     bt: &mut [Curve; 4],
+    face_sides: u32,
 ) -> Result<(Surface, CoonsWarning)> {
     const OP: &str = OP_COONS_SRF;
     let twist_tol = mtol * 1.0e4;
@@ -518,30 +522,43 @@ pub fn create_coons_srf(
 
     // Now compute the twist vectors to use: the mixed partials at the four corners,
     // the averages of the derivatives of the two cross-boundary derivative curves
-    // meeting there.
-    let t00 = twist(
-        deriv1(&lr[2], v0)?,
-        deriv1(&bt[2], u0)?,
-        twist_tol,
-        &mut warning,
+    // meeting there. Not upstream (WR-613): a corner between a face side and a blend's
+    // side takes the blend side's twist.
+    let (cd1, cd2) = (deriv1(&lr[2], v0)?, deriv1(&bt[2], u0)?);
+    let mut t00 = twist(cd1, cd2, twist_tol, &mut warning);
+    // left: CD1, bottom: CD2
+    face_side_twist(
+        face_sides,
+        (COONS_FACE_LEFT, cd1),
+        (COONS_FACE_BOTTOM, cd2),
+        &mut t00,
     );
-    let t10 = twist(
-        deriv1(&bt[2], ur)?,
-        deriv1(&lr[3], v0)?,
-        twist_tol,
-        &mut warning,
+    let (cd1, cd2) = (deriv1(&bt[2], ur)?, deriv1(&lr[3], v0)?);
+    let mut t10 = twist(cd1, cd2, twist_tol, &mut warning);
+    // bottom: CD1, right: CD2
+    face_side_twist(
+        face_sides,
+        (COONS_FACE_RIGHT, cd2),
+        (COONS_FACE_BOTTOM, cd1),
+        &mut t10,
     );
-    let t11 = twist(
-        deriv1(&lr[3], vs)?,
-        deriv1(&bt[3], ur)?,
-        twist_tol,
-        &mut warning,
+    let (cd1, cd2) = (deriv1(&lr[3], vs)?, deriv1(&bt[3], ur)?);
+    let mut t11 = twist(cd1, cd2, twist_tol, &mut warning);
+    // right: CD1, top: CD2
+    face_side_twist(
+        face_sides,
+        (COONS_FACE_RIGHT, cd1),
+        (COONS_FACE_TOP, cd2),
+        &mut t11,
     );
-    let t01 = twist(
-        deriv1(&bt[3], u0)?,
-        deriv1(&lr[2], vs)?,
-        twist_tol,
-        &mut warning,
+    let (cd1, cd2) = (deriv1(&bt[3], u0)?, deriv1(&lr[2], vs)?);
+    let mut t01 = twist(cd1, cd2, twist_tol, &mut warning);
+    // top: CD1, left: CD2
+    face_side_twist(
+        face_sides,
+        (COONS_FACE_LEFT, cd2),
+        (COONS_FACE_TOP, cd1),
+        &mut t01,
     );
 
     // ---- Compute the various surfaces ----
@@ -982,6 +999,30 @@ pub fn create_non_rational_curve(
     opt_base_surface: Option<&crate::surface::surface::Surface>,
     approx_tol: f64,
 ) -> Result<(BSplineCurve, Option<BSplineCurve>)> {
+    create_non_rational_curve_with_context::<crate::surface::surface::p4::NoObject>(
+        k,
+        curve,
+        opt_uv_trim_curve,
+        opt_base_surface,
+        approx_tol,
+        None,
+    )
+}
+
+/// [`create_non_rational_curve`] whose drop onto `opt_base_surface` runs under the
+/// caller's face context.
+///
+/// # Errors
+///
+/// As [`create_non_rational_curve`], and those of the context.
+pub fn create_non_rational_curve_with_context<O: crate::geom::solution_array::SolutionObject>(
+    k: &Kernel,
+    curve: &BSplineCurve,
+    opt_uv_trim_curve: Option<&BSplineCurve>,
+    opt_base_surface: Option<&crate::surface::surface::Surface>,
+    approx_tol: f64,
+    context: Option<crate::intersect::surface_drop_lib::p3::DropSolveContext<'_, O>>,
+) -> Result<(BSplineCurve, Option<BSplineCurve>)> {
     // for rational curves
     if curve.is_rational()? {
         // Build arc-length parameterized nonRational curve approximation
@@ -992,8 +1033,8 @@ pub fn create_non_rational_curve(
         let mut new_uv_trim_curve = None;
         if let Some(base) = opt_base_surface {
             let trim_ivl = new_curve.natural_interval();
-            let domain = base.natural_uv_domain();
-            let dropped = drop_curve(k, base, &domain, &new_curve, &trim_ivl, approx_tol)?;
+            let domain = base.natural_uv_domain_with_nurb(k)?;
+            let dropped = drop_curve(k, base, &domain, &new_curve, &trim_ivl, approx_tol, context)?;
             new_uv_trim_curve = Some(
                 dropped
                     .uv_curves
@@ -1044,6 +1085,31 @@ impl BSplineSurface {
         param_type: OffsetParamType,
         options: crate::nurbs::srf_offset::OffsetOptions,
     ) -> Result<BSplineSurface> {
+        self.approximate_offset_surface_cancellable(
+            offset_distance,
+            approx_tol_3d,
+            param_type,
+            options,
+            None,
+        )
+    }
+
+    /// [`BSplineSurface::approximate_offset_surface_with`] whose NLib offset polls
+    /// `cancel` (#2136, #2372) and returns `Cancelled` once it fires; `None`, or a token
+    /// that never fires, changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// As [`BSplineSurface::approximate_offset_surface_with`]; `Cancelled` when `cancel`
+    /// fires.
+    pub(crate) fn approximate_offset_surface_cancellable(
+        &self,
+        offset_distance: f64,
+        approx_tol_3d: f64,
+        param_type: OffsetParamType,
+        options: crate::nurbs::srf_offset::OffsetOptions,
+        cancel: Option<&crate::kernel::CancelToken>,
+    ) -> Result<BSplineSurface> {
         let nl_surf_p = self
             .nurb
             .as_ref()
@@ -1068,7 +1134,7 @@ impl BSplineSurface {
 
         // pass the call along to NLib
         let mut nl_surf = nl_surf_p
-            .offset_with(
+            .offset_cancellable(
                 offset_distance,
                 ln_deg,
                 ln_deg,
@@ -1076,6 +1142,7 @@ impl BSplineSurface {
                 10.0 * approx_tol_3d,
                 approx_tol_3d,
                 options,
+                cancel,
             )
             .map_err(SolidError::nl_ser(OP_OFFSET))?;
 
@@ -1110,6 +1177,26 @@ impl BSplineSurface {
         create_bilinear_patch: bool,
         bdry_crvs: &mut [BSplineCurve],
         deriv_crvs: &mut [BSplineCurve],
+    ) -> Result<BSplineSurface> {
+        Self::create_coons_patch_on_faces(tol, create_bilinear_patch, bdry_crvs, deriv_crvs, 0)
+    }
+
+    /// [`BSplineSurface::create_coons_patch`] with the fork's `lFaceSides` (WR-613,
+    /// tangency-labs/smlib@7fd9fb0): `face_sides` marks the boundary curves on a face of
+    /// the body, [`COONS_FACE_LEFT`] for `bdry_crvs[0]`, [`COONS_FACE_RIGHT`] for
+    /// `bdry_crvs[1]`, [`COONS_FACE_BOTTOM`] for `bdry_crvs[2]` and [`COONS_FACE_TOP`]
+    /// for `bdry_crvs[3]`, and goes to [`create_coons_srf`] (the bilinear patch ignores
+    /// it). `0` is upstream's `CreateCoonsPatch`.
+    ///
+    /// # Errors
+    ///
+    /// As [`BSplineSurface::create_coons_patch`].
+    pub fn create_coons_patch_on_faces(
+        tol: f64,
+        create_bilinear_patch: bool,
+        bdry_crvs: &mut [BSplineCurve],
+        deriv_crvs: &mut [BSplineCurve],
+        face_sides: u32,
     ) -> Result<BSplineSurface> {
         const OP: &str = OP_COONS;
         // check input - 4 curves
@@ -1157,7 +1244,8 @@ impl BSplineSurface {
             let [der_l, der_r, der_b, der_t] = ders.ok_or_else(|| SolidError::sm_err(OP))?;
             let mut lr = [l, r, der_l, der_r];
             let mut bt = [b, t, der_b, der_t];
-            let res = create_coons_srf(tol, &mut lr, &mut bt);
+            // bits 1 left, 2 right, 4 bottom, 8 top: bdry_crvs' order
+            let res = create_coons_srf(tol, &mut lr, &mut bt, face_sides);
             let [l, r, der_l, der_r] = lr;
             let [b, t, der_b, der_t] = bt;
             cur_l.nurb = Some(l);
@@ -1177,199 +1265,6 @@ impl BSplineSurface {
 
         // copy the new surface into an SMLib object
         Ok(Self::from_gw_nurb(&sur))
-    }
-
-    /// The surface extended by `dist` across each side ([`SurfParamType::Both`]) with
-    /// continuity `extension_continuity` (`CreateExtendedSurface(crContext, dDist,
-    /// eExtensionContinuity, rpExtended)`).
-    ///
-    /// # Errors
-    ///
-    /// The errors of [`BSplineSurface::create_extended_surface_dir`].
-    pub fn create_extended_surface(
-        &self,
-        k: &Kernel,
-        dist: f64,
-        extension_continuity: ContinuityType,
-    ) -> Result<BSplineSurface> {
-        // pass the call along
-        self.create_extended_surface_dir(k, SurfParamType::Both, dist, extension_continuity)
-    }
-
-    /// The surface extended by `dist` across the sides named by `ext_direction`
-    /// (`CreateExtendedSurface` with `SmSurfParamType`): [`SurfParamType::U`] /
-    /// [`SurfParamType::V`] both sides of one direction, `UMin`, `VMin`, `UMax`,
-    /// `VMax` one side, `Both` all four, `Neither` none.
-    ///
-    /// The continuity is `NL_G1` for [`ContinuityType::G1`] (and any type not listed),
-    /// `NL_G1R` for `G1R`, `NL_G2` for `G1G2` and `NL_CMAX` for `CInfinity`. Sides at a
-    /// singularity and directions in which the surface is closed are not extended; a
-    /// surface closed in both directions is copied. A failing extension is retried with
-    /// half the distance (down to `dist / 100`), then repeated with doubled distances
-    /// until about `dist` is reached.
-    ///
-    /// # Errors
-    ///
-    /// `SM_ERR` without NURB, when no extension succeeds, a repeated extension fails
-    /// or an extended surface is invalid; [`SolidError::Unported`] from the
-    /// singularity and closedness tests.
-    pub fn create_extended_surface_dir(
-        &self,
-        k: &Kernel,
-        ext_direction: SurfParamType,
-        dist: f64,
-        extension_continuity: ContinuityType,
-    ) -> Result<BSplineSurface> {
-        self.create_extended_surface_dispatched(
-            ext_direction,
-            dist,
-            extension_continuity,
-            &|uv| is_singularity(k, self, uv),
-            &|domain, dir| is_closed(k, self, domain, dir),
-        )
-    }
-
-    /// The body of [`BSplineSurface::create_extended_surface_dir`] with the virtual
-    /// `IsSingularity(uv, dir)` and `IsClosed(domain, dir)` of the calling object
-    /// passed in (an `SmPlane` overrides both), as upstream's virtual dispatch.
-    pub(crate) fn create_extended_surface_dispatched(
-        &self,
-        ext_direction: SurfParamType,
-        dist: f64,
-        extension_continuity: ContinuityType,
-        is_singularity: &dyn Fn(Point2) -> Result<(bool, SurfParamType)>,
-        is_closed: &dyn Fn(&Extent2d, SurfParamType) -> Result<bool>,
-    ) -> Result<BSplineSurface> {
-        const OP: &str = OP_EXTEND;
-
-        // copy input surface into local object
-        let mut esur = surface_nurb(self, OP)?.clone();
-
-        let uv_domain = self.natural_uv_domain();
-        let mut ext_dist = dist;
-
-        // pick continuity level
-        let gflg = match extension_continuity {
-            ContinuityType::G1R => SrfContinuity::G1R,
-            ContinuityType::G1G2 => SrfContinuity::G2,
-            ContinuityType::CInfinity => SrfContinuity::Cmax,
-            _ => SrfContinuity::G1, // SM_CT_G1 and anything else
-        };
-
-        // sort out where extension is needed
-        let u_dir = matches!(
-            ext_direction,
-            SurfParamType::U | SurfParamType::UMin | SurfParamType::UMax
-        );
-        let v_dir = matches!(
-            ext_direction,
-            SurfParamType::V | SurfParamType::VMin | SurfParamType::VMax
-        );
-        let ext_u_or_v = if u_dir {
-            SurfParamType::U
-        } else if v_dir {
-            SurfParamType::V
-        } else {
-            SurfParamType::Both
-        };
-        let neither = ext_direction == SurfParamType::Neither;
-        let mut skip_umin = neither || v_dir || ext_direction == SurfParamType::UMax;
-        let mut skip_vmin = neither || u_dir || ext_direction == SurfParamType::VMax;
-        let mut skip_umax = neither || v_dir || ext_direction == SurfParamType::UMin;
-        let mut skip_vmax = neither || u_dir || ext_direction == SurfParamType::VMin;
-
-        // Don't extend through singularities in U or V
-        let (sing, sing_direction) = is_singularity(uv_domain.min())?;
-        if sing {
-            if sing_direction == SurfParamType::U {
-                skip_vmin = true;
-            } else {
-                skip_umin = true;
-            }
-        }
-        let (sing, sing_direction) = is_singularity(uv_domain.max())?;
-        if sing {
-            if sing_direction == SurfParamType::U {
-                skip_vmax = true;
-            } else {
-                skip_umax = true;
-            }
-        }
-
-        // when asked and allowed - extend in U direction
-        if (ext_u_or_v == SurfParamType::U || ext_u_or_v == SurfParamType::Both)
-            && !is_closed(&uv_domain, SurfParamType::U)?
-        {
-            // when extending in the UMin direction
-            if !skip_umin {
-                extend_side(
-                    &mut esur,
-                    dist,
-                    &mut ext_dist,
-                    Direction::U,
-                    CurveEnd::Start,
-                    gflg,
-                )?;
-            }
-
-            // reset the extension distance
-            ext_dist = dist;
-
-            // when asked - extend in the UMax direction
-            if !skip_umax {
-                extend_side(
-                    &mut esur,
-                    dist,
-                    &mut ext_dist,
-                    Direction::U,
-                    CurveEnd::End,
-                    gflg,
-                )?;
-            }
-        }
-
-        // when asked - extend in the V direction
-        if (ext_u_or_v == SurfParamType::V || ext_u_or_v == SurfParamType::Both)
-            && !is_closed(&uv_domain, SurfParamType::V)?
-        {
-            // reset extension distance
-            ext_dist = dist;
-
-            // when asked - extend in the V Min direction
-            if !skip_vmin {
-                extend_side(
-                    &mut esur,
-                    dist,
-                    &mut ext_dist,
-                    Direction::V,
-                    CurveEnd::Start,
-                    gflg,
-                )?;
-            }
-
-            // reset the extension distance
-            ext_dist = dist;
-
-            // when asked - extend in the V Max direction
-            if !skip_vmax {
-                extend_side(
-                    &mut esur,
-                    dist,
-                    &mut ext_dist,
-                    Direction::V,
-                    CurveEnd::End,
-                    gflg,
-                )?;
-            }
-        }
-
-        // build output SmBSplineSurface from esur SURFACE object
-        if is_closed(&uv_domain, SurfParamType::U)? && is_closed(&uv_domain, SurfParamType::V)? {
-            // surfaces closed in both directions - don't get extended - copy input
-            Ok(self.copy())
-        } else {
-            Ok(Self::from_gw_nurb(&esur))
-        }
     }
 
     /// Joins the surface with `surface_to_join` along a common boundary
@@ -1407,12 +1302,14 @@ impl BSplineSurface {
         let mut sur_list = [this_sur, sur_2_join];
         let res = make_surfaces_compatible(&mut sur_list, compat_dir);
         let [this_sur, sur_2_join] = sur_list;
-        self.nurb = Some(this_sur);
-        surface_to_join.nurb = Some(sur_2_join);
+        self.nurb = Some(this_sur).into();
+        surface_to_join.nurb = Some(sur_2_join).into();
         // surfaces not compatible, so not joined
         res.map_err(SolidError::nl_ser(OP))?;
 
-        let (Some(this_sur), Some(sur_2_join)) = (&self.nurb, &surface_to_join.nurb) else {
+        let (Some(this_sur), Some(sur_2_join)) =
+            (self.nurb.as_ref(), surface_to_join.nurb.as_ref())
+        else {
             return Err(SolidError::sm_err(OP));
         };
         // join operation failed -> SM_ERR
@@ -1442,6 +1339,24 @@ impl BSplineSurface {
         ang_tol_deg: f64,
         opt_center: Option<(Point3, &mut Vec3)>,
     ) -> Result<Vec<BSplineSurface>> {
+        Self::create_n_sided_patch_with(bdry_crvs, deriv_crvs, ang_tol_deg, opt_center, false)
+    }
+
+    /// [`BSplineSurface::create_n_sided_patch`] with the opt-in fix of WR-461 (#1170)
+    /// when `stay_inside`: the cross-boundary derivatives across the inner curves are
+    /// shortened where their blend would leave the neighbour's tangent plane
+    /// (`Kernel::fixes.corner_blend_stays_inside_neighbours`).
+    ///
+    /// # Errors
+    ///
+    /// As [`BSplineSurface::create_n_sided_patch`].
+    pub fn create_n_sided_patch_with(
+        bdry_crvs: &mut [BSplineCurve],
+        deriv_crvs: &mut [Option<BSplineCurve>],
+        ang_tol_deg: f64,
+        opt_center: Option<(Point3, &mut Vec3)>,
+        stay_inside: bool,
+    ) -> Result<Vec<BSplineSurface>> {
         const OP: &str = OP_NSIDED;
         if deriv_crvs.len() < bdry_crvs.len() {
             return Err(invalid(OP, "fewer derivative entries than boundary curves"));
@@ -1465,7 +1380,13 @@ impl BSplineSurface {
         });
 
         // pass the call along to NLib
-        let res = fill_n_sided_hole(&mut cur, Some(der.as_mut_slice()), ang_tol_deg, center);
+        let res = fill_n_sided_hole_with(
+            &mut cur,
+            Some(der.as_mut_slice()),
+            ang_tol_deg,
+            center,
+            stay_inside,
+        );
         for (b, c) in bdry_crvs.iter_mut().zip(cur) {
             b.nurb = Some(c);
         }
@@ -1526,6 +1447,84 @@ impl BSplineSurface {
         do_translational_sweep: bool,
         approx_tol_3d: f64,
     ) -> Result<BSplineSurface> {
+        Self::sweep_surface(
+            section_curve,
+            trajectory_curve,
+            opt_scale_curve,
+            do_translational_sweep,
+            approx_tol_3d,
+            None,
+        )
+        .map(|(surface, _)| surface)
+    }
+
+    /// [`create_sweep_surface`](Self::create_sweep_surface) that also reports where the sweep
+    /// put its sections ([`SweepTrace`]; `None` for a translational sweep) and, when asked, the
+    /// placements of [`create_sweep_surface_with_placements`](Self::create_sweep_surface_with_placements)
+    /// (not upstream: the fork's #2572 definition of a general-path sweep reads them).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`create_sweep_surface`](Self::create_sweep_surface).
+    pub fn create_sweep_surface_traced(
+        section_curve: &BSplineCurve,
+        trajectory_curve: &BSplineCurve,
+        opt_scale_curve: Option<&BSplineCurve>,
+        do_translational_sweep: bool,
+        approx_tol_3d: f64,
+        placements: Option<&mut [Axis2Placement; 3]>,
+    ) -> Result<(BSplineSurface, Option<SweepTrace>)> {
+        Self::sweep_surface(
+            section_curve,
+            trajectory_curve,
+            opt_scale_curve,
+            do_translational_sweep,
+            approx_tol_3d,
+            placements,
+        )
+    }
+
+    /// [`create_sweep_surface`](Self::create_sweep_surface) that also reports where
+    /// the section's first, middle and last instances lie (the SolidCraft fork's
+    /// `pOptPlacements`, tangency-labs/smlib 5d3939e, #1450): the systems the section
+    /// curve's own coordinates were carried onto. A translational sweep's instance at
+    /// `v` is the section moved by `TrajectoryCurve(v)` (at the trajectory's start,
+    /// middle and end parameters, axes unturned); otherwise they are the local systems
+    /// `N_CreateSweepScale` placed the first, middle and last sections on. The surface
+    /// is the same as [`create_sweep_surface`](Self::create_sweep_surface)'s.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`create_sweep_surface`](Self::create_sweep_surface), and of the
+    /// trajectory's point evaluations for a translational sweep.
+    pub fn create_sweep_surface_with_placements(
+        section_curve: &BSplineCurve,
+        trajectory_curve: &BSplineCurve,
+        opt_scale_curve: Option<&BSplineCurve>,
+        do_translational_sweep: bool,
+        approx_tol_3d: f64,
+    ) -> Result<(BSplineSurface, [Axis2Placement; 3])> {
+        let mut placements = [Axis2Placement::IDENTITY; 3];
+        let (surface, _) = Self::sweep_surface(
+            section_curve,
+            trajectory_curve,
+            opt_scale_curve,
+            do_translational_sweep,
+            approx_tol_3d,
+            Some(&mut placements),
+        )?;
+        Ok((surface, placements))
+    }
+
+    /// `CreateSweepSurface` with the fork's optional `pOptPlacements` output.
+    fn sweep_surface(
+        section_curve: &BSplineCurve,
+        trajectory_curve: &BSplineCurve,
+        opt_scale_curve: Option<&BSplineCurve>,
+        do_translational_sweep: bool,
+        approx_tol_3d: f64,
+        opt_placements: Option<&mut [Axis2Placement; 3]>,
+    ) -> Result<(BSplineSurface, Option<SweepTrace>)> {
         const OP: &str = OP_SWEEP;
 
         // get NurbCurve pointers for Section and trajectory curves
@@ -1539,9 +1538,23 @@ impl BSplineSurface {
         };
 
         // branch on TranslationalSweep flag
+        let mut trace = None;
         let nl_surf = if do_translational_sweep {
             // nlSurf(u,v) = nlCurvS(u) + nlCurvT(v)
-            create_trans_sweep_srf(nl_curv_t, nl_curv_s).map_err(SolidError::nl_ser(OP))?
+            let surf =
+                create_trans_sweep_srf(nl_curv_t, nl_curv_s).map_err(SolidError::nl_ser(OP))?;
+
+            // SolidCraft fork (5d3939e): the section's instance at v is the section moved
+            // by TrajectoryCurve(v)
+            if let Some(placements) = opt_placements {
+                let ivl = trajectory_curve.natural_interval();
+                let ts = [ivl.min(), ivl.evaluate(0.5), ivl.max()];
+                for (placement, t) in placements.iter_mut().zip(ts) {
+                    let at = trajectory_curve.evaluate_point(t)?;
+                    *placement = Axis2Placement::new(at, Vec3::X, Vec3::Y);
+                }
+            }
+            surf
         } else {
             // make orthogonal vector set: x = trajectory start tangent, y = any perp
             // vector to x, z = x * y
@@ -1573,12 +1586,37 @@ impl BSplineSurface {
                 dir: Direction::U,
                 e: approx_tol_3d,
             };
-            create_sweep_scale(nl_curv_t, nl_curv_s, z_axis, &opt)
-                .map_err(SolidError::nl_ser(OP))?
+            match opt_placements {
+                None => {
+                    let (surf, t) =
+                        create_sweep_scale_traced(nl_curv_t, nl_curv_s, z_axis, &opt, None)
+                            .map_err(SolidError::nl_ser(OP))?;
+                    trace = Some(t);
+                    surf
+                }
+                Some(placements) => {
+                    let mut placed = Default::default();
+                    let (surf, t) = create_sweep_scale_traced(
+                        nl_curv_t,
+                        nl_curv_s,
+                        z_axis,
+                        &opt,
+                        Some(&mut placed),
+                    )
+                    .map_err(SolidError::nl_ser(OP))?;
+                    trace = Some(t);
+                    // SolidCraft fork (5d3939e): each instance is the section carried from
+                    // the global system onto the local one (OL, XL, YL, ZL) it was placed on
+                    for (placement, frame) in placements.iter_mut().zip(placed) {
+                        *placement = Axis2Placement::new(frame.origin, frame.x, frame.y);
+                    }
+                    surf
+                }
+            }
         };
 
         // build SmBSplineSurface from NurbSurface
-        Ok(Self::from_gw_nurb(&nl_surf))
+        Ok((Self::from_gw_nurb(&nl_surf), trace))
     }
 
     /// The swung surface of a profile `section_curve` in the `[x, z]` plane and a
@@ -1616,9 +1654,7 @@ impl BSplineSurface {
         let mut esur = None;
         let d = match eval_pt_derivs_unbounded(sur, uv.x, uv.y, 0, cflg, &mut esur) {
             Ok(d) => d,
-            Err(SolidError::Unported { upstream, unit }) => {
-                return Err(SolidError::Unported { upstream, unit })
-            }
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => eval_pt_derivs_unbounded(sur, uv.x, uv.y, 0, cflg, &mut esur)
                 .map_err(SolidError::nl_ser(OP))?,
         };
@@ -1718,7 +1754,9 @@ impl BSplineSurface {
 
         let rtn = if same_size {
             // copy surQ values into surP
-            sur_q.copy_into(&mut self.nurb);
+            let mut nurb = self.nurb.take();
+            sur_q.copy_into(&mut nurb);
+            self.nurb = nurb.into();
             Ok(())
         } else {
             // something went wrong - leave surP unmodified
@@ -1797,6 +1835,47 @@ impl BSplineSurface {
         Ok(sd)
     }
 
+    /// [`BSplineSurface::evaluate_simple`] with first derivatives
+    /// (`highest_u_deriv = highest_v_deriv = 1`) into the caller's 2x2 block `d`
+    /// (every entry written), without a heap allocation per call for a non-rational,
+    /// non-polynomial surface ([`Surface::first_derivs_into`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`BSplineSurface::evaluate_simple`].
+    pub fn evaluate_simple_first_into(
+        &self,
+        uv: Point2,
+        u_from_left: bool,
+        v_from_left: bool,
+        only_upper_half: bool,
+        d: &mut [[Vec3; 2]; 2],
+    ) -> Result<()> {
+        const OP: &str = OP_EVAL_SIMPLE;
+        if self.form == BSplineSurfaceForm::Polynomial {
+            let full = self.evaluate_simple(uv, 1, 1, u_from_left, v_from_left, only_upper_half)?;
+            *d = [[Vec3::ZERO; 2]; 2];
+            for (out, row) in d.iter_mut().zip(&full) {
+                for (o, x) in out.iter_mut().zip(row) {
+                    *o = *x;
+                }
+            }
+            return Ok(());
+        }
+
+        let mut s_uv = uv;
+        let natural_uv_domain = self.natural_uv_domain();
+        if !natural_uv_domain.contains_point(s_uv, 0.0) {
+            s_uv = natural_uv_domain.clamp_point(s_uv);
+        }
+
+        let uflg = if u_from_left { Side::Left } else { Side::Right };
+        let vflg = if v_from_left { Side::Left } else { Side::Right };
+        let sur = surface_nurb(self, OP)?;
+        sur.first_derivs_into(s_uv.x, s_uv.y, uflg, vflg, only_upper_half, d)
+            .map_err(SolidError::nl_ser(OP))
+    }
+
     /// The point at `uv` (`EvaluatePoint`): `N_SrfEvalPt` from the left at knots, or the
     /// power-basis evaluation for [`BSplineSurfaceForm::Polynomial`]. `uv` is not
     /// clamped (upstream's clamping is disabled on purpose).
@@ -1815,71 +1894,6 @@ impl BSplineSurface {
         };
         c.map_err(SolidError::nl_ser(OP))
     }
-}
-
-/// One side of `CreateExtendedSurface`: extends `esur` across `end` of `dir` by
-/// `ext_dist`, halving the distance after each failure (`SM_ERR` below
-/// `dist / 100`), checks validity, then repeats with doubled distances while the
-/// distance is below `dist / 2` (at most [`MAX_EXTEND_DOUBLINGS`] times).
-fn extend_side(
-    esur: &mut Surface,
-    dist: f64,
-    ext_dist: &mut f64,
-    dir: Direction,
-    end: CurveEnd,
-    gflg: SrfContinuity,
-) -> Result<()> {
-    const OP: &str = OP_EXTEND;
-
-    // extend Surf - shorter dists until extension succeeds
-    let mut halvings = 0usize;
-    loop {
-        match extend_by_dist(esur, *ext_dist, dir, end, gflg) {
-            Ok(s) => {
-                *esur = s;
-                break;
-            }
-            Err(e @ SolidError::Unported { .. }) => return Err(e),
-            Err(_) => {
-                *ext_dist /= 2.0;
-                if *ext_dist < dist / 100.0 {
-                    return Err(SolidError::sm_err(OP));
-                }
-                // upstream loops forever when dist is 0 or NaN
-                halvings += 1;
-                if halvings > MAX_EXTEND_HALVINGS {
-                    return Err(SolidError::NotConverged {
-                        operation: OP,
-                        iterations: u32::try_from(MAX_EXTEND_HALVINGS).unwrap_or(u32::MAX),
-                    });
-                }
-            }
-        }
-    }
-
-    // quit - when extended surface is no good
-    if esur.is_valid().is_err() {
-        return Err(SolidError::sm_err(OP));
-    }
-
-    // if needed - multiple extensions until Extension gets to be near requested size
-    let mut doublings = 0usize;
-    while *ext_dist < dist / 2.0 {
-        // upstream loops forever for a negative distance (HANG-16)
-        doublings += 1;
-        if doublings > MAX_EXTEND_DOUBLINGS {
-            return Err(SolidError::NotConverged {
-                operation: OP,
-                iterations: u32::try_from(MAX_EXTEND_DOUBLINGS).unwrap_or(u32::MAX),
-            });
-        }
-        *ext_dist *= 2.0;
-        *esur = extend_by_dist(esur, *ext_dist, dir, end, gflg).map_err(SolidError::nl_ser(OP))?;
-        if esur.is_valid().is_err() {
-            return Err(SolidError::sm_err(OP));
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1905,6 +1919,80 @@ mod tests {
         )
         .unwrap();
         BSplineSurface::from_nurb(sur, false)
+    }
+
+    /// A cubic Bezier curve on [0, 1] through the four control points.
+    fn bezier(p: [(f64, f64, f64); 4]) -> Curve {
+        let pw = p
+            .iter()
+            .map(|&(x, y, z)| CPoint::new(x, y, z, NOW))
+            .collect();
+        Curve::new(pw, 3, bezier_knots()).unwrap()
+    }
+
+    /// WR-613 (the fork's tangency-labs/smlib@7fd9fb0): the unit square in z = 0 whose
+    /// left and right sides lie on the plane (cross derivative (1, 0, 0), no twist) and
+    /// whose bottom and top sides are a blend's, its cross derivative `(0, 1, u (1 - u))`
+    /// turning out of the plane (twist (0, 0, 1) at u = 0). The mean twist leaves the
+    /// patch's u derivative along the plane's sides off their cross derivative by up to
+    /// 0.048 out of the plane; with the plane's sides marked the corners take the
+    /// blend's twist and the patch meets the plane's cross derivative along them.
+    #[test]
+    fn wr_613_face_sides_meet_their_cross_derivative() {
+        let third = 1.0 / 3.0;
+        let along = |x: f64, y: f64, d: (f64, f64)| {
+            bezier([
+                (x, y, 0.0),
+                (x + d.0 * third, y + d.1 * third, 0.0),
+                (x + d.0 * 2.0 * third, y + d.1 * 2.0 * third, 0.0),
+                (x + d.0, y + d.1, 0.0),
+            ])
+        };
+        let across_plane = || bezier([(1.0, 0.0, 0.0); 4]);
+        let across_blend = || {
+            bezier([
+                (0.0, 1.0, 0.0),
+                (0.0, 1.0, third),
+                (0.0, 1.0, third),
+                (0.0, 1.0, 0.0),
+            ])
+        };
+        // the worst miss of the patch's u derivative along its left and right sides
+        let miss = |face_sides: u32| -> f64 {
+            let mut lr = [
+                along(0.0, 0.0, (0.0, 1.0)),
+                along(1.0, 0.0, (0.0, 1.0)),
+                across_plane(),
+                across_plane(),
+            ];
+            let mut bt = [
+                along(0.0, 0.0, (1.0, 0.0)),
+                along(0.0, 1.0, (1.0, 0.0)),
+                across_blend(),
+                across_blend(),
+            ];
+            let (sur, _) = create_coons_srf(1e-6, &mut lr, &mut bt, face_sides).unwrap();
+            let sur = BSplineSurface::from_nurb(sur, false);
+            let mut worst: f64 = 0.0;
+            for (u, der) in [(0.0, &lr[2]), (1.0, &lr[3])] {
+                for i in 0..=20 {
+                    let v = f64::from(i) / 20.0;
+                    let d = sur
+                        .evaluate_simple(Point2::new(u, v), 1, 0, u > 0.5, true, false)
+                        .unwrap();
+                    let want = der.derivs(v, Side::Left, 1).unwrap()[0];
+                    worst = worst.max((d[1][0] - want).length());
+                }
+            }
+            worst
+        };
+        let mean = miss(0);
+        assert!(mean > 0.04, "the mean twist misses by {mean}");
+        let faces = miss(COONS_FACE_LEFT | COONS_FACE_RIGHT);
+        assert!(faces < 1e-12, "the face sides miss by {faces}");
+        // marking the blend's sides instead does not help the plane's
+        let blend = miss(COONS_FACE_BOTTOM | COONS_FACE_TOP);
+        assert!(blend > 0.04, "{blend}");
     }
 
     #[test]
@@ -1969,14 +2057,6 @@ mod tests {
     }
 
     #[test]
-    fn extended_surface_runs() {
-        let k = &Kernel::default();
-        let s = plane_surface();
-        let r = s.create_extended_surface(k, 0.1, ContinuityType::G1);
-        assert!(r.is_ok(), "{r:?}");
-    }
-
-    #[test]
     fn missing_nurb() {
         let s = BSplineSurface::new();
         assert!(matches!(
@@ -1986,18 +2066,6 @@ mod tests {
                 ..
             })
         ));
-    }
-
-    #[test]
-    fn negative_extension_distance_stops() {
-        // upstream doubles a negative distance towards -inf forever (HANG-16)
-        let k = &Kernel::default();
-        let r = plane_surface().create_extended_surface(k, -5.0, ContinuityType::G1R);
-        assert!(matches!(r, Err(SolidError::NotConverged { .. })), "{r:?}");
-        // a positive distance is unaffected
-        assert!(plane_surface()
-            .create_extended_surface(k, 0.5, ContinuityType::G1R)
-            .is_ok());
     }
 
     #[test]

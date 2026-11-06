@@ -57,7 +57,7 @@
 //! | [`PolyBrep::region_poly_shells`]             | `SmPolyRegion::GetPolyShells` (`GetPolyBrep` is `self`) |
 //! | [`PolyBrep::delete_region`]                  | `SmPolyRegion::~SmPolyRegion`                     |
 //! | [`PolyBrep::tolerance`], [`PolyBrep::ok_back_ptrs`] | `SmPolyBrep::GetTolerance`, `GetOKBackPtrs` |
-//! | [`PolyBrep::destroy`]                        | `SmPolyBrep::~SmPolyBrep`                         |
+//! | [`PolyBrep::destroy`], [`PolyBrep::destroy_with_original`] | `SmPolyBrep::~SmPolyBrep`           |
 //! | [`PolyBrep::calculate_bounding_box`]         | `SmPolyBrep::CalculateBoundingBox`                |
 //! | [`PolyBrep::aux_data_list`]                  | `SmPolyBrep::GetAuxDataList`                      |
 //! | [`PolyBrep::first_poly_face`]                | `SmPolyBrep::GetFirstPolyFace`                    |
@@ -103,24 +103,28 @@
 //!   labels. Reaching the objects behind them is outside this unit:
 //!   `SmPolyEdge::IsDegenerate` needs `SmFace::GetSurface` (unit `topology.face_p2`) when
 //!   the back pointers are valid and a face is set; `SetOriginalFace` with attribute
-//!   propagation calls `SmFace::Notify` (unit `topology.face_p3`); the destructor of a
-//!   poly B-rep with valid back pointers clears `SmVertex::m_pPolyVertex`
-//!   (`GetPolyVertex` / `SetPolyVertex`, unit `topology.vertex`). The key-only APIs
+//!   propagation calls `SmFace::Notify` (unit `topology.face_p3`). The key-only APIs
 //!   return [`SolidError::Unported`]; `IsDegenerate` additionally offers the explicit
 //!   [`PolyBrep::edge_is_degenerate_with_owner`] adapter.
+//! - The destructor of a poly B-rep with valid back pointers clears each original
+//!   vertex's `m_pPolyVertex` that names its poly vertex: the caller gives the original
+//!   B-rep and the resolver of the vertex keys ([`PolyBrep::destroy_with_original`]);
+//!   [`PolyBrep::destroy`] without them is [`SolidError::InvalidInput`] when a back
+//!   pointer would have to be cleared (upstream follows the pointer).
 //! - `SmPolyBrep::CalculateBoundingBox` asked for a pseudo box without a point array
 //!   dereferences the null `pOptPolyPoints` (it builds `sPolyPoints` and then reads the
 //!   caller's pointer); Rust returns [`SolidError::InvalidInput`] (see
 //!   `plan/upstream-issues.md`).
 //! - `SmCPolyFace::RemovePolyFace` of a face that is not a member removes the first
-//!   member (`FindElement` leaves the index at 0); kept (see `plan/upstream-issues.md`).
+//!   member (`FindElement` leaves the index at 0); kept by default for parity (WR-81;
+//!   opt-in fix [`UpstreamFixes::cpoly_remove_poly_face_check_member`]).
 //! - A composite face cannot be a member of a composite face, nor the source of
 //!   [`PolyBrep::add_cpoly_face`] ([`SolidError::InvalidInput`]). Upstream only ever
 //!   adds shell faces (`SmLineSegClass.cpp`), but `AddPolyFace` would accept a composite
-//!   (even itself), and the virtual `GetPolyEdges` / `GetNormal` /
+//!   (even itself), and the virtual `GetPolyLoops` / `GetPolyEdges` / `GetNormal` /
 //!   `CalculateBoundingBox` / `GetOKBackPtrs` of the composite would then recurse
-//!   without bound; refusing nested composites keeps that recursion one level deep
-//!   (WR-82 in `plan/upstream-issues.md`).
+//!   without bound; refusing nested composites keeps composite queries one level deep
+//!   (WR-82).
 //! - `SmCPolyFace::GetNormal` of a composite without members returns `(1,1,1)` after an
 //!   `SM_ASSERT`; kept.
 //! - `SmPolyBrep::GetPolyEdges` with a common edge use walks each face's loop list as
@@ -132,6 +136,10 @@
 //! - `SmPolyBrep::Notify` and the notifications of `Transform` take a
 //!   [`PolyNotifyEnv`] (records, attributes, caches, context and this object's
 //!   [`ObjectRef`]); the poly B-rep's cache slot is its `aobject`.
+//! - `SmPolyFace::SetOriginalFace` takes an optional [`PolyFaceCopyEnv`] only when
+//!   changing to a non-null source with attribute propagation enabled. It uses the
+//!   real source B-rep face and existing face notification/copy services; unchanged,
+//!   null and disabled assignments need no notification context.
 //! - `SmPolyFace::GetNormal` and `SmPolyLoop::ContainsPoint` are `const` upstream but
 //!   cache the normal and raise tolerances through `const_cast`; here they take
 //!   `&mut self`.
@@ -139,7 +147,8 @@
 //!   [`UNDEF_ULONG`]. A user count decremented below zero wraps, as upstream.
 //! - The vertex's face / index lists (`m_vFaces`, `m_vIndices`), visibility and user
 //!   values are not used by this unit's functions; only `m_vNormals` is kept. The
-//!   attribute / display list members of the base classes are not modelled.
+//!   display list members of the base classes are not modelled. Attribute lists and
+//!   topology notification records are supplied explicitly by callers.
 //! - `sm_ReportInvalidTransformInput` sends its message through `smos_ErrorMessage`;
 //!   here the message is the `reason` of the returned [`SolidError::InvalidInput`].
 //! - `SmCopyPolyBrepMap`, `SmPolyMerge`, `SmTriangleBag` and `SmPolyBrepData` have no
@@ -168,16 +177,18 @@ use crate::geom::point_set::PointSet3d;
 use crate::geom::pseudo_box::PseudoBox;
 use crate::geom::tol;
 use crate::geom::vector2d::Vec2;
-use crate::kernel::Kernel;
+use crate::kernel::{Kernel, UpstreamFixes};
 use crate::math::{Point3, Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_PARAM, EFF_ZERO_SQ, UNDEF_DOUBLE};
 use crate::topology::topology::TopologyRecords;
-use crate::topology::{Brep, FaceId};
+use crate::topology::{vertex, Brep, FaceId, VertexId};
+
+pub mod copy;
 
 /// `SM_UNDEF_ULONG` on LP64 (`0xFFFFFFFFFFFFFFFE`... upstream's `ULONG_MAX - 1`).
 pub const UNDEF_ULONG: u64 = u64::MAX - 1;
 
-/// `SM_ERR_INVALID_INPUT`.
-const SM_ERR_INVALID_INPUT: i32 = 1007;
+// `SM_ERR_INVALID_INPUT`.
+use crate::error::SM_ERR_INVALID_INPUT;
 
 macro_rules! poly_id {
     ($(#[$doc:meta])* $name:ident) => {
@@ -436,6 +447,27 @@ pub struct PolyNotifyEnv<'a, R: ?Sized, T> {
     pub this: ObjectRef,
 }
 
+/// The real source face and notification state used by
+/// [`PolyBrep::face_set_original_face`].
+///
+/// `notify.key_of(EntityRef::Face(source_face))` must identify the actual source
+/// face and equal the setter's original key. The caller must give `destination`
+/// the identity of the actual destination poly face (not its owning poly B-rep),
+/// distinct from the source, and keep both objects' topology records and attribute
+/// lists under those same keys. A null `notify.context` means no context callbacks,
+/// not missing source/attribute state.
+#[derive(Debug)]
+pub struct PolyFaceCopyEnv<'a> {
+    /// The B-rep containing the original face.
+    pub source_brep: &'a mut Brep,
+    /// The actual original face in `source_brep`.
+    pub source_face: FaceId,
+    /// Existing face notification services and consistent source/destination records.
+    pub notify: crate::topology::edge::NotifyEnv<'a>,
+    /// The actual destination poly face, with its concrete face/composite-face type.
+    pub destination: ObjectRef,
+}
+
 /// Outputs of [`PolyBrep::calculate_bounding_box`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct PolyBrepBoxes {
@@ -601,13 +633,15 @@ const fn nested_composite(operation: &'static str) -> SolidError {
 }
 
 fn slot<'a, T>(v: &'a [Option<T>], i: u32, op: &'static str) -> Result<&'a T> {
-    v.get(i as usize).and_then(Option::as_ref).ok_or(dead(op))
+    v.get(i as usize)
+        .and_then(Option::as_ref)
+        .ok_or_else(|| dead(op))
 }
 
 fn slot_mut<'a, T>(v: &'a mut [Option<T>], i: u32, op: &'static str) -> Result<&'a mut T> {
     v.get_mut(i as usize)
         .and_then(Option::as_mut)
-        .ok_or(dead(op))
+        .ok_or_else(|| dead(op))
 }
 
 fn push_slot<T>(v: &mut Vec<Option<T>>, item: T, op: &'static str) -> Result<u32> {
@@ -717,6 +751,8 @@ fn transform_poly_normal(
 pub struct PolyBrep {
     /// `m_sZoneTol3d`.
     tolerance: f64,
+    /// Opt-in upstream defect fixes.
+    pub fixes: UpstreamFixes,
     /// `m_bOKBackPtrs`.
     ok_back_ptrs: bool,
     /// `m_bOwnsContext`.
@@ -738,6 +774,10 @@ pub struct PolyBrep {
     aux_slots: Vec<Option<PolyVertAuxData>>,
 }
 
+/// Resolves an original vertex's key to its id in the original B-rep (see
+/// [`PolyBrep::destroy_with_original`]).
+pub type VertexOfKey<'a> = &'a dyn Fn(ObjectKey) -> Option<VertexId>;
+
 impl PolyBrep {
     // ---- construction (mirrors of upstream constructors outside this unit) ---------
 
@@ -747,6 +787,7 @@ impl PolyBrep {
     pub fn new(k: &Kernel, zone_tol: f64) -> Self {
         Self {
             tolerance: tol::zone_tol3d(k, zone_tol),
+            fixes: k.fixes,
             ok_back_ptrs: false,
             owns_context: false,
             aobject: AObject::new(),
@@ -1145,10 +1186,13 @@ impl PolyBrep {
     ///
     /// # Errors
     ///
-    /// [`SolidError::InvalidInput`] for unknown ids.
+    /// [`SolidError::InvalidInput`] for unknown ids, without modifying the B-rep.
     pub fn edge_set_aux_data(&mut self, edge: PolyEdgeId, aux: Option<PolyAuxId>) -> Result<()> {
         const OP: &str = "query::poly::PolyBrep::edge_set_aux_data";
         let old = slot(&self.edge_slots, edge.0, OP)?.aux;
+        if let Some(a) = aux {
+            slot(&self.aux_slots, a.0, OP)?;
+        }
         if old == aux {
             return Ok(());
         }
@@ -1186,7 +1230,7 @@ impl PolyBrep {
     /// # Errors
     ///
     /// [`SolidError::InvalidInput`] for an unknown face or a composite `face` (nested
-    /// composites would make the composite queries recurse without bound).
+    /// composites would make the composite queries recurse without bound; WR-82).
     pub fn add_cpoly_face(&mut self, face: PolyFaceId) -> Result<PolyFaceId> {
         const OP: &str = "query::poly::PolyBrep::add_cpoly_face";
         let f = slot(&self.face_slots, face.0, OP)?;
@@ -1212,7 +1256,7 @@ impl PolyBrep {
     ///
     /// [`SolidError::InvalidInput`] for unknown ids, a `cpoly` that is not composite or
     /// a composite `face` (nested composites would make the composite queries recurse
-    /// without bound).
+    /// without bound; WR-82).
     pub fn cpoly_add_poly_face(
         &mut self,
         cpoly: PolyFaceId,
@@ -1296,7 +1340,9 @@ impl PolyBrep {
     }
 
     fn edge_vertex(&self, e: PolyEdgeId, op: &'static str) -> Result<PolyVertexId> {
-        self.edge(e)?.vertex.ok_or(SolidError::null_pointer(op))
+        self.edge(e)?
+            .vertex
+            .ok_or_else(|| SolidError::null_pointer(op))
     }
 
     /// The poly vertex record `v`.
@@ -1640,7 +1686,7 @@ impl PolyBrep {
             if out.len() > self.edge_slots.len() {
                 return Err(SolidError::sm_err(op));
             }
-            e = self.edge(e)?.next_at_v.ok_or(dead(op))?;
+            e = self.edge(e)?.next_at_v.ok_or_else(|| dead(op))?;
             if e == h {
                 break;
             }
@@ -1899,7 +1945,10 @@ impl PolyBrep {
         if let Some(v) = x.vertex {
             // the status is ignored upstream
             if let Err(err) = self.vertex_remove_poly_edge(v, e) {
-                if matches!(err, SolidError::InvalidInput { .. }) {
+                if matches!(
+                    err,
+                    SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }
+                ) {
                     return Err(err);
                 }
             }
@@ -2045,7 +2094,7 @@ impl PolyBrep {
         // Match SmPolyEdge::IsDegenerate's imperfect UV/XYZ test, not a new one.
         if self.edge_is_2d_or_zero(e)? {
             if let Some(surface) = surface {
-                let domain = surface.natural_uv_domain();
+                let domain = surface.natural_uv_domain_with_nurb(k)?;
                 (su, sv) = domain.classify_point(start_uv, EFF_ZERO_PARAM, None);
                 (eu, ev) = domain.classify_point(end_uv, EFF_ZERO_PARAM, None);
                 if su != ExtentPointType::Outside && sv != ExtentPointType::Outside {
@@ -2515,8 +2564,12 @@ impl PolyBrep {
     }
 
     /// `SmCPolyFace::RemovePolyFace`: removes the first occurrence of `face` from the
-    /// members; a face that is not a member removes the first member (upstream's
-    /// found index stays 0), nothing when there are no members.
+    /// members.
+    ///
+    /// By default (upstream behaviour, WR-81), a face that is not a member removes
+    /// the first member (upstream's `FindElement` status is ignored and found index
+    /// stays 0). With [`Kernel::fixes.cpoly_remove_poly_face_check_member`](crate::kernel::UpstreamFixes::cpoly_remove_poly_face_check_member)
+    /// (or [`PolyBrep::fixes`]), removing a non-member does nothing.
     ///
     /// # Errors
     ///
@@ -2530,9 +2583,16 @@ impl PolyBrep {
         .composite
         .as_mut()
         .ok_or(dead("query::poly::PolyBrep::cpoly_remove_poly_face"))?;
-        let found = members.iter().position(|&m| m == face).unwrap_or(0);
-        if found < members.len() {
-            members.remove(found);
+        let pos = members.iter().position(|&m| m == face);
+        if self.fixes.cpoly_remove_poly_face_check_member {
+            if let Some(i) = pos {
+                members.remove(i);
+            }
+        } else {
+            let found = pos.unwrap_or(0);
+            if found < members.len() {
+                members.remove(found);
+            }
         }
         Ok(())
     }
@@ -2789,33 +2849,68 @@ impl PolyBrep {
     }
 
     /// `SmPolyFace::SetOriginalFace(pOriginalFace, bPropagateAttribs)` (upstream default
-    /// `FALSE`): stores the back pointer when it changes.
+    /// `FALSE`): stores the new original key first, then optionally notifies the real
+    /// source face with `Copy` to propagate attributes, flags and user values while
+    /// resetting the destination's three general marks.
+    ///
+    /// `copy_env` is required only for a changed, non-null original with propagation
+    /// enabled. Ownerless labels remain usable without it when propagation is
+    /// disabled; unchanged and null assignments never inspect it.
     ///
     /// # Errors
     ///
-    /// [`SolidError::Unported`] (`topology.face_p3`, `SmFace::Notify`) when a new face is
-    /// set with `propagate_attribs`; [`SolidError::InvalidInput`] for an unknown face.
+    /// [`SolidError::InvalidInput`] for an unknown poly face, missing required copy
+    /// context, inconsistent source identity, or an incorrectly typed/colliding
+    /// destination identity; those of the source face and its notification services.
+    /// Notification errors leave the new original key stored, as upstream assigns
+    /// before notifying.
     pub fn face_set_original_face(
         &mut self,
         f: PolyFaceId,
         original: Option<ObjectKey>,
         propagate_attribs: bool,
+        copy_env: Option<&mut PolyFaceCopyEnv<'_>>,
     ) -> Result<()> {
-        let x = slot_mut(
-            &mut self.face_slots,
-            f.0,
-            "query::poly::PolyBrep::face_set_original_face",
-        )?;
-        if x.original_face != original {
-            x.original_face = original;
-            if original.is_some() && propagate_attribs {
-                // UNPORTED(topology.face_p3): SmFace::Notify -- justified: findings.md topology.face_p3 "Stubs left for this unit"
-                // (SM_NO_COPY to this poly face; the original face is an opaque key: no B-rep,
-                // no topology record)
-                return Err(SolidError::unported("SmFace::Notify", "topology.face_p3"));
-            }
+        const OP: &str = "query::poly::PolyBrep::face_set_original_face";
+        let x = slot_mut(&mut self.face_slots, f.0, OP)?;
+        if x.original_face == original {
+            return Ok(());
         }
-        Ok(())
+        x.original_face = original;
+        let Some(original) = original.filter(|_| propagate_attribs) else {
+            return Ok(());
+        };
+        let env = copy_env.ok_or(SolidError::InvalidInput {
+            operation: OP,
+            reason: "attribute propagation requires a real source face and notification context",
+        })?;
+        let source = (env.notify.key_of)(crate::EntityRef::Face(env.source_face));
+        if source.key != original || source.type_code != crate::topology::face::p2::TYPE {
+            return Err(SolidError::InvalidInput {
+                operation: OP,
+                reason: "original key does not identify the supplied source face",
+            });
+        }
+        let destination_type = if x.composite.is_some() {
+            PolyObjectKind::CPolyFace.type_code()
+        } else {
+            PolyObjectKind::Face.type_code()
+        };
+        if env.destination.type_code != destination_type || env.destination.key == source.key {
+            return Err(SolidError::InvalidInput {
+                operation: OP,
+                reason: "copy destination must identify this distinct concrete poly face",
+            });
+        }
+        env.source_brep.face(env.source_face)?;
+        crate::topology::face::p3::notify(
+            env.source_brep,
+            env.source_face,
+            &mut env.notify,
+            None,
+            NotifyOperation::Copy,
+            [Some(env.destination), None, None],
+        )
     }
 
     /// `CalculateBoundingBox` (virtual): a face's box is the union of the boxes of
@@ -3288,29 +3383,63 @@ impl PolyBrep {
         Ok(())
     }
 
-    /// `SmPolyBrep::~SmPolyBrep`: deletes the composite faces, then every edge, loop,
-    /// face, shell and region, then the vertices; with valid back pointers each
-    /// original vertex's poly vertex pointer would be cleared first.
+    /// `SmPolyBrep::~SmPolyBrep` without the original B-rep
+    /// ([`PolyBrep::destroy_with_original`] with `None`).
     ///
     /// # Errors
     ///
-    /// [`SolidError::Unported`] (`topology.vertex`, `SmVertex::GetPolyVertex`) when the
-    /// back pointers are valid and a vertex has an original vertex.
-    pub fn destroy(mut self) -> Result<()> {
-        if self.ok_back_ptrs {
-            for &v in &self.vertex_list {
-                if self.vertex(v)?.original_vertex.is_some() {
-                    // UNPORTED(topology.vertex): SmVertex::GetPolyVertex / SetPolyVertex
-                    return Err(SolidError::unported(
-                        "SmVertex::GetPolyVertex",
-                        "topology.vertex",
-                    ));
-                }
-            }
-        }
+    /// As [`PolyBrep::destroy_with_original`].
+    pub fn destroy(self) -> Result<()> {
+        self.destroy_with_original(None)
+    }
+
+    /// `SmPolyBrep::~SmPolyBrep`: deletes the composite faces, then every edge, loop,
+    /// face, shell and region, then the vertices. With valid back pointers, each poly
+    /// vertex with an original vertex whose poly vertex is this one clears it
+    /// (`SetPolyVertex(NULL)`) on `original`: the B-rep of the original vertices and the
+    /// resolver of their keys.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::InvalidInput`] when a back pointer has to be followed without
+    /// `original`, or its resolver does not know the key (upstream's pointer is always
+    /// live); [`SolidError::NotFound`] for a resolved vertex not in `original`.
+    pub fn destroy_with_original(
+        mut self,
+        mut original: Option<(&mut Brep, VertexOfKey<'_>)>,
+    ) -> Result<()> {
+        const OP: &str = "query::poly::PolyBrep::destroy_with_original";
+
+        // delete m_pCPolyFaceListHead list members
         for c in self.cpoly_faces() {
             self.delete_face(c)?;
         }
+
+        // delete m_pVertexListHead list members
+        for v in self.poly_vertices() {
+            // if this PolyBrep is pointing to a current Brep - clear Brep back pointers if
+            // possible
+            let Some(key) = self.vertex(v)?.original_vertex else {
+                continue;
+            };
+            if !self.ok_back_ptrs {
+                continue;
+            }
+            let Some((b, vertex_of)) = original.as_mut() else {
+                return Err(SolidError::invalid_input(
+                    OP,
+                    "the original B-rep is needed to clear its poly vertex back pointers",
+                ));
+            };
+            let vertex_of: &dyn Fn(ObjectKey) -> Option<VertexId> = *vertex_of;
+            let vertex = vertex_of(key)
+                .ok_or_else(|| SolidError::invalid_input(OP, "unknown original vertex"))?;
+            if vertex::poly_vertex(b, vertex)? == Some(v) {
+                vertex::set_poly_vertex(b, vertex, None)?;
+            }
+        }
+
+        // clear remaining internal member values
         self.tolerance = UNDEF_DOUBLE;
         self.ok_back_ptrs = false;
         Ok(())
@@ -3346,6 +3475,67 @@ mod tests {
         }
         b.finish_poly_edge_loop(l).unwrap();
         (b, f, l, es)
+    }
+
+    #[test]
+    fn destroy_clears_original_back_pointers() {
+        let k = Kernel::default();
+        let build = |ok: bool| {
+            let (mut poly, ..) = square(&k);
+            let pv = poly.poly_vertices();
+            let mut b = Brep::new();
+            let ov: Vec<VertexId> = (0..3)
+                .map(|_| {
+                    b.add_vertex_record(crate::topology::Vertex::default())
+                        .unwrap()
+                })
+                .collect();
+            // ov[0] names pv[0]; ov[1] names another poly vertex; ov[2] names none.
+            vertex::set_poly_vertex(&mut b, ov[0], Some(pv[0])).unwrap();
+            vertex::set_poly_vertex(&mut b, ov[1], Some(pv[3])).unwrap();
+            for (j, &v) in pv.iter().take(3).enumerate() {
+                poly.vertex_set_original_vertex(v, Some(ObjectKey(j as u64 + 1)))
+                    .unwrap();
+            }
+            poly.set_ok_back_ptrs(ok);
+            (poly, b, ov, pv)
+        };
+        let resolve = |ov: Vec<VertexId>| {
+            move |key: ObjectKey| {
+                ov.get(usize::try_from(key.0).ok()?.checked_sub(1)?)
+                    .copied()
+            }
+        };
+
+        let (poly, mut b, ov, pv) = build(true);
+        let r = resolve(ov.clone());
+        let r: &dyn Fn(ObjectKey) -> Option<VertexId> = &r;
+        poly.destroy_with_original(Some((&mut b, r))).unwrap();
+        assert_eq!(vertex::poly_vertex(&b, ov[0]).unwrap(), None);
+        assert_eq!(vertex::poly_vertex(&b, ov[1]).unwrap(), Some(pv[3]));
+        assert_eq!(vertex::poly_vertex(&b, ov[2]).unwrap(), None);
+
+        // Without valid back pointers nothing is followed.
+        let (poly, b, ov, pv) = build(false);
+        poly.destroy().unwrap();
+        assert_eq!(vertex::poly_vertex(&b, ov[0]).unwrap(), Some(pv[0]));
+
+        // A back pointer to follow needs the original B-rep and a known key.
+        let (poly, ..) = build(true);
+        assert!(matches!(
+            poly.destroy(),
+            Err(SolidError::InvalidInput { .. })
+        ));
+        let (poly, mut b, ..) = build(true);
+        let none: &dyn Fn(ObjectKey) -> Option<VertexId> = &|_| None;
+        assert!(matches!(
+            poly.destroy_with_original(Some((&mut b, none))),
+            Err(SolidError::InvalidInput { .. })
+        ));
+
+        // No original vertices: nothing to clear.
+        let (poly, ..) = square(&k);
+        poly.destroy().unwrap();
     }
 
     #[test]
@@ -3394,6 +3584,86 @@ mod tests {
     }
 
     #[test]
+    fn edge_set_aux_data_rejects_invalid_replacement_without_mutation() {
+        let k = Kernel::default();
+        for has_old in [false, true] {
+            for deleted in [false, true] {
+                let (mut b, _, l, es) = square(&k);
+                let old = if has_old {
+                    let a = b.add_aux_data(Vec3::ZERO, Vec2::new(0.0, 0.0)).unwrap();
+                    b.edge_set_aux_data(es[0], Some(a)).unwrap();
+                    Some(a)
+                } else {
+                    None
+                };
+                let invalid = if deleted {
+                    let a = b.add_aux_data(Vec3::ZERO, Vec2::new(0.0, 0.0)).unwrap();
+                    b.aux_delete_if_no_users(a).unwrap();
+                    a
+                } else {
+                    PolyAuxId::from_index(u32::MAX)
+                };
+                let before = b.clone();
+                assert!(matches!(
+                    b.edge_set_aux_data(es[0], Some(invalid)),
+                    Err(SolidError::InvalidInput { .. })
+                ));
+                assert_eq!(b, before);
+
+                b.delete_edge(es[0]).unwrap();
+                assert_eq!(b.loop_poly_edges(l).unwrap(), es[1..]);
+                assert!(b.edge_aux_data(es[0]).is_err());
+                if let Some(a) = old {
+                    assert!(b.aux_data(a).is_err());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn edge_set_aux_data_same_live_id_preserves_counts() {
+        let k = Kernel::default();
+        let (mut b, _, _, es) = square(&k);
+        let a = b.add_aux_data(Vec3::ZERO, Vec2::new(0.0, 0.0)).unwrap();
+        b.edge_set_aux_data(es[0], Some(a)).unwrap();
+        assert_eq!(b.aux_data(a).unwrap().num_users(), 1);
+        let before = b.clone();
+        b.edge_set_aux_data(es[0], Some(a)).unwrap();
+        assert_eq!(b, before);
+        assert_eq!(b.aux_data(a).unwrap().num_users(), 1);
+    }
+
+    #[test]
+    fn edge_set_aux_data_replacement_deletes_exclusively_owned_record() {
+        let k = Kernel::default();
+        let (mut b, _, _, es) = square(&k);
+        let old = b.add_aux_data(Vec3::ZERO, Vec2::new(0.0, 0.0)).unwrap();
+        let new = b.add_aux_data(Vec3::ZERO, Vec2::new(1.0, 1.0)).unwrap();
+        b.edge_set_aux_data(es[0], Some(old)).unwrap();
+        b.edge_set_aux_data(es[0], Some(new)).unwrap();
+        assert_eq!(b.edge_aux_data(es[0]).unwrap(), Some(new));
+        assert!(b.aux_data(old).is_err());
+        assert_eq!(b.aux_data(new).unwrap().num_users(), 1);
+    }
+
+    #[test]
+    fn edge_set_aux_data_shared_record_survives_until_last_user_clears() {
+        let k = Kernel::default();
+        let (mut b, _, _, es) = square(&k);
+        let a = b.add_aux_data(Vec3::ZERO, Vec2::new(0.0, 0.0)).unwrap();
+        b.edge_set_aux_data(es[0], Some(a)).unwrap();
+        b.edge_set_aux_data(es[1], Some(a)).unwrap();
+        assert_eq!(b.aux_data(a).unwrap().num_users(), 2);
+        b.edge_set_aux_data(es[0], None).unwrap();
+        assert_eq!(b.edge_aux_data(es[0]).unwrap(), None);
+        assert_eq!(b.edge_aux_data(es[1]).unwrap(), Some(a));
+        assert_eq!(b.aux_data(a).unwrap().num_users(), 1);
+        b.edge_set_aux_data(es[1], None).unwrap();
+        assert_eq!(b.edge_aux_data(es[1]).unwrap(), None);
+        assert!(b.aux_data(a).is_err());
+    }
+
+    #[test]
     fn delete_edge_unlinks() {
         let k = Kernel::default();
         let (mut b, _, l, es) = square(&k);
@@ -3407,13 +3677,197 @@ mod tests {
     }
 
     #[test]
+    fn original_face_context_is_required_only_after_changed_enabled_assignment() {
+        let k = Kernel::default();
+        let (mut poly, face, _, _) = square(&k);
+        poly.face_set_original_face(face, None, true, None).unwrap();
+        poly.face_set_original_face(face, Some(ObjectKey(1)), false, None)
+            .unwrap();
+        // Same original is a no-op even when propagation is subsequently enabled.
+        poly.face_set_original_face(face, Some(ObjectKey(1)), true, None)
+            .unwrap();
+        assert!(matches!(
+            poly.face_set_original_face(face, Some(ObjectKey(2)), true, None),
+            Err(SolidError::InvalidInput { .. })
+        ));
+        assert_eq!(poly.face_original_face(face).unwrap(), Some(ObjectKey(2)));
+        // A failed notification still leaves the new key assigned.
+        poly.face_set_original_face(face, Some(ObjectKey(2)), true, None)
+            .unwrap();
+        poly.face_set_original_face(face, None, true, None).unwrap();
+        assert_eq!(poly.face_original_face(face).unwrap(), None);
+    }
+
+    #[test]
+    fn original_face_copy_uses_real_notification_and_shared_attribute_lifetimes() {
+        use crate::geom::attribute::{Attribute, Behavior};
+        use crate::geom::context::MarkType;
+        use crate::topology::topology::Topology;
+        use crate::topology::{Face, Shell};
+        use crate::EntityRef;
+
+        let k = Kernel::default();
+        for composite in [false, true] {
+            let (mut poly, plain, _, _) = square(&k);
+            let face = if composite {
+                poly.add_cpoly_face(plain).unwrap()
+            } else {
+                plain
+            };
+            let mut source = Brep::new();
+            let shell = source.add_shell_record(Shell::default()).unwrap();
+            let source_face = source.add_face_record(Face::new(shell)).unwrap();
+            let from = ObjectKey(1);
+            let to = ObjectKey(2);
+            let key_of = |entity| {
+                assert_eq!(entity, EntityRef::Face(source_face));
+                ObjectRef {
+                    type_code: crate::topology::face::p2::TYPE,
+                    key: from,
+                }
+            };
+            let context = Context::default();
+            let mut src_record = Topology::new();
+            src_record.set_all_flags(16);
+            src_record.mark(Some(&context), MarkType::Mark);
+            src_record.mark(Some(&context), MarkType::MarkIo);
+            let mut dst_record = Topology::new();
+            dst_record.set_all_flags(2);
+            dst_record.mark(Some(&context), MarkType::Mark);
+            let destination_io_mark = dst_record.get_mark(MarkType::MarkIo);
+            let mut records =
+                crate::topology::topology::NotifyRecords::from(std::collections::BTreeMap::from([
+                    (from, src_record),
+                    (to, dst_record),
+                ]));
+            let mut attributes = AttributeStore::new();
+            let long = attributes
+                .insert(Attribute::long(501, 41, Behavior::Copy))
+                .unwrap();
+            let color = attributes
+                .insert(Attribute::color(502, Vec3::X, Behavior::Reference))
+                .unwrap();
+            let temp = attributes
+                .insert(Attribute::long(503, 81, Behavior::Temp))
+                .unwrap();
+            for h in [long, color, temp] {
+                attributes.add_attribute(from, h).unwrap();
+            }
+            let mut env = PolyFaceCopyEnv {
+                source_brep: &mut source,
+                source_face,
+                notify: crate::topology::edge::NotifyEnv {
+                    records: &mut records,
+                    attributes: &mut attributes,
+                    context: None, // legitimate null context: real state still supplied
+                    key_of: &key_of,
+                },
+                destination: ObjectRef {
+                    type_code: if composite {
+                        PolyObjectKind::CPolyFace
+                    } else {
+                        PolyObjectKind::Face
+                    }
+                    .type_code(),
+                    key: to,
+                },
+            };
+            poly.face_set_original_face(face, Some(from), true, Some(&mut env))
+                .unwrap();
+            assert_eq!(records[&to].all_flags(), 16);
+            assert_eq!(records[&to].get_mark(MarkType::Mark), 0);
+            assert_eq!(records[&to].get_mark(MarkType::MarkIo), destination_io_mark);
+            let copied = attributes.find_attribute(to, 501).unwrap();
+            assert_ne!(copied, long);
+            assert_eq!(attributes.get(copied).unwrap().long_value(), Some(41));
+            assert_eq!(attributes.find_attribute(to, 502), Some(color));
+            assert_eq!(attributes.get(color).unwrap().users().len(), 2);
+            assert_eq!(attributes.find_attribute(to, 503), None);
+            attributes
+                .get_mut(color)
+                .unwrap()
+                .set_vector3d_value(Vec3::Y)
+                .unwrap();
+            assert_eq!(
+                attributes.get(color).unwrap().vector3d_value(),
+                Some(Vec3::Y)
+            );
+            attributes.clear_attributes(from).unwrap();
+            assert!(attributes.get(long).is_none());
+            assert_eq!(attributes.get(copied).unwrap().long_value(), Some(41));
+            assert_eq!(attributes.get(color).unwrap().users(), &[to]);
+            attributes.clear_attributes(to).unwrap();
+            assert!(attributes.get(copied).is_none());
+            assert!(attributes.get(color).is_none());
+        }
+    }
+
+    #[test]
+    fn original_face_copy_rejects_inconsistent_identities_after_assignment() {
+        use crate::topology::topology::Topology;
+        use crate::topology::{Face, Shell};
+
+        let k = Kernel::default();
+        // Wrong original key, wrong source type, wrong destination type, key collision,
+        // missing source record and missing destination record are distinct errors.
+        for invalid in 0..6 {
+            let (mut poly, face, _, _) = square(&k);
+            let mut source = Brep::new();
+            let shell = source.add_shell_record(Shell::default()).unwrap();
+            let source_face = source.add_face_record(Face::new(shell)).unwrap();
+            let mut records =
+                crate::topology::topology::NotifyRecords::from(std::collections::BTreeMap::from([
+                    (ObjectKey(1), Topology::new()),
+                    (ObjectKey(2), Topology::new()),
+                ]));
+            if invalid == 4 {
+                records.remove(&ObjectKey(1));
+            }
+            if invalid == 5 {
+                records.remove(&ObjectKey(2));
+            }
+            let mut attributes = AttributeStore::new();
+            let key_of = |_| ObjectRef {
+                type_code: if invalid == 1 {
+                    PolyObjectKind::Face.type_code()
+                } else {
+                    crate::topology::face::p2::TYPE
+                },
+                key: ObjectKey(1),
+            };
+            let mut env = PolyFaceCopyEnv {
+                source_brep: &mut source,
+                source_face,
+                notify: crate::topology::edge::NotifyEnv {
+                    records: &mut records,
+                    attributes: &mut attributes,
+                    context: None,
+                    key_of: &key_of,
+                },
+                destination: ObjectRef {
+                    type_code: if invalid == 2 {
+                        PolyObjectKind::Brep.type_code()
+                    } else {
+                        PolyObjectKind::Face.type_code()
+                    },
+                    key: ObjectKey(if invalid == 3 { 1 } else { 2 }),
+                },
+            };
+            let original = Some(ObjectKey(if invalid == 0 { 9 } else { 1 }));
+            assert!(matches!(
+                poly.face_set_original_face(face, original, true, Some(&mut env)),
+                Err(SolidError::InvalidInput { .. })
+            ));
+            assert_eq!(poly.face_original_face(face).unwrap(), original);
+            assert!(attributes.attributes(ObjectKey(2)).is_empty());
+        }
+    }
+
+    #[test]
     fn transform_scales_and_rejects_undefined() {
         let k = Kernel::default();
         let (mut b, f, _, _) = square(&k);
-        let mut records: std::collections::BTreeMap<
-            ObjectKey,
-            crate::topology::topology::Topology,
-        > = std::collections::BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attributes = AttributeStore::new();
         let mut caches: CacheStore<()> = CacheStore::new();
         let mut env = PolyNotifyEnv {
@@ -3472,7 +3926,7 @@ mod tests {
         let k = Kernel::default();
         let (mut poly, face, _, edges) = square(&k);
         let edge = edges[0];
-        poly.face_set_original_face(face, Some(ObjectKey(7)), false)
+        poly.face_set_original_face(face, Some(ObjectKey(7)), false, None)
             .unwrap();
         poly.set_ok_back_ptrs(true);
         assert!(poly
@@ -3538,5 +3992,288 @@ mod tests {
         let mut d = DisplayList::new(3);
         assert_eq!(d.set_display_list_id(7), 3);
         assert_eq!(d.display_list_id(), 7);
+    }
+
+    #[test]
+    fn wr81_remove_poly_face_non_member() {
+        let mut k = Kernel::default();
+        let (mut b, f1, _, _) = square(&k);
+        let shell = b.face_poly_shell(f1).unwrap().unwrap();
+        let f2 = b.add_face(&k, shell, 1.0e-5, None).unwrap();
+        let c = b.add_cpoly_face(f1).unwrap();
+        b.cpoly_add_poly_face(c, f2, false).unwrap();
+        assert_eq!(b.cpoly_faces_of_composite(c).unwrap(), vec![f1, f2]);
+
+        // Default behavior (WR-81 bug preserved): removing non-member removes element 0 (f1)
+        let non_member = PolyFaceId::from_index(999);
+        b.cpoly_remove_poly_face(c, non_member).unwrap();
+        assert_eq!(b.cpoly_faces_of_composite(c).unwrap(), vec![f2]);
+
+        // Opt-in fix enabled: removing non-member does not remove anything
+        k.fixes.cpoly_remove_poly_face_check_member = true;
+        let (mut b_fixed, f3, _, _) = square(&k);
+        let shell_fixed = b_fixed.face_poly_shell(f3).unwrap().unwrap();
+        let f4 = b_fixed.add_face(&k, shell_fixed, 1.0e-5, None).unwrap();
+        let c_fixed = b_fixed.add_cpoly_face(f3).unwrap();
+        b_fixed.cpoly_add_poly_face(c_fixed, f4, false).unwrap();
+        assert_eq!(
+            b_fixed.cpoly_faces_of_composite(c_fixed).unwrap(),
+            vec![f3, f4]
+        );
+
+        b_fixed.cpoly_remove_poly_face(c_fixed, non_member).unwrap();
+        assert_eq!(
+            b_fixed.cpoly_faces_of_composite(c_fixed).unwrap(),
+            vec![f3, f4]
+        );
+
+        // Valid member removal works
+        b_fixed.cpoly_remove_poly_face(c_fixed, f3).unwrap();
+        assert_eq!(b_fixed.cpoly_faces_of_composite(c_fixed).unwrap(), vec![f4]);
+
+        // Trigger 1: removing a removed member a second time does not remove the remaining member
+        b_fixed.cpoly_remove_poly_face(c_fixed, f3).unwrap();
+        assert_eq!(b_fixed.cpoly_faces_of_composite(c_fixed).unwrap(), vec![f4]);
+
+        // Trigger 2: deleting a face after removing it from composite does not remove remaining members
+        b_fixed.delete_face(f3).unwrap();
+        assert_eq!(b_fixed.cpoly_faces_of_composite(c_fixed).unwrap(), vec![f4]);
+    }
+
+    fn add_wr82_triangle_face(
+        k: &Kernel,
+        pb: &mut PolyBrep,
+        shell: PolyShellId,
+        pts: &[Point3; 3],
+        tol: f64,
+    ) -> (PolyFaceId, PolyLoopId, [PolyEdgeId; 3]) {
+        let f = pb
+            .add_face(k, shell, tol, Some(Vec3::new(0.0, 0.0, 1.0)))
+            .unwrap();
+        let vs = [
+            pb.add_vertex(k, pts[0], tol).unwrap(),
+            pb.add_vertex(k, pts[1], tol).unwrap(),
+            pb.add_vertex(k, pts[2], tol).unwrap(),
+        ];
+        let lp = pb.start_poly_edge_loop(f).unwrap();
+        let es = [
+            pb.add_poly_edge(k, lp, tol, pts[0], pts[1], vs[0]).unwrap(),
+            pb.add_poly_edge(k, lp, tol, pts[1], pts[2], vs[1]).unwrap(),
+            pb.add_poly_edge(k, lp, tol, pts[2], pts[0], vs[2]).unwrap(),
+        ];
+        pb.finish_poly_edge_loop(lp).unwrap();
+        let (normal, degenerate) = pb.face_normal(k, f, true, true).unwrap();
+        assert!(!degenerate);
+        for v in vs {
+            pb.vertex_add_face_normal(v, normal).unwrap();
+        }
+        (f, lp, es)
+    }
+
+    #[test]
+    fn wr82_rejects_self_and_nested_composite_faces_preserving_state() {
+        let k = Kernel::default();
+        let tol = 1.0e-5;
+        let mut pb = PolyBrep::new(&k, tol);
+        let region = pb.add_region().unwrap();
+        let shell = pb.add_shell(region).unwrap();
+        let (f1, l1, es1) = add_wr82_triangle_face(
+            &k,
+            &mut pb,
+            shell,
+            &[
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+            ],
+            tol,
+        );
+        let (f2, l2, es2) = add_wr82_triangle_face(
+            &k,
+            &mut pb,
+            shell,
+            &[
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(1.0, 1.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+            ],
+            tol,
+        );
+
+        let c1 = pb.add_cpoly_face(f1).unwrap();
+        let c2 = pb.add_cpoly_face(f2).unwrap();
+        assert_eq!(pb.cpoly_faces(), vec![c1, c2]);
+        assert_eq!(pb.face_cpoly_face(f1).unwrap(), Some(c1));
+        assert_eq!(pb.face_cpoly_face(f2).unwrap(), Some(c2));
+        assert_eq!(pb.face_cpoly_face(c1).unwrap(), Some(c1));
+        assert_eq!(pb.face_cpoly_face(c2).unwrap(), Some(c2));
+        assert_eq!(pb.cpoly_faces_of_composite(c1).unwrap(), vec![f1]);
+        assert_eq!(pb.cpoly_faces_of_composite(c2).unwrap(), vec![f2]);
+
+        let snapshot = pb.clone();
+        let slot_count = pb.face_slot_count();
+
+        // SmCPolyFace(c1): composite source face is rejected without allocating a
+        // dangling composite or overwriting c1's self back-pointer.
+        assert!(matches!(
+            pb.add_cpoly_face(c1),
+            Err(SolidError::InvalidInput {
+                operation: "query::poly::PolyBrep::add_cpoly_face",
+                reason: "a composite poly face cannot be a member of a composite poly face",
+            })
+        ));
+        assert_eq!(pb.cpoly_faces(), vec![c1, c2]);
+        assert_eq!(pb.face_slot_count(), slot_count);
+        assert_eq!(pb.face_cpoly_face(c1).unwrap(), Some(c1));
+        assert_eq!(pb, snapshot);
+
+        // c1->AddPolyFace(c1): exact WR-82 self-cycle trigger (both duplicate modes).
+        for allow_duplicates in [false, true] {
+            assert!(matches!(
+                pb.cpoly_add_poly_face(c1, c1, allow_duplicates),
+                Err(SolidError::InvalidInput {
+                    operation: "query::poly::PolyBrep::cpoly_add_poly_face",
+                    reason: "a composite poly face cannot be a member of a composite poly face",
+                })
+            ));
+        }
+        assert_eq!(pb.cpoly_faces_of_composite(c1).unwrap(), vec![f1]);
+        assert_eq!(pb.face_cpoly_face(c1).unwrap(), Some(c1));
+        assert_eq!(pb, snapshot);
+
+        // c1->AddPolyFace(c2) and c2->AddPolyFace(c1): nested / mutual 2-cycle rejected,
+        // leaving c2's back-pointer and member list [f2] untouched.
+        assert!(matches!(
+            pb.cpoly_add_poly_face(c1, c2, false),
+            Err(SolidError::InvalidInput {
+                operation: "query::poly::PolyBrep::cpoly_add_poly_face",
+                reason: "a composite poly face cannot be a member of a composite poly face",
+            })
+        ));
+        assert_eq!(pb.face_cpoly_face(c2).unwrap(), Some(c2));
+        assert_eq!(pb.cpoly_faces_of_composite(c2).unwrap(), vec![f2]);
+        assert_eq!(pb.cpoly_faces_of_composite(c1).unwrap(), vec![f1]);
+
+        assert!(matches!(
+            pb.cpoly_add_poly_face(c2, c1, true),
+            Err(SolidError::InvalidInput {
+                operation: "query::poly::PolyBrep::cpoly_add_poly_face",
+                reason: "a composite poly face cannot be a member of a composite poly face",
+            })
+        ));
+        assert_eq!(pb.face_cpoly_face(c1).unwrap(), Some(c1));
+        assert_eq!(pb.face_cpoly_face(c2).unwrap(), Some(c2));
+        assert_eq!(pb.cpoly_faces_of_composite(c1).unwrap(), vec![f1]);
+        assert_eq!(pb.cpoly_faces_of_composite(c2).unwrap(), vec![f2]);
+        assert_eq!(pb, snapshot);
+
+        // Non-composite target and unknown face ids are also rejected without mutation.
+        assert!(matches!(
+            pb.cpoly_add_poly_face(f1, f2, false),
+            Err(SolidError::InvalidInput { .. })
+        ));
+        let unknown = PolyFaceId::from_index(999);
+        assert!(matches!(
+            pb.add_cpoly_face(unknown),
+            Err(SolidError::InvalidInput { .. })
+        ));
+        assert!(matches!(
+            pb.cpoly_add_poly_face(c1, unknown, false),
+            Err(SolidError::InvalidInput { .. })
+        ));
+        assert_eq!(pb, snapshot);
+
+        // Composite queries on c1 and c2 still terminate cleanly after rejected cycles.
+        assert_eq!(pb.face_poly_loops(c1).unwrap(), vec![l1]);
+        assert_eq!(pb.face_poly_loops(c2).unwrap(), vec![l2]);
+        assert_eq!(pb.face_poly_edges(c1).unwrap(), es1.to_vec());
+        assert_eq!(pb.face_poly_edges(c2).unwrap(), es2.to_vec());
+        assert_eq!(
+            pb.face_normal(&k, c1, false, false).unwrap(),
+            (Vec3::new(0.0, 0.0, 1.0), false)
+        );
+        assert_eq!(
+            pb.face_normal(&k, c2, false, false).unwrap(),
+            (Vec3::new(0.0, 0.0, 1.0), false)
+        );
+        assert!(pb.face_bounding_box(c1).is_ok());
+        assert!(pb.face_bounding_box(c2).is_ok());
+        assert!(!pb.face_ok_back_ptrs(c1).unwrap());
+        assert!(!pb.face_ok_back_ptrs(c2).unwrap());
+    }
+
+    #[test]
+    fn wr82_valid_multi_face_composite_queries_succeed() {
+        let k = Kernel::default();
+        let tol = 1.0e-5;
+        let mut pb = PolyBrep::new(&k, tol);
+        let region = pb.add_region().unwrap();
+        let shell = pb.add_shell(region).unwrap();
+        let (f1, l1, es1) = add_wr82_triangle_face(
+            &k,
+            &mut pb,
+            shell,
+            &[
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+            ],
+            tol,
+        );
+        let (f2, _, _) = add_wr82_triangle_face(
+            &k,
+            &mut pb,
+            shell,
+            &[
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(1.0, 1.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+            ],
+            tol,
+        );
+        let (f3, l3, es3) = add_wr82_triangle_face(
+            &k,
+            &mut pb,
+            shell,
+            &[
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(3.0, 0.0, 0.0),
+                Vec3::new(1.0, 2.0, 0.0),
+            ],
+            tol,
+        );
+
+        pb.set_ok_back_ptrs(true);
+        let c1 = pb.add_cpoly_face(f1).unwrap();
+        pb.cpoly_add_poly_face(c1, f3, false).unwrap();
+        // Re-adding f3 with allow_duplicates = false keeps the member list unique.
+        pb.cpoly_add_poly_face(c1, f3, false).unwrap();
+
+        assert_eq!(pb.cpoly_faces_of_composite(c1).unwrap(), vec![f1, f3]);
+        assert_eq!(pb.face_cpoly_face(f1).unwrap(), Some(c1));
+        assert_eq!(pb.face_cpoly_face(f3).unwrap(), Some(c1));
+        assert_eq!(pb.face_cpoly_face(f2).unwrap(), None);
+        assert_eq!(pb.face_cpoly_face(c1).unwrap(), Some(c1));
+
+        let expected_edges: Vec<PolyEdgeId> = es1.into_iter().chain(es3).collect();
+        assert_eq!(pb.face_poly_edges(c1).unwrap(), expected_edges);
+        assert_eq!(pb.face_poly_loops(c1).unwrap(), vec![l1, l3]);
+        assert_eq!(
+            pb.face_normal(&k, c1, true, true).unwrap(),
+            (Vec3::new(0.0, 0.0, 1.0), false)
+        );
+
+        let bb_f1 = pb.face_bounding_box(f1).unwrap();
+        let bb_f3 = pb.face_bounding_box(f3).unwrap();
+        let bb_c1 = pb.face_bounding_box(c1).unwrap();
+        assert_eq!(bb_c1, bb_f1.union(&bb_f3));
+        assert_eq!(bb_c1.min(), Vec3::new(-tol, -tol, -tol));
+        assert_eq!(bb_c1.max(), Vec3::new(3.0 + tol, 2.0 + tol, tol));
+
+        assert!(pb.face_ok_back_ptrs(c1).unwrap());
+
+        let (sphere_center, sphere_radius) = pb.face_compute_sphere_bound(c1, true).unwrap();
+        assert_eq!(sphere_center, Vec3::new(1.0, 0.5, 0.0));
+        assert!((sphere_radius - (crate::geom::vector3d::sqrt(4.25) + tol)).abs() <= 1.0e-15);
     }
 }

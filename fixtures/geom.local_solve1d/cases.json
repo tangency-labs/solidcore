@@ -8124,6 +8124,64 @@
     "tol": 0.0,
     "maximize": false
    }
+  },
+  {
+   "name": "trig_bracket_residual_separate_platform_calls",
+   "inputs": {
+    "acceptable": 1.9498269151442054e-12,
+    "algorithm": 3,
+    "desired": null,
+    "func": {
+     "fail_first": 0,
+     "fail_hi": 0.0,
+     "fail_lo": 1.0,
+     "found_tol": 0.0,
+     "kind": 2,
+     "p": [
+      -0.3882206991029129,
+      3.602483678194587,
+      -1.2331464376658001,
+      -0.592468345313117,
+      0.4070053463734302
+     ],
+     "partial": true
+    },
+    "guesses": [
+     0.4249261703541882
+    ],
+    "interval": [
+     -1.600249728224778,
+     0.7935376232354012
+    ],
+    "op": "solve_it",
+    "periodic": false
+   }
+  },
+{
+   "name": "oscillation_failed_last_guess_zeroed_outputs",
+   "inputs": {
+    "op": "solve_it",
+    "func": {
+     "kind": 0,
+     "p": [
+      2.0,
+      -2.0,
+      0.0,
+      1.0
+     ],
+     "fail_lo": 0.94564800000197,
+     "fail_hi": 0.94564800000197,
+     "zero_on_failure": true
+    },
+    "interval": [
+     -3.0,
+     3.0
+    ],
+    "acceptable": 1e-09,
+    "guesses": [
+     0.0
+    ]
+   }
   }
  ]
 }

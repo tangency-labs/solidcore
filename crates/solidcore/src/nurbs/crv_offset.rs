@@ -24,10 +24,17 @@
 //!   [`MAX_SHORT_DEGREE`](crate::nurbs::bezier::MAX_SHORT_DEGREE) (impossible
 //!   upstream, where `NL_DEGREE` is a `short`) is [`SolidError::InvalidInput`], so
 //!   index arithmetic and allocations sized from a degree cannot overflow.
-//! - More than [`MAX_OFFSET_SAMPLES`] sample points in total is
-//!   [`SolidError::InvalidInput`]. Upstream samples any count, but the knot removal
-//!   that follows takes time quadratic in it (about 5 s for 23 000 samples, and
-//!   practically forever for the counts a pole or a tiny tolerance produce).
+//! - HANG-44: more sample points in total than the input-scaled
+//!   [`offset_sample_bound`] is [`SolidError::InvalidInput`] with reason
+//!   [`TOO_MANY_SAMPLES_REASON`]. Upstream samples any
+//!   count, but the knot removal that follows takes time quadratic in it (practically
+//!   forever for the counts a pole or a tiny tolerance produce). The bound is
+//!   `min(2^17, max(16 384, 4 * segments * ceil((1/tol)^exp * 2 deg)))`: any count up
+//!   to [`MAX_OFFSET_SAMPLES`] (the former fixed cap, so every input it accepted is
+//!   unchanged), four times the curvature-free count a curve of that many Bezier
+//!   segments needs at `tol` (a swept wall of 127 segments at `1e-5` needs 38 227),
+//!   and never more than [`MAX_OFFSET_SAMPLES_ANY`] (about 30 s at opt-level 3).
+//! - Cancellation: `offset_pt_sampling_cancellable` (crate-private) polls a cancel token (#2136, #2372) per sample point and per knot removal step; `offset_pt_sampling` passes none.
 
 use crate::error::{NlibCode, Result, SolidError};
 use crate::math::{max2, Vec3};
@@ -47,9 +54,40 @@ use crate::nurbs::math::{blend_pt, float_op_is_bad, FloatOp, MODEL_TOL};
 
 const OP: &str = "nurbs::crv_offset::Curve::offset_pt_sampling";
 
-/// Most sample points [`Curve::offset_pt_sampling`] takes on a free-form curve (the
-/// sum of the per-segment counts; the difftest guard allows 4000).
+/// Sample points [`Curve::offset_pt_sampling`] always allows on a free-form curve (the
+/// sum of the per-segment counts; the difftest guard allows 4000). Above it the
+/// input-scaled [`offset_sample_bound`] applies.
 pub const MAX_OFFSET_SAMPLES: isize = 16_384;
+
+/// `reason` of the `InvalidInput` error of [`Curve::offset_pt_sampling`] when the
+/// sample count exceeds [`offset_sample_bound`] (a pole or a cusp of the offset).
+pub const TOO_MANY_SAMPLES_REASON: &str = "too many sample points";
+
+/// How many times its curvature-free count (`ceil(f1 * 2 deg)` per Bezier segment) a
+/// curve may sample in [`offset_sample_bound`].
+pub const OFFSET_SAMPLE_SLACK: isize = 4;
+
+/// The most sample points [`Curve::offset_pt_sampling`] takes on any curve: the knot
+/// removal that follows is quadratic in the count.
+pub const MAX_OFFSET_SAMPLES_ANY: isize = 1 << 17;
+
+/// The most sample points [`Curve::offset_pt_sampling`] takes on a free-form curve of
+/// `segments` Bezier segments whose per-segment count without the curvature term
+/// (`ceil((1/tol)^exp * 2 deg)`, the least upstream samples a segment) is `floor`:
+/// `OFFSET_SAMPLE_SLACK * segments * floor`, clamped to
+/// `[MAX_OFFSET_SAMPLES, MAX_OFFSET_SAMPLES_ANY]`. A well-formed curve samples at
+/// most `OFFSET_SAMPLE_SLACK` times its floor (its offset's second derivative `Muu`
+/// stays below `8 (2 deg OFFSET_SAMPLE_SLACK)^2` on average); a pole or a cusp of the
+/// offset drives `Muu`, and so the count, far beyond it.
+#[must_use]
+pub fn offset_sample_bound(segments: usize, floor: isize) -> isize {
+    let scaled = isize::try_from(segments)
+        .ok()
+        .and_then(|n| n.checked_mul(floor))
+        .and_then(|n| n.checked_mul(OFFSET_SAMPLE_SLACK))
+        .unwrap_or(isize::MAX);
+    scaled.clamp(MAX_OFFSET_SAMPLES, MAX_OFFSET_SAMPLES_ANY)
+}
 
 /// Upstream `NL_UNITSPAN`.
 const UNIT_SPAN: Interval = Interval::new(0.0, 1.0);
@@ -122,6 +160,27 @@ impl Curve {
         tangents: bool,
         par: OffsetParam,
         tol: f64,
+    ) -> Result<Curve> {
+        self.offset_pt_sampling_cancellable(b, d, deg, tangents, par, tol, None)
+    }
+
+    /// [`Curve::offset_pt_sampling`] that polls `cancel` (#2136, #2372) once per sample
+    /// point and per knot removal step and returns `Cancelled` once it fires; `None`, or
+    /// a token that never fires, changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// As [`Curve::offset_pt_sampling`]; `Cancelled` when `cancel` fires.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn offset_pt_sampling_cancellable(
+        &self,
+        b: Vec3,
+        d: f64,
+        deg: usize,
+        tangents: bool,
+        par: OffsetParam,
+        tol: f64,
+        cancel: Option<&crate::kernel::CancelToken>,
     ) -> Result<Curve> {
         check_short_degree(deg, OP)?;
 
@@ -211,10 +270,12 @@ impl Curve {
             nu.push(c);
             mu = mu.checked_add(c).ok_or_else(unrepresentable)?;
         }
-        if mu > MAX_OFFSET_SAMPLES {
+        // HANG-44: the input-scaled bound, from `del` without the curvature term.
+        if mu > MAX_OFFSET_SAMPLES && mu > offset_sample_bound(bez.len(), count((f1 * f2).ceil())?)
+        {
             return Err(SolidError::InvalidInput {
                 operation: OP,
-                reason: "too many sample points",
+                reason: TOO_MANY_SAMPLES_REASON,
             });
         }
 
@@ -247,6 +308,9 @@ impl Curve {
         // Sample curve.
         let mut pts: Vec<Vec3> = storage(mu, OP)?;
         for i in 0..=mu {
+            if let Some(token) = cancel {
+                token.check(OP)?;
+            }
             let (q, ts) = self.eval_tangent(get(&u, i, OP)?, Side::Left)?;
             let n = b.cross(ts);
             set(&mut pts, i, pt_along_vector(q, d, n), OP)?;
@@ -293,7 +357,12 @@ impl Curve {
 
         // Remove knots.
         let der = usize::from(tangents && deg == 2);
-        cur_q = cur_q.remove_knots_deriv_constraints(tol, ConstrainedEnds::Both, der)?;
+        cur_q = cur_q.remove_knots_deriv_constraints_cancellable(
+            tol,
+            ConstrainedEnds::Both,
+            der,
+            cancel,
+        )?;
 
         // Compact output curve.
         let (n, _) = cur_q.array_sizes();
@@ -438,6 +507,9 @@ mod tests {
             1.0,
         ];
         let c = Curve::new(pw, 3, u).unwrap();
+        // HANG-44 addendum 2026-10-29: still refused under the input-scaled bound (5
+        // segments, floor 13 each, so the bound is 16 384), before any sampling.
+        let clock = std::time::Instant::now();
         let r = c.offset_pt_sampling(
             Vec3::new(0.0, 0.0, 1.0),
             0.0,
@@ -446,7 +518,10 @@ mod tests {
             OffsetParam::Inherited,
             0.11799393559359235,
         );
+        let took = clock.elapsed();
+        eprintln!("fuzz00366 refused in {took:?}");
         assert!(matches!(r, Err(SolidError::InvalidInput { .. })), "{r:?}");
+        assert!(took < std::time::Duration::from_secs(2), "{took:?}");
         let r = cubic().offset_pt_sampling(
             Vec3::new(0.0, 0.0, 1.0),
             0.1,
@@ -456,5 +531,95 @@ mod tests {
             0.01,
         );
         assert!(matches!(r, Err(SolidError::InvalidInput { .. })), "{r:?}");
+    }
+
+    /// #2372: a fired cancel token ends the sampling and the knot removal with
+    /// `Cancelled`; an unfired one leaves the offset bit for bit as without one.
+    #[test]
+    fn a_cancel_token_ends_the_offset_and_an_unfired_one_changes_nothing() {
+        let b = Vec3::new(0.0, 0.0, 1.0);
+        let par = OffsetParam::Inherited;
+        let plain = cubic()
+            .offset_pt_sampling(b, 0.1, 3, false, par, 1e-4)
+            .unwrap();
+        let token = crate::kernel::CancelToken::new();
+        let unfired = cubic()
+            .offset_pt_sampling_cancellable(b, 0.1, 3, false, par, 1e-4, Some(&token))
+            .unwrap();
+        assert_eq!(plain, unfired);
+        token.cancel();
+        let r = cubic().offset_pt_sampling_cancellable(b, 0.1, 3, false, par, 1e-4, Some(&token));
+        assert!(matches!(r, Err(SolidError::Cancelled { .. })), "{r:?}");
+        // the knot removal on its own
+        let r = plain.remove_knots_deriv_constraints_cancellable(
+            1e-4,
+            ConstrainedEnds::Both,
+            0,
+            Some(&token),
+        );
+        assert!(matches!(r, Err(SolidError::Cancelled { .. })), "{r:?}");
+    }
+
+    /// HANG-44 addendum 2026-10-29: the bound scales with the segment count and the
+    /// tolerance, never drops below the former cap and never exceeds the ceiling.
+    #[test]
+    fn sample_bound_is_input_scaled() {
+        assert_eq!(offset_sample_bound(5, 13), MAX_OFFSET_SAMPLES);
+        assert_eq!(offset_sample_bound(60, 301), 4 * 60 * 301);
+        assert_eq!(offset_sample_bound(127, 301), MAX_OFFSET_SAMPLES_ANY);
+        assert_eq!(
+            offset_sample_bound(usize::MAX, isize::MAX),
+            MAX_OFFSET_SAMPLES_ANY
+        );
+        assert_eq!(offset_sample_bound(0, 0), MAX_OFFSET_SAMPLES);
+    }
+
+    /// A tiny tolerance asks for about 72 000 samples per segment even on a gentle
+    /// curve: refused at once by the ceiling.
+    #[test]
+    fn tiny_tolerance_is_refused_quickly() {
+        let clock = std::time::Instant::now();
+        let r = cubic().offset_pt_sampling(
+            Vec3::new(0.0, 0.0, 1.0),
+            0.1,
+            3,
+            false,
+            OffsetParam::Inherited,
+            1e-12,
+        );
+        let took = clock.elapsed();
+        assert!(matches!(r, Err(SolidError::InvalidInput { .. })), "{r:?}");
+        assert!(took < std::time::Duration::from_secs(2), "{took:?}");
+    }
+
+    /// A gentle cubic of `n` segments (control points on a sine).
+    fn wavy(n: usize) -> Curve {
+        let pw = (0..n + 3)
+            .map(|i| {
+                let x = i as f64 * 0.5;
+                CPoint::new(x, (x * 0.7).sin() * 2.0, 0.0, crate::nurbs::math::NOW)
+            })
+            .collect();
+        let mut u = vec![0.0; 4];
+        u.extend((1..n).map(|i| i as f64 / n as f64));
+        u.extend([1.0; 4]);
+        Curve::new(pw, 3, u).unwrap()
+    }
+
+    /// Issue #1476: 60 segments at `1e-5` sample 60 * 301 = 18 060 points, above the
+    /// former fixed cap of 16 384, and are offset now. Slow in a debug build (the
+    /// quadratic knot removal); `issue_1476_swept_bar_shell` keeps the 38 227-sample
+    /// case live.
+    #[test]
+    #[ignore = "slow in debug builds (about 18 000 samples)"]
+    fn many_segments_at_a_tight_tolerance_are_offset() {
+        let c = wavy(60);
+        let b = Vec3::new(0.0, 0.0, 1.0);
+        let q = c
+            .offset_pt_sampling(b, 0.5, 3, false, OffsetParam::Inherited, 1e-5)
+            .unwrap();
+        let (p0, t0) = c.eval_tangent(0.0, Side::Left).unwrap();
+        let o = pt_along_vector(p0, 0.5, b.cross(t0));
+        assert!((q.cpts()[0].to_euclid() - o).length() < 1e-5);
     }
 }

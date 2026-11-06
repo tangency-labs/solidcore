@@ -5,6 +5,7 @@
 //! | Rust | Upstream |
 //! |------|----------|
 //! | [`CurveClassification::intersect_edges`] | `SmCurveClassification::IntersectEdges` |
+//! | [`CurveClassification::intersect_edges_mut`] | `SmCurveClassification::IntersectEdges` over a mutable adapter |
 //! | [`CurveClassification::intersect_ts_bound`] | `SmCurveClassification::IntersectTSBound` |
 //!
 //! Deviations: topology is supplied as borrowed views resolved from arena ids, and
@@ -14,21 +15,27 @@
 //! the vertex uses and edge uses it marks are a local ordered list of visited
 //! handles. No input-driven recursion is added. Temporary surface-owner
 //! clearing is represented by a private copy for a lifted 2D source. Concrete
-//! curve-on-surface dispatch is preserved; mutable edge insertion retains its dependency
-//! deferral. Ignored native evaluation
+//! curve-on-surface dispatch is preserved; [`CurveClassification::intersect_edges`]
+//! inserts through a read-only adapter (its mutable edits defer) and
+//! [`CurveClassification::intersect_edges_mut`] through a mutable one. Each target
+//! edge's curve cache is built at that edge's live zone tolerance, as upstream's
+//! `SmTol::GetApproxTol3d(&m_crCurve)` reads it from the curve's owning edge; the
+//! classification curve's cache has no owner in reach through the caller's geometry and
+//! still builds on the system tolerance. Ignored native evaluation
 //! and drop statuses preserve initialized outputs; unported errors propagate. The
 //! native checked-drop guess aliases its output and is reset to zero before solving;
 //! the Rust call explicitly uses that zero guess. A 3D trim-boundary source returns
 //! `InvalidInput` instead of upstream's debug-only assertion.
 
 use super::p1::{cull_or_refine_cci_in_3d, src_zone_tol_3d_of};
-use super::p5::insert_solutions;
+use super::p5::{insert_solutions, insert_solutions_mut, ClassGeometryMut};
 use super::CurveClassification;
 use crate::curve::crv_on_surf::CrvOnSurf;
 use crate::curve::curve::p5::make_curve_cache;
 use crate::curve::curve::p6::DroppedPoint;
 use crate::curve::curve::p8::CurveIntersectOptions;
 use crate::curve::curve::Curve;
+use crate::curve::curve_cache::CurveCache;
 use crate::error::{ignored, Result, SolidError};
 use crate::geom::context::ALL_MARKS;
 use crate::geom::extent1d::Extent1d;
@@ -171,7 +178,7 @@ fn lifted(k: &Kernel, uv: &Curve, surface: &Surface) -> Result<Curve> {
         k,
         uv.clone_for_evaluation()?,
         surface.clone_for_evaluation()?,
-        Some(surface.natural_uv_domain()),
+        Some(surface.natural_uv_domain_with_nurb(k)?),
         0,
     )?))
 }
@@ -240,58 +247,21 @@ impl<O: ClassObject> CurveClassification<O> {
             source
         };
         let source_zone = src_zone_tol_3d_of(k, Some(self));
+        // the source curve's cache, kept across the edges (see `edge_solutions`)
+        let mut source_cache = None;
         for edge in edges {
-            let target = curve(geometry, edge.curve)?;
-            let edge_zone = edge.zone_tol_3d;
-            let mut tolerance = xsect_tol_3d_from_zones(k, edge_zone, source_zone);
-            if options.has_big_gaps {
-                if let Some(gap) = edge.face_gap {
-                    if gap > tolerance {
-                        tolerance = gap * 1.1;
-                    }
-                }
-            }
-            let mut solutions = Vec::new();
-            if core::ptr::eq(target, working) {
-                let lo = max2(edge.interval.min(), self.interval().min());
-                let hi = min2(edge.interval.max(), self.interval().max());
-                if lo < hi {
-                    let mut sol = Solution::new();
-                    sol.solution_type = SolutionType::RangeOfValues;
-                    sol.num_variables = 2;
-                    sol.num_objects = 2;
-                    for slot in sol.objects.iter_mut().take(2) {
-                        *slot = Some(edge.curve);
-                    }
-                    for i in 0..2 {
-                        *sol.start.param_mut(i)? = lo;
-                        *sol.end.param_mut(i)? = hi;
-                    }
-                    solutions.push(sol);
-                }
-            } else {
-                let found = working.global_curve_intersect(
-                    k,
-                    &self.interval(),
-                    target,
-                    &edge.interval,
-                    tolerance,
-                    &CurveIntersectOptions {
-                        handles: [
-                            Some(Side::Source(working.natural_interval())),
-                            Some(Side::Target(target.natural_interval())),
-                        ],
-                        ..CurveIntersectOptions::default()
-                    },
-                )?;
-                solutions.extend(
-                    found
-                        .as_slice()
-                        .iter()
-                        .map(|s| named(s, source_handle, edge.curve)),
-                );
-            }
+            let (mut solutions, tolerance) = self.edge_solutions(
+                k,
+                geometry,
+                working,
+                source_handle,
+                source_zone,
+                edge,
+                options,
+                &mut source_cache,
+            )?;
             if !solutions.is_empty() {
+                source_cache = None;
                 insert_solutions(
                     k,
                     geometry,
@@ -303,6 +273,152 @@ impl<O: ClassObject> CurveClassification<O> {
             }
         }
         Ok(())
+    }
+
+    /// [`CurveClassification::intersect_edges`] over a mutable adapter: the solutions
+    /// are inserted with [`insert_solutions_mut`], whose surface/surface/surface
+    /// refinement may edit the classification curve and the edges in place; each edge
+    /// is intersected with the curve as it is then (upstream's `m_cpCurve` pointer).
+    /// `surface` (the face's surface) is needed only to lift a 2D source when
+    /// `options.uv_space_okay` is off.
+    ///
+    /// # Errors
+    /// As [`CurveClassification::intersect_edges`]; [`SolidError::InvalidInput`] for a 2D
+    /// source to lift without `surface`.
+    pub fn intersect_edges_mut(
+        &mut self,
+        k: &Kernel,
+        geometry: &mut impl ClassGeometryMut<O>,
+        edges: &[BoundaryEdge<O>],
+        surface: Option<&Surface>,
+        options: IntersectEdgesOptions,
+    ) -> Result<()> {
+        let source_handle = self.curve().ok_or(SolidError::null_pointer(OP))?;
+        let lift = {
+            let source = curve(&*geometry, source_handle)?;
+            if !options.uv_space_okay && source.dim() == 2 {
+                let surface = surface.ok_or(SolidError::invalid_input(
+                    OP,
+                    "a 2D source to lift without the face's surface",
+                ))?;
+                let mut unowned = surface.clone_for_evaluation()?;
+                let _ = unowned.set_owner(None);
+                Some(lifted(k, source, &unowned)?)
+            } else {
+                None
+            }
+        };
+        let source_zone = src_zone_tol_3d_of(k, Some(self));
+        // the source curve's cache, kept across the edges (see `edge_solutions`)
+        let mut source_cache = None;
+        for edge in edges {
+            let (mut solutions, tolerance) = {
+                let working = match &lift {
+                    Some(l) => l,
+                    None => curve(&*geometry, source_handle)?,
+                };
+                self.edge_solutions(
+                    k,
+                    &*geometry,
+                    working,
+                    source_handle,
+                    source_zone,
+                    edge,
+                    options,
+                    &mut source_cache,
+                )?
+            };
+            if !solutions.is_empty() {
+                // the insertion's surf/surf/surf refinement may edit the source curve
+                source_cache = None;
+                insert_solutions_mut(
+                    k,
+                    geometry,
+                    self,
+                    &mut solutions,
+                    edge.edge,
+                    Some(tolerance),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The solutions of one edge of `IntersectEdges` and their intersection tolerance.
+    /// `source_cache` keeps the source curve `working`'s cache across the edges, as
+    /// upstream keeps it on the curve; the caller drops it whenever an insertion may
+    /// have edited the curve.
+    #[allow(clippy::too_many_arguments)]
+    fn edge_solutions(
+        &self,
+        k: &Kernel,
+        geometry: &impl ClassGeometry<O>,
+        working: &Curve,
+        source_handle: O,
+        source_zone: f64,
+        edge: &BoundaryEdge<O>,
+        options: IntersectEdgesOptions,
+        source_cache: &mut Option<CurveCache<Side>>,
+    ) -> Result<(Vec<Solution<O>>, f64)> {
+        let target = curve(geometry, edge.curve)?;
+        let edge_zone = edge.zone_tol_3d;
+        let mut tolerance = xsect_tol_3d_from_zones(k, edge_zone, source_zone);
+        if options.has_big_gaps {
+            if let Some(gap) = edge.face_gap {
+                if gap > tolerance {
+                    tolerance = gap * 1.1;
+                }
+            }
+        }
+        let mut solutions = Vec::new();
+        if core::ptr::eq(target, working) {
+            let lo = max2(edge.interval.min(), self.interval().min());
+            let hi = min2(edge.interval.max(), self.interval().max());
+            if lo < hi {
+                let mut sol = Solution::new();
+                sol.solution_type = SolutionType::RangeOfValues;
+                sol.num_variables = 2;
+                sol.num_objects = 2;
+                for slot in sol.objects.iter_mut().take(2) {
+                    *slot = Some(edge.curve);
+                }
+                for i in 0..2 {
+                    *sol.start.param_mut(i)? = lo;
+                    *sol.end.param_mut(i)? = hi;
+                }
+                solutions.push(sol);
+            }
+        } else {
+            // `GlobalCurveIntersect` caches the edge's own curve object, whose cache is
+            // built at `SmTol::GetApproxTol3d(&m_crCurve)`: half the edge's tolerance
+            // (`SmCurveCache.cpp:1496`, through the curve's owner). The caller's handle
+            // geometry is not that owned object, so the live edge tolerance is supplied
+            // to the lazy build; a cache is still built only where the solve needs it.
+            let found = working.global_curve_intersect_cached_with_zone_tols(
+                k,
+                &self.interval(),
+                target,
+                &edge.interval,
+                tolerance,
+                &CurveIntersectOptions {
+                    handles: [
+                        Some(Side::Source(working.natural_interval())),
+                        Some(Side::Target(target.natural_interval())),
+                    ],
+                    ..CurveIntersectOptions::default()
+                },
+                source_cache,
+                &mut None,
+                [None, Some(edge_zone)],
+            )?;
+            solutions.extend(
+                found
+                    .as_slice()
+                    .iter()
+                    .map(|s| named(s, source_handle, edge.curve)),
+            );
+        }
+        Ok((solutions, tolerance))
     }
 
     /// Intersects a 2D source with a face's trim vertices and curves. A valid trim
@@ -388,7 +504,7 @@ impl<O: ClassObject> CurveClassification<O> {
             Some(Side::Source(source.natural_interval())),
         ) {
             Ok(c) => c,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Err(SolidError::null_pointer(OP)),
         };
         let tree = cache.tree().ok_or(SolidError::null_pointer(OP))?;
@@ -565,6 +681,8 @@ impl<O: ClassObject> CurveClassification<O> {
             // the boundary views are read-only `ClassGeometry` handles built from a
             // borrowed `&Brep` (`query::face::p2::curve_on_classify`), so a trim curve
             // created here could be neither stored nor resolved
+            // Proof (unreachable): only for an uncached trim curve met in a read-only
+            // boundary view; 0 hits in the green difftest sweep.
             SolidError::unported("SmEdgeuse::GetOrCreateUVTrimCurve", "topology.edgeuse_p3")
         })?;
         let trim = curve(geometry, trim_handle)?;
@@ -831,5 +949,137 @@ mod tests {
             assert_eq!(found.parameter, parameter);
             assert_eq!(found.distance, 1.1641532182693481e-10);
         }
+    }
+
+    /// Handles of [`a_kept_source_cache_intersects_edges_as_fresh_caches`].
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum E {
+        Source,
+        Target(usize),
+        Edge(usize),
+    }
+    impl ClassObject for E {
+        fn class_kind(&self) -> ClassObjectKind {
+            match self {
+                Self::Edge(_) => ClassObjectKind::Edge,
+                _ => ClassObjectKind::Curve,
+            }
+        }
+    }
+    struct Edges {
+        source: Curve,
+        targets: Vec<Curve>,
+    }
+    impl ClassGeometry<E> for Edges {
+        fn topology_zone_tol_3d(&self, h: E) -> Option<f64> {
+            matches!(h, E::Edge(_)).then_some(1e-6)
+        }
+        fn curve(&self, h: E) -> Option<&Curve> {
+            match h {
+                E::Source => Some(&self.source),
+                E::Target(i) => self.targets.get(i),
+                E::Edge(_) => None,
+            }
+        }
+        fn surface(&self, _: E) -> Option<&Surface> {
+            None
+        }
+        fn volume(&self, _: E) -> Option<&Volume> {
+            None
+        }
+        fn point(&self, _: E) -> Option<Point3> {
+            None
+        }
+    }
+
+    /// The source curve's cache kept across the edges (and dropped after an edge with
+    /// hits, as the edge loops do) gives the solutions of a fresh cache for each edge.
+    #[test]
+    fn a_kept_source_cache_intersects_edges_as_fresh_caches() {
+        use crate::nurbs::b_spline_curve::BSplineCurve;
+        use crate::nurbs::math::{CPoint, NOW};
+        use crate::nurbs::nurbs_crv::allocate_nurb_curve;
+
+        let k = Kernel::default();
+        // a planar cubic B-spline (not analytic, so the intersection reads the caches)
+        let pts = [[0.0, 0.0], [1.0, 2.0], [3.0, -1.0], [4.0, 1.0], [6.0, 0.0]];
+        let mut nurb = allocate_nurb_curve(4, 3, 8).unwrap();
+        for (d, s) in nurb.cpts_mut().iter_mut().zip(pts) {
+            *d = CPoint::new(s[0], s[1], 0.0, NOW);
+        }
+        nurb.knots_mut()
+            .copy_from_slice(&[0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0]);
+        let source = Curve::from(BSplineCurve::from_nurb(nurb, 3, false));
+        let line = |a: Vec3, dir: Vec3, len: f64| {
+            Curve::from(Line::bounded(
+                a,
+                dir,
+                &Extent1d::from_min_max(0., len),
+                &BoundedLineOptions {
+                    scale: 1.,
+                    dim: 3,
+                    ..Default::default()
+                },
+            ))
+        };
+        let up = Vec3::new(0., 1., 0.);
+        let far = |y: f64| line(Vec3::new(-10., y, 0.), Vec3::new(1., 0., 0.), 1.);
+        // misses and crossings in turn: reuse after misses, a rebuild after each hit
+        let targets = vec![
+            far(20.),
+            line(Vec3::new(1., -5., 0.), up, 10.),
+            far(30.),
+            far(40.),
+            line(Vec3::new(2.5, -5., 0.), up, 10.),
+            line(Vec3::new(4., -5., 0.), up, 10.),
+            far(50.),
+        ];
+        let geometry = Edges { source, targets };
+        let cc = CurveClassification::with_curve_interval(
+            &k,
+            E::Source,
+            Extent1d::from_min_max(0., 1.),
+            1e-6,
+        );
+        let source_zone = src_zone_tol_3d_of(&k, Some(&cc));
+        let working = &geometry.source;
+        let mut kept = None;
+        let (mut hits, mut reused) = (0, 0);
+        for (i, target) in geometry.targets.iter().enumerate() {
+            let interval = target.natural_interval();
+            let edge = BoundaryEdge {
+                edge: E::Edge(i),
+                curve: E::Target(i),
+                interval,
+                face_gap: None,
+                zone_tol_3d: 1e-6,
+            };
+            let solve = |cache: &mut Option<CurveCache<Side>>| {
+                cc.edge_solutions(
+                    &k,
+                    &geometry,
+                    working,
+                    E::Source,
+                    source_zone,
+                    &edge,
+                    IntersectEdgesOptions::default(),
+                    cache,
+                )
+                .unwrap()
+            };
+            let fresh = solve(&mut None);
+            if kept.is_some() {
+                reused += 1;
+            }
+            let with_kept = solve(&mut kept);
+            assert!(kept.is_some());
+            assert_eq!(format!("{with_kept:?}"), format!("{fresh:?}"), "edge {i}");
+            if !with_kept.0.is_empty() {
+                hits += 1;
+                kept = None;
+            }
+        }
+        assert_eq!(hits, 3);
+        assert!(reused >= 3);
     }
 }

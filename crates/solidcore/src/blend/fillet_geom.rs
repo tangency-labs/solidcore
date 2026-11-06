@@ -12,3 +12,8 @@ pub mod p3;
 pub mod p4;
 pub mod p5;
 pub mod p6;
+pub mod surface_plane_curve;
+pub mod tangent_end_rib;
+
+// Supported public paths; numbered modules are implementation partitions.
+pub use p1::{FilletCornerType, FilletErrorType};

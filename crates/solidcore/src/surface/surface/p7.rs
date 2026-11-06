@@ -37,10 +37,6 @@
 //! | [`good_drop_result`]                              | `sm_GoodDropResult` (static)                     |
 //!
 //! Deviations:
-//! - **Face tolerance of `IsPlanar`.** The B-spline, revolution and cone boxes are
-//!   expanded by the face tolerance the B-rep cached on the surface
-//!   ([`Surface::owner_zone_tol_3d`]). A face-owned surface without it returns
-//!   [`SolidError::Unported`] (`SmFace::GetTolerance`).
 //! - **Generic bodies.** The `SmSurface` bodies that only call the evaluation virtuals
 //!   (`Evaluate`, `EvaluatePoint`, `GetNaturalUVDomain`) are generic over
 //!   [`SurfaceEvaluate`], so a caller holding a bare [`BSplineSurface`] (which does not
@@ -61,16 +57,37 @@
 //!   `pSurfaceNode->GetOwnerObject()`) instead of the node and the unused patch.
 //!   `LocalCurveSolve`'s `cpdOptTargetDistance` (`NotUsed` upstream) and
 //!   `CreateParallelProjectionCurves`' context are dropped.
+//! - **A blend's net for averages (#2510).** `ApproxDerivativeLengths`, an average that
+//!   scales tolerances, evaluates a procedural blend as its certified net
+//!   ([`crate::surface::procedural_blend::NetScope::new`]).
 //! - **Debug-only work** compiled out of the release build (drawing, dumps, the
 //!   `SM_ASSERT`s, `EvaluateNormal`'s static list of bad surfaces) is not ported, nor
 //!   is `FindDegenParamForDirection`'s angle bookkeeping (`dBestRad`,
 //!   `dNearBestRad`: computed in release builds but never read).
 //! - **Upstream quirks kept:** `GetFlatCorners` masks its return value with `&=` while
-//!   filling the corner points; `SmSSGlobalSolver::BranchMayContainAnswers` returns
+//!   filling the corner points (the opt-in `Kernel::fixes.flat_corners_test_bits` tests each
+//!   bit instead, WR-384); `SmSSGlobalSolver::BranchMayContainAnswers` returns
 //!   `SM_SUCCESS` (that is, `FALSE`) for a node outside its face and `NER`'s status
 //!   (non-zero: `TRUE`) for a missing patch; `sm_GoodDropResult` compares the guess and
-//!   result distances with swapped names; `FindDegenParamForDirection` compares a
-//!   sample fraction with the parameter `dS`.
+//!   result distances with swapped names (the opt-in
+//!   `Kernel::fixes.good_drop_result_distances_in_order` compares them the right way round
+//!   and takes a foot only at the local solve's tight tolerance, WR-56); `FindDegenParamForDirection` compares a sample fraction with the parameter
+//!   `dS` (the opt-in `Kernel::fixes.degen_param_tiebreak_uses_actual_param` compares the
+//!   mapped singular parameter `s_ivl.evaluate(...)` instead, WR-57).
+//! - **Projection curve class.** `CreateParallelProjectionCurves` takes a [`Curve`] for
+//!   upstream's `const SmBSplineCurve&`; a curve outside the `SmBSplineCurve` classes
+//!   (B-spline, line, ellipse, hyperbola, parabola), which upstream's type rules out,
+//!   is `SM_ERR_INVALID_INPUT` before the sweep.
+//! - **Projection approximation tolerance (HANG-32).** The public
+//!   `CreateParallelProjectionCurves` refuses a supplied approximation tolerance that
+//!   is not finite, positive and normal before preparing the cache or geometry. The
+//!   C++ reference is reported to run for more than 15 minutes on the smallest
+//!   subnormal (the looping routine was not located), and the FFI already refuses such
+//!   inputs. `None` and every finite positive normal value are accepted, with no upper
+//!   cap. This is a deterministic early public-API contract, not a claim that the Rust
+//!   solver would otherwise fail to terminate: its global solves are bounded
+//!   ([`crate::geom::global_solver::MAX_SOLVE_DEPTH`] /
+//!   [`crate::geom::global_solver::MAX_SOLVE_BRANCHES`]).
 //! - **`GlobalPointSolve_0`** takes the kernel and the surface's handle `surface: O`
 //!   (the cache's owner object and the solutions' object), as `GlobalLineIntersect`
 //!   does; it and `SmSPGlobalSolver::BranchMayContainAnswers` (which reads the cache
@@ -86,14 +103,25 @@
 //!   `EvaluateSTEP`, `GetFace` and the base `CalculateBoundingBox`
 //!   (`surface.surface_p1`; the solver constructors also hand over the caches holding
 //!   the patch data of tree nodes).
+//! - **No evidence (WR-663).** With the opt-in `Kernel::fixes.query_statuses_pass_on`,
+//!   `IsClosed` is `false` when an end, the continuity, the mid derivatives or the
+//!   Frenet frame cannot be evaluated, and the base `IsPlanar` is `false` without its
+//!   box, as the fork (tangency-labs/smlib 21dcf69). The same flag passes on the other
+//!   statuses this file's functions drop and gives their soft answers (the convergence
+//!   tests, `sm_GoodDropResult`, `ApproxDerivativeLengths`, `FindDegenParamForDirection`,
+//!   `sm_CheckSeamDrop`, `sm_LoadGuesses`), as do the other `surface::surface` files
+//!   (`plan/upstream-issues/WR-663--addendum-2026-10-31-surface-statuses.md`).
 
-use crate::curve::curve::Curve;
-use crate::error::{ignored, Result, SolidError};
+use crate::curve::curve::{Curve, CurveKind};
+use crate::error::{
+    ignore_or_pass_on, ignore_status, ignored, ignored_or_pass_on, passed_on, Result, SolidError,
+};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent1d::ExtentNd;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::geom_utility::p2::{
-    evaluate_curve_continuity, frenet_from_derivatives, ContinuityType, CurveEval,
+    evaluate_curve_continuity_with, frenet_from_derivatives, ContinuityOptions, ContinuityType,
+    CurveEval,
 };
 use crate::geom::global_solver::{
     Branch, GlobalSolve, GlobalSolver, PreferredSolution, SolutionPairType, SolutionRequested,
@@ -107,13 +135,16 @@ use crate::geom::tree::{AuxDataType, Tree};
 use crate::geom::vector2d::Vec2;
 use crate::geom::vector3d::sqrt as sm_sqrt;
 use crate::kernel::Kernel;
-use crate::math::{max2, Point2, Point3, Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT};
+use crate::math::{
+    max2, Point2, Point3, Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, UNDEF_DOUBLE,
+};
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::{
     BSplineSurface, BoundingBoxRequest, LocationType, SurfParamType,
 };
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use crate::nurbs::knots::Side;
+use crate::surface::procedural_blend::NetScope;
 use crate::surface::surface_cache::SurfaceCache;
 use crate::topology::BrepId;
 
@@ -237,7 +268,7 @@ pub fn base_evaluate_normal<S: SurfaceEvaluate + ?Sized>(
         }
     }
 
-    let uv_domain = surface.natural_uv_domain();
+    let uv_domain = surface.natural_uv_domain_with_nurb(k)?;
     let mut step = 1.0e-8;
 
     // First check for the parallel-derivatives case (the lengths of the
@@ -327,7 +358,12 @@ pub fn base_evaluate_normal<S: SurfaceEvaluate + ?Sized>(
                     // They both produced non-zero normals.
                     norm2 /= len;
                     normal = 2.0 * norm1 - norm2; // Linear extrapolation.
-                    normal = normal.unitize_or_z();
+                                                  // (passed on with the opt-in fix, WR-663, tangency-labs/smlib 21dcf69)
+                    normal = if k.fixes.query_statuses_pass_on {
+                        normal.unitize()?
+                    } else {
+                        normal.unitize_or_z()
+                    };
                 }
 
                 return Ok(normal);
@@ -514,7 +550,8 @@ pub fn base_evaluate_normal<S: SurfaceEvaluate + ?Sized>(
 /// # Errors
 ///
 /// [`SolidError::Unported`] from the surface's evaluation; those of
-/// `smgu_EvaluateCurveContinuity` (see the module docs).
+/// `smgu_EvaluateCurveContinuity` (see the module docs; WR-380's opt-in G2 test from
+/// `Kernel::fixes.geometric_g2_continuity`).
 pub fn base_is_closed<S: SurfaceEvaluate + ?Sized>(
     k: &Kernel,
     surface: &S,
@@ -524,6 +561,9 @@ pub fn base_is_closed<S: SurfaceEvaluate + ?Sized>(
     want_continuity: bool,
 ) -> Result<(bool, Option<ContinuityType>)> {
     let discontinuous = want_continuity.then_some(ContinuityType::Discontinuous);
+    // with the opt-in fix a surface that cannot be evaluated is not shown closed
+    // (tangency-labs/smlib 21dcf69)
+    let not_shown = k.fixes.query_statuses_pass_on;
 
     // locals
     let count = if param == SurfParamType::Both { 2 } else { 1 };
@@ -586,32 +626,40 @@ pub fn base_is_closed<S: SurfaceEvaluate + ?Sized>(
 
             // evaluate isoParameter endPoints
             if want_continuity {
-                if let Some(d) = ignored(evaluate_2nd_derivatives(
+                match ignored(evaluate_2nd_derivatives(
                     k,
                     surface,
                     uv_min,
                     Side::Left,
                     Side::Left,
                 ))? {
-                    d2_min = d;
+                    Some(d) => d2_min = d,
+                    None if not_shown => return Ok((false, discontinuous)),
+                    None => (),
                 }
-                if let Some(d) = ignored(evaluate_2nd_derivatives(
+                match ignored(evaluate_2nd_derivatives(
                     k,
                     surface,
                     uv_max,
                     Side::Left,
                     Side::Left,
                 ))? {
-                    d2_max = d;
+                    Some(d) => d2_max = d,
+                    None if not_shown => return Ok((false, discontinuous)),
+                    None => (),
                 }
                 p_min = d2_min.point;
                 p_max = d2_max.point;
             } else {
-                if let Some(p) = ignored(surface.evaluate_point(k, uv_min))? {
-                    p_min = p;
+                match ignored(surface.evaluate_point(k, uv_min))? {
+                    Some(p) => p_min = p,
+                    None if not_shown => return Ok((false, discontinuous)),
+                    None => (),
                 }
-                if let Some(p) = ignored(surface.evaluate_point(k, uv_max))? {
-                    p_max = p;
+                match ignored(surface.evaluate_point(k, uv_max))? {
+                    Some(p) => p_max = p,
+                    None if not_shown => return Ok((false, discontinuous)),
+                    None => (),
                 }
             }
 
@@ -633,7 +681,7 @@ pub fn base_is_closed<S: SurfaceEvaluate + ?Sized>(
                     } else {
                         (d2_min.dv, d2_min.dvv, d2_max.dv, d2_max.dvv)
                     };
-                let curve_continuity = evaluate_curve_continuity(
+                let curve_continuity = match evaluate_curve_continuity_with(
                     &CurveEval {
                         position: p_min,
                         first: first_min,
@@ -647,7 +695,15 @@ pub fn base_is_closed<S: SurfaceEvaluate + ?Sized>(
                         third: None,
                     },
                     CONTINUITY_ANGLE,
-                )?;
+                    &ContinuityOptions {
+                        geometric_g2: k.fixes.geometric_g2_continuity,
+                    },
+                ) {
+                    Err(e) if not_shown && !e.is_unported_or_cancelled() => {
+                        return Ok((false, discontinuous))
+                    }
+                    r => r?,
+                };
 
                 // save lowest found continuity
                 if (min_continuity as i32) > (curve_continuity as i32) {
@@ -658,7 +714,7 @@ pub fn base_is_closed<S: SurfaceEvaluate + ?Sized>(
             // extra test
             if (min_continuity as i32) > (ContinuityType::Discontinuous as i32) {
                 // filter out very short curve passing as closed curves
-                if let Some(d) = ignored(evaluate_directional_derivs(
+                match ignored(evaluate_directional_derivs(
                     k,
                     surface,
                     uv_mid,
@@ -667,9 +723,13 @@ pub fn base_is_closed<S: SurfaceEvaluate + ?Sized>(
                     Side::Left,
                     Side::Left,
                 ))? {
-                    for (dst, src) in p_mid.iter_mut().zip(d) {
-                        *dst = src;
+                    Some(d) => {
+                        for (dst, src) in p_mid.iter_mut().zip(d) {
+                            *dst = src;
+                        }
                     }
+                    None if not_shown => return Ok((false, discontinuous)),
+                    None => (),
                 }
 
                 let p_mid0 = p_mid.first().copied().unwrap_or(Vec3::UNDEF);
@@ -686,6 +746,8 @@ pub fn base_is_closed<S: SurfaceEvaluate + ?Sized>(
                         for (dst, src) in g_mid.iter_mut().zip(g) {
                             *dst = src;
                         }
+                    } else if not_shown {
+                        return Ok((false, discontinuous));
                     } else {
                         for (dst, src) in g_mid.iter_mut().zip(p_mid.iter().take(2)) {
                             *dst = *src;
@@ -776,12 +838,14 @@ impl Surface {
         u_side: Side,
         v_side: Side,
     ) -> Result<Vec3> {
-        match self.kind() {
+        match self.kind_with_nurb(k)? {
             // SmSphere::EvaluateNormal (the side flags are not used)
             SurfaceKind::Sphere(s) => s.evaluate_normal(uv),
             SurfaceKind::Cone(_)
             | SurfaceKind::Torus(_)
             | SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::SurfOfRevolution(_)
             | SurfaceKind::SurfOfExtrusion(_)
             | SurfaceKind::Step(_) => base_evaluate_normal(k, self, uv, u_side, v_side),
@@ -821,6 +885,8 @@ impl Surface {
             SurfaceKind::Cone(_)
             | SurfaceKind::Torus(_)
             | SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::SurfOfRevolution(_)
             | SurfaceKind::SurfOfExtrusion(_)
@@ -834,7 +900,8 @@ impl Surface {
 
     /// Whether the surface is planar within `tol_3d`, with a plane point, unit normal
     /// and the largest deviation seen (`IsPlanar`, virtual): a plane always is; the
-    /// others test the pseudo box of `CalculateBoundingBox` over the natural domain.
+    /// others test the pseudo box of `CalculateBoundingBox` over the natural domain,
+    /// not expanded by the zone tolerance.
     ///
     /// # Errors
     ///
@@ -843,7 +910,9 @@ impl Surface {
     /// of an offset surface's bounding box (its other failures are ignored, as
     /// upstream).
     pub fn is_planar(&self, k: &Kernel, tol_3d: f64) -> Result<Planar> {
-        match self.kind() {
+        // the unpadded box: the zone-tolerance padding made flat surfaces fail small
+        // tolerances
+        match self.kind_with_nurb(k)? {
             SurfaceKind::Plane(p) => {
                 let (point, normal, deviation) = p.is_planar();
                 Ok(Planar {
@@ -854,45 +923,66 @@ impl Surface {
                 })
             }
             SurfaceKind::BSpline(s) => {
-                // the box expansion uses the owning face's tolerance, as cached on the
-                // surface by its B-rep (UNPORTED(topology.face_p2): SmFace::GetTolerance
-                // for a bare face handle without it)
-                let face_tol = self.face_zone_tol_3d()?;
-                Ok(planar_of(k, s, &self.natural_uv_domain(), face_tol)?.is_planar(tol_3d))
+                Ok(planar_of(k, s, &self.natural_uv_domain_with_nurb(k)?)?.is_planar(tol_3d))
+            }
+            SurfaceKind::BallPatch(s) => {
+                Ok(planar_of(k, s.net(), &self.natural_uv_domain_with_nurb(k)?)?.is_planar(tol_3d))
+            }
+            // SmSurface::IsPlanar on the blend's own (virtual) CalculateBoundingBox: the
+            // net's pseudo box grown by the bound; a box that fails is not planar (the
+            // fork's IsPlanar, the only one a blend meets)
+            SurfaceKind::ProceduralBlend(pb) => {
+                let req = BoundingBoxRequest {
+                    normal: false,
+                    pseudo: true,
+                    polar: false,
+                    pseudo_guess: None,
+                    polar_guess: None,
+                    expand_by_zone_tol: false,
+                    expand_tolerance: None,
+                };
+                let domain = self.natural_uv_domain_with_nurb(k)?;
+                let boxed = ignored(pb.calculate_bounding_box(k, &domain, &req, self))?
+                    .and_then(|b| b.pseudo);
+                let shown = boxed.is_some();
+                let mut planar = boxed.unwrap_or_else(PseudoBox::new).is_planar(tol_3d);
+                if !shown {
+                    planar.is_planar = false;
+                }
+                Ok(planar)
             }
             // SmSurfOfRevolution (and SmCone, SmSphere, SmTorus) inherit
-            // SmBSplineSurface::CalculateBoundingBox:
-            // the face's cached tolerance, as for the B-spline (UNPORTED(topology.face_p2):
-            // SmFace::GetTolerance for a bare face handle without it)
+            // SmBSplineSurface::CalculateBoundingBox
             SurfaceKind::Cone(s) => {
-                let face_tol = self.face_zone_tol_3d()?;
                 Ok(
-                    planar_of(k, s.rev().base(), &self.natural_uv_domain(), face_tol)?
+                    planar_of(k, s.rev().base(), &self.natural_uv_domain_with_nurb(k)?)?
                         .is_planar(tol_3d),
                 )
             }
             SurfaceKind::Sphere(s) => {
-                let face_tol = self.face_zone_tol_3d()?;
                 Ok(
-                    planar_of(k, s.base().base(), &self.natural_uv_domain(), face_tol)?
+                    planar_of(k, s.base().base(), &self.natural_uv_domain_with_nurb(k)?)?
                         .is_planar(tol_3d),
                 )
             }
             SurfaceKind::Torus(s) => {
-                let face_tol = self.face_zone_tol_3d()?;
                 Ok(
-                    planar_of(k, s.base().base(), &self.natural_uv_domain(), face_tol)?
+                    planar_of(k, s.base().base(), &self.natural_uv_domain_with_nurb(k)?)?
                         .is_planar(tol_3d),
                 )
             }
             SurfaceKind::SurfOfRevolution(s) => {
-                let face_tol = self.face_zone_tol_3d()?;
-                Ok(planar_of(k, s.base(), &self.natural_uv_domain(), face_tol)?.is_planar(tol_3d))
+                Ok(
+                    planar_of(k, s.base(), &self.natural_uv_domain_with_nurb(k)?)?
+                        .is_planar(tol_3d),
+                )
             }
             // (and SmSurfOfExtrusion)
+            // (`CalculateBoundingBox`'s `GetOrCreateGwNurbPointer` makes a recognised
+            // extrusion's NURB)
             SurfaceKind::SurfOfExtrusion(s) => {
-                let face_tol = self.face_zone_tol_3d()?;
-                Ok(planar_of(k, s.base(), &self.natural_uv_domain(), face_tol)?.is_planar(tol_3d))
+                let base = s.base_with_nurb(k)?;
+                Ok(planar_of(k, &base, &self.natural_uv_domain_with_nurb(k)?)?.is_planar(tol_3d))
             }
             // SmSurface body: use the virtual box and ignore ordinary failures,
             // which leave the default pseudo box. The kernel is available here.
@@ -902,13 +992,21 @@ impl Surface {
             | SurfaceKind::SrfInVolume(_) => {
                 let pseudo = ignored(self.calculate_bounding_box(
                     k,
-                    &self.natural_uv_domain(),
+                    &self.natural_uv_domain_with_nurb(k)?,
                     [false, true, false],
-                    true,
-                ))?
-                .and_then(|b| b.pseudo_box)
-                .unwrap_or_else(PseudoBox::new);
-                Ok(pseudo.is_planar(tol_3d))
+                    false,
+                ))?;
+                // with the opt-in fix a surface that cannot be boxed is not shown planar
+                // (tangency-labs/smlib 21dcf69)
+                let not_shown = pseudo.is_none() && k.fixes.query_statuses_pass_on;
+                let pseudo = pseudo
+                    .and_then(|b| b.pseudo_box)
+                    .unwrap_or_else(PseudoBox::new);
+                let mut planar = pseudo.is_planar(tol_3d);
+                if not_shown {
+                    planar.is_planar = false;
+                }
+                Ok(planar)
             }
         }
     }
@@ -925,6 +1023,9 @@ impl Surface {
             return Ok(None);
         }
         // UNPORTED(topology.face_p4): SmFace::GetBrep
+        // Proof (unreachable): no library caller; a surface's owner is an `ObjectRef`
+        // key, which cannot reach the face's arena. Code holding the face holds its
+        // `Brep` (the arena is the B-rep), so it never asks the surface.
         Err(SolidError::unported("SmFace::GetBrep", "topology.face_p4"))
     }
 
@@ -945,7 +1046,7 @@ impl Surface {
         let mut points = want_points.then_some([Vec3::UNDEF; 4]);
 
         // locals
-        let d = self.natural_uv_domain();
+        let d = self.natural_uv_domain_with_nurb(k)?;
         let corners = [
             Point2::new(d.u_min(), d.v_min()),
             Point2::new(d.u_min(), d.v_max()),
@@ -961,11 +1062,18 @@ impl Surface {
             }
         }
 
-        // optional output (upstream masks the return value while testing)
+        // optional output (upstream masks the return value while testing: `if (lRtn &=
+        // bit)`; the opt-in `Kernel::fixes.flat_corners_test_bits` tests each bit, WR-384)
+        let test_bits = k.fixes.flat_corners_test_bits;
         if let Some(pts) = points.as_mut() {
             for ((c, bit), p) in corners.iter().zip(FLAT_CORNER_BITS).zip(pts.iter_mut()) {
-                rtn &= bit;
-                if rtn != 0 {
+                let flat = if test_bits {
+                    rtn & bit
+                } else {
+                    rtn &= bit;
+                    rtn
+                };
+                if flat != 0 {
                     if let Some(v) = ignored(self.evaluate_point(k, *c))? {
                         *p = v;
                     }
@@ -979,6 +1087,12 @@ impl Surface {
     /// Slides `uv` along a degenerate boundary (singular in `singular_dir`) to where
     /// the non-singular tangent best matches `dir` (`FindDegenParamForDirection`):
     /// samples ten parameters, then runs a Newton solve from the best one.
+    ///
+    /// In the near-equal starting-guess tie-break, upstream compares the `[0, 1]`
+    /// sample fractions `dThisParam` and `dNearBestParam` directly against the input
+    /// singular parameter `dS`; with
+    /// `Kernel::fixes.degen_param_tiebreak_uses_actual_param` (WR-57) it compares the
+    /// mapped singular parameters in `s_ivl` instead.
     ///
     /// # Errors
     ///
@@ -999,19 +1113,22 @@ impl Surface {
         let mut s_dir = dir.unitize()?;
 
         // locals
-        let domain = self.natural_uv_domain();
+        let domain = self.natural_uv_domain_with_nurb(k)?;
         let uv_min = domain.min();
         let uv_max = domain.max();
         let mut s_ivl = Extent1d::new();
         let mut t_ivl = Extent1d::new();
         let singular_u = singular_dir == SurfParamType::U;
+        // (the statuses SMLib drops here are passed on with the opt-in fix, WR-663,
+        // tangency-labs/smlib 21dcf69)
+        let pass = k.fixes.query_statuses_pass_on;
         let (ds, dt) = if singular_u {
-            ignored(s_ivl.set_min_max(uv_min.x, uv_max.x))?;
-            ignored(t_ivl.set_min_max(uv_min.y, uv_max.y))?;
+            ignore_or_pass_on(s_ivl.set_min_max(uv_min.x, uv_max.x), pass)?;
+            ignore_or_pass_on(t_ivl.set_min_max(uv_min.y, uv_max.y), pass)?;
             (uv.x, uv.y)
         } else {
-            ignored(s_ivl.set_min_max(uv_min.y, uv_max.y))?;
-            ignored(t_ivl.set_min_max(uv_min.x, uv_max.x))?;
+            ignore_or_pass_on(s_ivl.set_min_max(uv_min.y, uv_max.y), pass)?;
+            ignore_or_pass_on(t_ivl.set_min_max(uv_min.x, uv_max.x), pass)?;
             (uv.y, uv.x)
         };
 
@@ -1055,11 +1172,20 @@ impl Surface {
                 at(&m, 0, 1)?
             } else {
                 at(&m, 1, 0)?
-            }
-            .unitize_or_z();
+            };
+            let surf_dt = if pass {
+                surf_dt.unitize()?
+            } else {
+                surf_dt.unitize_or_z()
+            };
 
             // measure how closely test point dir is to target dir
             let this_f = surf_dt.dot(s_dir);
+            // (upstream's `AngleBetween` is for debugging only; its status is passed on
+            // with the opt-in fix)
+            if pass {
+                surf_dt.angle_between(s_dir)?;
+            }
 
             // save the best sample point
             if this_f > best_f {
@@ -1068,9 +1194,14 @@ impl Surface {
             }
 
             // for nearly equal starting guesses - save the one nearest the input value
+            // (WR-57: pinned C++ compares the [0, 1] fraction directly against `ds`)
+            let (cand_s, near_best_s) = if k.fixes.degen_param_tiebreak_uses_actual_param {
+                (s_ivl.evaluate(this_param), s_ivl.evaluate(near_best_param))
+            } else {
+                (this_param, near_best_param)
+            };
             if this_f > near_best_f - f_tol
-                && (this_f > near_best_f + f_tol
-                    || (this_param - ds).abs() < (near_best_param - ds).abs())
+                && (this_f > near_best_f + f_tol || (cand_s - ds).abs() < (near_best_s - ds).abs())
             {
                 near_best_f = this_f;
                 near_best_param = this_param;
@@ -1100,16 +1231,19 @@ impl Surface {
         };
         let mut found_param = near_best_param;
         if !found {
-            if let Some((f, t)) = ignored(singular_param_solve(
-                k,
-                self,
-                uv,
-                s_dir,
-                singular_dir,
-                &s_ivl,
-                s_ivl.evaluate(best_param),
-                tol,
-            ))? {
+            if let Some((f, t)) = ignored_or_pass_on(
+                singular_param_solve(
+                    k,
+                    self,
+                    uv,
+                    s_dir,
+                    singular_dir,
+                    &s_ivl,
+                    s_ivl.evaluate(best_param),
+                    tol,
+                ),
+                pass,
+            )? {
                 found = f;
                 found_t = t;
             }
@@ -1156,8 +1290,56 @@ impl Surface {
         opt_target_distance: Option<f64>,
         requested: SolutionRequested,
     ) -> Result<SolutionArray<O>> {
+        self.global_point_solve_0_in(
+            k,
+            surface,
+            None,
+            None,
+            false,
+            uv_domain,
+            op,
+            test_point,
+            distance_tolerance,
+            opt_target_distance,
+            requested,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn global_point_solve_0_in<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        surface: O,
+        cache: Option<&SurfaceCache<O>>,
+        mut context: Option<&mut dyn SurfaceSolveContext<O>>,
+        point_test_off: bool,
+        uv_domain: &Extent2d,
+        op: SolverOperation,
+        test_point: Point3,
+        distance_tolerance: f64,
+        opt_target_distance: Option<f64>,
+        requested: SolutionRequested,
+    ) -> Result<SolutionArray<O>> {
         // get surface spatial decomposition tree from Surface's cache
-        let cache = self.solve_cache(k, surface, OP_SOLVE)?;
+        let mut owned;
+        let cache = if let Some(c) = cache {
+            if point_test_off {
+                owned = c.clone();
+                owned.point_test_enabled = false;
+                &owned
+            } else {
+                c
+            }
+        } else {
+            owned = match context.as_deref_mut() {
+                Some(ctx) => solve_surface_cache_with(k, self, Some(surface), ctx)?,
+                None => self.solve_cache(k, surface, OP_SOLVE)?,
+            };
+            if point_test_off {
+                owned.point_test_enabled = false;
+            }
+            &owned
+        };
         let surface_tree = cache.tree().ok_or(SolidError::null_pointer(OP_SOLVE))?;
 
         // put point into a single node PointTree
@@ -1165,7 +1347,10 @@ impl Surface {
 
         // instance global Surface/Point solver
         let mut gs = SpGlobalSolver::new(k, &point_tree, surface_tree, Some(self), *uv_domain);
-        gs.surface_cache = Some(&cache);
+        gs.surface_cache = Some(cache);
+        if let Some(ctx) = context.as_deref() {
+            gs.face_queries = ctx.face_queries();
+        }
 
         // init solver.dBestAnswerSoFarSq to properly handle SM_SR_SINGLE requests
         let best = point_solve_best_answer_sq(op, opt_target_distance)?;
@@ -1293,7 +1478,12 @@ impl Surface {
         let curve_cache = match crate::curve::curve::p5::make_curve_cache::<O>(k, curve, handles[0])
         {
             Ok(c) => c,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e)
+                if e.is_unported_or_cancelled()
+                    || matches!(e, SolidError::PreparationRequired { .. }) =>
+            {
+                return Err(e);
+            }
             Err(_) => return Err(SolidError::null_pointer(OP_SOLVE)),
         };
         let curve_tree = curve_cache
@@ -1313,13 +1503,14 @@ impl Surface {
         gs.surface_cache = Some(&surface_cache);
         if let Some(context) = context.as_deref() {
             gs.face_queries = context.face_queries();
-            gs.operands = Some(SolveOperands {
-                operands: [
-                    handles[0].map(|h| (h, OperandDomain::Curve(curve.natural_interval()))),
-                    handles[1].map(|h| (h, OperandDomain::Surface(self.natural_uv_domain()))),
-                ],
-            });
         }
+        let domain = self.natural_uv_domain_with_nurb(k)?;
+        gs.operands = Some(SolveOperands {
+            operands: [
+                handles[0].map(|h| (h, OperandDomain::Curve(curve.natural_interval()))),
+                handles[1].map(|h| (h, OperandDomain::Surface(domain))),
+            ],
+        });
 
         let best = pair_solve_best_answer_sq(op, opt_target_distance, false)?;
         if op == SolverOperation::AtDistance {
@@ -1502,13 +1693,17 @@ impl Surface {
         gs.caches = [Some(&cache1), Some(&cache2)];
         if let Some(context) = context.as_deref() {
             gs.face_queries = context.face_queries();
-            gs.operands = Some(SolveOperands {
-                operands: [
-                    handles[0].map(|h| (h, OperandDomain::Surface(self.natural_uv_domain()))),
-                    handles[1].map(|h| (h, OperandDomain::Surface(other.natural_uv_domain()))),
-                ],
-            });
         }
+        let (domain, other_domain) = (
+            self.natural_uv_domain_with_nurb(k)?,
+            other.natural_uv_domain_with_nurb(k)?,
+        );
+        gs.operands = Some(SolveOperands {
+            operands: [
+                handles[0].map(|h| (h, OperandDomain::Surface(domain))),
+                handles[1].map(|h| (h, OperandDomain::Surface(other_domain))),
+            ],
+        });
 
         let best = pair_solve_best_answer_sq(op, opt_target_distance, true)?;
         if op == SolverOperation::AtDistance {
@@ -1630,19 +1825,24 @@ impl Surface {
     /// between the curve's and the surface's boxes, the sweep then moved back by half
     /// to run both ways), through `SmAdvSurfaceIntersector::DoIntersection`. Returns
     /// the 3D curves and their UV curves on this surface (`None` for a `NULL` entry).
-    /// The surface and curve continuity checks only report.
+    /// The surface and curve continuity checks only report. `curve` is one of the
+    /// `SmBSplineCurve` classes (B-spline, line, ellipse, hyperbola, parabola): its
+    /// continuities, box and natural interval dispatch as upstream's virtuals, and the
+    /// sweep uses its NURB.
     ///
     /// # Errors
     ///
-    /// `SM_ERR_INVALID_INPUT` for a zero projection vector; `SM_ERR_NULL_POINTER`
-    /// without a surface cache; those of the continuities, the boxes, the sweep, its
-    /// move and the intersection; [`SolidError::Unported`] from unported callees of the
-    /// surface cache and the intersector.
+    /// `SM_ERR_INVALID_INPUT` for a zero projection vector, a supplied approximation
+    /// tolerance that is not finite, positive and normal (HANG-32), or a curve of
+    /// another class; `SM_ERR_NULL_POINTER` without a surface cache; those of the
+    /// continuities, the boxes, the sweep, its move and the intersection;
+    /// [`SolidError::Unported`] from unported callees of the surface cache and the
+    /// intersector.
     pub fn create_parallel_projection_curves(
         &self,
         k: &Kernel,
         uv_domain: &Extent2d,
-        curve: &BSplineCurve,
+        curve: &Curve,
         projection_vector: Vec3,
         opt_projection_distance: Option<f64>,
         opt_approx_tol_3d: Option<f64>,
@@ -1674,7 +1874,7 @@ impl Surface {
         &self,
         k: &Kernel,
         uv_domain: &Extent2d,
-        curve: &BSplineCurve,
+        curve: &Curve,
         projection_vector: Vec3,
         opt_projection_distance: Option<f64>,
         opt_approx_tol_3d: Option<f64>,
@@ -1699,7 +1899,7 @@ impl Surface {
         &self,
         k: &Kernel,
         uv_domain: &Extent2d,
-        curve: &BSplineCurve,
+        curve: &Curve,
         projection_vector: Vec3,
         opt_projection_distance: Option<f64>,
         opt_approx_tol_3d: Option<f64>,
@@ -1715,10 +1915,20 @@ impl Surface {
             return Err(SolidError::invalid_input(OP_PROJ, "zero projection vector"));
         }
 
+        // check input - a supplied approximation tolerance must be finite, positive and
+        // normal (HANG-32): a subnormal one spins the C++ projector, and the FFI already
+        // refuses it. Done before any cache or geometry preparation; `None` is unchanged.
+        if opt_approx_tol_3d.is_some_and(|t| !(t.is_finite() && t >= f64::MIN_POSITIVE)) {
+            return Err(SolidError::invalid_input(
+                OP_PROJ,
+                "approximation tolerance must be finite, positive and normal (HANG-32)",
+            ));
+        }
+
         // check state - internal surface continuities are better than C0 (NER; the
         // continuity is only reported)
         let ner = |e: SolidError| {
-            if e.is_unported() {
+            if e.is_unported_or_cancelled() {
                 e
             } else {
                 SolidError::null_pointer(OP_PROJ)
@@ -1728,10 +1938,10 @@ impl Surface {
             Some((context, handle)) => context
                 .build_surface_cache(k, self, *handle)
                 .map_err(ner)?
-                .surface_continuity(uv_domain)?,
+                .surface_continuity_with_kernel(k, uv_domain)?,
             None => super::p2::surface_cache::<()>(k, self, None)
                 .map_err(ner)?
-                .surface_continuity(uv_domain)?,
+                .surface_continuity_with_kernel(k, uv_domain)?,
         };
 
         // check state - internal curve continuities are better than C0 (only reported)
@@ -1752,7 +1962,7 @@ impl Surface {
                 polar: false,
             };
             let curve_box = curve
-                .calculate_bounding_box(&curve.natural_interval(), req)?
+                .calculate_bounding_box(k, &curve.natural_interval(), req, true)?
                 .normal
                 .unwrap_or_default();
             4.0 * curve_box.max_distance(&surf_box)
@@ -1761,8 +1971,32 @@ impl Surface {
         // sweep vector
         let sweep_vec = projection_vector.unitize()? * projection_distance;
 
-        // swept surface
-        let mut sweep_curve = curve.clone();
+        // swept surface (`const SmBSplineCurve&`: the class's NURB)
+        // (the analytic classes' own NURB, swept exactly with no knot fix-up; when it is
+        // missing, their virtual MakeNurb makes it on a copy)
+        let mut sweep_curve: BSplineCurve = match curve.kind() {
+            CurveKind::BSpline(c) => c.clone_exact(),
+            CurveKind::Line(c) => c.base_with_nurb()?.clone_exact(),
+            CurveKind::Ellipse(c) if c.base().gw_nurb().is_some() => c.base().clone_exact(),
+            CurveKind::Ellipse(c) => {
+                let mut c = c.clone();
+                ignore_status(c.make_nurb(k))?;
+                c.base().clone_exact()
+            }
+            CurveKind::Hyperbola(c) if c.base().gw_nurb().is_some() => c.base().clone_exact(),
+            CurveKind::Hyperbola(c) => {
+                let mut c = c.clone();
+                ignore_status(c.make_nurb(None))?;
+                c.base().clone_exact()
+            }
+            CurveKind::Parabola(c) if c.base().gw_nurb().is_some() => c.base().clone_exact(),
+            CurveKind::Parabola(c) => {
+                let mut c = c.clone();
+                ignore_status(c.make_nurb(None))?;
+                c.base().clone_exact()
+            }
+            _ => return Err(SolidError::invalid_input(OP_PROJ, "not an SmBSplineCurve")),
+        };
         let mut projection_surface = Surface::from(BSplineSurface::create_linear_sweep(
             &mut sweep_curve,
             sweep_vec,
@@ -1777,7 +2011,7 @@ impl Surface {
         }
 
         // intersection
-        let projection_domain = projection_surface.natural_uv_domain();
+        let projection_domain = projection_surface.natural_uv_domain_with_nurb(k)?;
         let x = match context {
             Some((context, handle)) => {
                 crate::intersect::surface_intersector::p5::do_intersection_with_context(
@@ -1815,26 +2049,20 @@ impl Surface {
 ///
 /// [`SolidError::Unported`] from the bounding box.
 pub fn b_spline_is_planar(k: &Kernel, s: &BSplineSurface, tol_3d: f64) -> Result<Planar> {
-    Ok(planar_of(k, s, &s.natural_uv_domain(), None)?.is_planar(tol_3d))
+    Ok(planar_of(k, s, &s.natural_uv_domain())?.is_planar(tol_3d))
 }
 
-/// The pseudo box of a B-spline surface over `uv_domain`, expanded by `face_tol` (the
-/// owning face's tolerance; `None` for `SM_ZONE_TOL_3D`); a failed box is the default
-/// box, as upstream ignores the status.
-fn planar_of(
-    k: &Kernel,
-    s: &BSplineSurface,
-    uv_domain: &Extent2d,
-    face_tol: Option<f64>,
-) -> Result<PseudoBox> {
+/// The pseudo box of a B-spline surface over `uv_domain`, not expanded by the zone
+/// tolerance; a failed box is the default box, as upstream ignores the status.
+fn planar_of(k: &Kernel, s: &BSplineSurface, uv_domain: &Extent2d) -> Result<PseudoBox> {
     let req = BoundingBoxRequest {
         normal: false,
         pseudo: true,
         polar: false,
         pseudo_guess: None,
         polar_guess: None,
-        expand_by_zone_tol: true,
-        expand_tolerance: face_tol,
+        expand_by_zone_tol: false,
+        expand_tolerance: None,
     };
     Ok(ignored(s.calculate_bounding_box(k, uv_domain, &req))?
         .and_then(|b| b.pseudo)
@@ -1882,12 +2110,12 @@ fn solve_surface_cache<O: SolutionObject>(
 ) -> Result<SurfaceCache<O>> {
     let mut cache = match super::p1::get_surface_cache(k, surface, handle) {
         Ok(c) => c,
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => return Err(SolidError::null_pointer(OP_SOLVE)),
     };
     match cache.get_tree(k) {
         Ok(_) => Ok(cache),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Err(SolidError::null_pointer(OP_SOLVE)),
     }
 }
@@ -1903,12 +2131,22 @@ fn solve_surface_cache_with<O: SolutionObject>(
 ) -> Result<SurfaceCache<O>> {
     let mut cache = match context.build_surface_cache(k, surface, handle) {
         Ok(c) => c,
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e)
+            if e.is_unported_or_cancelled()
+                || matches!(e, SolidError::PreparationRequired { .. }) =>
+        {
+            return Err(e);
+        }
         Err(_) => return Err(SolidError::null_pointer(OP_SOLVE)),
     };
     match cache.get_tree(k) {
         Ok(_) => Ok(cache),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e)
+            if e.is_unported_or_cancelled()
+                || matches!(e, SolidError::PreparationRequired { .. }) =>
+        {
+            Err(e)
+        }
         Err(_) => Err(SolidError::null_pointer(OP_SOLVE)),
     }
 }
@@ -1968,14 +2206,33 @@ pub fn approx_derivative_lengths<S: SurfaceEvaluate + ?Sized>(
     let mut mag_u = 0.0;
     let mut mag_v = 0.0;
     let mut d = (Vec3::UNDEF, Vec3::UNDEF, Vec3::UNDEF);
+    // with the opt-in fix the samples that evaluate are averaged, `SM_UNDEF_DOUBLE` when
+    // none does (WR-663, tangency-labs/smlib 21dcf69)
+    let only_evaluated = k.fixes.query_statuses_pass_on;
+    let mut num_evaluated: u32 = 0;
+    // an average, a scale for tolerances: a procedural blend's net answers it (#2510)
+    let _net = NetScope::new(k);
 
     for &si in &samples {
         for &sj in &samples {
             let uv = uv_domain.evaluate(si, sj);
-            eval_1st_keep(k, surface, uv, Side::Left, Side::Left, &mut d)?;
+            let evaluated = eval_1st_keep(k, surface, uv, Side::Left, Side::Left, &mut d)?;
+            if only_evaluated && !evaluated {
+                continue;
+            }
             mag_u += d.1.length();
             mag_v += d.2.length();
+            num_evaluated += 1;
         }
+    }
+
+    if only_evaluated {
+        if num_evaluated == 0 {
+            return Ok(Vec2::new(UNDEF_DOUBLE, UNDEF_DOUBLE));
+        }
+        mag_u /= f64::from(num_evaluated);
+        mag_v /= f64::from(num_evaluated);
+        return Ok(Vec2::new(mag_u, mag_v));
     }
 
     mag_u /= (NUM_SAMPLES * NUM_SAMPLES) as f64;
@@ -2002,7 +2259,8 @@ pub struct HigherOrderDerivs {
 ///
 /// # Errors
 ///
-/// Those of `Evaluate1stDerivatives`.
+/// Those of `Evaluate1stDerivatives` and of the natural domain (a lazy analytic
+/// surface makes its NURB first).
 pub fn compute_higher_order_derivs<S: SurfaceEvaluate + ?Sized>(
     k: &Kernel,
     surface: &S,
@@ -2012,7 +2270,7 @@ pub fn compute_higher_order_derivs<S: SurfaceEvaluate + ?Sized>(
     want_g4: bool,
 ) -> Result<HigherOrderDerivs> {
     // locals
-    let domain = surface.natural_uv_domain();
+    let domain = surface.natural_uv_domain_with_nurb(k)?;
 
     // finite difference step - watch for stepping out of surface boundaries
     let mut step = EFF_ZERO_SQRT / 1000.0; // 1.0e-9
@@ -2075,7 +2333,8 @@ pub fn compute_higher_order_derivs<S: SurfaceEvaluate + ?Sized>(
 ///
 /// # Errors
 ///
-/// Those of `Evaluate1stDerivatives`; the status of `Unitize` for a zero result.
+/// Those of `Evaluate1stDerivatives` and of the natural domain (a lazy analytic
+/// surface makes its NURB first); the status of `Unitize` for a zero result.
 pub fn compute_inward_vector<S: SurfaceEvaluate + ?Sized>(
     k: &Kernel,
     surface: &S,
@@ -2085,9 +2344,13 @@ pub fn compute_inward_vector<S: SurfaceEvaluate + ?Sized>(
     let (_, du, dv) = evaluate_1st_derivatives(k, surface, uv, Side::Left, Side::Left)?;
 
     // towards midPoint UV vec
-    let mid_uv = surface.natural_uv_domain().evaluate(0.5, 0.5);
+    let mid_uv = surface.natural_uv_domain_with_nurb(k)?.evaluate(0.5, 0.5);
     let dir_uv = mid_uv - uv;
-    let dir_uv = dir_uv.unitize().unwrap_or(dir_uv);
+    // (passed on with the opt-in fix, WR-663, tangency-labs/smlib 21dcf69)
+    let dir_uv = match passed_on(dir_uv.unitize(), k.fixes.query_statuses_pass_on)? {
+        Ok(d) => d,
+        Err(_) => dir_uv,
+    };
 
     // directional derivative
     let inward = dir_uv.x * du + dir_uv.y * dv;
@@ -2121,7 +2384,13 @@ pub fn drop_points_to_tangent_plane<S: SurfaceEvaluate + ?Sized>(
     let mut out = Vec::new();
     for p in points {
         let diff = *p - pnt;
-        if let Some(s) = ignored(drop_vectors(du, dv, &[diff]))?.and_then(|v| v.first().copied()) {
+        // (passed on with the opt-in fix, WR-663, tangency-labs/smlib 21dcf69)
+        if let Some(s) = ignored_or_pass_on(
+            drop_vectors(du, dv, &[diff]),
+            k.fixes.query_statuses_pass_on,
+        )?
+        .and_then(|v| v.first().copied())
+        {
             uv_step = s;
         }
         out.push(uv + uv_step);
@@ -2169,12 +2438,12 @@ pub fn load_guesses(
 
     // set gridSize = 1 for linear geometry (an SmBSplineSurface: B-splines and planes)
     let is_bss = surface.is_kind_of(BSplineSurface::TYPE)?;
-    let grid_u = if is_bss && surface.number_control_points(SurfParamType::U) == 2 {
+    let grid_u = if is_bss && surface.number_control_points(k, SurfParamType::U) == 2 {
         1
     } else {
         GRID_SIZE
     };
-    let grid_v = if is_bss && surface.number_control_points(SurfParamType::V) == 2 {
+    let grid_v = if is_bss && surface.number_control_points(k, SurfParamType::V) == 2 {
         1
     } else {
         GRID_SIZE
@@ -2200,8 +2469,11 @@ pub fn load_guesses(
         }
         None => false,
     };
+    // (the point evaluation's status is passed on with the opt-in fix, WR-663,
+    // tangency-labs/smlib 21dcf69)
+    let pass = k.fixes.query_statuses_pass_on;
     if !ok {
-        if let Some(p) = ignored(surface.evaluate_point(k, close_uv))? {
+        if let Some(p) = ignored_or_pass_on(surface.evaluate_point(k, close_uv), pass)? {
             pt = p;
         }
     }
@@ -2315,7 +2587,7 @@ pub fn load_guesses(
                 None => false,
             };
             if !ok {
-                if let Some(p) = ignored(surface.evaluate_point(k, uv))? {
+                if let Some(p) = ignored_or_pass_on(surface.evaluate_point(k, uv), pass)? {
                     pt = p;
                 }
             }
@@ -2354,17 +2626,27 @@ pub fn pass_sc_convergence_test<S: SurfaceEvaluate + ?Sized>(
     curve: &Curve,
     parameter: f64,
 ) -> Result<bool> {
+    // with the opt-in fix a point that cannot be evaluated is not shown converged
+    // (WR-663, tangency-labs/smlib 21dcf69)
+    let not_shown = k.fixes.query_statuses_pass_on;
+
     // surface eval
     let mut d = (Vec3::UNDEF, Vec3::UNDEF, Vec3::UNDEF);
-    eval_1st_keep(k, surface, uv, Side::Left, Side::Left, &mut d)?;
+    if !eval_1st_keep(k, surface, uv, Side::Left, Side::Left, &mut d)? && not_shown {
+        return Ok(false);
+    }
     let (pnt, mut du, mut dv) = d;
 
     // curve eval
     let mut pv = [Vec3::UNDEF, Vec3::UNDEF];
-    if let Some(v) = ignored(curve.evaluate(k, parameter, 1, true, true))? {
-        for (dst, src) in pv.iter_mut().zip(v) {
-            *dst = src;
+    match ignored(curve.evaluate(k, parameter, 1, true, true))? {
+        Some(v) => {
+            for (dst, src) in pv.iter_mut().zip(v) {
+                *dst = src;
+            }
         }
+        None if not_shown => return Ok(false),
+        None => (),
     }
     let [pv0, mut pv1] = pv;
 
@@ -2416,10 +2698,17 @@ where
     S1: SurfaceEvaluate + ?Sized,
     S2: SurfaceEvaluate + ?Sized,
 {
+    // with the opt-in fix a point that cannot be evaluated is not shown converged
+    // (WR-663, tangency-labs/smlib 21dcf69)
+    let not_shown = k.fixes.query_statuses_pass_on;
     let mut d1 = (Vec3::UNDEF, Vec3::UNDEF, Vec3::UNDEF);
-    eval_1st_keep(k, surface, uv, Side::Left, Side::Left, &mut d1)?;
+    if !eval_1st_keep(k, surface, uv, Side::Left, Side::Left, &mut d1)? && not_shown {
+        return Ok(false);
+    }
     let mut d2 = (Vec3::UNDEF, Vec3::UNDEF, Vec3::UNDEF);
-    eval_1st_keep(k, surface2, uv2, Side::Left, Side::Left, &mut d2)?;
+    if !eval_1st_keep(k, surface2, uv2, Side::Left, Side::Left, &mut d2)? && not_shown {
+        return Ok(false);
+    }
     let (pnt, mut du, mut dv) = d1;
     let (pnt2, mut du2, mut dv2) = d2;
     let mut diff = pnt - pnt2;
@@ -2476,11 +2765,18 @@ pub fn check_seam_drop<S: SurfaceEvaluate + ?Sized>(
     // pOther point is dropped onto a seam in pThis (evaluated in its STEP
     // parameterisation). Upstream ignores the status: on failure sPtDer keeps its
     // default-constructed (undefined) vectors.
-    let pt_der = ignored(evaluate_step(k, this_surf, this_uv))?
+    // (both statuses are passed on with the opt-in fix, WR-663, tangency-labs/smlib
+    // 21dcf69)
+    let pass = k.fixes.query_statuses_pass_on;
+    let pt_der = ignored_or_pass_on(evaluate_step(k, this_surf, this_uv), pass)?
         .unwrap_or_else(|| vec![vec![Vec3::UNDEF; 2]; 2]);
 
     let mut d = (Vec3::UNDEF, Vec3::UNDEF, Vec3::UNDEF);
-    eval_1st_keep(k, other_surf, other_uv, Side::Left, Side::Left, &mut d)?;
+    if pass {
+        d = evaluate_1st_derivatives(k, other_surf, other_uv, Side::Left, Side::Left)?;
+    } else {
+        eval_1st_keep(k, other_surf, other_uv, Side::Left, Side::Left, &mut d)?;
+    }
     let (_, other_u, other_v) = d;
 
     // Unitize them, so that dot-product comparisons mean direction only.
@@ -2531,6 +2827,14 @@ pub fn check_seam_drop<S: SurfaceEvaluate + ?Sized>(
 /// Whether a local point drop from `guess_uv` (solution value `sol_value` at
 /// `sol_uv`) converged well enough to skip the global solve (`sm_GoodDropResult`).
 ///
+/// Its last test, meant to refuse a result farther from the point than the guess,
+/// measures the two distances the wrong way round, as upstream; with
+/// `Kernel::fixes.good_drop_result_distances_in_order` (WR-56, the fork's
+/// tangency-labs/smlib@0b4de8c / eaa998a) it measures them the right way, and takes a
+/// result as the foot only when the gap's components along the unit tangents are
+/// within the local solve's tight tolerance `EFF_ZERO * (1 + max|P|)` (upstream: their
+/// sum under 1e-4, an interior result each under 1e-3).
+///
 /// # Errors
 ///
 /// Only [`SolidError::Unported`] (upstream ignores the evaluation statuses).
@@ -2560,15 +2864,30 @@ pub fn good_drop_result<S: SurfaceEvaluate + ?Sized>(
     }
 
     // Evaluate the error functions: how far from the surface normal.
+    // (with the opt-in fix a drop that cannot be evaluated is not shown good, WR-663,
+    // tangency-labs/smlib 21dcf69; the fork keeps the dropped `Unitize` statuses)
+    let not_shown = k.fixes.query_statuses_pass_on;
     let mut d = (Vec3::UNDEF, Vec3::UNDEF, Vec3::UNDEF);
-    eval_1st_keep(k, surface, result_uv, Side::Left, Side::Left, &mut d)?;
+    if !eval_1st_keep(k, surface, result_uv, Side::Left, Side::Left, &mut d)? && not_shown {
+        return Ok(false);
+    }
     let (srf_point, su, sv) = d;
     let su = su.unitize_or_z();
     let sv = sv.unitize_or_z();
     let gap = pt_to_drop - srf_point;
     let fu = gap.dot(su);
     let fv = gap.dot(sv);
-    if fu.abs() + fv.abs() < 0.0001 {
+    // Upstream takes any foot 1e-4 off along the surface (an interior one 1e-3 off in
+    // each direction). With the opt-in (tangency-labs/smlib@eaa998a, with the distance
+    // swap below), a foot is one the local solve converged to by its own tight
+    // tolerance, `LocalPointSolve_1`'s; a stalled solve goes to the global solve.
+    let (foot_tol, interior_tol) = if k.fixes.good_drop_result_distances_in_order {
+        let tight_tol = EFF_ZERO * (1.0 + pt_to_drop.max_dimension());
+        (tight_tol, tight_tol)
+    } else {
+        (0.0001, 0.001)
+    };
+    if fu.abs() + fv.abs() < foot_tol {
         return Ok(true);
     }
 
@@ -2581,7 +2900,7 @@ pub fn good_drop_result<S: SurfaceEvaluate + ?Sized>(
         if fu < -EFF_ZERO {
             return Ok(false);
         }
-    } else if fu.abs() > 0.001 {
+    } else if fu.abs() > interior_tol {
         return Ok(false); // interior, bad fcn value.
     }
 
@@ -2594,18 +2913,30 @@ pub fn good_drop_result<S: SurfaceEvaluate + ?Sized>(
         if fv < -EFF_ZERO {
             return Ok(false);
         }
-    } else if fv.abs() > 0.001 {
+    } else if fv.abs() > interior_tol {
         return Ok(false); // interior, bad fcn value.
     }
 
     // One more: if the solution 3d point is farther than the guess (upstream's names
     // are swapped).
     let mut guess_3d = Vec3::UNDEF;
-    if let Some(p) = ignored(surface.evaluate_point(k, guess_uv))? {
-        guess_3d = p;
+    match ignored(surface.evaluate_point(k, guess_uv))? {
+        Some(p) => guess_3d = p,
+        None if not_shown => return Ok(false),
+        None => (),
     }
-    let dsq_guess = pt_to_drop.distance_squared(srf_point);
-    let dsq_result = pt_to_drop.distance_squared(guess_3d);
+    let (dsq_guess, dsq_result) = if k.fixes.good_drop_result_distances_in_order {
+        // Not upstream (WR-56; tangency-labs/smlib@0b4de8c): each distance to its own point
+        (
+            pt_to_drop.distance_squared(guess_3d),
+            pt_to_drop.distance_squared(srf_point),
+        )
+    } else {
+        (
+            pt_to_drop.distance_squared(srf_point),
+            pt_to_drop.distance_squared(guess_3d),
+        )
+    };
     if dsq_result > dsq_guess {
         return Ok(false);
     }
@@ -2678,7 +3009,7 @@ impl<O: SolutionObject> SpGlobalSolver<'_, '_, O> {
                     for corner in patch.pseudo_box.corners() {
                         let vec = corner - test_pnt;
                         if vec.length_squared() > EFF_ZERO {
-                            tmp_polar.add_vector(vec, None);
+                            tmp_polar.add_vector_with_kernel(k, vec, None);
                         }
                     }
 
@@ -2757,9 +3088,9 @@ impl<O: SolutionObject> SsGlobalSolver<'_, '_, O> {
     ///
     /// # Errors
     ///
-    /// [`SolidError::Unported`] for two patch nodes when normalizing (the patch data
-    /// lives in the surface caches, which a `Tree` does not reach yet:
-    /// `surface.surface_cache_p1`).
+    /// [`SolidError::Unported`] for two patch nodes when normalizing without
+    /// [`SsGlobalSolver::caches`] (the patch data lives in the surface caches:
+    /// `surface.surface_cache_p1`); the production solve always sets them.
     pub fn may_contain_answers(&self, branch: &Branch) -> Result<bool> {
         let k = self.kernel;
         if self.base.operation == SolverOperation::Normalize {
@@ -2809,12 +3140,11 @@ impl<O: SolutionObject> SsGlobalSolver<'_, '_, O> {
                     return self.base.branch_may_contain_answers(branch);
                 }
                 // The patches (the nodes' m_pData) are SurfaceCache::patch(node) of the
-                // two surface caches. DISPATCH GAP: the constructor (SsGlobalSolver::new,
-                // surface::surface::p1) takes the trees as upstream does, and a Tree does
-                // not reach its cache; handing the caches over needs them mutable (the
-                // polar boxes are built lazily). No UNPORTED marker: the constructor is
-                // ported; the error names the owner of the patch data
-                // (surface.surface_cache_p1).
+                // two surface caches, which the branch above reads. Without them (a
+                // solver built without caches: tests and runners; the production SS
+                // solve, Surface::global_surface_solve_in here, always sets `caches`
+                // after SsGlobalSolver::new) the polar boxes are out of reach; the
+                // error names the owner of the patch data (surface.surface_cache_p1).
                 // (then sm_IsNodeValid of both nodes, returning SM_SUCCESS = FALSE when
                 // outside, ComputeConeBoundTo and the polar box cone tests)
                 return Err(SolidError::unported(
@@ -2923,6 +3253,7 @@ fn cs_normalize_local_solve(
         EFF_ZERO_SQ,
     );
     let mut solver = LocalSolveNd::new(&mut equations, Some(&bounds), Some(&periodicities));
+    solver.set_skips_failed_evaluations(k.fixes.oscillating_skips_failed_guesses);
     solver.set_boundary_handler(BoundaryHandler::TotalBoundaryHits, 5);
     let solution = solver.solve_it(guess, EFF_ZERO_SQRT)?;
     // No: see note in upstream [B234]: not found is not found, whatever the reason.
@@ -2932,13 +3263,350 @@ fn cs_normalize_local_solve(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::curve::hermite_curve::HermiteCurve;
     use crate::surface::plane::Plane;
+
+    fn issue_2009_kernels() -> (Kernel, Kernel) {
+        let off = Kernel::default();
+        let mut on = Kernel::default();
+        on.fixes.query_statuses_pass_on = true;
+        (off, on)
+    }
+
+    #[test]
+    fn issue_2009_unevaluable_samples_give_no_derivative_lengths() {
+        // tangency-labs/smlib 21dcf69 (ApproxDerivativeLengths): the samples that
+        // evaluate are averaged, SM_UNDEF_DOUBLE when none does. Upstream averages the
+        // unset derivatives.
+        let s = Surface::from(BSplineSurface::default());
+        let dom = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        let (off, on) = issue_2009_kernels();
+        let len_off = approx_derivative_lengths(&off, &s, &dom).unwrap();
+        let len_on = approx_derivative_lengths(&on, &s, &dom).unwrap();
+        assert_eq!(len_on, Vec2::new(UNDEF_DOUBLE, UNDEF_DOUBLE));
+        assert_ne!(len_off, len_on);
+    }
+
+    #[test]
+    fn issue_2009_unevaluable_points_are_not_shown_converged() {
+        // tangency-labs/smlib 21dcf69 (sm_PassSSConvergenceTest, sm_PassSCConvergenceTest):
+        // a point that cannot be evaluated is not shown converged. Upstream compares the
+        // unset values, which agree.
+        let s = Surface::from(BSplineSurface::default());
+        let uv = Point2::new(0.5, 0.5);
+        let (off, on) = issue_2009_kernels();
+        let ss_off = pass_ss_convergence_test(&off, &s, uv, &s, uv).unwrap();
+        let ss_on = pass_ss_convergence_test(&on, &s, uv, &s, uv).unwrap();
+        assert!(!ss_on);
+        assert!(ss_off);
+    }
+
+    #[test]
+    fn issue_2009_unevaluable_surface_is_not_shown_closed() {
+        // tangency-labs/smlib 21dcf69 (SmSurface::IsClosed): a surface that cannot be
+        // evaluated is not shown closed. Coverage only: upstream's unset ends coincide
+        // but its short-curve test then rejects them too.
+        let s = Surface::from(BSplineSurface::default());
+        let dom = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        assert!(s
+            .evaluate_point(&Kernel::default(), Point2::new(0.0, 0.0))
+            .is_err());
+        let off = Kernel::default();
+        let mut on = Kernel::default();
+        on.fixes.query_statuses_pass_on = true;
+        let closed_off = s
+            .is_closed(&off, &dom, SurfParamType::U, None, false)
+            .unwrap()
+            .0;
+        let closed_on = s
+            .is_closed(&on, &dom, SurfParamType::U, None, false)
+            .unwrap()
+            .0;
+        assert!(!closed_on);
+        assert!(!closed_off);
+    }
+
+    /// tangency-labs/solidcore#525 (WR-384): with the corner points wanted, upstream's
+    /// `if (lRtn &= bit)` clears the other corners' bits (4 flat corners come back as
+    /// none, with only the first point); the opt-in tests each bit.
+    #[test]
+    fn issue_525_flat_corners_keep_their_bits() {
+        let mut k = Kernel::default();
+        // a degenerate bilinear patch: every corner's derivatives are parallel
+        let s = Surface::from(
+            BSplineSurface::create_bilinear_surface(
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(2.0, 0.0, 0.0),
+                Vec3::new(3.0, 0.0, 0.0),
+            )
+            .unwrap(),
+        );
+        assert_eq!(s.flat_corners(&k, 1.0, false).unwrap().flags, 15);
+        let up = s.flat_corners(&k, 1.0, true).unwrap();
+        assert_eq!(up.flags, 0);
+        k.fixes.flat_corners_test_bits = true;
+        let fixed = s.flat_corners(&k, 1.0, true).unwrap();
+        assert_eq!(fixed.flags, 15);
+        assert!(fixed.points.unwrap().iter().all(|p| *p != Vec3::UNDEF));
+    }
 
     fn plane() -> Surface {
         Surface::from(Plane::from_normal(
             Vec3::new(0.0, 0.0, 1.0),
             Vec3::new(0.0, 0.0, 1.0),
         ))
+    }
+
+    #[test]
+    fn flat_corner_points_preserve_each_mask_bit() {
+        use crate::nurbs::math::{CPoint, NOW};
+
+        let mut k = Kernel::default();
+        k.fixes.flat_corners_test_bits = true;
+        // Only the lower/lower corner has nonzero parallel tangents. Reverse
+        // either control-net direction to exercise each of the four bits.
+        for reverse_u in [false, true] {
+            for reverse_v in [false, true] {
+                let mut net = vec![
+                    vec![
+                        CPoint::new(0.0, 0.0, 0.0, NOW),
+                        CPoint::new(1.0, 0.0, 0.0, NOW),
+                    ],
+                    vec![
+                        CPoint::new(2.0, 0.0, 0.0, NOW),
+                        CPoint::new(1.0, 1.0, 0.0, NOW),
+                    ],
+                ];
+                if reverse_u {
+                    net.reverse();
+                }
+                if reverse_v {
+                    for row in &mut net {
+                        row.reverse();
+                    }
+                }
+                let knots = [0.0, 0.0, 1.0, 1.0];
+                let s = Surface::from(
+                    BSplineSurface::from_data(1, 1, 1, 1, 3, 3, &net, &knots, &knots).unwrap(),
+                );
+                let index = usize::from(reverse_u) * 2 + usize::from(reverse_v);
+                let flags = 1 << index;
+                assert_eq!(s.flat_corners(&k, 1e-8, false).unwrap().flags, flags);
+                let result = s.flat_corners(&k, 1e-8, true).unwrap();
+                assert_eq!(result.flags, flags);
+                for (i, point) in result.points.unwrap().iter().enumerate() {
+                    assert_eq!(*point, if i == index { Vec3::ZERO } else { Vec3::UNDEF });
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn flat_corner_points_preserve_multiple_bits_and_regular_corners() {
+        use crate::nurbs::math::{CPoint, NOW};
+        let mut k = Kernel::default();
+        k.fixes.flat_corners_test_bits = true;
+        let net = vec![
+            vec![
+                CPoint::new(0.0, 0.0, 0.0, NOW),
+                CPoint::new(2.0, 0.0, 0.0, NOW),
+            ],
+            vec![
+                CPoint::new(1.0, 0.0, 0.0, NOW),
+                CPoint::new(3.0, 0.0, 0.0, NOW),
+            ],
+        ];
+        let knots = [0.0, 0.0, 1.0, 1.0];
+        let s = Surface::from(
+            BSplineSurface::from_data(1, 1, 1, 1, 3, 3, &net, &knots, &knots).unwrap(),
+        );
+        assert_eq!(s.flat_corners(&k, 1e-8, false).unwrap().flags, 15);
+        let result = s.flat_corners(&k, 1e-8, true).unwrap();
+        assert_eq!(result.flags, 15);
+        assert_eq!(
+            result.points.unwrap(),
+            [
+                Vec3::ZERO,
+                Vec3::new(2.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(3.0, 0.0, 0.0)
+            ]
+        );
+        assert_eq!(
+            plane().flat_corners(&k, 1e-8, true).unwrap(),
+            FlatCorners {
+                flags: 0,
+                points: Some([Vec3::UNDEF; 4])
+            }
+        );
+    }
+
+    /// WR-56 (#1852; the fork's tangency-labs/smlib@0b4de8c): the flat patch
+    /// (10 u, 10 v, 0) and the point (5, 5, 1), whose foot is (0.5, 0.5). A local result
+    /// 5e-4 along the patch from the foot passes every test before the last (the gap
+    /// along the patch is between 1e-4 and 1e-3); the last should take it when its guess
+    /// is farther from the point and refuse it when its guess is the foot itself.
+    #[test]
+    fn wr_56_good_drop_result_compares_the_right_distances() {
+        use crate::nurbs::math::{CPoint, NOW};
+
+        let net = vec![
+            vec![
+                CPoint::new(0.0, 0.0, 0.0, NOW),
+                CPoint::new(0.0, 10.0, 0.0, NOW),
+            ],
+            vec![
+                CPoint::new(10.0, 0.0, 0.0, NOW),
+                CPoint::new(10.0, 10.0, 0.0, NOW),
+            ],
+        ];
+        let knots = [0.0, 0.0, 1.0, 1.0];
+        let s = Surface::from(
+            BSplineSurface::from_data(1, 1, 1, 1, 3, 3, &net, &knots, &knots).unwrap(),
+        );
+        let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        let point = Point3::new(5.0, 5.0, 1.0);
+        let mut sol = SolutionEnd::new();
+        sol.solution_value = 1.0;
+        sol.parameters[0] = 0.500_05;
+        sol.parameters[1] = 0.5;
+        // the result is nearer the point than the guess (0.3, 0.5), farther than the
+        // guess (0.5, 0.5)
+        let nearer_guess = Point2::new(0.3, 0.5);
+        let foot_guess = Point2::new(0.5, 0.5);
+        let mut k = Kernel::default();
+        let good = |k: &Kernel, guess: Point2| {
+            good_drop_result(k, &s, &domain, point, guess, &sol).unwrap()
+        };
+        // upstream: the nearer result is refused, the farther one taken
+        assert!(!good(&k, nearer_guess));
+        assert!(good(&k, foot_guess));
+        // With the opt-in, a result 5e-4 off along the surface is not one the local
+        // solve converged to (tight tolerance 6e-12 here), whatever the guess
+        // (tangency-labs/smlib@eaa998a); the distance test is covered on the domain
+        // boundary by `issue_1852_good_drop_compares_the_actual_guess_distance`.
+        k.fixes.good_drop_result_distances_in_order = true;
+        assert!(!good(&k, nearer_guess));
+        assert!(!good(&k, foot_guess));
+    }
+
+    /// WR-56 (tangency-labs/smlib@eaa998a): with the opt-in, `sm_GoodDropResult` takes
+    /// a local result as the foot only when `|Fu| + |Fv|` is under the local solve's
+    /// tight tolerance `EFF_ZERO * (1 + max|P|)`, and refuses an interior result with
+    /// either component over it; upstream takes any foot whose components sum under
+    /// 1e-4 (and an interior one each under 1e-3). The point lies on the plane `d`
+    /// from the result along `S_u`; the guess is the result itself, so the distance
+    /// test never refuses.
+    #[test]
+    fn wr_56_good_drop_result_takes_only_a_tightly_converged_foot() {
+        let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        let s = Surface::from(Plane::from_normal(Point3::ZERO, Vec3::Z));
+        let mut k = Kernel::default();
+        let result_uv = Point2::new(0.5, 0.5);
+        let (result_point, su, _) =
+            evaluate_1st_derivatives(&k, &s, result_uv, Side::Left, Side::Left).unwrap();
+        let su = su.unitize_or_z();
+        let mut sol = SolutionEnd::new();
+        sol.solution_value = 1.0;
+        *sol.param_mut(0).unwrap() = result_uv.x;
+        *sol.param_mut(1).unwrap() = result_uv.y;
+        let good = |k: &Kernel, d: f64| {
+            good_drop_result(k, &s, &domain, result_point + d * su, result_uv, &sol).unwrap()
+        };
+        let tight = EFF_ZERO * (1.0 + (result_point + 1e-6 * su).max_dimension());
+        assert!(tight < 1e-11);
+        // Upstream: every foot within 1e-4 is taken, and an interior one up to 1e-3
+        // that passes the distance test.
+        assert!(good(&k, 1e-6));
+        assert!(good(&k, 5e-5));
+        assert!(good(&k, 5e-4));
+        assert!(good(&k, 1e-13));
+        assert!(!good(&k, 2e-3));
+        // Opt-in: only the foot within the tight tolerance.
+        k.fixes.good_drop_result_distances_in_order = true;
+        assert!(!good(&k, 1e-6));
+        assert!(!good(&k, 5e-5));
+        assert!(!good(&k, 5e-4));
+        assert!(good(&k, 1e-13));
+        assert!(!good(&k, 2e-3));
+    }
+
+    /// HANG-32: the public projection entry rejects a supplied approximation
+    /// tolerance that is not finite, positive and normal before it prepares any cache
+    /// or geometry; the FFI already refuses the same inputs. The unsupported Hermite
+    /// curve keeps the accepted cases on the cheap path to the existing
+    /// `not an SmBSplineCurve` refusal (no intersector), so this is a contract test,
+    /// not a successful projection.
+    #[test]
+    fn hang_32_projection_rejects_non_normal_approximation_tolerance() {
+        let k = Kernel::default();
+        let s = plane();
+        let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        let unsupported = Curve::from(HermiteCurve::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::X,
+            Point3::new(1.0, 0.0, 0.0),
+            Vec3::X,
+            3,
+        ));
+        let call = |approx: Option<f64>, vector: Vec3| {
+            s.create_parallel_projection_curves(
+                &k,
+                &domain,
+                &unsupported,
+                vector,
+                Some(1.0),
+                approx,
+                None,
+            )
+        };
+
+        let rejected = |approx: f64| match call(Some(approx), Vec3::Z) {
+            Err(SolidError::InvalidInput { operation, reason }) => {
+                assert_eq!(operation, OP_PROJ);
+                assert_eq!(
+                    reason,
+                    "approximation tolerance must be finite, positive and normal (HANG-32)"
+                );
+            }
+            other => panic!("approximation tolerance {approx:e} was not rejected: {other:?}"),
+        };
+        for approx in [
+            f64::from_bits(1),
+            f64::from_bits(0x000F_FFFF_FFFF_FFFF),
+            0.0,
+            -0.0,
+            -1.0,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            rejected(approx);
+        }
+
+        // The precondition accepts `None` and every finite positive normal value, with
+        // no upper cap: each reaches the later unsupported-kind refusal.
+        for approx in [None, Some(f64::MIN_POSITIVE), Some(1e-6), Some(f64::MAX)] {
+            match call(approx, Vec3::Z) {
+                Err(SolidError::InvalidInput { operation, reason }) => {
+                    assert_eq!(operation, OP_PROJ);
+                    assert_eq!(reason, "not an SmBSplineCurve");
+                }
+                other => {
+                    panic!("approximation tolerance {approx:?} was rejected too early: {other:?}")
+                }
+            }
+        }
+
+        // The zero projection vector keeps its precedence over the new check.
+        match call(Some(f64::from_bits(1)), Vec3::ZERO) {
+            Err(SolidError::InvalidInput { operation, reason }) => {
+                assert_eq!(operation, OP_PROJ);
+                assert_eq!(reason, "zero projection vector");
+            }
+            other => panic!("zero vector did not take precedence: {other:?}"),
+        }
     }
 
     #[test]
@@ -2977,8 +3645,418 @@ mod tests {
     fn inward_vector_points_to_middle() {
         let k = &Kernel::default();
         let s = plane();
-        let d = s.natural_uv_domain();
+        let d = s.natural_uv_domain_if_built();
         let v = compute_inward_vector(k, &s, d.min()).unwrap();
         assert!((v.length() - 1.0).abs() < 1e-12);
+    }
+
+    /// tangency-labs/solidcore#1852 (WR-56): `sm_GoodDropResult` stores the result
+    /// distance in `dDsqGuess` and the guess distance in `dDsqResult`, so its last
+    /// test rejects a drop that improved on the guess. The opt-in
+    /// `Kernel::fixes.good_drop_result_distances_in_order` compares the actual
+    /// guess and result distances. Every case reaches the final comparison: the
+    /// result lies on the domain's `u = 0` side and the point on the plane `1/2048`
+    /// beyond it along `-S_u`, so `Fu` is `-1/2048` (allowed on that side) and `Fv`
+    /// is zero, past the residual early return in both modes. On that side the
+    /// opt-in's tight foot test (tangency-labs/smlib@eaa998a), which refuses an
+    /// interior result that far off, leaves the comparison reachable.
+    #[test]
+    fn issue_1852_good_drop_compares_the_actual_guess_distance() {
+        let h = 1.0 / 2048.0;
+        let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        let s = Surface::from(Plane::from_normal(Point3::ZERO, Vec3::Z));
+        let mut k = Kernel::default();
+        let result_uv = Point2::new(0.0, 0.5);
+        let (result_point, su, _) =
+            evaluate_1st_derivatives(&k, &s, result_uv, Side::Left, Side::Left).unwrap();
+        let pt_to_drop = result_point - h * su;
+        let mut sol = SolutionEnd::new();
+        sol.solution_value = 1.0;
+        *sol.param_mut(0).unwrap() = result_uv.x;
+        *sol.param_mut(1).unwrap() = result_uv.y;
+
+        // The result is closer than the guess: upstream rejects it (its swapped
+        // names make the guess look farther); the fix accepts it.
+        let nearer_guess = result_uv + Point2::new(0.1, 0.0);
+        // The guess is closer than the result: upstream accepts it; the fix
+        // rejects it, as the final test intends.
+        let farther_guess = result_uv - Point2::new(h, 0.0);
+        // Equidistant: both accept.
+        let equal_guess = result_uv - Point2::new(2.0 * h, 0.0);
+
+        assert!(!good_drop_result(&k, &s, &domain, pt_to_drop, nearer_guess, &sol).unwrap());
+        assert!(good_drop_result(&k, &s, &domain, pt_to_drop, farther_guess, &sol).unwrap());
+        assert!(good_drop_result(&k, &s, &domain, pt_to_drop, equal_guess, &sol).unwrap());
+
+        k.fixes.good_drop_result_distances_in_order = true;
+        assert!(good_drop_result(&k, &s, &domain, pt_to_drop, nearer_guess, &sol).unwrap());
+        assert!(!good_drop_result(&k, &s, &domain, pt_to_drop, farther_guess, &sol).unwrap());
+        assert!(good_drop_result(&k, &s, &domain, pt_to_drop, equal_guess, &sol).unwrap());
+    }
+
+    fn wr57_double_root_patch_u(u_min: f64, u_max: f64) -> Surface {
+        use crate::nurbs::math::{CPoint, NOW};
+
+        // S(u, v) = v * (1, 16 * (s - 0.25) * (s - 0.75), 0), s = (u - u_min) / (u_max - u_min):
+        // singular along v = 0, with exact +X non-singular tangents at s = 0.25 and s = 0.75
+        // and symmetric sample dot products at ii = 2 (2/9) and ii = 7 (7/9).
+        let net = vec![
+            vec![
+                CPoint::new(0.0, 0.0, 0.0, NOW),
+                CPoint::new(1.0, 3.0, 0.0, NOW),
+            ],
+            vec![
+                CPoint::new(0.0, 0.0, 0.0, NOW),
+                CPoint::new(1.0, -5.0, 0.0, NOW),
+            ],
+            vec![
+                CPoint::new(0.0, 0.0, 0.0, NOW),
+                CPoint::new(1.0, 3.0, 0.0, NOW),
+            ],
+        ];
+        let u_knots = [u_min, u_min, u_min, u_max, u_max, u_max];
+        let v_knots = [0.0, 0.0, 1.0, 1.0];
+        Surface::from(
+            BSplineSurface::from_data(2, 1, 2, 1, 5, 3, &net, &u_knots, &v_knots).unwrap(),
+        )
+    }
+
+    fn wr57_double_root_patch_v(v_min: f64, v_max: f64) -> Surface {
+        use crate::nurbs::math::{CPoint, NOW};
+
+        let net = vec![
+            vec![
+                CPoint::new(0.0, 0.0, 0.0, NOW),
+                CPoint::new(0.0, 0.0, 0.0, NOW),
+                CPoint::new(0.0, 0.0, 0.0, NOW),
+            ],
+            vec![
+                CPoint::new(1.0, 3.0, 0.0, NOW),
+                CPoint::new(1.0, -5.0, 0.0, NOW),
+                CPoint::new(1.0, 3.0, 0.0, NOW),
+            ],
+        ];
+        let u_knots = [0.0, 0.0, 1.0, 1.0];
+        let v_knots = [v_min, v_min, v_min, v_max, v_max, v_max];
+        Surface::from(
+            BSplineSurface::from_data(1, 2, 1, 2, 3, 5, &net, &u_knots, &v_knots).unwrap(),
+        )
+    }
+
+    /// WR-57 (#2209): `UpstreamFixes::degen_param_tiebreak_uses_actual_param` defaults to
+    /// `false`, is enabled by `UpstreamFixes::all()`, and can be toggled through
+    /// `UpstreamFixes::flag_mut`.
+    #[test]
+    fn wr57_flag_default_off_and_lookup_by_name() {
+        use crate::kernel::UpstreamFixes;
+
+        let mut k = Kernel::default();
+        assert!(!k.fixes.degen_param_tiebreak_uses_actual_param);
+        assert!(UpstreamFixes::all().degen_param_tiebreak_uses_actual_param);
+        assert!(UpstreamFixes::NAMES.contains(&"degen_param_tiebreak_uses_actual_param"));
+
+        let flag = k
+            .fixes
+            .flag_mut("degen_param_tiebreak_uses_actual_param")
+            .unwrap();
+        assert!(!*flag);
+        *flag = true;
+        assert!(k.fixes.degen_param_tiebreak_uses_actual_param);
+
+        *k.fixes
+            .flag_mut("degen_param_tiebreak_uses_actual_param")
+            .unwrap() = false;
+        assert!(!k.fixes.degen_param_tiebreak_uses_actual_param);
+    }
+
+    /// WR-57 (#2209): on a sphere reparameterized to `[0, 360]` or `[0, 2 * PI]` in `u`,
+    /// the south-pole seam tie-break (`ii = 0` vs `ii = 9` for `+X`) compares `[0, 1]`
+    /// fractions against `dS` by default (flipping `input_s = 5.0` to `360.0` and
+    /// `input_s = 0.8` to `2 * PI`), whereas the opt-in compares the mapped singular
+    /// parameters and keeps `u = 0.0`; on `[0, 1]` both modes agree identically.
+    #[test]
+    fn wr57_sphere_pole_seam_tiebreak_on_non_unit_and_unit_domains() {
+        use crate::geom::axis2_placement::Axis2Placement;
+        use crate::math::PI;
+        use crate::surface::sphere::Sphere;
+
+        let k_off = Kernel::default();
+        let mut k_on = Kernel::default();
+        k_on.fixes.degen_param_tiebreak_uses_actual_param = true;
+
+        let sphere = Sphere::create_canonical(&k_off, &Axis2Placement::default(), 1.0).unwrap();
+
+        // Native `[0, 1]` singular domain: default and opt-in behave identically.
+        let unit_surf = Surface::from(sphere.clone());
+        assert_eq!(
+            unit_surf
+                .natural_uv_domain_with_nurb(&k_off)
+                .unwrap()
+                .u_interval(),
+            Extent1d::from_min_max(0.0, 1.0)
+        );
+        for input_s in [-2.0, 0.0, 0.1, 0.49, 0.51, 0.9, 1.0, 5.0] {
+            let off = unit_surf
+                .find_degen_param_for_direction(
+                    &k_off,
+                    Point2::new(input_s, 0.0),
+                    Vec3::X,
+                    true,
+                    SurfParamType::U,
+                    1e-9,
+                )
+                .unwrap();
+            let on = unit_surf
+                .find_degen_param_for_direction(
+                    &k_on,
+                    Point2::new(input_s, 0.0),
+                    Vec3::X,
+                    true,
+                    SurfParamType::U,
+                    1e-9,
+                )
+                .unwrap();
+            assert_eq!(off, on);
+            assert!(off.converged);
+            let expected = if input_s < 0.5 { 0.0 } else { 1.0 };
+            assert!((off.uv.x - expected).abs() < 1e-9);
+        }
+
+        // `[0, 360]` angular domain with `input_s = 5.0`: `5.0` is `5.0` from `0.0` vs
+        // `355.0` from `360.0`, yet `|1.0 - 5.0| = 4.0 < |0.0 - 5.0| = 5.0`.
+        let mut sphere_deg = sphere.clone();
+        sphere_deg
+            .reparameterize(&k_off, &Extent2d::from_bounds(0.0, 0.0, 360.0, 1.0))
+            .unwrap();
+        let surf_deg = Surface::from(sphere_deg);
+        let off_deg = surf_deg
+            .find_degen_param_for_direction(
+                &k_off,
+                Point2::new(5.0, 0.0),
+                Vec3::X,
+                true,
+                SurfParamType::U,
+                1e-9,
+            )
+            .unwrap();
+        let on_deg = surf_deg
+            .find_degen_param_for_direction(
+                &k_on,
+                Point2::new(5.0, 0.0),
+                Vec3::X,
+                true,
+                SurfParamType::U,
+                1e-9,
+            )
+            .unwrap();
+        assert!(off_deg.converged);
+        assert!((off_deg.uv.x - 360.0).abs() < 1e-9);
+        assert!(on_deg.converged);
+        assert!(on_deg.uv.x.abs() < 1e-9);
+
+        // `[0, 2 * PI]` angular domain with `input_s = 0.8` rad (`0.8` from `0.0` vs
+        // `2 * PI - 0.8` from `2 * PI`, yet `|1.0 - 0.8| = 0.2 < |0.0 - 0.8| = 0.8`).
+        let mut sphere_rad = sphere;
+        sphere_rad
+            .reparameterize(&k_off, &Extent2d::from_bounds(0.0, 0.0, 2.0 * PI, 1.0))
+            .unwrap();
+        let surf_rad = Surface::from(sphere_rad);
+        let off_rad = surf_rad
+            .find_degen_param_for_direction(
+                &k_off,
+                Point2::new(0.8, 0.0),
+                Vec3::X,
+                true,
+                SurfParamType::U,
+                1e-9,
+            )
+            .unwrap();
+        let on_rad = surf_rad
+            .find_degen_param_for_direction(
+                &k_on,
+                Point2::new(0.8, 0.0),
+                Vec3::X,
+                true,
+                SurfParamType::U,
+                1e-9,
+            )
+            .unwrap();
+        assert!(off_rad.converged);
+        assert!((off_rad.uv.x - 2.0 * PI).abs() < 1e-9);
+        assert!(on_rad.converged);
+        assert!(on_rad.uv.x.abs() < 1e-9);
+    }
+
+    /// WR-57 (#2209): on B-spline degenerate patches with interior double solutions on
+    /// `[10, 20]` and `[-20, -10]` (for both `SurfParamType::U` and `SurfParamType::V`),
+    /// default mode chooses the sample fraction closer in `[0, 1]` while opt-in chooses
+    /// the mapped singular parameter closer to `dS`, and `[0, 1]` patches match bit for
+    /// bit across both modes.
+    #[test]
+    fn wr57_nurbs_degenerate_patch_shifted_domains_and_both_singular_directions() {
+        let k_off = Kernel::default();
+        let mut k_on = Kernel::default();
+        k_on.fixes.degen_param_tiebreak_uses_actual_param = true;
+
+        // Positive shifted `U` domain `[10, 20]`, interior roots at `12.5` and `17.5`.
+        let pos_u = wr57_double_root_patch_u(10.0, 20.0);
+        let off_pos = pos_u
+            .find_degen_param_for_direction(
+                &k_off,
+                Point2::new(12.0, 0.0),
+                Vec3::X,
+                true,
+                SurfParamType::U,
+                1e-9,
+            )
+            .unwrap();
+        let on_pos = pos_u
+            .find_degen_param_for_direction(
+                &k_on,
+                Point2::new(12.0, 0.0),
+                Vec3::X,
+                true,
+                SurfParamType::U,
+                1e-9,
+            )
+            .unwrap();
+        assert!(off_pos.converged);
+        assert!((off_pos.uv.x - 17.5).abs() < 1e-9);
+        assert!(on_pos.converged);
+        assert!((on_pos.uv.x - 12.5).abs() < 1e-9);
+
+        // Inbound direction (`dir_from_pole = false` with `-X`) exercises the negated
+        // direction branch with the same tie-break.
+        let off_in = pos_u
+            .find_degen_param_for_direction(
+                &k_off,
+                Point2::new(12.0, 0.0),
+                -Vec3::X,
+                false,
+                SurfParamType::U,
+                1e-9,
+            )
+            .unwrap();
+        let on_in = pos_u
+            .find_degen_param_for_direction(
+                &k_on,
+                Point2::new(12.0, 0.0),
+                -Vec3::X,
+                false,
+                SurfParamType::U,
+                1e-9,
+            )
+            .unwrap();
+        assert!((off_in.uv.x - 17.5).abs() < 1e-9);
+        assert!((on_in.uv.x - 12.5).abs() < 1e-9);
+
+        // When `input_s = 18.0` is genuinely near `17.5`, both modes pick `17.5`.
+        let off_upper = pos_u
+            .find_degen_param_for_direction(
+                &k_off,
+                Point2::new(18.0, 0.0),
+                Vec3::X,
+                true,
+                SurfParamType::U,
+                1e-9,
+            )
+            .unwrap();
+        let on_upper = pos_u
+            .find_degen_param_for_direction(
+                &k_on,
+                Point2::new(18.0, 0.0),
+                Vec3::X,
+                true,
+                SurfParamType::U,
+                1e-9,
+            )
+            .unwrap();
+        assert!((off_upper.uv.x - 17.5).abs() < 1e-9);
+        assert!((on_upper.uv.x - 17.5).abs() < 1e-9);
+
+        // Negative shifted `U` domain `[-20, -10]`, interior roots at `-17.5` and `-12.5`:
+        // at `input_s = -12.0`, default keeps `2/9` (`-17.5`) because `-12.0 < 0.5`,
+        // whereas opt-in switches to `7/9` (`-12.5`).
+        let neg_u = wr57_double_root_patch_u(-20.0, -10.0);
+        let off_neg = neg_u
+            .find_degen_param_for_direction(
+                &k_off,
+                Point2::new(-12.0, 0.0),
+                Vec3::X,
+                true,
+                SurfParamType::U,
+                1e-9,
+            )
+            .unwrap();
+        let on_neg = neg_u
+            .find_degen_param_for_direction(
+                &k_on,
+                Point2::new(-12.0, 0.0),
+                Vec3::X,
+                true,
+                SurfParamType::U,
+                1e-9,
+            )
+            .unwrap();
+        assert!(off_neg.converged);
+        assert!((off_neg.uv.x + 17.5).abs() < 1e-9);
+        assert!(on_neg.converged);
+        assert!((on_neg.uv.x + 12.5).abs() < 1e-9);
+
+        // `SurfParamType::V` on `[0, 1] x [10, 20]`, interior roots at `v = 12.5` and `17.5`.
+        let pos_v = wr57_double_root_patch_v(10.0, 20.0);
+        let off_v = pos_v
+            .find_degen_param_for_direction(
+                &k_off,
+                Point2::new(0.0, 12.0),
+                Vec3::X,
+                true,
+                SurfParamType::V,
+                1e-9,
+            )
+            .unwrap();
+        let on_v = pos_v
+            .find_degen_param_for_direction(
+                &k_on,
+                Point2::new(0.0, 12.0),
+                Vec3::X,
+                true,
+                SurfParamType::V,
+                1e-9,
+            )
+            .unwrap();
+        assert!(off_v.converged);
+        assert!((off_v.uv.y - 17.5).abs() < 1e-9);
+        assert!(on_v.converged);
+        assert!((on_v.uv.y - 12.5).abs() < 1e-9);
+
+        // `[0, 1]` singular `U` domain: bit-identical in both modes.
+        let unit_u = wr57_double_root_patch_u(0.0, 1.0);
+        for input_s in [-2.0, 0.0, 0.2, 0.49, 0.51, 0.8, 1.0, 5.0] {
+            let off = unit_u
+                .find_degen_param_for_direction(
+                    &k_off,
+                    Point2::new(input_s, 0.0),
+                    Vec3::X,
+                    true,
+                    SurfParamType::U,
+                    1e-9,
+                )
+                .unwrap();
+            let on = unit_u
+                .find_degen_param_for_direction(
+                    &k_on,
+                    Point2::new(input_s, 0.0),
+                    Vec3::X,
+                    true,
+                    SurfParamType::U,
+                    1e-9,
+                )
+                .unwrap();
+            assert_eq!(off, on);
+            assert!(off.converged);
+            let expected = if input_s < 0.5 { 0.25 } else { 0.75 };
+            assert!((off.uv.x - expected).abs() < 1e-9);
+        }
     }
 }

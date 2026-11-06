@@ -49,6 +49,7 @@ use crate::kernel::Kernel;
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
 use crate::nurbs::b_spline_surface_n_lib::p2::SkinnedSurfaceOptions;
+use crate::nurbs::knots::MAX_DEGREE;
 use crate::primitive::primitive_creation::model::PrimitiveModel;
 use crate::primitive::primitive_creation::p3::RepeatedSweepOptions;
 use crate::surface::surface::Surface;
@@ -57,13 +58,14 @@ use crate::topology::{Brep, FaceId};
 const OP_SKIN_PRIMITIVE: &str = "sweep::api_surfaces::create_skin_primitive";
 const OP_REVOLUTION: &str = "sweep::api_surfaces::create_surface_revolution";
 const OP_SKIN: &str = "sweep::api_surfaces::create_skin";
+const OP_SKIN_FROM_FACES: &str = "sweep::api_surfaces::create_skin_from_faces";
 
 /// The sweep approximation tolerance `SmApiCreateSweep` passes to
 /// `CreateSweepSurface` (`dTol`).
 pub const SWEEP_APPROX_TOL: f64 = 1.0e-5;
 
 /// A lofted solid and its faces ([`create_skin_primitive`]'s outputs).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct SkinPrimitive {
     /// `rpResult`: the lofted solid.
     pub brep: Brep,
@@ -76,7 +78,7 @@ pub struct SkinPrimitive {
 }
 
 /// A solid lofted between face loops ([`create_skin_from_faces`]'s outputs).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct SkinFromFaces {
     /// `rpResult`: the B-rep holding the lofted faces.
     pub brep: Brep,
@@ -188,7 +190,7 @@ pub fn create_skin_primitive(
                 &mut transferred,
             );
             match status {
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 // Ownership is indeterminate for copies without a report entry.
                 _ if transferred.len() != copy_count => {
                     return Err(SolidError::sm_err(OP_SKIN_PRIMITIVE));
@@ -210,12 +212,22 @@ pub fn create_skin_primitive(
 ///
 /// # Errors
 ///
-/// Those of `SmPrimitiveCreation::CreateSkinFromFaces`.
+/// [`SolidError::InvalidInput`] for a degree outside `1..=NL_MAXDEG` (NLib's surface
+/// evaluators size their basis-function arrays by `NL_MAXDEG`); those of
+/// `SmPrimitiveCreation::CreateSkinFromFaces`.
 pub fn create_skin_from_faces(
     k: &mut Kernel,
     faces: &[(&Brep, FaceId)],
     degree: usize,
 ) -> Result<SkinFromFaces> {
+    // NLib's surface evaluators size their basis-function stack arrays by
+    // NL_MAXDEG, so evaluating a loft of higher degree overflows the stack.
+    if !(1..=MAX_DEGREE).contains(&degree) {
+        return Err(SolidError::invalid_input(
+            OP_SKIN_FROM_FACES,
+            "loft degree outside 1..=NL_MAXDEG",
+        ));
+    }
     let (brep, new_faces) = PrimitiveModel::build_new(k, |pc, model| {
         let input = model.add_owner_breps(faces)?;
         let mut new_faces = Vec::new();
@@ -338,6 +350,7 @@ pub fn create_surface_revolution(
 /// `InvalidInput` for fewer than two profiles; those of
 /// [`BSplineSurface::create_skinned_surface`].
 pub fn create_skin(k: &Kernel, profiles: &[BSplineCurve]) -> Result<BSplineSurface> {
+    crate::profile::profile_scope!(k, "sweep::skin");
     if profiles.len() < 2 {
         return Err(SolidError::invalid_input(
             OP_SKIN,
@@ -420,7 +433,10 @@ mod tests {
         assert_eq!(surface.owner(), None);
         assert_eq!(
             surface
-                .evaluate_point(&revolution_kernel, surface.natural_uv_domain().min())
+                .evaluate_point(
+                    &revolution_kernel,
+                    surface.natural_uv_domain_if_built().min()
+                )
                 .unwrap(),
             Point3::ZERO,
         );

@@ -63,10 +63,8 @@
 //!   bucket list to `SmObjsInVoxels::FindCoincidentPairs`, the port returns
 //!   [`SolidError::InvalidInput`]. Statuses upstream ignores (`SetProps` in the cache
 //!   steps) are ignored; [`SolidError::Unported`] propagates.
-//! - **`SM_HISTOGRAM_EDGELEN_INDEX`** converts `floor(log10(a))` to `ULONG` before adding
-//!   6; the x86-64 conversion of a negative value wraps, which
-//!   [`edge_len_histogram_index`] reproduces (a NaN length, an index past the
-//!   histogram upstream, is [`SolidError::InvalidInput`]).
+//! - **`SM_HISTOGRAM_EDGELEN_INDEX`**: a NaN length (an index past the histogram
+//!   upstream) is [`SolidError::InvalidInput`] in [`edge_len_histogram_index`].
 //! - **`pbNewProbs` out-params** become the returned `bool`. Upstream
 //!   `Cache_CoinVertices` returns early on its no-work path (no target vertices or
 //!   no new ones) before writing `*pbNewProbs = FALSE`, leaving the caller's value;
@@ -89,15 +87,17 @@ use crate::geom::hash_table::{
     gap_histogram_index, FindPairsOptions, ObjsInVoxels, GAP_HISTOGRAM_BUCKETS,
 };
 use crate::geom::tol::{
-    approx_tol_3d, calc_edge_zone_tol_3d, calc_vertex_zone_tol_3d, context_model_size_estimate,
-    context_zone_tol_3d, gap_gain, size_estimate_to_zone_tol_3d, zone_tol3d, SmallTopoType,
+    approx_tol_3d, brep_calc_edge_zone_tol_3d, brep_calc_face_zone_tol_3d,
+    brep_calc_vertex_zone_tol_3d, brep_model_size_estimate, calc_edge_zone_tol_3d,
+    calc_vertex_zone_tol_3d, context_model_size_estimate, context_zone_tol_3d,
+    set_brep_model_size_estimate, size_estimate_to_zone_tol_3d, zone_tol3d, SmallTopoType,
     USE_DEFAULT,
 };
 use crate::heal::face_props::{
     FaceProps, HealerOpType, LoopObject, MixedLinkType, PropStage, Tri, TriedLinkType,
 };
 use crate::kernel::Kernel;
-use crate::math::{max3, max4, BIG_DOUBLE, EFF_ZERO, UNDEF_DOUBLE};
+use crate::math::{BIG_DOUBLE, EFF_ZERO, UNDEF_DOUBLE};
 use crate::topology::edgeuse::p1 as eu1;
 use crate::topology::face::p2 as face_p2;
 use crate::topology::{
@@ -136,7 +136,7 @@ fn remove_first<T: PartialEq>(v: &mut Vec<T>, x: &T) -> bool {
 }
 
 /// `SM_HISTOGRAM_EDGELEN_INDEX(a)`: `0` below `1e-5`, `10` above `1e4`, else
-/// `(ULONG)floor(log10(a)) + 6` with the wrapping conversion of x86-64.
+/// `(ULONG)(floor(log10(a)) + 6)`.
 ///
 /// # Errors
 ///
@@ -155,8 +155,8 @@ pub fn edge_len_histogram_index(a: f64) -> Result<usize> {
                 "SM_HISTOGRAM_EDGELEN_INDEX of NaN indexes past the histogram",
             ));
         }
-        // (ULONG)(double) of a value in [-5, 4]: two's complement wrap, then + 6
-        let idx = (f as i64 as u64).wrapping_add(6);
+        // (ULONG)(floor(log10(a)) + 6): a value in [1, 10]
+        let idx = (f + 6.0) as u64;
         usize::try_from(idx)
             .ok()
             .filter(|&i| i < EDGELEN_BUCKET_CNT)
@@ -1169,11 +1169,13 @@ pub enum FaceFlag {
     BadClosedPtrLoopCnt,
     /// `m_lBadMissingPoles`.
     BadMissingPoles,
+    /// `m_bBadCrossedPole` (listed last so the other links keep their indices).
+    BadCrossedPole,
 }
 
 impl FaceFlag {
     /// Every link, in declaration order.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::BadHasNotYetProb,
         Self::BadSmallZoneTol3d,
         Self::BadLargeZoneTol3d,
@@ -1192,6 +1194,7 @@ impl FaceFlag {
         Self::BadClosed3dLoopCnt,
         Self::BadClosedPtrLoopCnt,
         Self::BadMissingPoles,
+        Self::BadCrossedPole,
     ];
 
     /// The `SmBooleanUL` member, `None` for a counter.
@@ -1202,6 +1205,7 @@ impl FaceFlag {
             Self::BadLargeZoneTol3d => &mut p.bad_large_zone_tol_3d,
             Self::BadDegenFace => &mut p.bad_degen_face,
             Self::BadMissingSeam => &mut p.bad_missing_seam,
+            Self::BadCrossedPole => &mut p.bad_crossed_pole,
             Self::BadCrossedSeam => &mut p.bad_crossed_seam,
             Self::BadNearMissSeam => &mut p.bad_near_miss_seam,
             Self::BadLoopProblems => &mut p.bad_loop_problems,
@@ -1236,6 +1240,7 @@ impl FaceFlag {
             Self::BadDegenFace => ul(p.bad_degen_face),
             Self::BadFlatCorners => p.bad_flat_corners,
             Self::BadMissingSeam => ul(p.bad_missing_seam),
+            Self::BadCrossedPole => ul(p.bad_crossed_pole),
             Self::BadCrossedSeam => ul(p.bad_crossed_seam),
             Self::BadNearMissSeam => ul(p.bad_near_miss_seam),
             Self::BadLoopProblems => ul(p.bad_loop_problems),
@@ -1906,6 +1911,8 @@ pub struct HealData<O: LoopObject> {
     pub bad_face_props_flat_corner: FaceProbArray<O>,
     /// `m_sBadFaceProps_MissingSeam`.
     pub bad_face_props_missing_seam: FaceProbArray<O>,
+    /// `m_sBadFaceProps_CrossedPole`: boundary edges crossing an interior surface pole.
+    pub bad_face_props_crossed_pole: FaceProbArray<O>,
     /// `m_sBadFaceProps_CrossedSeam`.
     pub bad_face_props_crossed_seam: FaceProbArray<O>,
     /// `m_sBadFaceProps_NearMissSeam`.
@@ -1966,23 +1973,6 @@ pub struct HealData<O: LoopObject> {
     pub new_shells_from_closed_sheets: Vec<ShellId>,
 }
 
-/// `SmZoneTol3d sZoneTol3d = SmTol::GetZoneTol3d(pBrep)` and the other `SmBrep`
-/// overloads of `SmTol` (`SmBrep::GetTolerance`).
-fn brep_zone_tol_3d(b: &Brep) -> f64 {
-    b.tolerance()
-}
-
-/// `SmTol::GetModelSizeEstimate(const SmBrep&)` (`SmBrep::GetThisModelSizeEstimate`).
-fn brep_model_size_estimate(k: &Kernel, b: &Brep) -> f64 {
-    b.this_model_size_estimate(k, true)
-}
-
-/// `SmTol::SetModelSizeEstimate(SmBrep&, double)` (`SmBrep::SetThisModelSizeEstimate`;
-/// the returned value is not used upstream).
-fn set_brep_model_size_estimate(k: &mut Kernel, b: &mut Brep, size: f64) -> f64 {
-    b.set_this_model_size_estimate(k, size)
-}
-
 /// `SmBrep::SetTolerance(sZoneTol3d)` (`SM_OLDTOL_LINE`, default arguments).
 fn set_brep_tolerance(k: &Kernel, b: &mut Brep, zone_tol_3d: f64) -> Result<()> {
     crate::topology::brep::p2::set_tolerance(k, b, zone_tol_3d, true, true)
@@ -2002,23 +1992,6 @@ fn set_face_tolerance(
 /// `SmFace::IsDegenerate(bSkipQuickCheck)` (`pOptZoneTol3d` default `NULL`).
 fn face_is_degenerate(k: &Kernel, b: &mut Brep, f: FaceId, skip_quick_check: bool) -> Result<bool> {
     crate::topology::face::p3::is_degenerate(k, b, f, skip_quick_check, None)
-}
-
-/// `SmTol::CalcEdgeZoneTol3d` / `CalcVertexZoneTol3d` with an `SmBrep`: the context
-/// formula over the B-rep's zone tolerance `def`.
-fn calc_brep_gap_zone_tol(
-    k: &Kernel,
-    def: f64,
-    gap_1d: f64,
-    gap_2d: f64,
-    max_up: Option<f64>,
-) -> f64 {
-    let gain = gap_gain(k);
-    let r = match max_up {
-        Some(up) => max4(def, up, gain * gap_1d / 2.0, gain * gap_2d - def),
-        None => max3(def, gain * gap_1d / 2.0, gain * gap_2d - def),
-    };
-    zone_tol3d(k, r)
 }
 
 /// A fresh gap-size histogram.
@@ -2108,6 +2081,7 @@ impl<O: LoopObject> HealData<O> {
             face_props_no_vertex_pole: MixedProbArray::default(),
             bad_face_props_flat_corner: ProbArray::default(),
             bad_face_props_missing_seam: ProbArray::default(),
+            bad_face_props_crossed_pole: ProbArray::default(),
             bad_face_props_crossed_seam: ProbArray::default(),
             bad_face_props_near_miss_seam: ProbArray::default(),
             ran_face_props_move_seam: TriedProbArray::default(),
@@ -2287,6 +2261,8 @@ impl<O: LoopObject> HealData<O> {
 
         self.bad_face_props_missing_seam
             .setup(H::CacheFaceprops2, ff(F::BadMissingSeam));
+        self.bad_face_props_crossed_pole
+            .setup(H::CacheFaceprops2, ff(F::BadCrossedPole));
         self.bad_face_props_crossed_seam
             .setup(H::CacheFaceprops2, ff(F::BadCrossedSeam));
         self.bad_face_props_near_miss_seam
@@ -2442,6 +2418,11 @@ impl<O: LoopObject> HealData<O> {
             "MissingSeam Cnt    ",
             bad,
         );
+        self.bad_face_props_crossed_pole.set_labels(
+            "Face boundary crosses a pole            ",
+            "CrossedPole Cnt    ",
+            bad,
+        );
         self.bad_face_props_crossed_seam.set_labels(
             "Face on closed srf crosses a seam       ",
             "CrossedSeam Cnt    ",
@@ -2555,6 +2536,7 @@ impl<O: LoopObject> HealData<O> {
         self.bad_face_props_flat_corner.reset();
 
         self.bad_face_props_missing_seam.reset();
+        self.bad_face_props_crossed_pole.reset();
         self.bad_face_props_crossed_seam.reset();
         self.bad_face_props_near_miss_seam.reset();
 
@@ -2722,6 +2704,7 @@ impl<O: LoopObject> HealData<O> {
         self.face_props_no_vertex_pole.base.remove(props);
         self.bad_face_props_flat_corner.remove(props);
         self.bad_face_props_missing_seam.remove(props);
+        self.bad_face_props_crossed_pole.remove(props);
         self.bad_face_props_crossed_seam.remove(props);
         self.bad_face_props_near_miss_seam.remove(props);
         self.ran_face_props_move_seam.base.remove(props);
@@ -3079,7 +3062,7 @@ impl<O: LoopObject> HealData<O> {
             })?;
 
             // update the tolerance (SmTol::CalcFaceZoneTol3d(pBrep))
-            let zone_tol_3d = brep_zone_tol_3d(b);
+            let zone_tol_3d = brep_calc_face_zone_tol_3d(k, b);
 
             if self.face_props.props(id)?.props.orig_zone_tol_3d == UNDEF_DOUBLE {
                 let t = face_p2::tolerance(b, face)?;
@@ -3120,12 +3103,11 @@ impl<O: LoopObject> HealData<O> {
             // update the tolerance
             let max_edge_edge_gap_3d_length = p.max_edge_edge_gap_length(b)?;
             let max_edge_face_gap_3d_length = p.max_edge_face_gap_length(b)?;
-            let def = brep_zone_tol_3d(b);
-            let zone_tol_3d = calc_brep_gap_zone_tol(
+            let zone_tol_3d = brep_calc_edge_zone_tol_3d(
                 k,
-                def,
                 max_edge_edge_gap_3d_length,
                 max_edge_face_gap_3d_length,
+                b,
                 Some(max_face_tol),
             );
             if p.orig_zone_tol_3d == UNDEF_DOUBLE {
@@ -3167,12 +3149,11 @@ impl<O: LoopObject> HealData<O> {
             // update the tolerance
             let max_vertex_edge_gap_3d_length = p.max_vtx_edge_gap_length(b)?;
             let max_vertex_face_gap_3d_length = p.max_vtx_face_gap_length(b)?;
-            let def = brep_zone_tol_3d(b);
-            let zone_tol_3d = calc_brep_gap_zone_tol(
+            let zone_tol_3d = brep_calc_vertex_zone_tol_3d(
                 k,
-                def,
                 max_vertex_edge_gap_3d_length,
                 max_vertex_face_gap_3d_length,
+                b,
                 Some(max_edge_tol_3d),
             );
             if p.orig_zone_tol_3d == UNDEF_DOUBLE {
@@ -3486,7 +3467,7 @@ mod tests {
     }
 
     #[test]
-    fn edge_len_index_wraps_like_x86() {
+    fn edge_len_index_buckets_by_decade() {
         assert_eq!(edge_len_histogram_index(1e-6).unwrap(), 0);
         assert_eq!(edge_len_histogram_index(5e-5).unwrap(), 1);
         assert_eq!(edge_len_histogram_index(0.5).unwrap(), 5);

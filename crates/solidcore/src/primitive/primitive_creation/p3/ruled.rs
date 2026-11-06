@@ -10,17 +10,27 @@
 //! Mutated offset/generator curves and marriage flags survive errors. The returned
 //! map is the surface attribute; callers attach it using their attribute store.
 //! No recursion. Invalid indices return errors instead of upstream undefined reads.
+//! Opt-in `Kernel::fixes.taper_pivot_nearest_corner` (WR-402): when the two links of a
+//! corner meet at both ends (a two-curve loop), the pivot is the joint nearest the
+//! corner's offset curve, not `sm_FindPivotPoint`'s first coincident pair.
+//!
+//! With `primitive_path_curve_statuses` (#483), pivot endpoint failures propagate
+//! through both pivot policies instead of using undefined points.
+//!
+//! With `sweep_statuses_pass_on` (WR-662, fork c8f6a31) the degree reduction, the
+//! curve transforms and evaluations and `MatchWeights` pass their statuses on.
+//!
 
 use crate::curve::composite_curve::OffsetMapAttribute;
 use crate::curve::curve::Curve;
-use crate::error::{ignore_status, ignored, Result, SolidError};
+use crate::error::{checked_or_ignored, ignore_status, ignored, passed_on, Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::geom_utility::p1::circle_from_3_points;
 use crate::kernel::Kernel;
 use crate::math::{Vec3, EFF_ZERO};
 use crate::nurbs::b_spline_curve::p1::{BSplineCurve, BSplineCurveForm};
 use crate::nurbs::b_spline_surface::p1::{BSplineSurface, SurfParamType};
-use crate::primitive::primitive_creation::p1::find_pivot_point;
+use crate::primitive::primitive_creation::p1::find_pivot_point_with_kernel;
 
 const OP: &str = "primitive::primitive_creation::p3::ruled_surface_from_offset";
 
@@ -55,7 +65,12 @@ pub fn ruled_surface_from_offset(
     missing_faces: &mut bool,
     options: OffsetRuleOptions,
 ) -> Result<(BSplineSurface, Option<OffsetMapAttribute>)> {
-    ignore_status(offset_curve.degree_reduction(options.tolerance, true))?;
+    // fork c8f6a31 (WR-662): the statuses below are passed on (`SER`).
+    let p = k.fixes.sweep_statuses_pass_on;
+    ignore_status(passed_on(
+        offset_curve.degree_reduction(options.tolerance, true),
+        p,
+    )?)?;
     let map = map.ok_or_else(|| SolidError::sm_err(OP))?;
     let index = usize::try_from(map.curve).map_err(|_| SolidError::sm_err(OP))?;
     if !options.surface_intersection
@@ -79,19 +94,27 @@ pub fn ruled_surface_from_offset(
         let other = generators
             .get(other)
             .ok_or_else(|| SolidError::sm_err(OP))?;
-        let pivot = find_pivot_point(source, other, options.same_point_tolerance)?;
+        let pivot = if k.fixes.taper_pivot_nearest_corner {
+            pivot_nearest_corner(k, source, other, options.same_point_tolerance, &first)?
+        } else {
+            find_pivot_point_with_kernel(k, source, other, options.same_point_tolerance)?
+        };
         second = BSplineCurve::create_point_curve(pivot)?;
         second_is_generator = false;
-        ignore_status(first.transform(&options.movement, None))?;
+        ignore_status(passed_on(first.transform(&options.movement, None), p)?)?;
     } else {
         if source.form() == BSplineCurveForm::CircularArc {
             let interval = source.natural_interval();
             let oi = first.natural_interval();
-            let start = ignored(source.evaluate_point(interval.min()))?.unwrap_or(Vec3::UNDEF);
-            let end = ignored(source.evaluate_point(interval.max()))?.unwrap_or(Vec3::UNDEF);
-            let offset_start = ignored(first.evaluate_point(oi.min()))?.unwrap_or(Vec3::UNDEF);
+            let start = ignored(passed_on(source.evaluate_point(interval.min()), p)?)?
+                .unwrap_or(Vec3::UNDEF);
+            let end = ignored(passed_on(source.evaluate_point(interval.max()), p)?)?
+                .unwrap_or(Vec3::UNDEF);
+            let offset_start =
+                ignored(passed_on(first.evaluate_point(oi.min()), p)?)?.unwrap_or(Vec3::UNDEF);
             if start.distance_squared(offset_start) > end.distance_squared(offset_start) {
-                let mid = ignored(source.evaluate_point(interval.mid()))?.unwrap_or(Vec3::UNDEF);
+                let mid = ignored(passed_on(source.evaluate_point(interval.mid()), p)?)?
+                    .unwrap_or(Vec3::UNDEF);
                 // The upstream ignores this status. Undefined circle outputs on
                 // a failed three-point construction cannot safely form a NURB.
                 let circle = circle_from_3_points(start, mid, end, 3, false)?;
@@ -108,12 +131,12 @@ pub fn ruled_surface_from_offset(
                     options.movement.x_axis(),
                     options.movement.y_axis(),
                 );
-                ignore_status(first.transform(&movement, None))?;
+                ignore_status(passed_on(first.transform(&movement, None), p)?)?;
             } else {
-                ignore_status(first.transform(&options.movement, None))?;
+                ignore_status(passed_on(first.transform(&options.movement, None), p)?)?;
             }
         } else {
-            ignore_status(first.transform(&options.movement, None))?;
+            ignore_status(passed_on(first.transform(&options.movement, None), p)?)?;
         }
         *unmarried
             .get_mut(index)
@@ -154,9 +177,9 @@ pub fn ruled_surface_from_offset(
     let [first, second] = &mut rules;
     if map.corner_offset && first_input_rational {
         if first.is_degenerate(k, EFF_ZERO, None)? {
-            ignore_status(first.match_weights(second))?;
+            ignore_status(passed_on(first.match_weights(second), p)?)?;
         } else if second.is_degenerate(k, EFF_ZERO, None)? {
-            ignore_status(second.match_weights(first))?;
+            ignore_status(passed_on(second.match_weights(first), p)?)?;
         }
     }
     if first_is_offset {
@@ -164,6 +187,57 @@ pub fn ruled_surface_from_offset(
     }
     let surface = BSplineSurface::create_ruled_surface(first, second, SurfParamType::U)?;
     Ok((surface, options.surface_intersection.then_some(map)))
+}
+
+/// The joint of `first` and `second` nearest the ends of the untransformed
+/// `corner` curve (WR-402). Two links closing a loop meet at both ends, and
+/// `find_pivot_point` gives both corners the same joint; with one joint this is
+/// `find_pivot_point`. Coincidence uses its squared-distance test.
+fn pivot_nearest_corner(
+    k: &Kernel,
+    first: &BSplineCurve,
+    second: &BSplineCurve,
+    tol: f64,
+    corner: &BSplineCurve,
+) -> Result<Vec3> {
+    let point = |c: &BSplineCurve, t: f64| -> Result<Vec3> {
+        Ok(
+            checked_or_ignored(c.evaluate_point(t), k.fixes.primitive_path_curve_statuses)?
+                .unwrap_or(Vec3::UNDEF),
+        )
+    };
+    let (a, b, c) = (
+        first.natural_interval(),
+        second.natural_interval(),
+        corner.natural_interval(),
+    );
+    let (start1, end1) = (point(first, a.min())?, point(first, a.max())?);
+    let (start2, end2) = (point(second, b.min())?, point(second, b.max())?);
+    let joints: Vec<Vec3> = [
+        (start1, start2),
+        (end1, start2),
+        (start1, end2),
+        (end1, end2),
+    ]
+    .into_iter()
+    .filter(|(p, q)| (*p - *q).length_squared() < tol)
+    .map(|(_, q)| q)
+    .collect();
+    if joints.len() < 2 {
+        return find_pivot_point_with_kernel(k, first, second, tol);
+    }
+    let (corner_start, corner_end) = (point(corner, c.min())?, point(corner, c.max())?);
+    let mut best: Option<(f64, Vec3)> = None;
+    for joint in joints {
+        let score = joint.distance_squared(corner_start) + joint.distance_squared(corner_end);
+        if best.is_none_or(|(least, _)| score < least) {
+            best = Some((score, joint));
+        }
+    }
+    match best {
+        Some((_, joint)) => Ok(joint),
+        None => find_pivot_point_with_kernel(k, first, second, tol),
+    }
 }
 
 #[cfg(test)]
@@ -206,5 +280,37 @@ mod tests {
         assert_eq!(unmarried, [false, true]);
         assert_eq!(offset.evaluate_point(0.0)?, Vec3::Y + 2.0 * Vec3::Z);
         Ok(())
+    }
+
+    /// An outward draft of a half disc (a line and an arc closing the loop) with
+    /// linear-extension corners and both caps is a closed solid with the opt-in:
+    /// each corner rules to its own joint (WR-402).
+    #[test]
+    fn issue_479_two_curve_loop_taper_is_closed() {
+        use crate::geom::attribute::{AttributeStore, ObjectKey};
+        use crate::mass::integrator::properties::{brep_volume, PropertyAttributes};
+        use crate::primitive::api_curves::{create_arc, create_line_segment};
+        use crate::sweep::api_brep::create_taper_extrude;
+        use crate::topology::brep::p2::is_manifold_solid;
+
+        let line = Curve::from(
+            create_line_segment(Vec3::new(-20.0, 0.0, 0.0), Vec3::new(20.0, 0.0, 0.0)).unwrap(),
+        );
+        let arc = Curve::from(create_arc(Vec3::ZERO, 20.0, 0.0, 180.0).unwrap());
+        let curves = [Some(&line), Some(&arc)];
+
+        let mut k = Kernel::default();
+        k.fixes.taper_pivot_nearest_corner = true;
+        let mut solid = create_taper_extrude(&mut k, &curves, 10.0, -3.0, 3, false).unwrap();
+        assert!(is_manifold_solid(&solid).unwrap());
+        let store = AttributeStore::default();
+        let key_of = |_| ObjectKey(0);
+        let attributes = PropertyAttributes {
+            store: &store,
+            key_of: &key_of,
+        };
+        let volume = brep_volume(&k, &mut solid, 1e-6, &attributes).unwrap();
+        // pi (20 + t)^2 / 2 + 2 (20 + t) t integrated over the draft
+        assert!((volume - 6555.9139).abs() < 1e-2, "volume {volume}");
     }
 }

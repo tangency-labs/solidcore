@@ -44,14 +44,18 @@
 //!   [`SolidError::Unported`] always propagates.
 //! - **Out-of-bounds evaluation.** `Solve` enables out-of-bounds evaluation of an
 //!   `SmBSplineSurface` (a B-spline, plane or surface of revolution) for the duration
-//!   of the solve (`SmTemporaryChangeValue`). The solver borrows its surface, so the
-//!   port solves on a copy with the flag set; solutions carry the caller's object
-//!   handle, so the copy is not visible.
+//!   of the solve (`SmTemporaryChangeValue`), in place on the borrowed surface (the
+//!   flag is a `Cell`), as upstream; the flag is restored after the solve.
 //! - **Solutions' objects** are the caller's handle for the surface (`O`, upstream
 //!   the `SmSurface*`).
 //! - **Unported callees.** `SmSurface::LocalPointSolve` (`surface.surface_p5`) for
 //!   every surface and `SmSurfaceEval::Normal` (`surface.surface_p4`, through `p1`) return
 //!   [`SolidError::Unported`].
+//! - **Guesses on a blend's net (#2510).** `Solve`'s rough guess and its refinement only
+//!   start the local solve, which meets the solve's tolerance on the surface itself: they
+//!   evaluate a procedural blend as its certified net
+//!   ([`crate::surface::procedural_blend::NetScope::new`]), the local solve as the
+//!   scope around the solve asks.
 //! - The stepper's `IsLocalMin` / `IsLocalMax` are not used upstream and are not
 //!   ported. Debug-only drawing and `SM_ASSERT`s are omitted.
 
@@ -66,7 +70,8 @@ use crate::geom::vector2d::{Point2, Vec2};
 use crate::geom::vector3d::Point3;
 use crate::kernel::Kernel;
 use crate::math::{min2, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_PARAM, EFF_ZERO_SQ, EFF_ZERO_SQRT};
-use crate::nurbs::b_spline_surface::SurfParamType;
+use crate::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
+use crate::surface::procedural_blend::NetScope;
 use crate::surface::surface::p2::SurfaceEval;
 use crate::surface::surface::{Surface, SurfaceKind};
 
@@ -132,7 +137,7 @@ impl SurfPtGlobalSolver<'_> {
                 suspicious = g.suspicious;
                 true
             }
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => false,
         };
 
@@ -155,12 +160,12 @@ impl SurfPtGlobalSolver<'_> {
         // Similar for just a few control points.
         let surface = self.base.surface();
         let num_cpts =
-            i32::try_from(surface.number_control_points(SurfParamType::U)).unwrap_or(i32::MAX);
+            i32::try_from(surface.number_control_points(k, SurfParamType::U)).unwrap_or(i32::MAX);
         if num_cpts < grid_size_u && num_cpts > 0 {
             grid_size_u = num_cpts;
         }
         let num_cpts =
-            i32::try_from(surface.number_control_points(SurfParamType::V)).unwrap_or(i32::MAX);
+            i32::try_from(surface.number_control_points(k, SurfParamType::V)).unwrap_or(i32::MAX);
         if num_cpts < grid_size_v && num_cpts > 0 {
             grid_size_v = num_cpts;
         }
@@ -267,6 +272,10 @@ impl SurfPtGlobalSolver<'_> {
         let (mut best_idx_u, mut best_idx_v) = best_idx;
         let mut uv = Point2::UNDEF;
 
+        // The suspicious triangle guess, kept as a candidate with `fixes.point_solve_keeps_triangle_guess`
+        // (WR-444, #1164): the nearest control point found below can be worse.
+        let mut triangle: Option<(Point2, usize, usize)> = None;
+
         // find closest ControlPoint triangle with point closest to target
         let suspicious = match self.find_polygon_triangle_guess((best_idx_u, best_idx_v)) {
             Ok(t) => {
@@ -288,9 +297,15 @@ impl SurfPtGlobalSolver<'_> {
                         }
                     }
                 }
+                if suspicious
+                    && k.fixes.point_solve_keeps_triangle_guess
+                    && op != SolverOperation::Signed3dDirectedMaximize
+                {
+                    triangle = Some((b.domain().clamp_point(uv), best_idx_u, best_idx_v));
+                }
                 suspicious
             }
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             // (the control net could not be read: only the rational warning is set)
             Err(_) => bspl.is_rational(),
         };
@@ -364,7 +379,7 @@ impl SurfPtGlobalSolver<'_> {
                 uv_guess_poly = g;
                 true
             }
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => false,
         };
 
@@ -423,8 +438,30 @@ impl SurfPtGlobalSolver<'_> {
             );
         }
 
+        let uv = b.domain().clamp_point(uv);
+
+        // Return the better of the triangle guess and the control-point guess, judged on
+        // the surface itself (`fixes.point_solve_keeps_triangle_guess`, WR-444, #1164).
+        if let Some((tri_uv, tri_u, tri_v)) = triangle {
+            let on_surface = |guess: Point2| match self.calc_func_val(k, guess) {
+                Ok(v) => Ok(Some(v)),
+                Err(e) if e.is_unported_or_cancelled() => Err(e),
+                Err(_) => Ok(None),
+            };
+            if let (Some(tri), Some(cpt)) = (on_surface(tri_uv)?, on_surface(uv)?) {
+                if tri < cpt {
+                    return Ok(PolygonGuess {
+                        uv: tri_uv,
+                        best_idx_u: tri_u,
+                        best_idx_v: tri_v,
+                        suspicious,
+                    });
+                }
+            }
+        }
+
         Ok(PolygonGuess {
-            uv: b.domain().clamp_point(uv),
+            uv,
             best_idx_u,
             best_idx_v,
             suspicious,
@@ -435,7 +472,7 @@ impl SurfPtGlobalSolver<'_> {
     fn leg_or_none(&self, idx_u: usize, idx_v: usize) -> Result<Option<Point2>> {
         match self.refine_guess_polygon_leg(idx_u, idx_v) {
             Ok(g) => Ok(Some(g)),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => Ok(None),
         }
     }
@@ -600,7 +637,7 @@ impl SurfPtGlobalSolver<'_> {
     fn seams_status_ignored(&mut self, k: &Kernel, uv: Point2) -> Result<Point2> {
         match self.check_guess_for_seams(k, uv) {
             Ok(u) => Ok(u),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => Ok(uv),
         }
     }
@@ -970,14 +1007,7 @@ impl SurfPtGlobalSolver<'_> {
     ) -> Result<SolutionArray<O>> {
         // We have to enable out-of-bounds evaluations.  Otherwise, the evaluators
         // will silently clamp, leading to wrong answers.
-        if let Some(oob_surface) = with_out_of_bounds_enabled(self.base.surface())? {
-            let mut solver = self.with_surface(&oob_surface);
-            let solutions = solver.solve_body(k, surface_obj);
-            // (the closure is a property of the geometry: keep what was computed)
-            self.copy_closure_from(&solver);
-            return solutions;
-        }
-        self.solve_body(k, surface_obj)
+        with_out_of_bounds_enabled_in_place(self.base.surface(), || self.solve_body(k, surface_obj))
     }
 
     /// The body of [`Self::solve`], once out-of-bounds evaluation is enabled.
@@ -993,9 +1023,10 @@ impl SurfPtGlobalSolver<'_> {
         sol.num_variables = 2;
         let mut found_answer = false;
 
-        let rough = match self.find_rough_guess(k) {
+        // (a guess: a procedural blend's net answers it, #2510)
+        let rough = match NetScope::with_net(k, || self.find_rough_guess(k)) {
             Ok(r) => r,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Err(SolidError::sm_err(OP_SOLVE)),
         };
         let (best_idx_u, best_idx_v) = (rough.best_idx_u, rough.best_idx_v);
@@ -1017,8 +1048,8 @@ impl SurfPtGlobalSolver<'_> {
 
             // Refine the guess (status ignored, as upstream).
             let mut uv_guess = rough.uv;
-            if let Err(e) = self.refine_guess(k, &mut uv_guess) {
-                if e.is_unported() {
+            if let Err(e) = NetScope::with_net(k, || self.refine_guess(k, &mut uv_guess)) {
+                if e.is_unported_or_cancelled() {
                     return Err(e);
                 }
             }
@@ -1047,7 +1078,7 @@ impl SurfPtGlobalSolver<'_> {
                     sol = s;
                     stat_ok = true;
                 }
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => stat_ok = false,
             }
 
@@ -1099,7 +1130,7 @@ impl SurfPtGlobalSolver<'_> {
                         // guess did not move and the first local solve failed.
                         stat_ok = true;
                     }
-                    Err(error) if error.is_unported() => return Err(error),
+                    Err(error) if error.is_unported_or_cancelled() => return Err(error),
                     Err(_) => stat_ok = false,
                 }
 
@@ -1123,7 +1154,7 @@ impl SurfPtGlobalSolver<'_> {
                                     .set_uv(Point2::new(sol.start.param(0)?, sol.start.param(1)?));
                             }
                         }
-                        Err(e) if e.is_unported() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => stat_ok = false,
                     }
                 }
@@ -1197,6 +1228,14 @@ fn set_first_object<O: SolutionObject>(sol: &mut Solution<O>, surface_obj: Optio
 pub(crate) fn with_out_of_bounds_enabled(surface: &Surface) -> Result<Option<Surface>> {
     let enabled = match surface.kind() {
         SurfaceKind::BSpline(b) => b.is_out_of_bounds_enabled(),
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net();
+            b.is_out_of_bounds_enabled()
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let b = bp.net();
+            b.is_out_of_bounds_enabled()
+        }
         SurfaceKind::Plane(p) => p.base().is_out_of_bounds_enabled(),
         SurfaceKind::Cone(s) => s.rev().base().is_out_of_bounds_enabled(),
         SurfaceKind::Sphere(s) => s.base().base().is_out_of_bounds_enabled(),
@@ -1216,6 +1255,14 @@ pub(crate) fn with_out_of_bounds_enabled(surface: &Surface) -> Result<Option<Sur
     let mut copy = surface.clone_for_evaluation()?;
     match copy.kind_mut() {
         SurfaceKind::BSpline(b) => *b.out_of_bounds_enabled_mut() = true,
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net_mut();
+            *b.out_of_bounds_enabled_mut() = true;
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let b = bp.net_mut();
+            *b.out_of_bounds_enabled_mut() = true;
+        }
         SurfaceKind::Plane(p) => *p.out_of_bounds_enabled_mut() = true,
         SurfaceKind::Cone(s) => *s.rev.base_mut().out_of_bounds_enabled_mut() = true,
         SurfaceKind::Sphere(s) => *s.base.base_mut().out_of_bounds_enabled_mut() = true,
@@ -1230,11 +1277,69 @@ pub(crate) fn with_out_of_bounds_enabled(surface: &Surface) -> Result<Option<Sur
     Ok(Some(copy))
 }
 
+/// Runs `f` with out-of-bounds evaluation enabled on `surface` itself when it is an
+/// `SmBSplineSurface` (B-spline, plane, surface of revolution) without it, and restores
+/// the flag after (`SmTemporaryChangeValue` on `GetOutOfBoundsEnabled()`, in place as
+/// upstream). The nesting check of [`with_out_of_bounds_enabled`]'s copy still runs, so
+/// errors stay the same.
+///
+/// # Errors
+///
+/// Those of [`Surface::check_evaluation_copy_depth`] and of `f`.
+pub(crate) fn with_out_of_bounds_enabled_in_place<R>(
+    surface: &Surface,
+    f: impl FnOnce() -> Result<R>,
+) -> Result<R> {
+    let Some(base) = out_of_bounds_base(surface) else {
+        return f();
+    };
+    if base.is_out_of_bounds_enabled() {
+        return f();
+    }
+    surface.check_evaluation_copy_depth(0)?;
+    base.set_out_of_bounds_enabled_in_place(true);
+    let result = f();
+    base.set_out_of_bounds_enabled_in_place(false);
+    // a NURB a cone, sphere, torus or surface of revolution made inside `f` is kept as
+    // a made kind copied while the flag was set (`Surface::kind_with_nurb`); upstream
+    // restores the flag on that one object, so restore it on the made kind too
+    if let Some(made) = out_of_bounds_base(surface) {
+        made.set_out_of_bounds_enabled_in_place(false);
+    }
+    result
+}
+
+/// The `SmBSplineSurface` part whose `m_bOutOfBoundsEnabled` an evaluation of `surface`
+/// reads, `None` for the kinds not derived from it.
+fn out_of_bounds_base(surface: &Surface) -> Option<&BSplineSurface> {
+    match surface.kind() {
+        SurfaceKind::BSpline(b) => Some(b),
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net();
+            Some(b)
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let b = bp.net();
+            Some(b)
+        }
+        SurfaceKind::Plane(p) => Some(p.base()),
+        SurfaceKind::Cone(s) => Some(s.rev().base()),
+        SurfaceKind::Sphere(s) => Some(s.base().base()),
+        SurfaceKind::Torus(s) => Some(s.base().base()),
+        SurfaceKind::SurfOfRevolution(s) => Some(s.base()),
+        SurfaceKind::SurfOfExtrusion(s) => Some(s.base()),
+        SurfaceKind::CurveBounded(_)
+        | SurfaceKind::Step(_)
+        | SurfaceKind::OffsetSurface(_)
+        | SurfaceKind::SrfInVolume(_) => None,
+    }
+}
+
 /// `pSurf->EvaluatePoint(uv, rPt)` with its status ignored: `prev` on failure.
 fn eval_point(k: &Kernel, surface: &Surface, uv: Point2, prev: Point3) -> Result<Point3> {
     match surface.evaluate_point(k, uv) {
         Ok(p) => Ok(p),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(prev),
     }
 }
@@ -1545,7 +1650,7 @@ impl SurfPtSolveStepper<'_> {
         if prev.is_singular()?.0 && op != SolverOperation::Signed3dDirectedMaximize {
             // Near singularity, use the surface's own domain. [B50]
             let surface = self.base.surface();
-            let srf_domain = surface.natural_uv_domain();
+            let srf_domain = surface.natural_uv_domain_with_nurb(k)?;
 
             match surface.invert_point_near_singularity(
                 k,
@@ -1558,7 +1663,7 @@ impl SurfPtSolveStepper<'_> {
                     self.set_uv(inverted.uv);
                     return Ok(TerminationReason::FoundAnswerConverged); // end iteration.
                 }
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => {}
             }
         }
@@ -2026,7 +2131,6 @@ mod tests {
     use super::*;
     use crate::geom::global_solver::SolutionRequested;
     use crate::geom::solution_array::ObjectKind;
-    use crate::nurbs::b_spline_surface::BSplineSurface;
 
     #[derive(Debug, Clone, Copy, PartialEq)]
     struct Srf;
@@ -2112,6 +2216,119 @@ mod tests {
         );
         let r = g.find_rough_guess(&k).unwrap();
         assert!(r.uv.x > 0.5 && r.uv.y > 0.5);
+    }
+
+    /// A rational strip of `runs` straight runs stacked 5 apart in z and joined end to end by
+    /// turns (weight 0.7), like the turns of a coil (#1164). Along a run the control points are
+    /// 20 to 40 apart, staggered from one run to the next, and the inner ones sit 1.5 above the run, so
+    /// the control net is off the surface between knots. Returns the surface and its domain.
+    fn stacked_runs_strip(runs: usize) -> (Surface, Extent2d) {
+        use crate::nurbs::b_spline_curve::p1::KnotType;
+        use crate::nurbs::b_spline_surface::p1::{BSplineSurfaceForm, CanonicalSurfaceData};
+        let sag = 1.5;
+        let mut path: Vec<(f64, f64, f64)> = Vec::new();
+        for r in 0..runs {
+            let z = 5.0 * r as f64;
+            let xs: Vec<f64> = if r % 2 == 0 {
+                vec![0.0, 40.0, 80.0, 120.0, 160.0]
+            } else {
+                vec![160.0, 140.0, 100.0, 60.0, 20.0, 0.0]
+            };
+            let n = xs.len();
+            for (i, x) in xs.into_iter().enumerate() {
+                let zz = if i > 0 && i + 1 < n { z + sag } else { z };
+                path.push((x, zz, 1.0));
+            }
+            if r + 1 < runs {
+                let xt = if r % 2 == 0 { 170.0 } else { -10.0 };
+                path.push((xt, z + 2.5, 0.7));
+            }
+        }
+        let n = path.len();
+        let mut pts = Vec::new();
+        let mut w = Vec::new();
+        for &(x, z, wt) in &path {
+            for y in [0.0, 1.0] {
+                pts.push(Point3::new(x, y, z));
+                w.push(wt);
+            }
+        }
+        let spans = n - 2;
+        let knots: Vec<f64> = (0..=spans).map(|i| i as f64).collect();
+        let mut mult = vec![1usize; spans + 1];
+        mult[0] = 3;
+        mult[spans] = 3;
+        let s = BSplineSurface::create_canonical(&CanonicalSurfaceData {
+            u_degree: 2,
+            v_degree: 1,
+            control_points: &pts,
+            form: BSplineSurfaceForm::Unspecified,
+            u_multiplicities: &mult,
+            v_multiplicities: &[2, 2],
+            u_knots: &knots,
+            v_knots: &[0.0, 1.0],
+            knot_type: KnotType::Unspecified,
+            weights: Some(&w),
+            uv_domain: None,
+        })
+        .unwrap();
+        (
+            Surface::from(s),
+            Extent2d::from_bounds(0.0, 0.0, spans as f64, 1.0),
+        )
+    }
+
+    /// #1164: on a rational surface whose control points are farther apart than its neighbouring
+    /// parts, the nearest control point is on the wrong run. Upstream drops the control-net
+    /// triangle guess for it, and from what is left (that control point's guess and the grid
+    /// search's) the solve finds nothing; with the fix the triangle guess is kept and the point is found.
+    #[test]
+    fn a_point_solve_finds_the_point_on_stacked_runs_with_the_fix() {
+        let (s, dom) = stacked_runs_strip(4);
+        let solve = |fixed: bool, target: Point3| {
+            let mut k = Kernel::default();
+            k.fixes.point_solve_keeps_triangle_guess = fixed;
+            s.global_point_solve(
+                &k,
+                Some(Srf),
+                &dom,
+                SolverOperation::Intersect,
+                target,
+                1e-6,
+                None,
+                SolutionRequested::All,
+            )
+            .unwrap()
+        };
+        let at = |u: f64| {
+            eval_point(&Kernel::default(), &s, Point2::new(u, 0.5), Point3::UNDEF).unwrap()
+        };
+
+        // a point on the first run, inside the second span
+        let target = at(0.8395);
+        assert_eq!(solve(false, target).len(), 0, "upstream finds the point");
+        let found = solve(true, target);
+        assert_eq!(found.len(), 1);
+        let sol = found.get(0).unwrap();
+        let uv = Point2::new(sol.start.param(0).unwrap(), sol.start.param(1).unwrap());
+        assert!(
+            eval_point(&Kernel::default(), &s, uv, Point3::UNDEF)
+                .unwrap()
+                .distance(target)
+                < 1e-6,
+            "{uv:?}"
+        );
+
+        // over the whole strip the fix never loses a point upstream finds, and finds some it
+        // misses
+        let mut gained = 0;
+        for i in 0..400 {
+            let target = at(dom.u_interval().max() * (f64::from(i) + 0.5) / 400.0);
+            let (before, after) = (solve(false, target).len(), solve(true, target).len());
+            assert!(after >= before, "lost the point at {target:?}");
+            gained += usize::from(after > before);
+        }
+        assert!(gained > 0);
     }
 
     #[test]
@@ -2274,5 +2491,28 @@ mod tests {
         assert!(this
             .line_search_bracketted(&k, &mut prev, ErrorNormType::Gap)
             .is_err());
+    }
+
+    fn oob(s: &Surface) -> bool {
+        match s.kind() {
+            SurfaceKind::BSpline(b) => b.is_out_of_bounds_enabled(),
+            _ => panic!("not a B-spline"),
+        }
+    }
+
+    #[test]
+    fn out_of_bounds_in_place_is_scoped_and_restored_on_error() {
+        let s = bilinear(0.0);
+        assert!(!oob(&s));
+        let r = with_out_of_bounds_enabled_in_place(&s, || {
+            assert!(oob(&s));
+            // a nested scope sees the flag set and leaves it set
+            let inner = with_out_of_bounds_enabled_in_place(&s, || Ok(oob(&s)));
+            assert_eq!(inner.ok(), Some(true));
+            assert!(oob(&s));
+            Err::<(), _>(SolidError::sm_err("test"))
+        });
+        assert!(r.is_err());
+        assert!(!oob(&s));
     }
 }

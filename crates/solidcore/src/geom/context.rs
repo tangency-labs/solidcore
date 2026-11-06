@@ -21,6 +21,7 @@
 //! | [`Context::sys_notify_callback`]          | `SmContext::GetSysNotifyCallback`               |
 //! | [`Context::user_notify_callback_mut`], [`Context::sys_notify_callback_mut`] | the same getters, for `Execute` |
 //! | [`NotifyCallback`], [`NotifyCallback::execute`] | `SmNotifyCallback`, `SmNotifyCallback::Execute` |
+//! | [`NotifyCallback::owner_link`]            | (none: the `GetOwner()` / `GetEdge()` a callback reads) |
 //! | [`Context::set_sys_notify_callback`]      | `SmContext::SetSysNotifyCallback`               |
 //! | [`Context::this_model_size_estimate`]     | `SmContext::GetThisModelSizeEstimate`           |
 //! | [`Context::set_this_model_size_estimate`] | `SmContext::SetThisModelSizeEstimate` (inline, `SM_USE_OLDTOL` build) |
@@ -33,7 +34,7 @@
 //! | [`MarkType`]                              | `SmMarkType`                                    |
 //! | [`MarkLock`]                              | `SmNewMarkAndLock`                              |
 //! | [`MarkLock::new`]                         | `SmNewMarkAndLock(const SmContext*, SmBitArray)` |
-//! | [`MarkLock::new_pair`]                    | `SmNewMarkAndLock(SmContext*, SmContext*)`      |
+//! | [`MarkLock::new_pair`], [`MarkLock::new_pair_with_fixes`] | `SmNewMarkAndLock(SmContext*, SmContext*)` |
 //! | [`MarkLock::unbound`], [`MarkLock::default`] | `SmNewMarkAndLock()`                         |
 //! | [`MarkLock::release`]                     | `SmNewMarkAndLock::~SmNewMarkAndLock`           |
 //! | [`MarkLock::mark_type`], [`MarkLock::mark_type1`], [`MarkLock::mark_type2`] | `GetMarkType`, `GetMarkType1`, `GetMarkType2` |
@@ -63,9 +64,13 @@
 //!   context shared (the port's `&Kernel`) can still claim a mark as upstream's do
 //!   ([`Context::claim_mark`], whose guard unlocks on drop). The kernel is
 //!   single-threaded: the accesses happen in program order.
-//! - The upstream two-context constructor locks the *first* context's mark type in the
-//!   second context and increments the first context's mark twice; this is ported
-//!   as is (see `plan/findings.md`).
+//! - In `SmNewMarkAndLock(SmContext*, SmContext*)`, when `ctx1 != ctx2`, pinned v1.0.1
+//!   picks `mark_type2` from the second context but increments the first context's mark
+//!   twice and locks `mark_type1` in the second context (`WR-1`,
+//!   `plan/findings/geom.context--notes.md`). [`MarkLock::new_pair`] (and
+//!   [`MarkLock::new_pair_with_fixes`] with default [`UpstreamFixes`]) reproduces this;
+//!   [`UpstreamFixes::mark_lock_pair_advances_and_locks_second_context`] opts into
+//!   advancing and locking `(ctx2, mark_type2)`.
 //! - `SM_ASSERT*`, `SM_ASSERT_MSG_BREAK` and `SM_DBG_WARN` only print messages in the
 //!   release build and are not ported. `SmBoolean` flags are `bool`; `ULONG` marks are
 //!   `u64` incremented with wrapping arithmetic, as in C.
@@ -89,7 +94,7 @@ use crate::error::{Result, SolidError};
 use crate::geom::attribute::ObjectKey;
 use crate::geom::object;
 use crate::geom::tol;
-use crate::kernel::Kernel;
+use crate::kernel::{Kernel, UpstreamFixes};
 
 /// Which traversal mark of a context to use (`SmMarkType`). The discriminants are the
 /// upstream bit values.
@@ -184,6 +189,17 @@ pub trait NotifyCallback: std::fmt::Debug + Send {
     /// nobody needs to recognise.
     fn as_any(&self) -> Option<&dyn core::any::Any> {
         None
+    }
+
+    /// Records the object `object` is owned by (`SmCurve::GetOwner`,
+    /// `SmSurface::GetOwner`, `SmEdgeuse::GetEdge`; `None` for a null owner) for the
+    /// notifications that follow. An upstream callback reads these links from the
+    /// notified objects themselves; an [`object::ObjectRef`] carries none, so the
+    /// notifying code reports a link no notification announces (a UV trim curve's edge
+    /// use, that edge use's edge) before the notification a callback needs it for
+    /// ([`object::report_owner_link`]). The default ignores it.
+    fn owner_link(&mut self, object: ObjectKey, owner: Option<object::ObjectRef>) {
+        let _ = (object, owner);
     }
 }
 
@@ -306,6 +322,17 @@ impl IdentitySlot {
     pub fn value(&self) -> Option<u64> {
         self.0.as_ref().map(|i| i.value)
     }
+
+    /// The same identity in a second slot, for a [`crate::topology::Snapshot`] that stands
+    /// in for this object while it is not live: the snapshot is only ever put back in
+    /// place of the object ([`crate::topology::Brep::restore`]) or dropped, so no two live
+    /// objects hold one identity.
+    pub(crate) fn duplicate_for_snapshot(&self) -> Self {
+        Self(self.0.as_ref().map(|i| Issued {
+            domain: Arc::clone(&i.domain),
+            value: i.value,
+        }))
+    }
 }
 
 /// A context's notify callbacks and identity domain, lent to another context for a
@@ -328,6 +355,20 @@ impl Drop for NotificationScope<'_> {
         self.kernel
             .context
             .install_lease(self.notifications.take_lease());
+    }
+}
+
+/// Lend the callbacks back to the stand-in even when the caller unwinds
+/// ([`Context::with_lease_returned`]).
+struct ReturnedLease<'a> {
+    kernel: &'a mut Kernel,
+    lent: &'a mut Context,
+}
+impl Drop for ReturnedLease<'_> {
+    fn drop(&mut self) {
+        let lease = self.kernel.context.take_lease();
+        self.kernel.context.identities.lent = true;
+        self.lent.install_lease(lease);
     }
 }
 
@@ -465,6 +506,25 @@ impl Context {
         Ok(action(scope.kernel, &mut scope.notifications))
     }
 
+    /// Gives the callbacks and identity domain `lent` holds (the stand-in of
+    /// [`Context::with_notification_context`]) back to the kernel context for
+    /// `action`, and lends them to `lent` again afterwards, also when `action`
+    /// unwinds: upstream has one context, so an edit nested in the lend notifies
+    /// and names through it like any other. With no stand-in, or a kernel context
+    /// that is not lent, `action` runs as is.
+    pub(crate) fn with_lease_returned<T>(
+        k: &mut Kernel,
+        lent: Option<&mut Self>,
+        action: impl FnOnce(&mut Kernel) -> T,
+    ) -> T {
+        let Some(lent) = lent.filter(|_| k.context.identities.lent) else {
+            return action(k);
+        };
+        k.context.install_lease(lent.take_lease());
+        let scope = ReturnedLease { kernel: k, lent };
+        action(scope.kernel)
+    }
+
     /// An immutable metadata snapshot, without copying callback ownership.
     pub(crate) fn metadata_copy(&self) -> Self {
         Self {
@@ -571,7 +631,7 @@ impl Context {
     /// # Errors
     ///
     /// `InvalidInput`, before anything moves, while a crate edit has lent this context's
-    /// callbacks ([`Context::lend_notify`]): swapping the lent context's placeholder would
+    /// callbacks (`Context::lend_notify`): swapping the lent context's placeholder would
     /// let a nested edit through, notifying nobody.
     pub fn take_notify_lease(&mut self) -> Result<NotifyLease> {
         self.check_not_lent()?;
@@ -628,10 +688,16 @@ impl Context {
         Ok(lease)
     }
 
+    /// Whether a crate edit has lent this context's callbacks ([`Context::lend_notify`]):
+    /// a nested edit through it is refused.
+    pub(crate) const fn notify_lent(&self) -> bool {
+        self.identities.lent
+    }
+
     /// `InvalidInput` when a crate edit has lent this context's callbacks
     /// ([`Context::lend_notify`]).
     pub(crate) const fn check_not_lent(&self) -> Result<()> {
-        if self.identities.lent {
+        if self.notify_lent() {
             Err(NOTIFY_LENT)
         } else {
             Ok(())
@@ -888,11 +954,35 @@ impl MarkLock {
     }
 
     /// Claims a mark in each of two contexts, e.g. the two operands of a Boolean
-    /// (`SmNewMarkAndLock(SmContext*, SmContext*)`). When `ctx1 == ctx2` both marks
-    /// are the same. Otherwise, as upstream, the second mark type is picked from
-    /// `contexts[ctx2]` but the first mark is advanced again in `contexts[ctx1]` and
-    /// the *first* mark type is locked in `contexts[ctx2]`.
+    /// (`SmNewMarkAndLock(SmContext*, SmContext*)`), with pinned SMLib compatibility
+    /// ([`UpstreamFixes::default`]).
+    ///
+    /// When `ctx1 == ctx2` both marks are the same. Otherwise, as upstream (`WR-1`),
+    /// the second mark type is picked from `contexts[ctx2]` but the first mark is
+    /// advanced again in `contexts[ctx1]` and the *first* mark type is locked in
+    /// `contexts[ctx2]`. See [`MarkLock::new_pair_with_fixes`] for the opt-in fix.
     pub fn new_pair(contexts: &mut [Context], ctx1: usize, ctx2: usize) -> Result<Self> {
+        Self::new_pair_with_fixes(contexts, ctx1, ctx2, &UpstreamFixes::default())
+    }
+
+    /// Claims a mark in each of two contexts (`SmNewMarkAndLock(SmContext*, SmContext*)`),
+    /// honoring [`UpstreamFixes::mark_lock_pair_advances_and_locks_second_context`].
+    ///
+    /// When `ctx1 == ctx2` both marks are `mark_type1`, advanced once in `contexts[ctx1]`.
+    /// When `ctx1 != ctx2`:
+    /// - With `fixes.mark_lock_pair_advances_and_locks_second_context` off (default),
+    ///   reproduces upstream (`WR-1`): picks `mark_type2` from `contexts[ctx2]` but
+    ///   advances `mark_type1` a second time in `contexts[ctx1]` and locks `mark_type1`
+    ///   in `contexts[ctx2]`.
+    /// - With `fixes.mark_lock_pair_advances_and_locks_second_context` on, advances and
+    ///   locks `mark_type2` in `contexts[ctx2]` so each context is advanced once on its
+    ///   own claimed mark and [`MarkLock::release`] leaves no stray lock.
+    pub fn new_pair_with_fixes(
+        contexts: &mut [Context],
+        ctx1: usize,
+        ctx2: usize,
+        fixes: &UpstreamFixes,
+    ) -> Result<Self> {
         const OP: &str = "geom::context::MarkLock::new_pair";
         check_index(contexts, ctx2, OP)?;
         let c1 = ctx_at(contexts, ctx1, OP)?;
@@ -901,6 +991,12 @@ impl MarkLock {
         lock_mark(c1, mark_type1);
         let mark_type2 = if ctx1 == ctx2 {
             mark_type1
+        } else if fixes.mark_lock_pair_advances_and_locks_second_context {
+            let c2 = ctx_at(contexts, ctx2, OP)?;
+            let m2 = unlocked_mark(c2, ALL_MARKS);
+            c2.new_mark(m2);
+            lock_mark(c2, m2);
+            m2
         } else {
             let m2 = unlocked_mark(ctx_at(contexts, ctx2, OP)?, ALL_MARKS);
             ctx_at(contexts, ctx1, OP)?.new_mark(mark_type1);
@@ -1278,5 +1374,181 @@ mod tests {
         let mp = MassPropertyBehavior::default();
         assert_eq!(mp.density, 1.0);
         assert_eq!(mp.face_area_behavior, 0);
+    }
+
+    #[test]
+    fn wr1_two_contexts_differing_free_marks_default_vs_opt_in() {
+        let default_fixes = UpstreamFixes::default();
+        let opt_in_fixes = UpstreamFixes {
+            mark_lock_pair_advances_and_locks_second_context: true,
+            ..UpstreamFixes::default()
+        };
+
+        // Case A: context 0 already holds `Mark`, so context 0 picks `Mark2` while
+        // context 1 picks `Mark`.
+        {
+            let mut cs = [Context::default(), Context::default()];
+            let mut outer0 = MarkLock::new(&mut cs, 0, ALL_MARKS).unwrap();
+            assert_eq!(outer0.mark_type(), MarkType::Mark);
+            let mut pair = MarkLock::new_pair_with_fixes(&mut cs, 0, 1, &default_fixes).unwrap();
+            assert_eq!(pair.mark_type1(), MarkType::Mark2);
+            assert_eq!(pair.mark_type2(), MarkType::Mark);
+            // Default reproduces WR-1: context 0's `Mark2` advanced twice (1 -> 5),
+            // context 1's `Mark` unadvanced (1) and unlocked, context 1's `Mark2` locked.
+            assert_eq!(cs[0].current_mark(MarkType::Mark2), 5);
+            assert!(cs[0].is_mark_locked(MarkType::Mark2));
+            assert_eq!(cs[1].current_mark(MarkType::Mark), 1);
+            assert!(!cs[1].is_mark_locked(MarkType::Mark));
+            assert!(cs[1].is_mark_locked(MarkType::Mark2));
+            pair.release(&mut cs).unwrap();
+            outer0.release(&mut cs).unwrap();
+            for m in ALL {
+                assert!(!cs[0].is_mark_locked(m));
+            }
+            // Stray lock left on context 1 (`Mark2`) because `release` unlocked `Mark`
+            // (which was never locked).
+            assert!(cs[1].is_mark_locked(MarkType::Mark2));
+        }
+        {
+            let mut cs = [Context::default(), Context::default()];
+            let mut outer0 = MarkLock::new(&mut cs, 0, ALL_MARKS).unwrap();
+            let mut pair = MarkLock::new_pair_with_fixes(&mut cs, 0, 1, &opt_in_fixes).unwrap();
+            assert_eq!(pair.mark_type1(), MarkType::Mark2);
+            assert_eq!(pair.mark_type2(), MarkType::Mark);
+            // Opt-in advances each context once on its own claimed mark and locks
+            // `(ctx2, mark_type2)`.
+            assert_eq!(cs[0].current_mark(MarkType::Mark2), 3);
+            assert!(cs[0].is_mark_locked(MarkType::Mark2));
+            assert_eq!(cs[1].current_mark(MarkType::Mark), 3);
+            assert!(cs[1].is_mark_locked(MarkType::Mark));
+            assert_eq!(cs[1].current_mark(MarkType::Mark2), 1);
+            assert!(!cs[1].is_mark_locked(MarkType::Mark2));
+            pair.new_mark(&mut cs).unwrap();
+            assert_eq!(cs[0].current_mark(MarkType::Mark2), 5);
+            assert_eq!(cs[1].current_mark(MarkType::Mark), 5);
+            pair.release(&mut cs).unwrap();
+            outer0.release(&mut cs).unwrap();
+            for m in ALL {
+                assert!(!cs[0].is_mark_locked(m));
+                assert!(!cs[1].is_mark_locked(m));
+            }
+        }
+
+        // Case B (vice versa): context 1 already holds `Mark`, so context 0 picks `Mark`
+        // while context 1 picks `Mark2`.
+        {
+            let mut cs = [Context::default(), Context::default()];
+            let mut outer1 = MarkLock::new(&mut cs, 1, ALL_MARKS).unwrap();
+            assert_eq!(outer1.mark_type(), MarkType::Mark);
+            let mut pair = MarkLock::new_pair_with_fixes(&mut cs, 0, 1, &default_fixes).unwrap();
+            assert_eq!(pair.mark_type1(), MarkType::Mark);
+            assert_eq!(pair.mark_type2(), MarkType::Mark2);
+            assert_eq!(cs[0].current_mark(MarkType::Mark), 5);
+            assert_eq!(cs[1].current_mark(MarkType::Mark2), 1);
+            assert!(!cs[1].is_mark_locked(MarkType::Mark2));
+            // Because `(1, Mark2)` is left unlocked under WR-1, a nested claim on
+            // context 1 collides with `pair.mark_type2()`.
+            let mut colliding = MarkLock::new(&mut cs, 1, ALL_MARKS).unwrap();
+            assert_eq!(colliding.mark_type(), MarkType::Mark2);
+            colliding.release(&mut cs).unwrap();
+            pair.release(&mut cs).unwrap();
+            assert!(cs[1].is_mark_locked(MarkType::Mark));
+            outer1.release(&mut cs).unwrap();
+        }
+        {
+            let mut cs = [Context::default(), Context::default()];
+            let mut outer1 = MarkLock::new(&mut cs, 1, ALL_MARKS).unwrap();
+            let mut pair = MarkLock::new_pair_with_fixes(&mut cs, 0, 1, &opt_in_fixes).unwrap();
+            assert_eq!(pair.mark_type1(), MarkType::Mark);
+            assert_eq!(pair.mark_type2(), MarkType::Mark2);
+            assert_eq!(cs[0].current_mark(MarkType::Mark), 3);
+            assert_eq!(cs[1].current_mark(MarkType::Mark2), 3);
+            assert!(cs[0].is_mark_locked(MarkType::Mark));
+            assert!(cs[1].is_mark_locked(MarkType::Mark));
+            assert!(cs[1].is_mark_locked(MarkType::Mark2));
+            let mut nested = MarkLock::new(&mut cs, 1, ALL_MARKS).unwrap();
+            assert_eq!(nested.mark_type(), MarkType::Mark3);
+            nested.release(&mut cs).unwrap();
+            pair.release(&mut cs).unwrap();
+            assert!(!cs[0].is_mark_locked(MarkType::Mark));
+            assert!(!cs[1].is_mark_locked(MarkType::Mark2));
+            assert!(cs[1].is_mark_locked(MarkType::Mark));
+            outer1.release(&mut cs).unwrap();
+            for m in ALL {
+                assert!(!cs[0].is_mark_locked(m));
+                assert!(!cs[1].is_mark_locked(m));
+            }
+        }
+    }
+
+    #[test]
+    fn wr1_same_context_and_out_of_bounds_identical_in_both_modes() {
+        for opt_in in [false, true] {
+            let fixes = UpstreamFixes {
+                mark_lock_pair_advances_and_locks_second_context: opt_in,
+                ..UpstreamFixes::default()
+            };
+
+            let mut cs = [Context::default(), Context::default()];
+            let mut held = MarkLock::new(&mut cs, 1, ALL_MARKS).unwrap();
+            assert_eq!(held.mark_type(), MarkType::Mark);
+
+            let mut same0 = MarkLock::new_pair_with_fixes(&mut cs, 0, 0, &fixes).unwrap();
+            assert_eq!(same0.mark_type1(), MarkType::Mark);
+            assert_eq!(same0.mark_type2(), MarkType::Mark);
+            assert_eq!(same0.context(), Some(0));
+            assert_eq!(same0.context2(), Some(0));
+            assert_eq!(cs[0].current_mark(MarkType::Mark), 3);
+            assert!(cs[0].is_mark_locked(MarkType::Mark));
+            same0.release(&mut cs).unwrap();
+            assert!(!cs[0].is_mark_locked(MarkType::Mark));
+
+            let mut same1 = MarkLock::new_pair_with_fixes(&mut cs, 1, 1, &fixes).unwrap();
+            assert_eq!(same1.mark_type1(), MarkType::Mark2);
+            assert_eq!(same1.mark_type2(), MarkType::Mark2);
+            assert_eq!(cs[1].current_mark(MarkType::Mark2), 3);
+            assert!(cs[1].is_mark_locked(MarkType::Mark2));
+            same1.release(&mut cs).unwrap();
+            held.release(&mut cs).unwrap();
+            for m in ALL {
+                assert!(!cs[0].is_mark_locked(m));
+                assert!(!cs[1].is_mark_locked(m));
+            }
+
+            // Out-of-bounds indices fail without mutating any context in either mode.
+            let mut fresh = [Context::default(), Context::default()];
+            for (c1, c2) in [(0, 2), (2, 0), (2, 2)] {
+                assert!(matches!(
+                    MarkLock::new_pair_with_fixes(&mut fresh, c1, c2, &fixes),
+                    Err(SolidError::InvalidInput {
+                        operation: "geom::context::MarkLock::new_pair",
+                        ..
+                    })
+                ));
+                for c in &fresh {
+                    assert_eq!(c.current_mark(MarkType::Mark), 1);
+                    for m in ALL {
+                        assert!(!c.is_mark_locked(m));
+                    }
+                }
+            }
+            let mut empty: [Context; 0] = [];
+            assert!(MarkLock::new_pair_with_fixes(&mut empty, 0, 0, &fixes).is_err());
+        }
+    }
+
+    #[test]
+    fn wr1_upstream_fixes_flag_lookup_and_toggle() {
+        let mut k = Kernel::default();
+        assert!(!k.fixes.mark_lock_pair_advances_and_locks_second_context);
+        assert!(UpstreamFixes::NAMES.contains(&"mark_lock_pair_advances_and_locks_second_context"));
+        *k.fixes
+            .flag_mut("mark_lock_pair_advances_and_locks_second_context")
+            .unwrap() = true;
+        assert!(k.fixes.mark_lock_pair_advances_and_locks_second_context);
+        *k.fixes
+            .flag_mut("mark_lock_pair_advances_and_locks_second_context")
+            .unwrap() = false;
+        assert!(!k.fixes.mark_lock_pair_advances_and_locks_second_context);
     }
 }

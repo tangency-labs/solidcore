@@ -10,6 +10,8 @@
 //! | [`PrimitiveCreation::create_box`] | `SmPrimitiveCreation::CreateBox` |
 //! | [`PrimitiveCreation::create_cylindrical_box`] | `CreateCylindricalBox` |
 //! | [`PrimitiveCreation::create_cone`] | protected `CreateCone` |
+//! | [`PrimitiveCreation::create_cylinder`] | `CreateCylinder` |
+//! | `conic_solid` (private) | static `sm_CreateConicSolid` |
 //! | [`PrimitiveCreation::create_sphere`] | protected `CreateSphere` |
 //! | [`PrimitiveCreation::create_torus`] | protected `CreateTorus` |
 //! | [`PrimitiveCreation::boolean_2d`] | `Boolean2D` |
@@ -24,12 +26,28 @@
 //! them. `SmBrep` is caller-owned; edits retain upstream edit-mode side effects.
 //! Face construction uses caller notification records, attributes and identity keys.
 //! No recursion.
+//! Not upstream (WR-565, tangency-labs/solidcore#1477, opt-in
+//! `Kernel::fixes.linear_sweep_arc_is_cylinder`; SolidCraft change, tangency-labs/smlib
+//! 12918e9): [`PrimitiveCreation::create_linear_sweep`] makes a circular arc short of a
+//! whole turn that is swept square to its plane a cylinder (`arc_sweep_cylinder`), where
+//! upstream makes it an `SmSurfOfExtrusion`.
+//! Not upstream (WR-576, tangency-labs/solidcore#1507, opt-in
+//! `Kernel::fixes.linear_sweep_arc_to_cylinder_zero`; SolidCraft change, tangency-labs/smlib
+//! fd59111): [`PrimitiveCreation::create_linear_sweep`] tests a profile curve for an arc
+//! to the zero an `SmCylinder`'s own check holds its generating curve to (`arc_zero`),
+//! not to the B-rep's tolerance.
+//! Not upstream (WR-596, opt-in `Kernel::fixes.box_face_failures_propagate`; the fork's
+//! tangency-labs/smlib 0df62c8, 35008b1, 449c81c): [`PrimitiveCreation::create_box`]
+//! returns each face's and the stitch's status and skips sides of zero extent, as the
+//! fork's `AddBoxFace` does; upstream drops them.
 
 use super::PrimitiveCreation;
 use crate::curve::curve::Curve;
 use crate::curve::ellipse::Ellipse;
 use crate::curve::line::Line;
-use crate::error::{ignore_status, ignored, Result, SolidError};
+use crate::error::{
+    ignore_or_pass_on, ignore_status, ignored, ignored_or_pass_on, Result, SolidError,
+};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent2d::Extent2d;
 use crate::kernel::Kernel;
@@ -83,7 +101,7 @@ pub enum Boolean2d {
     Merge = 4,
 }
 
-fn new_brep(k: &mut Kernel) -> Result<Brep> {
+pub(super) fn new_brep(k: &mut Kernel) -> Result<Brep> {
     crate::topology::brep::p3::new_brep(
         k,
         crate::geom::tol::USE_DEFAULT,
@@ -156,7 +174,7 @@ fn planar_face(
         )
     })
 }
-fn planar_faces(
+pub(super) fn planar_faces(
     k: &mut Kernel,
     b: &mut Brep,
     region: Option<RegionId>,
@@ -305,7 +323,7 @@ fn drop_uv_curves(
     output.clear();
     let dropped = surface.drop_curve::<NoObject>(
         k,
-        &surface.natural_uv_domain(),
+        &surface.natural_uv_domain_with_nurb(k)?,
         curve,
         &curve.natural_interval(),
         tolerance,
@@ -315,11 +333,6 @@ fn drop_uv_curves(
     )?;
     output.extend(dropped.uv_curves);
     Ok(())
-}
-/// `SmBrep::StitchFaces(tol, ...)` with the header defaults (`pOptFaces = NULL`,
-/// `bAllowSpineEdges = FALSE`); the counts and gaps are unused.
-pub(super) fn stitch_faces(k: &mut Kernel, b: &mut Brep, tolerance: f64) -> Result<()> {
-    crate::topology::brep::p4::stitch_faces(k, b, tolerance, None, false).map(drop)
 }
 
 enum AnalyticSurface {
@@ -367,7 +380,7 @@ pub fn create_rectangle(
     let base = BSplineSurface::create_bilinear_surface(p00, p10, p01, p11)?;
     let plane = Surface::from(base).copy_and_add_analytics(k)?;
     let mut brep = new_brep(k)?;
-    let domain = plane.natural_uv_domain();
+    let domain = plane.natural_uv_domain_with_nurb(k)?;
     ignore_status(create_face(k, &mut brep, plane, domain))?;
     Ok(brep)
 }
@@ -376,7 +389,7 @@ pub fn create_rectangle(
 // An unavailable port must remain visible; a failed native allocation/geometry
 // instead yields the static constructor's null result and its SM_ERR status.
 fn circle_error(error: SolidError) -> SolidError {
-    if error.is_unported() {
+    if error.is_unported_or_cancelled() {
         error
     } else {
         SolidError::sm_err("primitive::primitive_creation::p1::create_circle")
@@ -406,6 +419,61 @@ pub fn create_circle(
     Ok(brep)
 }
 
+/// The six faces of [`PrimitiveCreation::create_box`] (`length`, `width`, `height`) and
+/// their stitch; `propagate`: WR-596's statuses.
+fn box_faces(
+    k: &mut Kernel,
+    brep: &mut Brep,
+    [length, width, height]: [f64; 3],
+    frame: &Axis2Placement,
+    propagate: bool,
+) -> Result<()> {
+    let mut placement = Axis2Placement::new(frame.origin(), frame.x_axis(), frame.y_axis());
+    let planes = [
+        (frame.x_axis(), frame.y_axis(), length, width, height),
+        (frame.y_axis(), frame.z_axis(), width, height, length),
+        (frame.x_axis(), frame.z_axis(), length, height, -width),
+    ];
+    for (index, (x, y, u, v, offset)) in planes.into_iter().enumerate() {
+        if index != 0 {
+            let set = placement.set_canonical(frame.origin(), x, y);
+            if propagate {
+                set?;
+            } else {
+                ignore_status(set)?;
+            }
+        }
+        let domain = Extent2d::from_bounds(0.0, 0.0, u, v);
+        for side in 0..2 {
+            if side == 1 {
+                placement.translate(placement.z_axis().unitize_or_z() * offset);
+            }
+            if propagate {
+                // `AddBoxFace`: no face on a side of zero extent; a plane or face that
+                // cannot be made, or a face whose making fails after it was made,
+                // returns its status (the face keeps its plane)
+                if domain.x_length() == 0.0 || domain.y_length() == 0.0 {
+                    continue;
+                }
+                let mut plane = Plane::create_canonical(&placement)?;
+                plane.adjust_step_uv_domain(&domain)?;
+                let uv = plane.step_uv_domain();
+                create_face(k, brep, Surface::from(plane), uv)?;
+            } else {
+                let mut plane = Plane::create_canonical(&placement)?;
+                ignore_status(plane.adjust_step_uv_domain(&domain))?;
+                let uv = plane.step_uv_domain();
+                ignore_status(create_face(k, brep, Surface::from(plane), uv))?;
+            }
+        }
+    }
+    if propagate {
+        stitch(k, brep)
+    } else {
+        ignore_status(stitch(k, brep))
+    }
+}
+
 impl PrimitiveCreation {
     /// Build six planar faces, then stitch and orient them (`CreateBox`).
     pub fn create_box(
@@ -418,30 +486,14 @@ impl PrimitiveCreation {
         frame: &Axis2Placement,
     ) -> Result<()> {
         brep.set_editing_enabled(true);
-        let mut placement = Axis2Placement::new(frame.origin(), frame.x_axis(), frame.y_axis());
-        let planes = [
-            (frame.x_axis(), frame.y_axis(), length, width, height),
-            (frame.y_axis(), frame.z_axis(), width, height, length),
-            (frame.x_axis(), frame.z_axis(), length, height, -width),
-        ];
-        for (index, (x, y, u, v, offset)) in planes.into_iter().enumerate() {
-            if index != 0 {
-                ignore_status(placement.set_canonical(frame.origin(), x, y))?;
-            }
-            let domain = Extent2d::from_bounds(0.0, 0.0, u, v);
-            for side in 0..2 {
-                if side == 1 {
-                    placement.translate(placement.z_axis().unitize_or_z() * offset);
-                }
-                let mut plane = Plane::create_canonical(&placement)?;
-                ignore_status(plane.adjust_step_uv_domain(&domain))?;
-                let uv = plane.step_uv_domain();
-                ignore_status(create_face(k, brep, Surface::from(plane), uv))?;
-            }
+        // (WR-596, opt-in: the fork's `AddBoxFace`, every status returned; editing is
+        // turned off again on every way out)
+        let propagate = k.fixes.box_face_failures_propagate;
+        let result = box_faces(k, brep, [length, width, height], frame, propagate);
+        if propagate || result.is_ok() {
+            brep.set_editing_enabled(false);
         }
-        ignore_status(stitch(k, brep))?;
-        brep.set_editing_enabled(false);
-        Ok(())
+        result
     }
 
     /// Cylindrical box validation, followed by the first trimmed plane edit.
@@ -468,6 +520,8 @@ impl PrimitiveCreation {
                 "invalid length, radii or angular range",
             ));
         }
+        // fork c8f6a31 (WR-662): every dropped status of CreateCylindricalBox is SER.
+        let p = k.fixes.sweep_statuses_pass_on;
         brep.set_editing_enabled(true);
         let radians = core::f64::consts::PI / 180.0;
         let start_vec =
@@ -507,52 +561,66 @@ impl PrimitiveCreation {
             };
             let mut plane = Plane::create_canonical(&placement)?;
             let domain = Extent2d::from_bounds(-outer, -outer, outer, outer);
-            ignore_status(plane.adjust_step_uv_domain(&domain))?;
+            ignore_or_pass_on(plane.adjust_step_uv_domain(&domain), p)?;
             let curves = vec![
                 Curve::from(Line::from_points(a, d, 3)),
                 Curve::from(Ellipse::circle_from_3_points(k, d, e, f, 3, false)?),
                 Curve::from(Line::from_points(f, c, 3)),
                 Curve::from(Ellipse::circle_from_3_points(k, c, b, a, 3, false)?),
             ];
-            ignore_status(trimmed_face(
-                k,
-                brep,
-                self.region(),
-                curves,
-                Surface::from(plane),
-                domain,
-                notifications,
-            ))?;
+            ignore_or_pass_on(
+                trimmed_face(
+                    k,
+                    brep,
+                    self.region(),
+                    curves,
+                    Surface::from(plane),
+                    domain,
+                    notifications,
+                ),
+                p,
+            )?;
         }
         for radial in [start_vec, end_vec] {
-            ignore_status(placement.set_canonical(frame.origin(), radial, frame.z_axis()))?;
+            ignore_or_pass_on(
+                placement.set_canonical(frame.origin(), radial, frame.z_axis()),
+                p,
+            )?;
             let mut plane = Plane::create_canonical(&placement)?;
-            ignore_status(
+            ignore_or_pass_on(
                 plane.adjust_step_uv_domain(&Extent2d::from_bounds(inner, 0.0, outer, length)),
+                p,
             )?;
             let domain = plane.natural_uv_domain();
-            ignore_status(create_face_with_notifications(
-                k,
-                brep,
-                Surface::from(plane),
-                domain,
-                notifications,
-            ))?;
+            ignore_or_pass_on(
+                create_face_with_notifications(
+                    k,
+                    brep,
+                    Surface::from(plane),
+                    domain,
+                    notifications,
+                ),
+                p,
+            )?;
         }
         for radius in [inner, outer] {
             let mut cylinder = Cone::create_canonical_cylinder(k, frame, radius)?;
-            ignore_status(
+            ignore_or_pass_on(
                 cylinder.adjust_step_uv_domain(k, &Extent2d::from_bounds(start, 0.0, end, length)),
+                p,
             )?;
-            ignore_status(create_face_with_notifications(
-                k,
-                brep,
-                Surface::from(cylinder.clone()),
-                cylinder.rev.base().natural_uv_domain(),
-                notifications,
-            ))?;
+            ignore_or_pass_on(
+                create_face_with_notifications(
+                    k,
+                    brep,
+                    Surface::from(cylinder.clone()),
+                    cylinder.rev.base().natural_uv_domain(),
+                    notifications,
+                ),
+                p,
+            )?;
         }
-        ignore_status(stitch_with_keys(k, brep, notifications.key_of))?;
+        ignore_or_pass_on(stitch_with_keys(k, brep, notifications.key_of), p)?;
         brep.set_editing_enabled(false);
         Ok(())
     }
@@ -569,21 +637,79 @@ impl PrimitiveCreation {
     ) -> Result<()> {
         brep.set_editing_enabled(true);
         let cone = Cone::create_canonical(k, frame, base, top, height, false, false)?;
+        self.conic_solid(k, brep, &cone, base, top)
+    }
+
+    /// Solid cylinder of `radius` and `height` on the frame (`CreateCylinder`): the
+    /// canonical cylinder bounded to `[0, 360] x [0, height]` and its planar caps. A
+    /// height below `SM_EFF_ZERO` or a failed bound is `SM_ERR`; edit mode ends
+    /// disabled on success.
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR` as above; those of the cylinder construction and of the solid.
+    pub fn create_cylinder(
+        &mut self,
+        k: &mut Kernel,
+        brep: &mut Brep,
+        height: f64,
+        radius: f64,
+        frame: &Axis2Placement,
+    ) -> Result<()> {
+        const OP: &str = "primitive::primitive_creation::p1::create_cylinder";
+        // empty entity maps - m_vMapToSame, m_vMapToHigher, m_vMapFromSame, and m_vMapFromLower
+        self.init_entity_maps();
+
+        if height < EFF_ZERO {
+            return Err(SolidError::sm_err(OP));
+        }
+
+        brep.set_editing_enabled(true);
+
+        // CreateCanonical makes an infinite cylinder; bound it to v in [0, dHeight]
+        let mut cylinder = Cone::create_canonical_cylinder(k, frame, radius)?;
+        let domain = Extent2d::from_bounds(0.0, 0.0, 360.0, height);
+        match cylinder.adjust_step_uv_domain(k, &domain) {
+            Ok(()) => {}
+            Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => return Err(e),
+            Err(_) => return Err(SolidError::sm_err(OP)),
+        }
+
+        self.conic_solid(k, brep, &cylinder, radius, radius)?;
+
+        brep.set_editing_enabled(false);
+        Ok(())
+    }
+
+    /// `sm_CreateConicSolid`: the face of a bounded cone or cylinder surface and planar
+    /// caps at its ends (each cap's edge curve made only for a cap that is built),
+    /// stitched when a cap is made.
+    fn conic_solid(
+        &mut self,
+        k: &mut Kernel,
+        brep: &mut Brep,
+        cone: &Cone,
+        base: f64,
+        top: f64,
+    ) -> Result<()> {
         let domain = cone.rev.base().natural_uv_domain();
-        cone_face(k, brep, &cone, domain)?;
-        let base_edge = cone
-            .create_iso_parametric_curve(k, SurfParamType::V, domain.min().y, None, false)?
-            .curve;
-        let top_edge = cone
-            .create_iso_parametric_curve(k, SurfParamType::V, domain.max().y, None, false)?
-            .curve;
+        cone_face(k, brep, cone, domain)?;
         let tolerance = brep.tolerance();
+
+        // make base face
         let base_face = if base > tolerance {
+            // only make the edge curve for a cap that is built
+            let base_edge = cone
+                .create_iso_parametric_curve(k, SurfParamType::V, domain.min().y, None, false)?
+                .curve;
             planar_face(k, brep, self.region(), &[base_edge], tolerance)?
         } else {
             None
         };
         let top_face = if top > tolerance {
+            let top_edge = cone
+                .create_iso_parametric_curve(k, SurfParamType::V, domain.max().y, None, false)?
+                .curve;
             planar_face(k, brep, self.region(), &[top_edge], tolerance)?
         } else {
             None
@@ -654,6 +780,28 @@ impl PrimitiveCreation {
         ),
         notifications: &mut NotifyEnv<'_>,
     ) -> Result<()> {
+        Self::boolean_2d_keyed(k, a, b, operation, output, marks, notifications, None)
+    }
+
+    /// [`Self::boolean_2d`] with `b`'s objects notified under `other_key_of` (disjoint
+    /// from `notifications.key_of`'s identities of `a`'s) when given, else under
+    /// `notifications.key_of` as well.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn boolean_2d_keyed(
+        k: &mut Kernel,
+        a: &mut Brep,
+        b: &mut Brep,
+        operation: Boolean2d,
+        output: &mut Option<Brep>,
+        marks: (
+            &mut crate::topology::topology_traverser::Marks,
+            &mut crate::topology::topology_traverser::Marks,
+        ),
+        notifications: &mut NotifyEnv<'_>,
+        other_key_of: Option<&dyn Fn(crate::error::EntityRef) -> crate::geom::object::ObjectRef>,
+    ) -> Result<()> {
+        // fork c8f6a31 (WR-662): Boolean2D's smgu_PlanePointDistance is SER.
+        let p = k.fixes.sweep_statuses_pass_on;
         let previous = k.context.doing_boolean();
         let edit_a = a.editing_enabled();
         let edit_b = b.editing_enabled();
@@ -693,17 +841,23 @@ impl PrimitiveCreation {
                     if !other.is_planar {
                         return Err(SolidError::invalid_input(op, "non-planar surface"));
                     }
-                    let d2 = ignored(crate::geom::geom_utility::p1::plane_point_distance(
-                        first_plane.point,
-                        first_plane.normal,
-                        other.point,
-                    ))?
+                    let d2 = ignored_or_pass_on(
+                        crate::geom::geom_utility::p1::plane_point_distance(
+                            first_plane.point,
+                            first_plane.normal,
+                            other.point,
+                        ),
+                        p,
+                    )?
                     .unwrap_or(crate::math::UNDEF_DOUBLE);
-                    let d1 = ignored(crate::geom::geom_utility::p1::plane_point_distance(
-                        other.point,
-                        other.normal,
-                        first_plane.point,
-                    ))?
+                    let d1 = ignored_or_pass_on(
+                        crate::geom::geom_utility::p1::plane_point_distance(
+                            other.point,
+                            other.normal,
+                            first_plane.point,
+                        ),
+                        p,
+                    )?
                     .unwrap_or(crate::math::UNDEF_DOUBLE);
                     if !(crate::math::max2(d2, d1) < tolerance * 2.0
                         && first_plane
@@ -717,48 +871,75 @@ impl PrimitiveCreation {
                     }
                 }
             }
-            // Move the first surface out temporarily so Rust can borrow the
-            // remaining faces independently. Restore it on every exit.
-            let mut first_surface = a
-                .face_mut(first)?
+            // extend the first surface's domain to cover all other face domains
+            for (in_a, faces) in [
+                (true, faces_a.get(1..).unwrap_or_default()),
+                (false, faces_b.as_slice()),
+            ] {
+                for face in faces {
+                    let brep: &Brep = if in_a { &*a } else { &*b };
+                    let record = brep.face(*face)?;
+                    let other_domain = record.uv_domain;
+                    let other = record
+                        .surface
+                        .as_ref()
+                        .ok_or_else(|| SolidError::null_pointer(op))?
+                        .clone_for_evaluation()?;
+                    let covered = cover_face_surface(
+                        k,
+                        a,
+                        first,
+                        &other,
+                        tolerance * 2.0,
+                        Some(&other_domain),
+                    )?;
+                    // Not upstream (WR-536, opt-in): b's faces are rebuilt on copies of
+                    // the first surface below: one it does not cover would carry edges
+                    // far off its surface
+                    if k.fixes.boolean2d_plane_covers_far_faces && !covered {
+                        return Err(SolidError::Upstream {
+                            operation: op,
+                            code: crate::error::SM_ERR_INVALID_INPUT,
+                            entity: None,
+                        });
+                    }
+                }
+            }
+            // extend the rest of the surface domains to cover the first surface's domain
+            let first_surface = a
+                .face(first)?
                 .surface
-                .take()
-                .ok_or_else(|| SolidError::null_pointer(op))?;
-            let covered = (|| {
-                for (brep, faces) in [
-                    (&*a, faces_a.get(1..).unwrap_or_default()),
-                    (&*b, faces_b.as_slice()),
-                ] {
-                    for face in faces {
-                        let record = brep.face(*face)?;
-                        first_surface.cover_coincident_surface(
-                            k,
-                            record
-                                .surface
-                                .as_ref()
-                                .ok_or_else(|| SolidError::null_pointer(op))?,
-                            tolerance * 2.0,
-                            Some(&record.uv_domain),
-                        )?;
+                .as_ref()
+                .ok_or_else(|| SolidError::null_pointer(op))?
+                .clone_for_evaluation()?;
+            for (brep, faces) in [
+                (&mut *a, faces_a.get(1..).unwrap_or_default()),
+                (&mut *b, faces_b.as_slice()),
+            ] {
+                for face in faces {
+                    let covered =
+                        cover_face_surface(k, brep, *face, &first_surface, tolerance * 2.0, None)?;
+                    // (WR-536, opt-in) a plane that cannot be grown to cover the first face
+                    if k.fixes.boolean2d_plane_covers_far_faces && !covered {
+                        return Err(SolidError::Upstream {
+                            operation: op,
+                            code: crate::error::SM_ERR_INVALID_INPUT,
+                            entity: None,
+                        });
                     }
                 }
-                for (brep, faces) in [
-                    (&mut *a, faces_a.get(1..).unwrap_or_default()),
-                    (&mut *b, faces_b.as_slice()),
-                ] {
-                    for face in faces {
-                        brep.face_mut(*face)?
-                            .surface
-                            .as_mut()
-                            .ok_or_else(|| SolidError::null_pointer(op))?
-                            .cover_coincident_surface(k, &first_surface, tolerance * 2.0, None)?;
-                    }
-                }
-                Ok(())
-            })();
-            a.face_mut(first)?.surface = Some(first_surface);
-            covered?;
-            super::boolean::finish(k, a, b, first, operation, output, marks, notifications)?;
+            }
+            super::boolean::finish(
+                k,
+                a,
+                b,
+                first,
+                operation,
+                output,
+                marks,
+                notifications,
+                other_key_of,
+            )?;
             selected_result = true;
             Ok(())
         })();
@@ -774,10 +955,128 @@ impl PrimitiveCreation {
     }
 }
 
+/// `pFace->GetSurface()->CoverCoincidentSurface(pOther, tol, ..)` of `Boolean2D` on the
+/// surface of face `face` of `brep`, followed by the `SmFace::RemoveUVTrimCurves`
+/// (status ignored) a successful cover of a face-owned surface ends with. Returns
+/// `bSuccess`, which upstream's `Boolean2D` ignores (WR-536 refuses on it).
+///
+/// Upstream's `STEPInversion` solves inside run on the face's own surface, whose
+/// `GlobalPointSolve` classifies drops against the face (`GetFace()->PointClassify`).
+/// The surface is moved out of its face for the call (keeping its owner, so the cache
+/// it builds is its own) and lent with the B-rep through a face solve context; while it
+/// is out, the face holds an evaluation copy of it for the B-rep reads of that cache
+/// build. The real surface, possibly expanded, replaces the copy afterwards on every
+/// exit, and the face tolerance a solve raised on the copy is synced back.
+fn cover_face_surface(
+    k: &Kernel,
+    brep: &mut Brep,
+    face: FaceId,
+    other: &Surface,
+    tol: f64,
+    other_domain: Option<&Extent2d>,
+) -> Result<bool> {
+    use crate::query::brep::BrepFaceServices;
+    use crate::topology::brep_cache::CacheObject;
+
+    let op = "primitive::primitive_creation::p1::boolean_2d";
+    let stand_in = brep
+        .face(face)?
+        .surface
+        .as_ref()
+        .ok_or_else(|| SolidError::null_pointer(op))?
+        .clone_for_evaluation()?;
+    let mut surface = brep
+        .face_mut(face)?
+        .surface
+        .replace(stand_in)
+        .ok_or_else(|| SolidError::null_pointer(op))?;
+    let r = surface.cover_coincident_surface_deferring_trims_with_context(
+        k,
+        other,
+        tol,
+        other_domain,
+        (
+            &mut BrepFaceServices::new(&mut *brep),
+            Some(CacheObject::Surface(face)),
+        ),
+        true,
+    );
+    brep.face_mut(face)?.surface = Some(surface);
+    brep.sync_face_surface_tolerance(face)?;
+    let r = r?;
+    if r.remove_uv_trim_curves_of.is_some() {
+        // (passed on with the opt-in fix: the fork's `SER` in CoverCoincidentSurface,
+        // WR-663, tangency-labs/smlib 21dcf69)
+        ignore_or_pass_on(
+            crate::topology::face::p1::remove_uv_trim_curves(brep, face),
+            k.fixes.query_statuses_pass_on,
+        )?;
+    }
+    Ok(r.success)
+}
+
+/// Not upstream (WR-565, #1477, `fixes.linear_sweep_arc_is_cylinder`): the cylinder of
+/// the circular arc of `frame` and `radius` from `start` to `end` degrees, swept square
+/// to its plane over `distance` along the unit `sweep_dir`. The frame is turned about
+/// its Z axis to the arc's start or, for a sweep against the arc's normal, to its end
+/// and then flipped about its X axis, so that STEP u runs over the arc from 0 to its
+/// sweep angle and v along the sweep from 0 to `distance`. `None` when the cylinder
+/// cannot be made.
+fn arc_sweep_cylinder(
+    k: &Kernel,
+    mut frame: Axis2Placement,
+    radius: f64,
+    (start, end): (f64, f64),
+    sweep_dir: Vec3,
+    distance: f64,
+) -> Result<Option<Cone>> {
+    let against = sweep_dir.dot(frame.z_axis()) < 0.0;
+    let turn = if against { end } else { start };
+    frame.rotate_about_axis_at_point(
+        turn * core::f64::consts::PI / 180.0,
+        frame.origin(),
+        frame.z_axis(),
+    );
+    if against {
+        frame.rotate_about_axis_at_point(
+            180.0 * core::f64::consts::PI / 180.0,
+            frame.origin(),
+            frame.x_axis(),
+        );
+    }
+    let Some(mut cylinder) = ignored(Cone::create_canonical_cylinder(k, &frame, radius))? else {
+        return Ok(None);
+    };
+    // fork c8f6a31 (WR-662): the cylinder's AdjustSTEPUVDomain is SER.
+    let p = k.fixes.sweep_statuses_pass_on;
+    ignore_or_pass_on(
+        cylinder.adjust_step_uv_domain(k, &Extent2d::from_bounds(0.0, 0.0, end - start, distance)),
+        p,
+    )?;
+    Ok(Some(cylinder))
+}
+
+/// Not upstream (WR-576, #1507, `fixes.linear_sweep_arc_to_cylinder_zero`): the zero a
+/// linear sweep tests a profile curve's arc to, the one an `SmCylinder`'s own check holds
+/// its generating curve to: `SM_EFF_ZERO * 1000 * (1 + the largest coordinate of the
+/// curve's ends)` (the fork's `ArcZero`). The ends' status is ignored, as `GetEnds`'
+/// is there: ends that cannot be evaluated count as the origin.
+fn arc_zero(k: &Kernel, curve: &Curve) -> Result<f64> {
+    let (start, end) = match ignored(curve.ends(k))? {
+        Some(ends) => (ends.start, ends.end),
+        None => (Vec3::ZERO, Vec3::ZERO),
+    };
+    Ok(EFF_ZERO * 1000.0 * (1.0 + start.max_dimension().max(end.max_dimension())))
+}
+
 impl PrimitiveCreation {
     /// The curve overload of `CreateLinearSweep`. It consumes the curves, chooses
     /// a rectangular plane for an orthogonal line, a cylinder for a full circle
     /// swept along its axis, and an extrusion otherwise. Topology edits defer.
+    /// With `k.fixes.linear_sweep_arc_is_cylinder` (not upstream, WR-565) an arc
+    /// short of a full circle swept along its axis is a cylinder too.
+    /// With `k.fixes.linear_sweep_arc_to_cylinder_zero` (not upstream, WR-576) the arc
+    /// test is to the cylinder check's zero (`arc_zero`), not the B-rep's tolerance.
     pub fn create_linear_sweep(
         &mut self,
         k: &mut Kernel,
@@ -789,9 +1088,19 @@ impl PrimitiveCreation {
     ) -> Result<()> {
         use crate::geom::vector2d::Vec2;
         use crate::surface::surf_of_extrusion::p1::SurfOfExtrusion;
+        // fork c8f6a31 (WR-662): CreateLinearSweep's dropped statuses are SER.
+        let p = k.fixes.sweep_statuses_pass_on;
         let previous = k.context.doing_boolean();
         k.context.set_doing_boolean(true);
         let result = (|| {
+            // Every surface and the end cap use this unit direction and a positive
+            // length, so they meet. A negative distance sweeps against the direction.
+            let mut sweep_dir = direction.unitize()?;
+            let mut distance = distance;
+            if distance < 0.0 {
+                sweep_dir *= -1.0;
+                distance = -distance;
+            }
             let mut analytic_domain = Extent2d::from_bounds(0.0, 0.0, 1.0, distance);
             for curve in &curves {
                 let interval = match curve.kind() {
@@ -805,26 +1114,36 @@ impl PrimitiveCreation {
                 let surface = if curve.is_linear(k, EFF_ZERO, false)?.linear {
                     let ends = curve.ends(k)?;
                     let tangent = (ends.end - ends.start).unitize_or_z();
-                    if tangent.dot(direction).abs() < EFF_ZERO {
+                    if tangent.dot(sweep_dir).abs() < EFF_ZERO {
                         Some(Surface::from(Plane::new(
                             ends.start,
                             tangent,
-                            direction,
+                            sweep_dir,
                             Vec2::new((ends.end - ends.start).length(), distance),
                             &Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
                         )))
                     } else {
                         None
                     }
-                } else if let Some((mut frame, radius, start, end)) =
-                    curve.is_arc(k, 8, brep.tolerance())?
-                {
+                } else if let Some((mut frame, radius, start, end)) = curve.is_arc(
+                    k,
+                    8,
+                    // Not upstream (WR-576, #1507): with the fix, an arc only to the
+                    // zero the cylinder's own check holds it to.
+                    if k.fixes.linear_sweep_arc_to_cylinder_zero {
+                        arc_zero(k, curve)?
+                    } else {
+                        brep.tolerance()
+                    },
+                )? {
                     let angle = end - start;
+                    // A right cylinder only fits if the cap, translated along the
+                    // sweep direction, is within tolerance of its far edge.
                     if angle < 360.0 + brep.tolerance()
                         && angle > 360.0 - brep.tolerance()
-                        && frame.z_axis().is_parallel_to(direction, 0.5)
+                        && distance * frame.z_axis().cross(sweep_dir).length() <= brep.tolerance()
                     {
-                        if direction.dot(frame.z_axis()) < 0.0 {
+                        if sweep_dir.dot(frame.z_axis()) < 0.0 {
                             frame.rotate_about_axis_at_point(
                                 180.0 * core::f64::consts::PI / 180.0,
                                 frame.origin(),
@@ -834,12 +1153,30 @@ impl PrimitiveCreation {
                         if let Some(mut cylinder) =
                             ignored(Cone::create_canonical_cylinder(k, &frame, radius))?
                         {
-                            ignore_status(cylinder.adjust_step_uv_domain(
-                                k,
-                                &Extent2d::from_bounds(0.0, 0.0, 360.0, distance),
-                            ))?;
+                            ignore_or_pass_on(
+                                cylinder.adjust_step_uv_domain(
+                                    k,
+                                    &Extent2d::from_bounds(0.0, 0.0, 360.0, distance),
+                                ),
+                                p,
+                            )?;
                             let domain = cylinder.rev.base().natural_uv_domain();
-                            ignore_status(cone_face(k, brep, &cylinder, domain))?;
+                            ignore_or_pass_on(cone_face(k, brep, &cylinder, domain), p)?;
+                            continue;
+                        }
+                    }
+                    // Not upstream (WR-565, #1477): with the fix, an arc short of a
+                    // whole turn swept square to its plane is a cylinder too.
+                    if k.fixes.linear_sweep_arc_is_cylinder
+                        && angle > 0.0
+                        && angle <= 360.0 - brep.tolerance()
+                        && distance * frame.z_axis().cross(sweep_dir).length() <= brep.tolerance()
+                    {
+                        if let Some(cylinder) =
+                            arc_sweep_cylinder(k, frame, radius, (start, end), sweep_dir, distance)?
+                        {
+                            let domain = cylinder.rev.base().natural_uv_domain();
+                            ignore_or_pass_on(cone_face(k, brep, &cylinder, domain), p)?;
                             continue;
                         }
                     }
@@ -849,40 +1186,34 @@ impl PrimitiveCreation {
                 };
                 let Some(surface) = surface else {
                     let copy = curve.copy(k)?;
-                    let mut extrusion = SurfOfExtrusion::create_canonical(k, copy, direction)?;
-                    ignore_status(extrusion.adjust_step_uv_domain(k, &analytic_domain))?;
+                    let mut extrusion = SurfOfExtrusion::create_canonical(k, copy, sweep_dir)?;
+                    ignore_or_pass_on(extrusion.adjust_step_uv_domain(k, &analytic_domain), p)?;
                     let domain = extrusion.base().natural_uv_domain();
-                    ignore_status(extrusion_face(k, brep, &extrusion, domain))?;
+                    ignore_or_pass_on(extrusion_face(k, brep, &extrusion, domain), p)?;
                     continue;
                 };
-                let domain = surface.natural_uv_domain();
-                ignore_status(create_face(k, brep, surface, domain))?;
+                let domain = surface.natural_uv_domain_with_nurb(k)?;
+                ignore_or_pass_on(create_face(k, brep, surface, domain), p)?;
             }
             if cap_ends {
-                ignore_status(planar_faces(
-                    k,
-                    brep,
-                    self.region(),
-                    &curves,
-                    brep.tolerance(),
-                ))?;
+                ignore_or_pass_on(
+                    planar_faces(k, brep, self.region(), &curves, brep.tolerance()),
+                    p,
+                )?;
                 let mut translation = Axis2Placement::IDENTITY;
-                translation.translate(direction.unitize_or_z() * distance);
+                translation.translate(sweep_dir * distance);
                 let mut end_curves = Vec::new();
                 for curve in &curves {
                     let mut copy = curve.copy(k)?;
-                    ignore_status(copy.transform(k, &translation, None))?;
+                    ignore_or_pass_on(copy.transform(k, &translation, None), p)?;
                     end_curves.push(copy);
                 }
-                ignore_status(planar_faces(
-                    k,
-                    brep,
-                    self.region(),
-                    &end_curves,
-                    brep.tolerance(),
-                ))?;
+                ignore_or_pass_on(
+                    planar_faces(k, brep, self.region(), &end_curves, brep.tolerance()),
+                    p,
+                )?;
             }
-            ignore_status(stitch(k, brep))?;
+            ignore_or_pass_on(stitch(k, brep), p)?;
             brep.set_editing_enabled(false);
             Ok(())
         })();
@@ -908,6 +1239,8 @@ impl PrimitiveCreation {
         use crate::nurbs::srf_common::revolved_srf;
         use crate::topology::face::p2::FaceCurves;
         let op = "primitive::primitive_creation::p1::create_sphere_no_pole";
+        // fork c8f6a31 (WR-662): DropCurve, MakeFaceWithCurves and Transform are SER.
+        let p = k.fixes.sweep_statuses_pass_on;
         let start = -((0.8_f64 / 0.6).atan() * (180.0 / core::f64::consts::PI));
         let mut arc = circ_arc(
             &Arc {
@@ -944,7 +1277,7 @@ impl PrimitiveCreation {
         for (rotation, index) in [(-90.0, 3), (180.0, 1)] {
             patch.rotate_at_pt(Vec3::ZERO, Vec3::X, rotation)?;
             let surface = Surface::from(BSplineSurface::from_gw_nurb(&patch));
-            let domain = surface.natural_uv_domain();
+            let domain = surface.natural_uv_domain_with_nurb(k)?;
             let mut boundary = FaceCurves {
                 curve_loops: vec![2],
                 curves_3d: Some(Vec::new()),
@@ -961,7 +1294,10 @@ impl PrimitiveCreation {
                     .as_ref()
                     .ok_or_else(|| SolidError::null_pointer(op))?;
                 let copy = original.copy(k)?;
-                ignore_status(drop_uv_curves(k, &surface, &copy, tolerance, &mut dropped))?;
+                ignore_or_pass_on(
+                    drop_uv_curves(k, &surface, &copy, tolerance, &mut dropped),
+                    p,
+                )?;
                 let uv = dropped
                     .first()
                     .ok_or_else(|| SolidError::null_pointer(op))?
@@ -982,15 +1318,18 @@ impl PrimitiveCreation {
                     curves.push(uv);
                 }
             }
-            ignore_status(detailed_face(
-                k,
-                brep,
-                brep.infinite_region(),
-                boundary,
-                surface,
-                domain,
-                notifications,
-            ))?;
+            ignore_or_pass_on(
+                detailed_face(
+                    k,
+                    brep,
+                    brep.infinite_region(),
+                    boundary,
+                    surface,
+                    domain,
+                    notifications,
+                ),
+                p,
+            )?;
         }
         let keys =
             |object| crate::topology::brep::p2::caller_cache_key(notifications.key_of, object);
@@ -1008,19 +1347,22 @@ impl PrimitiveCreation {
         )
         .map(drop)
         {
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             other => other,
         };
         let mut translation = Axis2Placement::IDENTITY;
         translation.translate(center);
-        ignore_status(crate::topology::brep::p5::transform_with_notifications(
-            k,
-            brep,
-            &translation,
-            None,
-            true,
-            Some(notifications),
-        ))?;
+        ignore_or_pass_on(
+            crate::topology::brep::p5::transform_with_notifications(
+                k,
+                brep,
+                &translation,
+                None,
+                true,
+                Some(notifications),
+            ),
+            p,
+        )?;
         status
     }
 
@@ -1052,7 +1394,9 @@ impl PrimitiveCreation {
             .create_iso_parametric_curve(k, SurfParamType::U, 1.0, IsoCurveOptions::default())?
             .curve;
         let interval = front.natural_interval();
-        ignore_status(front.reverse_parameterization(&interval))?;
+        // fork c8f6a31 (WR-662): SER(pFrontEllipse->ReverseParameterization(..)).
+        let p = k.fixes.sweep_statuses_pass_on;
+        ignore_or_pass_on(front.reverse_parameterization(&interval), p)?;
         planar_face(
             k,
             brep,
@@ -1081,6 +1425,9 @@ pub fn analytic_rotational_sweep(
     use crate::geom::solution_array::SolutionType;
     use crate::math::{Vec3, EFF_ZERO_SQRT};
     let op = "primitive::primitive_creation::p1::analytic_rotational_sweep";
+    // fork c8f6a31 (WR-662): AdjustSTEPUVDomain, GlobalCurveIntersect and
+    // ComputeCrvsNormal are SER.
+    let p = k.fixes.sweep_statuses_pass_on;
     let tol = brep.tolerance();
     let ends = curve.ends(k)?;
     let (start_distance, _) = line_point_distance(axis_base, axis, ends.start);
@@ -1108,9 +1455,10 @@ pub fn analytic_rotational_sweep(
             if let Some(mut cylinder) =
                 ignored(Cone::create_canonical_cylinder(k, &frame, start_distance))?
             {
-                ignore_status(
+                ignore_or_pass_on(
                     cylinder
                         .adjust_step_uv_domain(k, &Extent2d::from_bounds(0.0, 0.0, 360.0, length)),
+                    p,
                 )?;
                 analytic = Some(AnalyticSurface::Cone(cylinder));
             }
@@ -1134,7 +1482,7 @@ pub fn analytic_rotational_sweep(
             }
             return match planar_face(k, brep, brep.infinite_region(), &circles, tol) {
                 Ok(_) => Ok(()),
-                Err(e) if e.is_unported() => Err(e),
+                Err(e) if e.is_unported_or_cancelled() => Err(e),
                 Err(_) => Err(SolidError::sm_err(op)),
             };
         } else {
@@ -1142,14 +1490,17 @@ pub fn analytic_rotational_sweep(
                 line_point_distance(axis_base, axis, ends.start);
             let (top_radius, top_parameter) = line_point_distance(axis_base, axis, ends.end);
             let axis_line = Curve::from(Line::infinite(axis_base, axis, 3, false));
-            let solutions = ignored(axis_line.global_curve_intersect(
-                k,
-                &axis_line.natural_interval(),
-                curve,
-                &curve.natural_interval(),
-                tol,
-                &intersection_options(axis_line.natural_interval(), curve.natural_interval()),
-            ))?;
+            let solutions = ignored_or_pass_on(
+                axis_line.global_curve_intersect(
+                    k,
+                    &axis_line.natural_interval(),
+                    curve,
+                    &curve.natural_interval(),
+                    tol,
+                    &intersection_options(axis_line.natural_interval(), curve.natural_interval()),
+                ),
+                p,
+            )?;
             if let Some(solutions) = solutions {
                 if !solutions.is_empty() {
                     let first = solutions.get_at(0)?;
@@ -1202,24 +1553,27 @@ pub fn analytic_rotational_sweep(
             }
         } else if angle < 360.0 + tol && angle > 360.0 - tol {
             let axis_line = Curve::from(Line::infinite(axis_base, axis, 3, false));
-            if let Some(solutions) = ignored(axis_line.global_curve_intersect(
-                k,
-                &axis_line.natural_interval(),
-                curve,
-                &curve.natural_interval(),
-                tol,
-                &intersection_options(axis_line.natural_interval(), curve.natural_interval()),
-            ))? {
+            if let Some(solutions) = ignored_or_pass_on(
+                axis_line.global_curve_intersect(
+                    k,
+                    &axis_line.natural_interval(),
+                    curve,
+                    &curve.natural_interval(),
+                    tol,
+                    &intersection_options(axis_line.natural_interval(), curve.natural_interval()),
+                ),
+                p,
+            )? {
                 if !solutions.is_empty() {
                     return Err(SolidError::sm_err(op));
                 }
             }
             let (major, param) = line_point_distance(axis_base, axis, frame.origin());
             let origin = axis_base + axis * param;
-            let normal = ignored(crate::curve::curve::p3::compute_crvs_normal(
-                k,
-                core::slice::from_ref(curve),
-            ))?
+            let normal = ignored_or_pass_on(
+                crate::curve::curve::p3::compute_crvs_normal(k, core::slice::from_ref(curve)),
+                p,
+            )?
             .unwrap_or(Vec3::UNDEF);
             let frame = Axis2Placement::new(origin, normal, normal.cross(axis));
             if let Some(torus) = ignored(Torus::create_canonical(
@@ -1243,7 +1597,7 @@ pub fn analytic_rotational_sweep(
     };
     match analytic_face(k, brep, surface) {
         Ok(_) => Ok(()),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Err(SolidError::sm_err(op)),
     }
 }
@@ -1295,7 +1649,7 @@ mod tests {
     #[test]
     fn boolean_2d_covers_plane_domains_before_intersection() {
         let mut k = Kernel::default();
-        let mut records = std::collections::BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attributes = crate::geom::attribute::AttributeStore::default();
         let mut notifications = NotifyEnv {
             records: &mut records,
@@ -1347,14 +1701,14 @@ mod tests {
             .surface
             .as_ref()
             .unwrap()
-            .natural_uv_domain();
+            .natural_uv_domain_if_built();
         let covered_b = b
             .face(fb)
             .unwrap()
             .surface
             .as_ref()
             .unwrap()
-            .natural_uv_domain();
+            .natural_uv_domain_if_built();
         assert!(covered_a.min().x <= -2.0 && covered_a.min().y <= -3.0);
         assert!(covered_a.max().x >= 4.0 && covered_a.max().y >= 5.0);
         assert_eq!(covered_a, covered_b);
@@ -1370,7 +1724,7 @@ mod tests {
             (180.0, false),
         ] {
             let mut k = Kernel::default();
-            let mut records = std::collections::BTreeMap::new();
+            let mut records = crate::topology::topology::NotifyRecords::new();
             let mut attributes = crate::geom::attribute::AttributeStore::default();
             let mut notifications = NotifyEnv {
                 records: &mut records,

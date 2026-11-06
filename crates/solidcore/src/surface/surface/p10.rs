@@ -55,7 +55,7 @@ use super::p9::implicit_iso;
 use crate::curve::curve::p3::local_curve_intersect;
 use crate::curve::curve::Curve;
 use crate::curve::line::Line;
-use crate::error::{ignored, Result, SolidError};
+use crate::error::{ignored, ignored_or_pass_on, passed_on, Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::extent3d::LineHit as BoxHit;
@@ -127,7 +127,9 @@ struct XsectPointClass {
     point_type: TsectCurveType,
 }
 
-/// `sm_ClassifyCurveSurfaceXSectPoint` (`surface::surface::p4`).
+/// `sm_ClassifyCurveSurfaceXSectPoint` (`surface::surface::p4`); `edge_tolerance` is
+/// the tolerance of the curve's owning edge, when the caller resolves it.
+#[allow(clippy::too_many_arguments)]
 fn classify_curve_surface_xsect_point(
     k: &Kernel,
     surface: &Surface,
@@ -136,8 +138,18 @@ fn classify_curve_surface_xsect_point(
     interval: &Extent1d,
     uv: Point2,
     t: f64,
+    edge_tolerance: Option<f64>,
 ) -> Result<XsectPointClass> {
-    let c = p4::classify_curve_surface_xsect_point(k, surface, domain, curve, interval, uv, t)?;
+    let c = p4::classify_curve_surface_xsect_point_with(
+        k,
+        surface,
+        domain,
+        curve,
+        interval,
+        uv,
+        t,
+        edge_tolerance,
+    )?;
     Ok(XsectPointClass {
         guess: c.found_guess.then_some((c.new_uv_guess, c.new_t_guess)),
         point_type: c.point_type,
@@ -203,16 +215,32 @@ struct DropAndTrim {
 
 /// `SmSurface::DropAndTrimCurve(context, domain, curve, interval, tol, ..., TRUE,
 /// TRUE)` (upstream requires an `SmBSplineCurve`).
-fn drop_and_trim_curve(
+fn drop_and_trim_curve<O: SolutionObject>(
     k: &Kernel,
     surface: &Surface,
+    cache: Option<&SurfaceCache<O>>,
     domain: &Extent2d,
     curve: &Curve,
     interval: &Extent1d,
     tol: f64,
 ) -> Result<DropAndTrim> {
-    let r = surface
-        .drop_and_trim_curve::<ObjectHandle>(k, domain, curve, interval, tol, true, true, None)?;
+    // the trace gets the surface's cache (`smsurf_GetSurfaceCache`): for a face's
+    // surface, the face's cache the solve ran on
+    let mut held = match cache {
+        Some(c) if surface.face()?.is_some() => Some(c.map_handles(Ok)?),
+        _ => None,
+    };
+    let r = surface.drop_and_trim_curve_in::<ObjectHandle, O>(
+        k,
+        held.as_mut(),
+        domain,
+        curve,
+        interval,
+        tol,
+        true,
+        true,
+        None,
+    )?;
     Ok(DropAndTrim {
         dist_to_surface: r.max_drop_to_surf,
         uv_curves: r.uv_curves,
@@ -246,7 +274,11 @@ fn set_p(end: &mut SolutionEnd, i: usize, v: f64) -> Result<()> {
 
 /// `EvaluatePoint` whose status upstream ignores: `Vec3::UNDEF` on failure.
 fn point_or_undef(k: &Kernel, curve: &Curve, t: f64) -> Result<Point3> {
-    Ok(ignored(curve.evaluate_point(k, t))?.unwrap_or(Vec3::UNDEF))
+    // (passed on with the opt-in fix, WR-663, tangency-labs/smlib 21dcf69)
+    Ok(
+        ignored_or_pass_on(curve.evaluate_point(k, t), k.fixes.query_statuses_pass_on)?
+            .unwrap_or(Vec3::UNDEF),
+    )
 }
 
 /// The count and parameters of an `IntersectLine` whose status upstream ignores (an
@@ -432,10 +464,19 @@ impl<'t, 's, O: SolutionObject + 't> LsiGlobalSolver<'t, 's, O> {
             v_conts[1] = ContinuityType::Discontinuous;
         }
 
+        // with the opt-in fix a branch outside the domain or interval of interest has no
+        // answers and the box intersections pass on their statuses (WR-663,
+        // tangency-labs/smlib 21dcf69)
+        let pass = k.fixes.query_statuses_pass_on;
+
         // when SurfaceLeafDomain is partially intersected by the IntersectionDomain
         if !uv_domain.is_contained_by(&self.uv_domain, EFF_ZERO) {
             // trim leafNode domain down to intersection domain
-            uv_domain = uv_domain.intersect(&self.uv_domain)?;
+            uv_domain = match uv_domain.intersect(&self.uv_domain) {
+                Ok(d) => d,
+                Err(e) if pass && !e.is_unported_or_cancelled() => return Ok(false),
+                Err(e) => return Err(e),
+            };
 
             // no work - remaining domain has a zero length dimension
             if are_same(uv_domain.max().x, uv_domain.min().x) {
@@ -453,17 +494,19 @@ impl<'t, 's, O: SolutionObject + 't> LsiGlobalSolver<'t, 's, O> {
         // BBox/line intersect
         let mut bbox = surface_node.bbox;
         bbox.expand_absolute(self.base.tolerance_3d);
-        let Some((bbox_enter, bbox_exit)) =
-            box_hit(&bbox.intersect_line(self.line_point, self.line_vector))
-        else {
+        let Some((bbox_enter, bbox_exit)) = box_hit(&passed_on(
+            bbox.intersect_line(self.line_point, self.line_vector),
+            pass,
+        )?) else {
             // no work - no BBox intersection
             return Ok(false);
         };
 
         // PseudoBox/line intersect
-        let Some((_, pseudo_enter, pseudo_exit)) =
-            pseudo_hit(&pseudo_box.intersect_line(self.line_point, self.line_vector))
-        else {
+        let Some((_, pseudo_enter, pseudo_exit)) = pseudo_hit(&passed_on(
+            pseudo_box.intersect_line(self.line_point, self.line_vector),
+            pass,
+        )?) else {
             // no work - no Pseudo intersection
             return Ok(false);
         };
@@ -482,9 +525,11 @@ impl<'t, 's, O: SolutionObject + 't> LsiGlobalSolver<'t, 's, O> {
 
         // trim sBoundIvl to m_cpLineInterval (the interval of interest)
         if let Some(line_ivl) = &self.line_interval {
-            bound_ivl = bound_ivl
-                .intersect(line_ivl)
-                .unwrap_or_else(|_| Extent1d::new());
+            bound_ivl = match bound_ivl.intersect(line_ivl) {
+                Ok(i) => i,
+                Err(e) if pass && !e.is_unported_or_cancelled() => return Ok(false),
+                Err(_) => Extent1d::new(),
+            };
         }
 
         // when firing rays only look at positive line parameters
@@ -502,9 +547,7 @@ impl<'t, 's, O: SolutionObject + 't> LsiGlobalSolver<'t, 's, O> {
 
         // init a line interval - for a ray or for a given line interval
         let ivl = match &self.line_interval {
-            Some(line_ivl) => line_ivl
-                .intersect(&bound_ivl)
-                .unwrap_or_else(|_| Extent1d::new()),
+            Some(line_ivl) => passed_on(line_ivl.intersect(&bound_ivl), pass)?.unwrap_or_default(),
             None => bound_ivl,
         };
 
@@ -646,6 +689,7 @@ impl<'t, 's, O: SolutionObject + 't> LsiGlobalSolver<'t, 's, O> {
                     &leaf.interval,
                     hit.uv,
                     hit.t,
+                    None,
                 );
                 // status ignored upstream (SE)
                 if let Some(XsectPointClass {
@@ -666,7 +710,7 @@ impl<'t, 's, O: SolutionObject + 't> LsiGlobalSolver<'t, 's, O> {
         }
 
         // the extra work required at discontinuities of the line ends and patch boundaries
-        let natural = cache.surface().natural_uv_domain();
+        let natural = cache.surface().natural_uv_domain_with_nurb(k)?;
         for j in 0..2 {
             // Handle curve discontinuities
             if t_conts.get(j).copied().is_some_and(at_most_c0) {
@@ -741,7 +785,7 @@ impl<'t, 's, O: SolutionObject + 't> LsiGlobalSolver<'t, 's, O> {
             (false, 0) => domain.min().y,
             (false, _) => domain.max().y,
         };
-        let iso = implicit_iso(leaf.eval, dir, constant, side == 0)?;
+        let iso = implicit_iso(k, leaf.eval, dir, constant, side == 0)?;
         if iso.is_degenerate(k, EFF_ZERO, None)? {
             return Ok(false);
         }
@@ -844,6 +888,9 @@ pub struct CombineContext<'a, O> {
     pub curve_handle: Option<O>,
     /// The surface's handle (upstream `&crSurface`).
     pub surface_handle: Option<O>,
+    /// The tolerance of the curve's owning edge (`pCurveOwner->GetTolerance()` of
+    /// `sm_ClassifyCurveSurfaceXSectPoint`), when the caller resolves it.
+    pub edge_tolerance: Option<f64>,
 }
 
 impl<O> Default for CombineContext<'_, O> {
@@ -853,6 +900,7 @@ impl<O> Default for CombineContext<'_, O> {
             surface_cache: None,
             curve_handle: None,
             surface_handle: None,
+            edge_tolerance: None,
         }
     }
 }
@@ -925,19 +973,32 @@ impl<O: SolutionObject> CombineContext<'_, O> {
 
 /// The point classification of the combination: whether `solution`'s start point is
 /// classified `SM_TC_COINCIDENT` (status ignored upstream).
+#[allow(clippy::too_many_arguments)]
 fn is_coincident_point<O>(
     k: &Kernel,
     surface: &Surface,
     uv_domain: &Extent2d,
     curve: &Curve,
     interval: &Extent1d,
+    edge_tolerance: Option<f64>,
     solution: &Solution<O>,
 ) -> Result<bool> {
     let uv = Point2::new(p(&solution.start, 1)?, p(&solution.start, 2)?);
     let t = p(&solution.start, 0)?;
-    let class = ignored(classify_curve_surface_xsect_point(
-        k, surface, uv_domain, curve, interval, uv, t,
-    ))?;
+    // (passed on with the opt-in fix, WR-663, tangency-labs/smlib 21dcf69)
+    let class = ignored_or_pass_on(
+        classify_curve_surface_xsect_point(
+            k,
+            surface,
+            uv_domain,
+            curve,
+            interval,
+            uv,
+            t,
+            edge_tolerance,
+        ),
+        k.fixes.query_statuses_pass_on,
+    )?;
     Ok(class.is_some_and(|c| c.point_type == TsectCurveType::Coincident))
 }
 
@@ -996,7 +1057,7 @@ pub fn global_curve_intersect_combine_solutions<O: SolutionObject>(
     let mut found_coincidence = false;
 
     // Phase 1: combine pairs of solutions of the same type.
-    let uv_size = surface.natural_uv_domain().size();
+    let uv_size = surface.natural_uv_domain_with_nurb(k)?.size();
     let t_size = curve.natural_interval().length();
 
     // set up rSolutions array indexing for Point and interval solutions
@@ -1010,7 +1071,15 @@ pub fn global_curve_intersect_combine_solutions<O: SolutionObject>(
         } else {
             last_interval = NO_INDEX;
             last_point = 0;
-            if is_coincident_point(k, surface, uv_domain, curve, interval, &first)? {
+            if is_coincident_point(
+                k,
+                surface,
+                uv_domain,
+                curve,
+                interval,
+                ctx.edge_tolerance,
+                &first,
+            )? {
                 found_coincidence = true;
             }
         }
@@ -1141,7 +1210,15 @@ pub fn global_curve_intersect_combine_solutions<O: SolutionObject>(
 
                 // see if points bound a coincident segment region (the first solution)
                 let first = solutions.get_at(0)?;
-                if is_coincident_point(k, surface, uv_domain, curve, interval, &first)? {
+                if is_coincident_point(
+                    k,
+                    surface,
+                    uv_domain,
+                    curve,
+                    interval,
+                    ctx.edge_tolerance,
+                    &first,
+                )? {
                     found_coincidence = true;
                 }
             }
@@ -1420,9 +1497,11 @@ pub fn global_curve_intersect_combine_solutions<O: SolutionObject>(
         if !small_interval {
             // (`ClassifyIntersectingRangeSolution` writes only the deviation and the
             // first three parameters of `rCurrSol.m_vStart`)
-            if let Some((degenerate, point)) = ignored(classify_intersecting_range_solution(
-                k, surface, curve, &curr,
-            ))? {
+            // (passed on with the opt-in fix, WR-663, tangency-labs/smlib 21dcf69)
+            if let Some((degenerate, point)) = ignored_or_pass_on(
+                classify_intersecting_range_solution(k, surface, curve, &curr),
+                k.fixes.query_statuses_pass_on,
+            )? {
                 is_degenerate = degenerate;
                 if let Some(pt) = point {
                     curr.start.solution_value = pt.solution_value;
@@ -1474,7 +1553,15 @@ pub fn global_curve_intersect_combine_solutions<O: SolutionObject>(
         }
 
         // replace the coincident parts by the curve's drop onto the surface
-        let dropped = drop_and_trim_curve(k, surface, uv_domain, curve, interval, tol)?;
+        let dropped = drop_and_trim_curve(
+            k,
+            surface,
+            ctx.surface_cache,
+            uv_domain,
+            curve,
+            interval,
+            tol,
+        )?;
         if dropped.dist_to_surface > tol {
             return Ok(());
         }

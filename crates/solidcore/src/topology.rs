@@ -10,6 +10,7 @@
 //! | [`Region`] / [`RegionId`]   | `SmRegion` (minimal: list owner, shell list, void flag) |
 //! | [`Shell`] / [`ShellId`]     | `SmShell` (faces, region, type and list head)         |
 //! | [`Brep::new_with_infinite_region`] | `SmBrep::SmBrep()` (topology part, CO-PORTED) |
+//! | [`Brep::add_attribute`], [`Brep::attach_attribute`], [`Brep::find_attribute`], [`Brep::entity_attributes`], [`Brep::remove_attribute`], [`Brep::clear_attributes`] | `SmAObject::AddAttribute`, `FindAttribute`, `GetAttributes`, `RemoveAttribute`, `ClearAttributes` on the B-rep's topology objects (their `m_pAttributes`, kept in one store per B-rep) |
 //! | [`Brep::notify_serial`]     | (none: the B-rep's kernel-issued notification serial; CO-PORTED by `topology.brep_p3`) |
 //! | [`Faceuse`] / [`FaceuseId`] | `SmFaceuse` (unit `topology.edgeuse_p1`)              |
 //! | [`Face`] / [`FaceId`]       | `SmFace` (unit `topology.face_p2`)                    |
@@ -38,14 +39,21 @@
 //! friend writes of `SmBrepConstructor`: they link records without validation (a
 //! B-rep graph is cyclic, so a record may name ids added later).
 
+pub mod api_files;
+pub mod api_projection;
 pub mod brep;
 pub mod brep_cache;
+pub mod brep_constructor;
 pub mod brep_data;
+pub mod brep_data_write;
 pub mod database_io;
 pub mod edge;
 pub mod edgeuse;
 pub mod face;
+pub mod geometry_write;
+pub mod integrity;
 pub mod loopuse;
+pub mod part_file;
 pub mod proto_topology;
 pub mod shell;
 #[allow(clippy::module_inception)]
@@ -56,10 +64,11 @@ pub mod vertex;
 pub mod vertexuse;
 
 use core::marker::PhantomData;
+use std::sync::Arc;
 
 use crate::curve::curve::Curve;
 use crate::error::{EntityRef, Result, SolidError};
-use crate::geom::attribute::ObjectKey;
+use crate::geom::attribute::{Attribute, AttributeHandle, AttributeStore, ObjectKey};
 use crate::geom::context::IdentitySlot;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
@@ -164,6 +173,56 @@ typed_id!(
     VertexuseId => Vertexuse
 );
 
+/// A copy-on-write handle to a big arena of a [`Brep`]: `Clone` is a deep copy (as for
+/// a plain `Arena`), [`Shared::share`] is a refcount bump, and the first write through
+/// `DerefMut` of a shared handle copies the arena, so every writer behaves as on an
+/// unshared one. Used by [`Brep::clone_sharing_surface_caches`] for the arenas a query's
+/// snapshot only reads.
+#[derive(Debug)]
+struct Shared<T>(Arc<T>);
+
+impl<T> Shared<T> {
+    fn share(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+
+    fn copy(&self, share: bool) -> Self
+    where
+        T: Clone,
+    {
+        if share {
+            self.share()
+        } else {
+            self.clone()
+        }
+    }
+}
+
+impl<T: Default> Default for Shared<T> {
+    fn default() -> Self {
+        Self(Arc::default())
+    }
+}
+
+impl<T: Clone> Clone for Shared<T> {
+    fn clone(&self) -> Self {
+        Self(Arc::new((*self.0).clone()))
+    }
+}
+
+impl<T> core::ops::Deref for Shared<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T: Clone> core::ops::DerefMut for Shared<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
 /// A dense store of `T` addressed by typed id `I`. Items are appended; an item can
 /// be removed (upstream's `delete` of a topology object, unit `topology.brep_p4`),
 /// which empties its slot for good: ids are never reused, so the ids of the other
@@ -230,6 +289,12 @@ impl<I: ArenaId, T> Arena<I, T> {
     #[must_use]
     pub fn len(&self) -> usize {
         self.live
+    }
+
+    /// Number of slots, removed items included: the index the next item takes.
+    #[must_use]
+    pub(crate) fn slot_count(&self) -> usize {
+        self.items.len()
     }
 
     /// True when the arena holds no item.
@@ -344,7 +409,12 @@ impl Default for Vertex {
 /// An edge (`SmEdge`): a bounded curve between two vertices.
 #[derive(Debug, Clone)]
 pub struct Edge {
-    /// Start and end vertex (equal for a closed edge).
+    /// Start and end vertex (equal for a closed edge), as set when the edge was made.
+    /// Upstream has no such field: `GetVertices` / `GetStartVertex` read the ends through
+    /// the edge and vertex uses ([`edge::vertices`], [`edge::start_end_vertices`]), and
+    /// topology edits inside an operation (vertex merges, edge splits) rewire only those
+    /// uses. Inside an operation read the ends through the uses; the public operations
+    /// refresh this pair before they return ([`Brep::refresh_cached_topology`]).
     pub vertices: [VertexId; 2],
     /// `m_pList` (CO-PORTED): the edge's edge uses in radial list order; the first is
     /// the primary edge use (`GetPrimaryEdgeuse`).
@@ -369,9 +439,12 @@ pub struct LoopEdge {
 /// A closed boundary loop of a face (`SmLoop`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Loop {
-    /// Face this loop bounds.
+    /// Face this loop bounds. Port-only: upstream's `GetFace` goes through the loop use
+    /// and its face use. Refreshed by [`Brep::refresh_cached_topology`].
     pub face: FaceId,
-    /// Edges in traversal order.
+    /// Edges in traversal order. Port-only builder data (upstream walks the loop use's
+    /// edge uses); after a refresh ([`Brep::refresh_cached_topology`]) the primary loop
+    /// use's edge-use cycle.
     pub edges: Vec<LoopEdge>,
     /// `m_pLU` (CO-PORTED): the primary loop use (`GetLoopuse`).
     pub loopuse: Option<LoopuseId>,
@@ -381,9 +454,14 @@ pub struct Loop {
 /// `topology.face_p2` ([`face::p2`]).
 #[derive(Debug, Clone)]
 pub struct Face {
-    /// Shell containing this face.
+    /// Shell containing this face. Port-only: upstream's `GetShell` reads the primary
+    /// face use's owner, and the native shell moves update only that; read it through
+    /// the face use inside an operation. Refreshed by [`Brep::refresh_cached_topology`].
     pub shell: ShellId,
-    /// Boundary loops; upstream keeps the outer loop first.
+    /// Boundary loops; upstream keeps the outer loop first. Port-only: upstream reaches
+    /// them through the primary face use's loop uses. Refreshed by
+    /// [`Brep::refresh_cached_topology`] in upstream's iteration order, the primary face
+    /// use's loop-use list order.
     pub loops: Vec<LoopId>,
     /// `m_pSurface`: the face's surface (`GetSurface`).
     pub surface: Option<Surface>,
@@ -420,7 +498,9 @@ impl Face {
 /// A shell (`SmShell`): a connected set of faces.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Shell {
-    /// Faces of the shell, in insertion order.
+    /// Faces of the shell, in insertion order. Port-only: upstream reaches them through
+    /// the shell's face uses; after a refresh ([`Brep::refresh_cached_topology`]) in
+    /// upstream's iteration order, the shell's face-use member order, each face once.
     pub faces: Vec<FaceId>,
     /// `m_pListOwner` (CO-PORTED): the region owning the shell (`GetRegion`).
     pub region: Option<RegionId>,
@@ -593,20 +673,98 @@ impl Default for Vertexuse {
     }
 }
 
+/// How a B-rep names its topology entities as the owners of its geometry (upstream's
+/// owner pointers): the port has no object pointers, so a geometry owner is an
+/// [`ObjectRef`](crate::geom::object::ObjectRef) under one of these schemes. A routine
+/// that attaches new geometry to topology (`SmEdgeuse::SetUVTrimCurve`'s `SetOwner`)
+/// names its owner by the B-rep's scheme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NamingScheme {
+    /// Not recorded: such routines leave the new geometry without owner (the caller
+    /// names it with its own identities), except a UV trim curve, which
+    /// `SetUVTrimCurve` always owns by its holder: under the edge use's identity of
+    /// [`NamingScheme::Arena`] (its notification identity).
+    #[default]
+    Unknown,
+    /// The Euler operators' notification identities
+    /// (`topology::loopuse::notify_ref`).
+    Notify,
+    /// A caller's own identities (a `TopologyEnv` / `NotifyEnv` `key_of`), recorded per
+    /// edge, face and edge use where the B-rep was built (`Brep::geometry_owner_keys`):
+    /// such routines name the new geometry by the recorded key, and leave it without
+    /// owner when none is recorded.
+    Caller,
+    /// The arena identities the crate's imported B-reps use
+    /// ([`brep_cache::arena_identity`]:
+    /// the entity's type code and arena index).
+    Arena,
+}
+
+/// The identity `entity` owns geometry under in a B-rep of naming `naming` that
+/// records `recorded` for it: [`Brep::owner_identity`] without the B-rep.
+#[must_use]
+pub(crate) fn owner_identity_of(
+    naming: NamingScheme,
+    recorded: Option<crate::geom::object::ObjectRef>,
+    entity: EntityRef,
+) -> crate::geom::object::ObjectRef {
+    match (naming, recorded) {
+        (NamingScheme::Caller, Some(key)) => key,
+        _ => scheme_owner_identity(naming, entity),
+    }
+}
+
+/// The identity a B-rep of naming `naming` names `entity` by when it records none:
+/// the Euler operators' notification identity ([`loopuse::notify_ref`]) under
+/// [`NamingScheme::Notify`], else the arena identity of the crate's imported B-reps
+/// ([`brep_cache::arena_identity`]) for edges, faces, vertices and the B-rep, and the
+/// notification identity for the other entities (edge uses among them).
+#[must_use]
+pub(crate) fn scheme_owner_identity(
+    naming: NamingScheme,
+    entity: EntityRef,
+) -> crate::geom::object::ObjectRef {
+    use brep_cache::{arena_identity, CacheObject};
+    if naming == NamingScheme::Notify {
+        return loopuse::notify_ref(entity);
+    }
+    match entity {
+        EntityRef::Edge(x) => arena_identity(CacheObject::Edge(x)),
+        EntityRef::Face(x) => arena_identity(CacheObject::Face(x)),
+        EntityRef::Vertex(x) => arena_identity(CacheObject::Vertex(x)),
+        EntityRef::Brep(_) => arena_identity(CacheObject::Brep),
+        other => loopuse::notify_ref(other),
+    }
+}
+
 /// A boundary representation (`SmBrep`): arenas of shells, faces, loops, edges and
 /// vertices linked by typed ids.
-#[derive(Debug, Clone)]
+///
+/// # Copying
+///
+/// `Brep` is not `Clone` (#2715): a field-by-field copy would drop every curve's and
+/// surface's owner, and a body whose faces own no surface queries, operates on and
+/// saves wrongly. Say which copy you mean:
+/// - [`brep::p3::brep_copy`] (`SmApiBrepCopy`): an independent body to operate on,
+///   edit or save. It owns its geometry under its own naming; its arena ids are new.
+///   ([`brep::p3::api_brep_copy`] notifies it through the caller's environment.)
+/// - [`Brep::clone_standing_for_self`]: a private copy that stands for this B-rep,
+///   with the same ids, key and naming, and geometry that keeps its owners. Use it
+///   for a scratch copy a query addresses by this B-rep's ids.
+/// - [`Brep::with_rollback`] (inside the crate, `snapshot`/`restore`): an operation's
+///   rollback, putting this B-rep back exactly as it was.
+#[derive(Debug)]
 pub struct Brep {
     shells: Arena<ShellId, Shell>,
     faces: Arena<FaceId, Face>,
     loops: Arena<LoopId, Loop>,
-    edges: Arena<EdgeId, Edge>,
+    edges: Shared<Arena<EdgeId, Edge>>,
     vertices: Arena<VertexId, Vertex>,
     regions: Arena<RegionId, Region>,
     infinite_region: Option<RegionId>,
     faceuses: Arena<FaceuseId, Faceuse>,
     loopuses: Arena<LoopuseId, Loopuse>,
-    edgeuses: Arena<EdgeuseId, Edgeuse>,
+    edgeuses: Shared<Arena<EdgeuseId, Edgeuse>>,
     vertexuses: Arena<VertexuseId, Vertexuse>,
     /// `m_bValidateOnly`.
     validate_only: bool,
@@ -615,9 +773,14 @@ pub struct Brep {
     /// The identity the B-rep is attributed and notified under (`SmBrep*`).
     key: ObjectKey,
     /// `SmOwningTopology::m_pList` of the B-rep (unit `topology.brep_p1`): the head of
-    /// its circular region list, `None` for the first region record (the region arena
-    /// holds the list in traversal order; the head only rotates it).
+    /// its circular region list, `None` for the first region record.
     region_list_head: Option<RegionId>,
+    /// The circular region list's link order (unit `topology.brep_p1`), from
+    /// [`Brep::region_list_head`] when it was last moved. Regions on the list
+    /// (`Region::in_brep`) that are not in it follow in arena order: that is upstream's
+    /// `PostInsert` (append at the tail, before the head). Empty while the list is still
+    /// in arena order (the head never moved past an append).
+    region_order: Vec<RegionId>,
     /// `m_pFaceListHead` (unit `topology.brep_p1`): the face list in its list order
     /// (every face record, once; an importer may reorder it). Upstream appends on
     /// `PostInsert` and unlinks on `Remove`: `remove_*_record` takes the id off this
@@ -644,6 +807,9 @@ pub struct Brep {
     /// the port's surface owners (not set on every imported face surface) cannot
     /// express on their own.
     surface_owner_cleared: Vec<FaceId>,
+    /// (not upstream) How the B-rep names its topology as an owner of geometry
+    /// ([`NamingScheme`]).
+    naming: NamingScheme,
     /// `m_pLockedBoundingBox` (unit `query.brep`): the box
     /// [`crate::query::brep::lock_bounding_box`] saved, which
     /// [`crate::query::brep::calculate_bounding_box`] returns while it is set. A clone
@@ -654,9 +820,64 @@ pub struct Brep {
     /// its objects' topology keys hold it (`topology::brep::p3::topology_ref`). A
     /// clone is a new B-rep without one.
     notify_identity: IdentitySlot,
-    /// Edge/face identities supplied when their geometry was bound. These record
-    /// producer provenance; they are never inferred from an opaque geometry owner.
+    /// (not upstream) Names this B-rep value for the notify records' seeding progress
+    /// (`topology::brep::p3`); a clone is another value without one.
+    progress_tag: topology::ProgressTag,
+    /// Edge/face/edge-use identities supplied when their geometry was bound. These
+    /// record producer provenance; they are never inferred from an opaque geometry
+    /// owner.
     geometry_owner_keys: std::collections::BTreeMap<EntityRef, crate::geom::object::ObjectRef>,
+    /// `SmAObject::m_pAttributes` of the B-rep's topology objects: the caller's and the
+    /// kernel's attributes on its faces, edges, ... (keyed by the B-rep-local
+    /// [`loopuse::notify_ref`] identity of each entity). A clone copies them.
+    attributes: AttributeStore,
+}
+
+/// A B-rep as it was ([`Brep::snapshot`]), to put back with [`Brep::restore`] in its
+/// place: never edited, queried or notified itself. Crate-private, as the pair is: outside
+/// the crate an edit is rolled back by [`Brep::with_rollback`], which can only put it back
+/// where it was taken.
+#[derive(Debug)]
+pub(crate) struct Snapshot(Brep);
+
+impl Brep {
+    /// The copy constructor; with `share` the edge and edge use arenas (the bulk of a
+    /// clone: their curves) are shared copy-on-write instead of copied, so their curves
+    /// keep their owners until a write copies the arena.
+    fn copy(&self, share: bool) -> Self {
+        Self {
+            shells: self.shells.clone(),
+            faces: self.faces.clone(),
+            loops: self.loops.clone(),
+            edges: self.edges.copy(share),
+            vertices: self.vertices.clone(),
+            regions: self.regions.clone(),
+            infinite_region: self.infinite_region,
+            faceuses: self.faceuses.clone(),
+            loopuses: self.loopuses.clone(),
+            edgeuses: self.edgeuses.copy(share),
+            vertexuses: self.vertexuses.clone(),
+            validate_only: self.validate_only,
+            tolerance: self.tolerance,
+            key: self.key,
+            region_list_head: self.region_list_head,
+            region_order: self.region_order.clone(),
+            face_list: self.face_list.clone(),
+            edge_list: self.edge_list.clone(),
+            vertex_list: self.vertex_list.clone(),
+            editing_enabled: self.editing_enabled,
+            model_size_estimate: self.model_size_estimate,
+            large_small_size_ratio: self.large_small_size_ratio,
+            deleted_surfaces: self.deleted_surfaces.clone(),
+            surface_owner_cleared: self.surface_owner_cleared.clone(),
+            naming: self.naming,
+            locked_bounding_box: self.locked_bounding_box,
+            notify_identity: self.notify_identity.clone(),
+            progress_tag: self.progress_tag.clone(),
+            geometry_owner_keys: self.geometry_owner_keys.clone(),
+            attributes: self.attributes.clone(),
+        }
+    }
 }
 
 impl Default for Brep {
@@ -665,18 +886,19 @@ impl Default for Brep {
             shells: Arena::default(),
             faces: Arena::default(),
             loops: Arena::default(),
-            edges: Arena::default(),
+            edges: Shared::default(),
             vertices: Arena::default(),
             regions: Arena::default(),
             infinite_region: None,
             faceuses: Arena::default(),
             loopuses: Arena::default(),
-            edgeuses: Arena::default(),
+            edgeuses: Shared::default(),
             vertexuses: Arena::default(),
             validate_only: false,
             tolerance: ZONE_TOL_3D,
             key: ObjectKey(0),
             region_list_head: None,
+            region_order: Vec::new(),
             face_list: Vec::new(),
             edge_list: Vec::new(),
             vertex_list: Vec::new(),
@@ -685,9 +907,12 @@ impl Default for Brep {
             large_small_size_ratio: USE_DEFAULT,
             deleted_surfaces: Vec::new(),
             surface_owner_cleared: Vec::new(),
+            naming: NamingScheme::Unknown,
             locked_bounding_box: None,
             notify_identity: IdentitySlot::default(),
+            progress_tag: topology::ProgressTag::default(),
             geometry_owner_keys: std::collections::BTreeMap::new(),
+            attributes: AttributeStore::default(),
         }
     }
 }
@@ -740,6 +965,153 @@ impl Brep {
         self.infinite_region = region;
     }
 
+    /// How this B-rep names its topology as the owner of geometry ([`NamingScheme`]).
+    #[must_use]
+    pub const fn naming(&self) -> NamingScheme {
+        self.naming
+    }
+
+    /// Records how this B-rep names its topology as the owner of geometry: set where a
+    /// B-rep is built or its geometry owners are relabelled.
+    pub fn set_naming(&mut self, naming: NamingScheme) {
+        self.naming = naming;
+    }
+
+    /// Relabels geometry owned by this B-rep's own topology records under
+    /// [`NamingScheme::Arena`] ([`brep_cache::arena_identity`]), preserving shared or
+    /// unowned geometry and syncing face surface tolerances. An edge use's own UV trim
+    /// curve takes the edge use's notification identity, the arena scheme's name for an
+    /// edge use (`edgeuse::p1::owner_ref`, `check_brep`).
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::NotFound`] for a dangling face, edge or edge use id (none in
+    /// practice).
+    pub fn use_arena_naming(&mut self) -> Result<()> {
+        let edges: Vec<EdgeId> = self.edges.ids().collect();
+        for edge in edges {
+            let entity = EntityRef::Edge(edge);
+            let arena = brep_cache::arena_identity(brep_cache::CacheObject::Edge(edge));
+            let notify = loopuse::notify_ref(entity);
+            let proven = self.geometry_owner_key(entity);
+            let rebound = self.edge_mut(edge)?.curve.as_mut().is_some_and(|curve| {
+                let matched = curve.owner().is_some_and(|o| {
+                    o == arena
+                        || (o.key, o.type_code) == (notify.key, notify.type_code)
+                        || Some(o) == proven
+                });
+                if matched {
+                    curve.set_owner(Some(arena), None);
+                }
+                matched
+            });
+            if rebound {
+                self.set_geometry_owner_key(entity, Some(arena));
+            }
+        }
+        let uses: Vec<EdgeuseId> = self.edgeuses.ids().collect();
+        for eu in uses {
+            let entity = EntityRef::Edgeuse(eu);
+            let notify = loopuse::notify_ref(entity);
+            let proven = self.geometry_owner_key(entity);
+            let rebound = self
+                .edgeuse_mut(eu)?
+                .uv_trim_curve
+                .as_mut()
+                .is_some_and(|curve| {
+                    let matched = curve
+                        .owner()
+                        .is_some_and(|o| o == notify || Some(o) == proven);
+                    if matched {
+                        curve.set_owner(Some(notify), None);
+                    }
+                    matched
+                });
+            if rebound {
+                self.set_geometry_owner_key(entity, Some(notify));
+            }
+        }
+        let faces: Vec<FaceId> = self.faces.ids().collect();
+        for face in faces {
+            let entity = EntityRef::Face(face);
+            let arena = brep_cache::arena_identity(brep_cache::CacheObject::Face(face));
+            let notify = loopuse::notify_ref(entity);
+            let proven = self.geometry_owner_key(entity);
+            let rebound = self
+                .face_mut(face)?
+                .surface
+                .as_mut()
+                .is_some_and(|surface| {
+                    let matched = surface
+                        .owner()
+                        .is_some_and(|o| o == arena || o == notify || Some(o) == proven);
+                    if matched {
+                        surface.set_owner(Some(arena));
+                    }
+                    matched
+                });
+            if rebound {
+                self.set_geometry_owner_key(entity, Some(arena));
+                self.sync_face_surface_tolerance(face)?;
+            }
+        }
+        self.naming = NamingScheme::Arena;
+        Ok(())
+    }
+
+    /// The identity `entity` owns geometry under (upstream: the entity itself,
+    /// `pGeom->GetOwner() == this`): under [`NamingScheme::Caller`] the key recorded
+    /// for it where it was built or its geometry bound, else, and under every other
+    /// scheme, the scheme's own identity (the notification identity under
+    /// [`NamingScheme::Notify`], otherwise the arena identity of an edge, face or
+    /// vertex and the notification identity of any other entity). Geometry binders name new
+    /// geometry by it and [`check_brep`](crate::topology::brep::validation::check_brep)
+    /// checks owners against it, so the two always agree (upstream's identity exists
+    /// from the moment the entity does).
+    ///
+    /// It is a geometry-owner identity, unique only as a whole
+    /// [`ObjectRef`](crate::geom::object::ObjectRef) (type code and key): outside
+    /// [`NamingScheme::Notify`] a face, an edge and a vertex of one index share their key.
+    /// Never use it as an attribute or notification key (a `key_of` or `source_key`),
+    /// whose stores key by the key alone; use [`loopuse::notify_ref`].
+    #[must_use]
+    pub fn owner_identity(&self, entity: EntityRef) -> crate::geom::object::ObjectRef {
+        owner_identity_of(self.naming, self.geometry_owner_key(entity), entity)
+    }
+
+    /// Producer-supplied owner identity recorded when geometry was bound to `entity`.
+    #[must_use]
+    pub(crate) fn geometry_owner_key(
+        &self,
+        entity: EntityRef,
+    ) -> Option<crate::geom::object::ObjectRef> {
+        self.geometry_owner_keys.get(&entity).copied()
+    }
+
+    /// All producer-supplied geometry owner identities recorded on this B-rep.
+    #[must_use]
+    pub(crate) const fn geometry_owner_keys(
+        &self,
+    ) -> &std::collections::BTreeMap<EntityRef, crate::geom::object::ObjectRef> {
+        &self.geometry_owner_keys
+    }
+
+    /// Updates or clears the producer-supplied geometry owner identity of `entity`.
+    pub(crate) fn set_geometry_owner_key(
+        &mut self,
+        entity: EntityRef,
+        owner: Option<crate::geom::object::ObjectRef>,
+    ) {
+        match owner {
+            Some(owner) => {
+                self.geometry_owner_keys.insert(entity, owner);
+            }
+            None => {
+                self.geometry_owner_keys.remove(&entity);
+            }
+        }
+    }
+
     /// `m_bEditingEnabled`.
     #[must_use]
     pub const fn editing_enabled(&self) -> bool {
@@ -774,18 +1146,178 @@ impl Brep {
     /// copy where upstream works on the B-rep): its face surfaces share the cache slots
     /// of this B-rep's ([`Surface::share_cache_slot_of`]), so that the surface caches the
     /// query makes or reuses on the copy are the B-rep's surfaces' own, as upstream's
-    /// are. A plain `clone` (the copy constructor) starts every surface without cache.
+    /// are. They also keep their owners (and the face tolerance cached on them), so
+    /// that `GetFace()` of the copy's surfaces finds the face as upstream's in-place
+    /// queries do (`SmTol::GetZoneTol3d(pSurface)` reads the face tolerance); the geometry's
+    /// copy constructor would start every surface without cache or owner.
     #[must_use]
     pub fn clone_sharing_surface_caches(&self) -> Self {
-        let mut copy = self.clone();
+        let mut copy = self.copy(true);
         for (id, face) in self.faces.iter() {
             if let (Some(original), Ok(face_copy)) = (face.surface.as_ref(), copy.face_mut(id)) {
                 if let Some(surface) = face_copy.surface.as_mut() {
                     surface.share_cache_slot_of(original);
+                    face::p2::RescueSurfaceOwner::new(original).restore(surface);
                 }
             }
         }
         copy
+    }
+
+    /// A private copy of this B-rep that stands for the B-rep itself where upstream
+    /// queries the B-rep in place (a `const` query that still makes missing UV trim
+    /// curves on it): its edge curves, face surfaces and UV trim curves are exact copies
+    /// that keep their owners (and the surfaces share their cache slots), so the copy's
+    /// geometry still names its own edges and faces (the geometry's copy constructor
+    /// resets every owner, and a B-rep cache made from such a copy holds no curve or
+    /// surface).
+    ///
+    /// # Errors
+    ///
+    /// Those of the geometry copies (a geometry nesting deeper than
+    /// `MAX_GEOMETRY_NESTING`).
+    pub fn clone_standing_for_self(&self) -> Result<Self> {
+        let mut copy = self.copy(false);
+        for (id, edge) in self.edges.iter() {
+            if let Some(curve) = edge.curve.as_ref() {
+                copy.edge_mut(id)?.curve = Some(curve.clone_for_evaluation()?);
+            }
+        }
+        for (id, face) in self.faces.iter() {
+            if let Some(surface) = face.surface.as_ref() {
+                copy.face_mut(id)?.surface = Some(surface.clone_for_evaluation()?);
+            }
+        }
+        for (id, edgeuse) in self.edgeuses.iter() {
+            if let Some(curve) = edgeuse.uv_trim_curve.as_ref() {
+                copy.edgeuse_mut(id)?.uv_trim_curve = Some(curve.clone_for_evaluation()?);
+            }
+        }
+        Ok(copy)
+    }
+
+    /// This B-rep as it is now, to put back with [`Brep::restore`] if an operation on it
+    /// is refused (not upstream: an operation's rollback). Put back, the B-rep is the
+    /// value it was, field for field:
+    /// - its topology, in the same arenas and lists, ids and order;
+    /// - its tolerance, editing and size state, deleted surfaces;
+    /// - its naming ([`Brep::naming`]), its key ([`Brep::key`]), its locked bounding box,
+    ///   the owner keys recorded when its geometry was bound;
+    /// - every attribute in its store, whatever its behaviour (temporary ones too), with
+    ///   the same handles and lists, so the provenance an application keeps there;
+    /// - its notification serial and progress tag, and the notification identity of each
+    ///   top-level curve and surface (a face's surface, an edge's curve, an edge use's UV
+    ///   trim curve, a deleted surface): the snapshot holds them for the B-rep while it is
+    ///   not live, and is only ever put back in its place or dropped. A nested curve's or surface's identity (an offset
+    ///   surface's base, notified by `swap_uv_with_notifications`) is not kept: put back,
+    ///   it is issued a fresh key at its next notification;
+    /// - its geometry exactly (the curves' and surfaces' kinds, owners, the face
+    ///   tolerances cached on them, exact rounds and made NURBs).
+    ///
+    /// Only caches start again: the surfaces' cache slots are empty, a cache an operation
+    /// builds on the edited faces not being the snapshot's.
+    ///
+    /// The snapshot shares no arena with this B-rep, so the operation that follows edits
+    /// this B-rep's own objects exactly as it would without it. (Sharing the edge arenas
+    /// copy-on-write, as [`Brep::clone_sharing_surface_caches`] does, would make the
+    /// operation's first edge edit copy them for this B-rep with the copy constructor,
+    /// which resets every curve's owner: a result the check then fails with Test #61,
+    /// Bad Edge, `ValidateGeometry`.)
+    ///
+    /// # Errors
+    ///
+    /// `Unsupported` while a face's surface owner is cleared (inside a running
+    /// `CreateUVTrimCurves`, a state no snapshot puts back); those of the geometry copies
+    /// (geometry nested deeper than `MAX_GEOMETRY_NESTING`). Nothing is changed.
+    pub(crate) fn snapshot(&self) -> Result<Snapshot> {
+        if !self.surface_owner_cleared.is_empty() {
+            return Err(SolidError::Unsupported {
+                operation: "topology::Brep::snapshot",
+                reason: "a snapshot of a B-rep whose surface owner is cleared",
+            });
+        }
+        // copy(false) already clones the arenas and their nested geometry. Validate
+        // every root before that first recursive copy, not only before replacing it
+        // with its exact snapshot copy below.
+        for (_, face) in self.faces.iter() {
+            if let Some(surface) = face.surface.as_ref() {
+                surface.check_evaluation_copy_depth(0)?;
+            }
+        }
+        for (_, edge) in self.edges.iter() {
+            if let Some(curve) = edge.curve.as_ref() {
+                Surface::check_curve_evaluation_copy_depth(curve, 0)?;
+            }
+        }
+        for (_, edgeuse) in self.edgeuses.iter() {
+            if let Some(curve) = edgeuse.uv_trim_curve.as_ref() {
+                Surface::check_curve_evaluation_copy_depth(curve, 0)?;
+            }
+        }
+        for surface in &self.deleted_surfaces {
+            surface.check_evaluation_copy_depth(0)?;
+        }
+        let mut saved = self.copy(false);
+        for (id, face) in self.faces.iter() {
+            if let Some(surface) = face.surface.as_ref() {
+                saved.face_mut(id)?.surface = Some(surface.snapshot_copy()?);
+            }
+        }
+        for (id, edge) in self.edges.iter() {
+            if let Some(curve) = edge.curve.as_ref() {
+                saved.edge_mut(id)?.curve = Some(curve.snapshot_copy()?);
+            }
+        }
+        for (id, edgeuse) in self.edgeuses.iter() {
+            if let Some(curve) = edgeuse.uv_trim_curve.as_ref() {
+                saved.edgeuse_mut(id)?.uv_trim_curve = Some(curve.snapshot_copy()?);
+            }
+        }
+        saved.deleted_surfaces = self
+            .deleted_surfaces
+            .iter()
+            .map(Surface::snapshot_copy)
+            .collect::<Result<_>>()?;
+        saved.notify_identity = self.notify_identity.duplicate_for_snapshot();
+        saved.progress_tag = self.progress_tag.duplicate_for_snapshot();
+        Ok(Snapshot(saved))
+    }
+
+    /// Puts back `saved`, a [`Brep::snapshot`] of the B-rep in this place taken earlier:
+    /// the B-rep is again the value it was when `saved` was taken (not upstream: an
+    /// operation's rollback). What the operation made in between is dropped.
+    pub(crate) fn restore(&mut self, saved: Snapshot) {
+        *self = saved.0;
+    }
+
+    /// Runs `edit` on this B-rep and keeps what it did only when `keep` says so of its
+    /// result: otherwise, and when `edit` panics, the B-rep is put back exactly as it came
+    /// in ([`Brep::snapshot`]: what is kept, and that only caches start again), and the
+    /// panic then goes on (not upstream: an operation's rollback). The snapshot is taken
+    /// and put back in this one place, so no other B-rep can receive its identities.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Brep::snapshot`], before `edit` runs and with nothing changed; `edit`'s.
+    pub fn with_rollback<T>(
+        &mut self,
+        edit: impl FnOnce(&mut Brep) -> Result<T>,
+        keep: impl FnOnce(&Result<T>) -> bool,
+    ) -> Result<T> {
+        use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+        let saved = self.snapshot()?;
+        match catch_unwind(AssertUnwindSafe(|| edit(&mut *self))) {
+            Ok(r) => {
+                if !keep(&r) {
+                    self.restore(saved);
+                }
+                r
+            }
+            Err(p) => {
+                self.restore(saved);
+                resume_unwind(p)
+            }
+        }
     }
 
     /// Ends the innermost [`Brep::begin_surface_owner_cleared`] scope of face `f`.
@@ -1047,6 +1579,179 @@ impl Brep {
         self.key = key;
     }
 
+    /// Whether `e` names a live topology object of this B-rep that can carry
+    /// attributes (every kind but the B-rep itself).
+    #[must_use]
+    pub fn is_live_entity(&self, e: EntityRef) -> bool {
+        match e {
+            EntityRef::Brep(_) => false,
+            EntityRef::Shell(x) => self.shells.get(x).is_some(),
+            EntityRef::Face(x) => self.faces.get(x).is_some(),
+            EntityRef::Loop(x) => self.loops.get(x).is_some(),
+            EntityRef::Edge(x) => self.edges.get(x).is_some(),
+            EntityRef::Vertex(x) => self.vertices.get(x).is_some(),
+            EntityRef::Region(x) => self.regions.get(x).is_some(),
+            EntityRef::Faceuse(x) => self.faceuses.get(x).is_some(),
+            EntityRef::Loopuse(x) => self.loopuses.get(x).is_some(),
+            EntityRef::Edgeuse(x) => self.edgeuses.get(x).is_some(),
+            EntityRef::Vertexuse(x) => self.vertexuses.get(x).is_some(),
+        }
+    }
+
+    /// The faces, edges and vertices on the B-rep's lists (an edit can unlink one and
+    /// leave its record in the arena: upstream's `delete` of it), for
+    /// [`Brep::still_has`].
+    pub(crate) fn listed_entities(&self) -> std::collections::BTreeSet<EntityRef> {
+        self.face_list()
+            .iter()
+            .map(|&f| EntityRef::Face(f))
+            .chain(self.edge_list().iter().map(|&e| EntityRef::Edge(e)))
+            .chain(self.vertex_list().iter().map(|&v| EntityRef::Vertex(v)))
+            .collect()
+    }
+
+    /// Whether `e` is an object the B-rep still has, as an operation that renamed its
+    /// objects hands their attributes back ([`Brep::is_live_entity`], and for a face,
+    /// edge or vertex on its list, `listed` from [`Brep::listed_entities`]): an object
+    /// upstream deleted has cleared its attributes.
+    pub(crate) fn still_has(
+        &self,
+        listed: &std::collections::BTreeSet<EntityRef>,
+        e: EntityRef,
+    ) -> bool {
+        self.is_live_entity(e)
+            && match e {
+                EntityRef::Face(_) | EntityRef::Edge(_) | EntityRef::Vertex(_) => {
+                    listed.contains(&e)
+                }
+                _ => true,
+            }
+    }
+
+    fn attributed_key(&self, e: EntityRef, operation: &'static str) -> Result<ObjectKey> {
+        if self.is_live_entity(e) {
+            Ok(loopuse::notify_ref(e).key)
+        } else {
+            Err(SolidError::NotFound {
+                operation,
+                entity: e,
+            })
+        }
+    }
+
+    /// `SmAObject::AddAttribute(new attribute)`: gives `e` a new attribute and returns
+    /// its handle. As upstream, a second attribute with the same id is added too
+    /// ([`Brep::find_attribute`] finds the first). Operations carry it to the objects
+    /// they make from `e` as its [`Behavior`](crate::geom::attribute::Behavior) says
+    /// (SMLib's default handlers: split, copy and merge pass it on to an object that
+    /// has no attribute of that id; temporary attributes are not passed on).
+    /// Application attribute ids should be above 10000, as upstream asks.
+    ///
+    /// # Errors
+    /// [`SolidError::NotFound`] when `e` is not a live object of this B-rep (or is the
+    /// B-rep itself).
+    pub fn add_attribute(&mut self, e: EntityRef, attribute: Attribute) -> Result<AttributeHandle> {
+        let key = self.attributed_key(e, "topology::Brep::add_attribute")?;
+        let h = self.attributes.insert(attribute)?;
+        self.attributes.add_attribute(key, h)?;
+        Ok(h)
+    }
+
+    /// `SmAObject::AddAttribute(existing attribute)`: puts an attribute this B-rep
+    /// already holds on `e` as well (a reference attribute shared by several objects).
+    /// Adding the attribute `e` already finds first under its id does nothing.
+    ///
+    /// # Errors
+    /// [`SolidError::NotFound`] for a dead entity; [`SolidError::InvalidInput`] for a
+    /// handle that is not live in this B-rep.
+    pub fn attach_attribute(&mut self, e: EntityRef, h: AttributeHandle) -> Result<()> {
+        let key = self.attributed_key(e, "topology::Brep::attach_attribute")?;
+        self.attributes.add_attribute(key, h)
+    }
+
+    /// `SmAObject::FindAttribute(lAttributeID)`: the first attribute of `e` with that
+    /// id (`None` for a dead entity).
+    #[must_use]
+    pub fn find_attribute(&self, e: EntityRef, attribute_id: u64) -> Option<&Attribute> {
+        let key = self
+            .attributed_key(e, "topology::Brep::find_attribute")
+            .ok()?;
+        self.attributes
+            .find_attribute(key, attribute_id)
+            .and_then(|h| self.attributes.get(h))
+    }
+
+    /// `SmAObject::GetAttributes`: every attribute of `e` with its handle, in the order
+    /// they were added (empty for a dead entity).
+    #[must_use]
+    pub fn entity_attributes(&self, e: EntityRef) -> Vec<(AttributeHandle, &Attribute)> {
+        let Ok(key) = self.attributed_key(e, "topology::Brep::entity_attributes") else {
+            return Vec::new();
+        };
+        self.attributes
+            .attributes(key)
+            .into_iter()
+            .filter_map(|h| self.attributes.get(h).map(|a| (h, a)))
+            .collect()
+    }
+
+    /// `SmAObject::RemoveAttribute(pAttribute)`: takes the attribute off `e`; it is
+    /// deleted when that was its last user, unless it is standalone. Returns whether it
+    /// was deleted (an attribute `e` does not carry is left alone).
+    ///
+    /// # Errors
+    /// [`SolidError::NotFound`] for a dead entity.
+    pub fn remove_attribute(&mut self, e: EntityRef, h: AttributeHandle) -> Result<bool> {
+        let key = self.attributed_key(e, "topology::Brep::remove_attribute")?;
+        self.attributes.remove_attribute(key, h, false)
+    }
+
+    /// `SmAObject::ClearAttributes`: takes every attribute off `e`, deleting each
+    /// dependent one it was the last user of.
+    ///
+    /// # Errors
+    /// [`SolidError::NotFound`] for a dead entity.
+    pub fn clear_attributes(&mut self, e: EntityRef) -> Result<()> {
+        let key = self.attributed_key(e, "topology::Brep::clear_attributes")?;
+        self.attributes.clear_attributes(key)
+    }
+
+    /// The attribute `h` of this B-rep, if live (also a standalone attribute that no
+    /// object carries any more).
+    #[must_use]
+    pub fn attribute(&self, h: AttributeHandle) -> Option<&Attribute> {
+        self.attributes.get(h)
+    }
+
+    /// Every live entity carrying at least one attribute, in identity order.
+    #[must_use]
+    pub fn attributed_entities(&self) -> Vec<EntityRef> {
+        self.attributes
+            .attributed_objects()
+            .into_iter()
+            .filter_map(loopuse::entity_of_notify_key)
+            .filter(|&e| self.is_live_entity(e))
+            .collect()
+    }
+
+    /// The B-rep's attribute store, read-only (keyed by each entity's B-rep-local
+    /// notification identity).
+    #[must_use]
+    pub fn attribute_store(&self) -> &AttributeStore {
+        &self.attributes
+    }
+
+    /// Takes the attribute store out, leaving an empty one (for an operation that
+    /// renames the objects while it runs).
+    pub(crate) fn take_attributes(&mut self) -> AttributeStore {
+        core::mem::take(&mut self.attributes)
+    }
+
+    /// Replaces the attribute store (keyed by [`loopuse::notify_ref`]).
+    pub(crate) fn set_attributes(&mut self, attributes: AttributeStore) {
+        self.attributes = attributes;
+    }
+
     /// The serial a context issued this B-rep for its notifications, once one has
     /// (the kernel issues it; there is no setter).
     #[must_use]
@@ -1062,6 +1767,11 @@ impl Brep {
     /// The slot of the B-rep's notification serial, read-only.
     pub(crate) const fn notify_identity(&self) -> &IdentitySlot {
         &self.notify_identity
+    }
+
+    /// The tag naming this B-rep value for the notify records' seeding progress.
+    pub(crate) fn progress_tag(&mut self) -> Arc<()> {
+        self.progress_tag.get()
     }
 
     /// Appends a region record as is (no validation).
@@ -1124,6 +1834,12 @@ impl Brep {
         Ok(id)
     }
 
+    /// Allocates a vertex retained by another topology object, outside the B-rep's
+    /// owning vertex list.
+    pub(crate) fn add_unlinked_vertex_record(&mut self, vertex: Vertex) -> Result<VertexId> {
+        self.vertices.insert(vertex)
+    }
+
     /// Appends a face use record as is (no validation).
     pub fn add_faceuse_record(&mut self, faceuse: Faceuse) -> Result<FaceuseId> {
         self.faceuses.insert(faceuse)
@@ -1155,9 +1871,12 @@ impl Brep {
     /// Deletes a region record (upstream `delete`; no unlinking: the caller resets the
     /// region list head and the infinite region when they named it).
     pub fn remove_region_record(&mut self, id: RegionId) -> Result<Region> {
-        self.regions
+        let region = self
+            .regions
             .remove(id)
-            .ok_or_else(|| not_found("topology::Brep::remove_region_record", id))
+            .ok_or_else(|| not_found("topology::Brep::remove_region_record", id))?;
+        self.region_order.retain(|&x| x != id);
+        Ok(region)
     }
 
     /// Deletes a face record (upstream `m_pFaceListHead->Remove` and `delete`): the
@@ -1218,9 +1937,12 @@ impl Brep {
 
     /// Deletes an edge use record (upstream `delete`; no unlinking).
     pub fn remove_edgeuse_record(&mut self, id: EdgeuseId) -> Result<Edgeuse> {
-        self.edgeuses
+        let record = self
+            .edgeuses
             .remove(id)
-            .ok_or_else(|| not_found("topology::Brep::remove_edgeuse_record", id))
+            .ok_or_else(|| not_found("topology::Brep::remove_edgeuse_record", id))?;
+        self.geometry_owner_keys.remove(&EntityRef::Edgeuse(id));
+        Ok(record)
     }
 
     /// Deletes a vertex use record (upstream `delete`; no unlinking).
@@ -1242,6 +1964,67 @@ impl Brep {
             tolerance: ZONE_TOL_3D,
             ..Vertex::default()
         })
+    }
+
+    /// Rewrites the port's cached topology fields from the links upstream reads them
+    /// through (not an upstream port: upstream stores none of them). [`Edge::vertices`]
+    /// from the edge uses ([`edge::start_end_vertices`], `GetStartVertex` /
+    /// `GetEndVertex`); [`Face::shell`] from the primary face use (`GetShell`);
+    /// [`Face::loops`] from the primary face use's loop uses; [`Loop::face`] through the
+    /// primary loop use and its face use (`GetFace`); [`Loop::edges`] from the primary
+    /// loop use's edge-use cycle; [`Shell::faces`] from the shell's face uses. The public
+    /// operations call it before they return, so the fields are true for their callers;
+    /// topology edits inside an operation maintain only the use links. Only these
+    /// fields change, and never a result: a field whose links are missing or cannot be
+    /// read keeps its value.
+    pub fn refresh_cached_topology(&mut self) {
+        use crate::topology::integrity as derive;
+        let ids: Vec<EdgeId> = self.edges.ids().collect();
+        for e in ids {
+            let has_uses = self.edges.get(e).is_some_and(|r| !r.edgeuses.is_empty());
+            if !has_uses {
+                continue;
+            }
+            if let Ok((Some(start), Some(end))) = edge::start_end_vertices(self, e) {
+                if let Some(r) = self.edges.get_mut(e) {
+                    r.vertices = [start, end];
+                }
+            }
+        }
+        let ids: Vec<FaceId> = self.faces.ids().collect();
+        for f in ids {
+            let shell = derive::derived_face_shell(self, f);
+            let loops = derive::derived_face_loops(self, f);
+            if let Some(r) = self.faces.get_mut(f) {
+                if let Some(shell) = shell {
+                    r.shell = shell;
+                }
+                if let Some(loops) = loops {
+                    r.loops = loops;
+                }
+            }
+        }
+        let ids: Vec<LoopId> = self.loops.ids().collect();
+        for l in ids {
+            let face = derive::derived_loop_face(self, l);
+            let edges = derive::derived_loop_edges(self, l);
+            if let Some(r) = self.loops.get_mut(l) {
+                if let Some(face) = face {
+                    r.face = face;
+                }
+                if let Some(edges) = edges {
+                    r.edges = edges;
+                }
+            }
+        }
+        let ids: Vec<ShellId> = self.shells.ids().collect();
+        for s in ids {
+            if let Some(faces) = derive::derived_shell_faces(self, s) {
+                if let Some(r) = self.shells.get_mut(s) {
+                    r.faces = faces;
+                }
+            }
+        }
     }
 
     /// Adds an edge from `start` to `end`; both vertices must exist.
@@ -1277,7 +2060,11 @@ impl Brep {
     }
 
     /// Adds a loop to `face` from edges in traversal order. Every edge must exist and
-    /// consecutive uses must share a vertex, closing back to the first.
+    /// consecutive uses must share a vertex, closing back to the first. An edge's ends
+    /// are read through its edge and vertex uses (`GetVertices`) when those name both
+    /// ends, and from its creation-time [`Edge::vertices`] otherwise (a builder edge from
+    /// [`Brep::add_edge`], before its uses are linked), so a loop built mid-operation
+    /// never reads a stale pair.
     pub fn add_loop(&mut self, face: FaceId, edges: Vec<LoopEdge>) -> Result<LoopId> {
         const OP: &str = "topology::Brep::add_loop";
         if self.faces.get(face).is_none() {
@@ -1289,7 +2076,12 @@ impl Brep {
                 .edges
                 .get(use_.edge)
                 .ok_or_else(|| not_found(OP, use_.edge))?;
-            let [a, b] = e.vertices;
+            // through the uses once they name both ends; a builder edge (no edge uses,
+            // or edge uses whose vertex uses are not linked yet) has only its pair
+            let [a, b] = match edge::start_end_vertices(self, use_.edge) {
+                Ok((Some(a), Some(b))) => [a, b],
+                _ => e.vertices,
+            };
             ends.push(if use_.forward { (a, b) } else { (b, a) });
         }
         let closes = ends
@@ -1336,6 +2128,60 @@ mod tests {
         // an unmatched end is a no-op
         b.end_surface_owner_cleared(g);
         assert!(!b.is_surface_owner_cleared(g));
+    }
+
+    #[test]
+    fn copy_standing_for_the_brep_keeps_geometry_owners() {
+        use crate::curve::line::Line;
+        use crate::geom::object::ObjectRef;
+        use crate::surface::plane::Plane;
+        let mut b = Brep::new();
+        let s = b.add_shell().unwrap();
+        let (v0, v1) = (
+            b.add_vertex(Vec3::ZERO).unwrap(),
+            b.add_vertex(Vec3::X).unwrap(),
+        );
+        let e = b.add_edge(v0, v1).unwrap();
+        let f = b.add_face(s).unwrap();
+        let edge_owner = ObjectRef {
+            type_code: edge::TYPE,
+            key: ObjectKey(u64::from(e.index())),
+        };
+        let face_owner = ObjectRef {
+            type_code: face::p2::TYPE,
+            key: ObjectKey(u64::from(f.index())),
+        };
+        let mut curve =
+            Curve::from(Line::create_line_segment(3, Vec3::ZERO, Vec3::X, None).unwrap());
+        let _ = curve.set_owner(Some(edge_owner), None);
+        b.edge_mut(e).unwrap().curve = Some(curve);
+        let mut surface = Surface::from(Plane::new(
+            Vec3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+            crate::math::Vec2::new(1.0, 1.0),
+            &Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+        ));
+        surface.set_owner(Some(face_owner));
+        b.face_mut(f).unwrap().surface = Some(surface);
+
+        // the arena copy (the geometry's copy constructor) resets the owners
+        let plain = b.copy(false);
+        assert_eq!(plain.edge(e).unwrap().curve.as_ref().unwrap().owner(), None);
+        assert_eq!(
+            plain.face(f).unwrap().surface.as_ref().unwrap().owner(),
+            None
+        );
+        // the copy standing for the B-rep keeps them
+        let copy = b.clone_standing_for_self().unwrap();
+        assert_eq!(
+            copy.edge(e).unwrap().curve.as_ref().unwrap().owner(),
+            Some(edge_owner)
+        );
+        assert_eq!(
+            copy.face(f).unwrap().surface.as_ref().unwrap().owner(),
+            Some(face_owner)
+        );
     }
 
     #[test]
@@ -1401,5 +2247,348 @@ mod tests {
         ));
         assert!(b.add_loop(f, Vec::new()).is_err());
         assert!(b.loops().is_empty());
+    }
+
+    #[test]
+    fn snapshot_checks_face_and_deleted_definition_roots_before_edit() {
+        use crate::surface::plane::Plane;
+        use crate::surface::procedural_blend::corner::{CornerDefinition, EndDefinition};
+        use crate::surface::surface::p2::MAX_GEOMETRY_NESTING;
+
+        // Internal guard fixtures, not a claim that public constructors admit an
+        // over-limit body. Each definition owns just one more surface.
+        fn nested_definition(depth: usize) -> Surface {
+            let mut surface = Surface::from(Plane::from_normal(Vec3::ZERO, Vec3::Z));
+            for _ in 0..depth {
+                let mut outer = Surface::from(Plane::from_normal(Vec3::ZERO, Vec3::Z));
+                outer.set_corner_definition(CornerDefinition::End(EndDefinition {
+                    support: Box::new(surface),
+                    boundary: Vec::new(),
+                }));
+                surface = outer;
+            }
+            surface
+        }
+
+        for depth in [MAX_GEOMETRY_NESTING, MAX_GEOMETRY_NESTING + 1] {
+            for deleted in [false, true] {
+                let mut brep = Brep::new();
+                brep.set_key(ObjectKey(77));
+                let surface = nested_definition(depth);
+                if deleted {
+                    brep.deleted_surfaces.push(surface);
+                } else {
+                    let shell = brep.add_shell().unwrap();
+                    let face = brep.add_face(shell).unwrap();
+                    brep.face_mut(face).unwrap().surface = Some(surface);
+                }
+                let mut edited = false;
+                let result = brep.with_rollback(
+                    |_| {
+                        edited = true;
+                        Ok(())
+                    },
+                    |_| true,
+                );
+                if depth == MAX_GEOMETRY_NESTING {
+                    result.unwrap();
+                    assert!(edited);
+                } else {
+                    assert!(matches!(result, Err(SolidError::InvalidInput { .. })));
+                    assert!(!edited);
+                }
+                assert_eq!(brep.key(), ObjectKey(77));
+                let surface = if deleted {
+                    brep.deleted_surfaces.first().unwrap()
+                } else {
+                    brep.faces
+                        .iter()
+                        .next()
+                        .unwrap()
+                        .1
+                        .surface
+                        .as_ref()
+                        .unwrap()
+                };
+                assert!(surface.procedural_definition().is_some());
+            }
+        }
+    }
+
+    /// A snapshot put back gives the B-rep as it was, every part an operation may change:
+    /// the naming, the key, the locked box, the attributes (a temporary one too) and their
+    /// lists, the notification identities of the B-rep and of its geometry, the owners
+    /// and the geometry. Each part is changed by the edit first.
+    #[test]
+    fn a_snapshot_put_back_is_the_brep_as_it_was() {
+        use crate::geom::attribute::{Attribute, Behavior};
+        use crate::kernel::{Kernel, KernelOptions};
+        let mut k = Kernel::new(&KernelOptions::default());
+        let mut b = crate::primitive::api_primitives::create_box(&mut k, Vec3::ZERO, 1.0, 2.0, 3.0)
+            .unwrap();
+        b.set_naming(NamingScheme::Caller);
+        b.set_key(ObjectKey(77));
+        crate::query::brep::lock_bounding_box(&k, &mut b, false).unwrap();
+        let f0 = b.face_list()[0];
+        b.add_attribute(
+            EntityRef::Face(f0),
+            Attribute::long(10_041, 1, Behavior::Copy),
+        )
+        .unwrap();
+        b.add_attribute(
+            EntityRef::Face(f0),
+            Attribute::long(10_077, 2, Behavior::Temp),
+        )
+        .unwrap();
+        let surface_key = k
+            .context
+            .geometry_key(
+                b.face_mut(f0)
+                    .unwrap()
+                    .surface
+                    .as_mut()
+                    .unwrap()
+                    .notify_identity_slot(),
+            )
+            .unwrap();
+        let e0 = b.edge_list()[0];
+        let curve_key = k
+            .context
+            .geometry_key(
+                b.edge_mut(e0)
+                    .unwrap()
+                    .curve
+                    .as_mut()
+                    .unwrap()
+                    .notify_identity_slot(),
+            )
+            .unwrap();
+        let progress = b.progress_tag.get();
+        let surface_owner = b.face(f0).unwrap().surface.as_ref().unwrap().owner();
+        assert!(surface_owner.is_some());
+        let summary = |b: &Brep| {
+            format!(
+                "{:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+                b.naming(),
+                b.key(),
+                b.locked_bounding_box(),
+                b.attributes,
+                b.faces,
+                b.edges
+                    .iter()
+                    .map(|(_, e)| format!("{e:?}"))
+                    .collect::<Vec<_>>(),
+                b.vertices,
+                b.geometry_owner_keys,
+            )
+        };
+        let before = summary(&b);
+        let saved = b.snapshot().unwrap();
+        // the edit: every part changed
+        b.set_naming(NamingScheme::Notify);
+        b.set_key(ObjectKey(78));
+        b.set_locked_bounding_box(None);
+        let temp = b.entity_attributes(EntityRef::Face(f0)).last().unwrap().0;
+        assert!(b.remove_attribute(EntityRef::Face(f0), temp).unwrap());
+        b.face_mut(f0).unwrap().surface = None;
+        b.edge_mut(e0).unwrap().curve = None;
+        let v0 = b.vertex_list()[0];
+        b.vertex_mut(v0).unwrap().tolerance = 0.5;
+        assert_ne!(summary(&b), before);
+        b.restore(saved);
+        assert_eq!(summary(&b), before);
+        let surface = b.face(f0).unwrap().surface.as_ref().unwrap();
+        assert_eq!(surface.notify_key(), Some(surface_key));
+        assert_eq!(surface.owner(), surface_owner);
+        let curve = b.edge(e0).unwrap().curve.as_ref().unwrap();
+        assert_eq!(curve.notify_key(), Some(curve_key));
+        assert!(Arc::ptr_eq(&b.progress_tag.get(), &progress));
+        // the context still names them by the same keys
+        let again = k
+            .context
+            .geometry_key(
+                b.face_mut(f0)
+                    .unwrap()
+                    .surface
+                    .as_mut()
+                    .unwrap()
+                    .notify_identity_slot(),
+            )
+            .unwrap();
+        assert_eq!(again, surface_key);
+    }
+
+    #[test]
+    fn rollback_preserves_iso_edge_sweep_definition() {
+        use crate::curve::curve::CurveKind;
+        use crate::curve::iso_curve::IsoCurve;
+        use crate::kernel::Kernel;
+        use crate::nurbs::b_spline_surface::SurfParamType;
+        use crate::primitive::api_curves::create_line_segment;
+        use crate::sweep::screw::screw_sweep;
+        use crate::topology::brep::validation::{check_brep, CheckLevel};
+
+        let mut k = Kernel::default();
+        let points = [
+            Vec3::new(4.1, 0.0, 0.0),
+            Vec3::new(5.0, 0.0, 0.0),
+            Vec3::new(5.0, 0.0, 0.9),
+            Vec3::new(4.1, 0.0, 0.9),
+        ];
+        let profile: Vec<Curve> = points
+            .iter()
+            .zip(points.iter().cycle().skip(1))
+            .map(|(&a, &b)| Curve::from(create_line_segment(a, b).unwrap()))
+            .collect();
+        let mut b = screw_sweep(&mut k, &profile, Vec3::ZERO, Vec3::Z, 1.5, 2.0, 1.5e-4).unwrap();
+        assert!(brep::p2::is_manifold_solid(&b).unwrap());
+
+        // Only replace an actual wall boundary with the same parameterization, not
+        // just a curve with the same endpoints. The body's own tolerance is the gate.
+        let mut replacement = None;
+        'faces: for (face_id, face) in b.faces().iter() {
+            let Some(wall) = face.surface.as_ref() else {
+                continue;
+            };
+            if wall.procedural_sweep().is_none() {
+                continue;
+            }
+            wall.check_evaluation_copy_depth(1).unwrap();
+            let domain = wall.natural_uv_domain_if_built();
+            for (direction, parameter) in [
+                (SurfParamType::U, domain.u_interval().min()),
+                (SurfParamType::U, domain.u_interval().max()),
+                (SurfParamType::V, domain.v_interval().min()),
+                (SurfParamType::V, domain.v_interval().max()),
+            ] {
+                let iso = IsoCurve::from_surface(
+                    &k,
+                    wall.clone_exact_bounded(),
+                    direction,
+                    parameter,
+                    false,
+                    false,
+                )
+                .unwrap();
+                let candidate = Curve::from(iso);
+                let natural = candidate.natural_interval();
+                for loop_id in &face.loops {
+                    for use_ in &b.loop_(*loop_id).unwrap().edges {
+                        let edge = b.edge(use_.edge).unwrap();
+                        let Some(old) = edge.curve.as_ref() else {
+                            continue;
+                        };
+                        let interval = edge.interval;
+                        if interval.min() < natural.min() || interval.max() > natural.max() {
+                            continue;
+                        }
+                        let tolerance = b.tolerance().max(edge.tolerance);
+                        let matches = [0.0, 0.25, 0.5, 0.75, 1.0].into_iter().all(|fraction| {
+                            let t = interval.min() + fraction * (interval.max() - interval.min());
+                            match (old.evaluate_point(&k, t), candidate.evaluate_point(&k, t)) {
+                                (Ok(a), Ok(c)) => (a - c).length() <= tolerance,
+                                _ => false,
+                            }
+                        });
+                        if matches {
+                            let mut candidate = candidate;
+                            candidate.set_owner(old.owner(), None);
+                            replacement = Some((face_id, use_.edge, candidate));
+                            break 'faces;
+                        }
+                    }
+                }
+            }
+        }
+        let (_face, edge, curve) = replacement.expect("no matching parameterized wall boundary");
+        b.edge_mut(edge).unwrap().curve = Some(curve);
+        let check = check_brep(&mut k, &mut b, CheckLevel::Level1).unwrap();
+        assert!(check.is_valid(), "invalid fixture: {:?}", check.lines());
+        let key = k
+            .context
+            .geometry_key(
+                b.edge_mut(edge)
+                    .unwrap()
+                    .curve
+                    .as_mut()
+                    .unwrap()
+                    .notify_identity_slot(),
+            )
+            .unwrap();
+
+        // No geometry evaluation while reading the state: include the whole sweep
+        // definition, its explicit certificate and stations, and both owners.
+        let state = |body: &Brep| {
+            let e = body.edge(edge).unwrap();
+            let c = e.curve.as_ref().unwrap();
+            let CurveKind::Iso(iso) = c.kind() else {
+                panic!("edge is not iso")
+            };
+            let surface = iso.surface();
+            assert!(matches!(
+                surface.kind(),
+                crate::surface::surface::SurfaceKind::BSpline(_)
+            ));
+            let definition = surface.procedural_definition().expect("lost definition");
+            let sweep = surface.procedural_sweep().expect("lost sweep");
+            (
+                e.interval,
+                e.tolerance,
+                c.owner(),
+                c.notify_key(),
+                iso.surf_param(),
+                iso.iso_parameter(),
+                iso.from_left(),
+                surface.owner(),
+                surface.natural_uv_domain_if_built(),
+                (
+                    format!("{:?}", sweep.definition()),
+                    sweep.definition().stations().to_vec(),
+                    sweep.bound(),
+                    definition.bound(),
+                ),
+            )
+        };
+        let before = state(&b);
+        assert_eq!(before.3, Some(key));
+        eprintln!("fixture Level1 valid; edge {edge:?}, notification key {key:?}, stations {:?}, bound {:?}", before.9.1, before.9.2);
+        let old_tolerance = b.edge(edge).unwrap().tolerance;
+        b.with_rollback(
+            |body| {
+                body.edge_mut(edge)?.tolerance = old_tolerance + 1.0;
+                Ok(())
+            },
+            Result::is_ok,
+        )
+        .unwrap();
+        assert_eq!(b.edge(edge).unwrap().tolerance, old_tolerance + 1.0);
+        b.edge_mut(edge).unwrap().tolerance = old_tolerance;
+        assert_eq!(state(&b), before);
+        eprintln!("successful edit control passed");
+        let mut ran = false;
+        let result: Result<()> = b.with_rollback(
+            |body| {
+                ran = true;
+                body.edge_mut(edge)?.curve = None;
+                Err(SolidError::InvalidInput {
+                    operation: "rollback_test",
+                    reason: "intended refusal",
+                })
+            },
+            Result::is_ok,
+        );
+        assert!(ran);
+        assert!(matches!(
+            result,
+            Err(SolidError::InvalidInput {
+                operation: "rollback_test",
+                reason: "intended refusal"
+            })
+        ));
+        eprintln!(
+            "failed edit ran, mutated edge, returned intended refusal; restored key {:?}",
+            b.edge(edge).unwrap().curve.as_ref().unwrap().notify_key()
+        );
+        assert_eq!(state(&b), before);
     }
 }

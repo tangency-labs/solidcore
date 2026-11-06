@@ -68,13 +68,18 @@
 //!   [`SolidError::InvalidInput`]). The `SmLoop` queries (`topology.loopuse`),
 //!   `SmCurveClassification::ReSet` (`intersect.curve_class_p2`) and
 //!   `SmFace::ClassifyLoops` ([`crate::query::face::p4::classify_loops`], whose status
-//!   `SetProps_Stage3` ignores as upstream) are wired.
+//!   `SetProps_Stage3` ignores as upstream) are wired. With the opt-in
+//!   `Kernel::fixes.heal_stage3_failures_propagate` (WR-268, WR-266, #521)
+//!   `SetProps_Stage3` propagates classification failures before reading the
+//!   classification records, and an error clears its in-progress stage marker, keeping
+//!   partial diagnostics without certifying the properties or skipping a retry.
 //! - **Query caches.** The mutable healer explicitly applies the vertex/face and
 //!   edge/face gap caches produced by seam queries, even on errors. Read-only props
 //!   queries still leave the B-rep unchanged; no geometry or topology is copied back.
 
 use crate::error::{ignored, EntityRef, Result, SolidError};
-use crate::geom::tol::{calc_face_zone_tol_3d, xsect_tol_3d_from_zones};
+use crate::geom::global_solver::SolverOperation;
+use crate::geom::tol::{calc_face_zone_tol_3d, xsect_tol_3d_from_zones, zone_tol3d};
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::intersect::curve_class::p1::{
     get_connected_touches, get_winding_count, CrvDirOnFaceType, CurveClassification, TouchData,
@@ -85,9 +90,11 @@ use crate::kernel::Kernel;
 use crate::math::EFF_ZERO;
 use crate::nurbs::b_spline_surface::p1::SurfParamType;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
-use crate::query::face::p2::CurveOnClassifyCache;
+use crate::query::face::p2::{CurveOnClassifyCache, FaceBrep};
+use crate::topology::edge as edge_mod;
 use crate::topology::edgeuse::p1 as eu1;
 use crate::topology::face::p2 as face_p2;
+use crate::topology::face::p4 as face_p4;
 use crate::topology::loopuse;
 use crate::topology::vertex as vertex_mod;
 use crate::topology::{
@@ -104,7 +111,7 @@ pub const UNDEF_ULONG: u64 = 123_456_789;
 
 /// `SM_ERR_NOTYET_HEAL_FACE` (`SmMessages.h`): a face with a problem the healer does
 /// not support yet.
-pub const SM_ERR_NOTYET_HEAL_FACE: i32 = 1040;
+pub use crate::error::SM_ERR_NOTYET_HEAL_FACE;
 
 /// The deepest child nesting [`Looptree::find_item`] follows.
 pub const MAX_LOOPTREE_DEPTH: usize = 1_000;
@@ -138,6 +145,19 @@ fn at<T: Copy>(v: &[T], i: usize, operation: &'static str) -> Result<T> {
     v.get(i)
         .copied()
         .ok_or_else(|| null(operation, "index out of range"))
+}
+
+/// `sClassifyLoopIOs[i]` of `SetProps_Stage3`, unchecked upstream: past the records it
+/// reads the zeroed slots of their allocation
+/// ([`crate::query::face::p4::classify_loop_io`]).
+fn classify_io_at(
+    ios: &[ClassifyLoopIo],
+    slack: &[ClassifyLoopIo],
+    i: usize,
+) -> Result<ClassifyLoopIo> {
+    crate::query::face::p4::classify_loop_io(ios, slack, i)
+        .copied()
+        .ok_or_else(|| null(OP_STAGE3, "index out of range"))
 }
 
 // ---- enumerations ---------------------------------------------------------------------
@@ -184,6 +204,23 @@ impl From<bool> for Tri {
             Self::True
         } else {
             Self::False
+        }
+    }
+}
+
+impl TryFrom<i32> for Tri {
+    type Error = SolidError;
+
+    /// Preserve all three native boolean values; reject other integers.
+    fn try_from(value: i32) -> Result<Self> {
+        match value {
+            crate::error::SM_FALSE => Ok(Self::False),
+            crate::error::SM_TRUE => Ok(Self::True),
+            crate::error::SM_UNSURE => Ok(Self::Unsure),
+            _ => Err(SolidError::invalid_input(
+                "Tri::try_from",
+                "invalid three-valued boolean",
+            )),
         }
     }
 }
@@ -1140,15 +1177,34 @@ pub struct SeamProblem {
 /// `SmFace::HasSeamProblem` as `SetProps_Stage2` calls it (see
 /// [`FaceProps::set_props_stage2_with`]): the face's seam classifications into `cu`,
 /// `cv`, its raw and done touch lists into `props`, and the seam problem.
-pub type SeamProblemFn<'f, O> = dyn FnMut(
+///
+/// `C` is the caller's view of the face's B-rep ([`FaceBrep`]): `&Brep`, the B-rep
+/// itself (`&mut Brep`) or classification objects over it.
+pub type SeamProblemFn<'f, C, O> = dyn FnMut(
         &Kernel,
-        &Brep,
+        &mut C,
         FaceId,
         &mut CurveClassification<O>,
         &mut CurveClassification<O>,
         &mut FaceProps<O>,
     ) -> Result<SeamProblem>
     + 'f;
+
+/// The B-rep [`FaceProps::set_props_with_seam`] runs on: a private copy of it
+/// (`Copy`, the temporary deviation of `query::face::p2`) or the B-rep itself.
+enum PropsBrep<'a> {
+    Copy(&'a Brep),
+    InPlace(&'a mut Brep),
+}
+
+impl PropsBrep<'_> {
+    fn brep(&self) -> &Brep {
+        match self {
+            Self::Copy(b) => b,
+            Self::InPlace(b) => b,
+        }
+    }
+}
 
 /// `m_pFace->HasSeamProblem(*m_pCrvClassU, *m_pCrvClassV, crossed, missing, nearMiss,
 /// FALSE, &m_bClosedU, &m_bClosedV, this)` for the callers of
@@ -1187,6 +1243,37 @@ fn face_has_seam_problem<O: LoopObject>(
     })
 }
 
+/// [`face_has_seam_problem`] on the face's B-rep in place
+/// ([`crate::topology::face::p4::has_seam_problem_in_brep_mut`]).
+fn face_has_seam_problem_mut<O: LoopObject>(
+    k: &Kernel,
+    b: &mut Brep,
+    f: FaceId,
+    class_u: &mut CurveClassification<O>,
+    class_v: &mut CurveClassification<O>,
+    props: &mut FaceProps<O>,
+) -> Result<SeamProblem> {
+    let (closed_u, closed_v) = (props.closed_u != Tri::False, props.closed_v != Tri::False);
+    let check = crate::topology::face::p4::has_seam_problem_in_brep_mut(
+        k,
+        b,
+        f,
+        crate::topology::face::p4::HasSeamProblemOptions {
+            outer_loop_only: false,
+            periodic_u: Some(closed_u),
+            periodic_v: Some(closed_v),
+            face_props: Some(props),
+        },
+    )?;
+    *class_u = check.class_u;
+    *class_v = check.class_v;
+    Ok(SeamProblem {
+        crossed: check.problem.crossed,
+        missing: check.problem.missing,
+        near_miss: check.problem.near_miss,
+    })
+}
+
 /// `SmCurveClassification::ReSet()` of an existing seam classification.
 fn curve_classification_reset<O: LoopObject>(
     k: &Kernel,
@@ -1202,6 +1289,10 @@ pub struct ClassifyLoopsOut {
     pub classifiable: HealNotYetFaceType,
     /// `rClassifyLoopIOs`: one record per target loop.
     pub classify_loop_ios: Vec<ClassifyLoopIo>,
+    /// The zero-filled records `SmTArray` allocates past `rClassifyLoopIOs`' size (at
+    /// least 16, in powers of two), which upstream's unchecked `rClassifyLoopIOs[i]`
+    /// reads and writes for a touch's loop index past the target loops.
+    pub classify_loop_io_slack: Vec<ClassifyLoopIo>,
     /// `reClassifyCrv_StartType`.
     pub start_type: CrvDirOnFaceType,
     /// `reClassifyCrv_StopType`.
@@ -1219,6 +1310,7 @@ impl Default for ClassifyLoopsOut {
         Self {
             classifiable: HealNotYetFaceType::NoProbs,
             classify_loop_ios: Vec::new(),
+            classify_loop_io_slack: Vec::new(),
             start_type: CrvDirOnFaceType::Uninit,
             stop_type: CrvDirOnFaceType::Uninit,
             ordered_no_area_indices: Vec::new(),
@@ -1332,6 +1424,13 @@ pub struct FaceProps<O: LoopObject> {
     pub raw_touch_list_v: Vec<TouchData<O>>,
     /// `m_sDoneTouchListV`.
     pub done_touch_list_v: Vec<TouchData<O>>,
+    /// `m_bBadCrossedPole`: one interior pole crossing is cached (after splitting,
+    /// Stage 2 finds the next crossing).
+    pub bad_crossed_pole: Tri,
+    /// `m_pCrossedPoleEdge`: the boundary edge of the cached crossing.
+    pub crossed_pole_edge: Option<EdgeId>,
+    /// `m_dCrossedPoleParameter`: the split parameter on [`FaceProps::crossed_pole_edge`].
+    pub crossed_pole_parameter: f64,
     /// `m_bBadCrossedSeam`.
     pub bad_crossed_seam: Tri,
     /// `m_eBadCrossedSeam`.
@@ -1425,6 +1524,9 @@ impl<O: LoopObject> FaceProps<O> {
             crv_class_v: None,
             raw_touch_list_v: Vec::new(),
             done_touch_list_v: Vec::new(),
+            bad_crossed_pole: Tri::False,
+            crossed_pole_edge: None,
+            crossed_pole_parameter: 0.0,
             bad_crossed_seam: Tri::False,
             bad_crossed_seam_dir: SurfParamType::Unknown,
             bad_missing_seam: Tri::False,
@@ -1542,16 +1644,21 @@ impl<O: LoopObject> FaceProps<O> {
                 self.raw_touch_list_v.clear();
                 self.done_touch_list_v.clear();
             }
+            self.bad_crossed_pole = Tri::False;
+            self.crossed_pole_edge = None;
+            self.crossed_pole_parameter = 0.0;
             self.bad_crossed_seam = Tri::False;
             self.bad_crossed_seam_dir = SurfParamType::Unknown;
             self.bad_missing_seam = Tri::False;
             self.bad_missing_seam_dir = SurfParamType::Unknown;
             self.bad_near_miss_seam = Tri::False;
             self.bad_near_miss_seam_dir = SurfParamType::Unknown;
+
+            // Stage 3 loop classification must retain the earlier crossing-repair result.
+            self.been_through_split_edges_at_seam = TriedLinkType::None;
         }
 
         self.been_through_move_seam = TriedLinkType::None;
-        self.been_through_split_edges_at_seam = TriedLinkType::None;
         self.been_through_split_faces_at_seam = TriedLinkType::None;
 
         // when asked - clear SetProps_AfterSplitEdge values
@@ -1620,18 +1727,22 @@ impl<O: LoopObject> FaceProps<O> {
         let mut cache = CurveOnClassifyCache::default();
         self.set_props_with_seam(
             k,
-            b,
+            &mut PropsBrep::Copy(b),
             stage,
             face,
             face_index,
             exe_heal_op,
-            &mut |k, b, f, cu, cv, p| face_has_seam_problem(k, b, f, cu, cv, p, &mut cache),
+            &mut cache,
         )
     }
 
-    /// The healer's `SetProps` call with explicit propagation of gap-cache values.
-    /// Apply writes even if a query fails after invalidating a sibling's cache.
-    pub(crate) fn set_props_with_query_gaps(
+    /// The healer's `SetProps` call on its B-rep: what the lazy face queries leave on the
+    /// B-rep (the UV trim curves `HasSeamProblem` and `ClassifyLoops`' bisectors make,
+    /// the tolerance growth and the gap caches) stays on `b`, as upstream's `const` face
+    /// queries leave it. `SetProps_Stage2`'s seam check runs on `b` in place; stage 3
+    /// still runs on a copy whose edits are copied back (the temporary deviation of
+    /// `query::face::p2`), even if a query fails after invalidating a sibling's cache.
+    pub fn set_props_with_query_gaps(
         &mut self,
         k: &Kernel,
         b: &mut Brep,
@@ -1643,26 +1754,26 @@ impl<O: LoopObject> FaceProps<O> {
         let mut cache = CurveOnClassifyCache::default();
         let result = self.set_props_with_seam(
             k,
-            b,
+            &mut PropsBrep::InPlace(&mut *b),
             stage,
             face,
             face_index,
             exe_heal_op,
-            &mut |k, b, f, cu, cv, p| face_has_seam_problem(k, b, f, cu, cv, p, &mut cache),
+            &mut cache,
         );
-        cache.apply_gap_updates(b)?;
+        cache.apply_uv_trim_updates(b)?;
         result
     }
 
     fn set_props_with_seam(
         &mut self,
         k: &Kernel,
-        b: &Brep,
+        b: &mut PropsBrep<'_>,
         stage: PropStage,
         face: FaceId,
         face_index: u64,
         exe_heal_op: HealerOpType,
-        seam: &mut SeamProblemFn<'_, O>,
+        cache: &mut CurveOnClassifyCache,
     ) -> Result<()> {
         // init rtn
         let mut rtn: Result<()> = Ok(());
@@ -1672,7 +1783,7 @@ impl<O: LoopObject> FaceProps<O> {
         if stage == PropStage::Gaps
             || (stage > PropStage::Gaps && !self.has_props(PropStage::Gaps, some_face))
         {
-            rtn = self.set_props_gaps(k, b, face, face_index, exe_heal_op);
+            rtn = self.set_props_gaps(k, b.brep(), face, face_index, exe_heal_op);
             keep_unported(&rtn)?;
         }
 
@@ -1680,7 +1791,26 @@ impl<O: LoopObject> FaceProps<O> {
         if stage == PropStage::Stage2
             || (stage > PropStage::Stage2 && !self.has_props(PropStage::Stage2, some_face))
         {
-            rtn = self.set_props_stage2_with(k, b, face, face_index, exe_heal_op, seam);
+            rtn = match b {
+                PropsBrep::Copy(b) => self.set_props_stage2_with(
+                    k,
+                    b,
+                    face,
+                    face_index,
+                    exe_heal_op,
+                    &mut |k, b, f, cu, cv, p| {
+                        face_has_seam_problem(k, b, f, cu, cv, p, &mut *cache)
+                    },
+                ),
+                PropsBrep::InPlace(b) => self.set_props_stage2_with(
+                    k,
+                    b,
+                    face,
+                    face_index,
+                    exe_heal_op,
+                    &mut |k, b, f, cu, cv, p| face_has_seam_problem_mut(k, b, f, cu, cv, p),
+                ),
+            };
             keep_unported(&rtn)?;
         }
 
@@ -1688,7 +1818,7 @@ impl<O: LoopObject> FaceProps<O> {
         if stage == PropStage::Stage3
             || (stage > PropStage::Stage3 && !self.has_props(PropStage::Stage3, some_face))
         {
-            rtn = self.set_props_stage3(k, b, face, face_index, exe_heal_op);
+            rtn = self.set_props_stage3_cached(k, b.brep(), face, face_index, exe_heal_op, cache);
             keep_unported(&rtn)?;
         }
 
@@ -1765,11 +1895,36 @@ impl<O: LoopObject> FaceProps<O> {
         let mut cache = CurveOnClassifyCache::default();
         self.set_props_stage2_with(
             k,
-            b,
+            &mut &*b,
             face,
             face_index,
             exe_heal_op,
             &mut |k, b, f, cu, cv, p| face_has_seam_problem(k, b, f, cu, cv, p, &mut cache),
+        )
+    }
+
+    /// [`FaceProps::set_props_stage2`] on the face's B-rep in place: what its seam check
+    /// leaves on `b` (UV trim curves, the trimmed cache's tolerance growth, gap caches)
+    /// stays there, as upstream's `SetProps_Stage2` leaves it.
+    ///
+    /// # Errors
+    ///
+    /// As [`FaceProps::set_props_stage2`].
+    pub fn set_props_stage2_mut(
+        &mut self,
+        k: &Kernel,
+        b: &mut Brep,
+        face: FaceId,
+        face_index: u64,
+        exe_heal_op: HealerOpType,
+    ) -> Result<()> {
+        self.set_props_stage2_with(
+            k,
+            &mut &mut *b,
+            face,
+            face_index,
+            exe_heal_op,
+            &mut |k, b, f, cu, cv, p| face_has_seam_problem_mut(k, b, f, cu, cv, p),
         )
     }
 
@@ -1781,14 +1936,14 @@ impl<O: LoopObject> FaceProps<O> {
     /// # Errors
     ///
     /// As [`FaceProps::set_props_stage2`], with `seam`'s errors for its seam call.
-    pub fn set_props_stage2_with(
+    pub fn set_props_stage2_with<C: FaceBrep>(
         &mut self,
         k: &Kernel,
-        b: &Brep,
+        b: &mut C,
         face: FaceId,
         face_index: u64,
         exe_heal_op: HealerOpType,
-        seam: &mut SeamProblemFn<'_, O>,
+        seam: &mut SeamProblemFn<'_, C, O>,
     ) -> Result<()> {
         // no work - already done or being done
         if self.prop_stage >= PropStage::Stage2A {
@@ -1806,7 +1961,7 @@ impl<O: LoopObject> FaceProps<O> {
         // `m_pFace` unchecked below. Here a missing face is `InvalidInput`, and the
         // props keep the other face's values if the face differs.)
         if self.prop_stage < PropStage::Gaps || self.face != Some(face) {
-            self.set_props_gaps(k, b, face, face_index, exe_heal_op)?;
+            self.set_props_gaps(k, b.brep(), face, face_index, exe_heal_op)?;
         }
 
         // Init props about to be computed - also resets SM_PROPSTAGE_3 values
@@ -1840,20 +1995,22 @@ impl<O: LoopObject> FaceProps<O> {
         let Some(m_face) = self.face else {
             return Err(null(OP_STAGE2, "no face"));
         };
-        let Some(surface) = face_p2::surface(b, m_face)? else {
+        let Some(surface) = face_p2::surface(b.brep(), m_face)? else {
             return Err(null(OP_STAGE2, "face without surface"));
         };
         self.has_surface = true;
-        self.natural_uv_domain = surface.natural_uv_domain();
+        self.natural_uv_domain = surface.natural_uv_domain_with_nurb(k)?;
 
-        let (up_faceuse, down_faceuse) = face_p2::faceuses(b, m_face)?;
+        let (up_faceuse, down_faceuse) = face_p2::faceuses(b.brep(), m_face)?;
         let (Some(up_faceuse), Some(down_faceuse)) = (up_faceuse, down_faceuse) else {
             return Err(null(OP_STAGE2, "face without face uses"));
         };
 
         // Major Face->Surface properties that force the face to be checked for
         // problems and healing
-        self.sheet = if eu1::faceuse_shell(b, up_faceuse)? == eu1::faceuse_shell(b, down_faceuse)? {
+        self.sheet = if eu1::faceuse_shell(b.brep(), up_faceuse)?
+            == eu1::faceuse_shell(b.brep(), down_faceuse)?
+        {
             MixedLinkType::HasProp
         } else {
             MixedLinkType::NoProp
@@ -1890,8 +2047,12 @@ impl<O: LoopObject> FaceProps<O> {
         // ignored inside, as upstream does)
         // (the approximation tolerance is half the face's zone tolerance,
         // `SmTol::GetApproxTol3d(this)` of the face's surface: passed with the face)
-        let sing =
-            surface.get_singularities_of_face(k, face_p2::tolerance(b, m_face)?, true, true)?;
+        let sing = surface.get_singularities_of_face(
+            k,
+            face_p2::tolerance(b.brep(), m_face)?,
+            true,
+            true,
+        )?;
         self.poles = u64::from(sing.singular);
         self.pole_points = sing.pole_points.map(|p| p.to_vec()).unwrap_or_default();
         self.pole_normals = sing.pole_normals.map(|p| p.to_vec()).unwrap_or_default();
@@ -1908,7 +2069,7 @@ impl<O: LoopObject> FaceProps<O> {
         if self.poles == SS_NONE {
             self.poles_link = MixedLinkType::NoProp;
         } else {
-            let vertices = face_vertices(b, m_face)?;
+            let vertices = face_vertices(b.brep(), m_face)?;
             let mut found_vertices: u64 = 0;
             let zone_tol_3d_sq = self.zone_tol_3d * self.zone_tol_3d;
             let sides = [SS_UMIN, SS_VMIN, SS_UMAX, SS_VMAX];
@@ -1923,7 +2084,7 @@ impl<O: LoopObject> FaceProps<O> {
 
                 // for every vertex
                 for &v in &vertices {
-                    let dist_sq = vertex_mod::point(b, v)?.distance_squared(pole);
+                    let dist_sq = vertex_mod::point(b.brep(), v)?.distance_squared(pole);
 
                     // note any poles that we find marked with a vertex
                     if dist_sq < zone_tol_3d_sq {
@@ -1940,6 +2101,16 @@ impl<O: LoopObject> FaceProps<O> {
             } else {
                 MixedLinkType::Prob
             };
+        }
+
+        // Find a boundary edge passing through a pole, using defining 3D geometry.
+        // Endpoints already on the pole do not need splitting. Cache one crossing:
+        // the repair refreshes Stage 2 after each split before consuming another.
+        self.bad_crossed_pole = Tri::False;
+        self.crossed_pole_edge = None;
+        self.crossed_pole_parameter = 0.0;
+        if self.poles_link == MixedLinkType::Prob {
+            self.find_crossed_pole(k, b.brep(), m_face)?;
         }
 
         // Flat Corner Surface Classification: m_lBadFlatCorners (GetFlatCorners with
@@ -1974,9 +2145,96 @@ impl<O: LoopObject> FaceProps<O> {
         Ok(())
     }
 
+    /// `SetProps_Stage2`'s pole-crossing search: the first boundary edge of `face` whose
+    /// interior passes through a pole no vertex marks, cached with its split parameter.
+    fn find_crossed_pole(&mut self, k: &Kernel, b: &Brep, face: FaceId) -> Result<()> {
+        let edges = face_p4::edges(b, face, None, false, None)?;
+        let face_tol = zone_tol3d(k, face_p2::tolerance(b, face)?);
+        let sides = [SS_UMIN, SS_VMIN, SS_UMAX, SS_VMAX];
+
+        // for every pole
+        for (pole_index, &pole) in self.pole_points.iter().enumerate() {
+            if self.bad_crossed_pole.is_true() {
+                break;
+            }
+
+            // no work unless pole is not marked with a vertex
+            if sides
+                .get(pole_index)
+                .is_some_and(|&side| (self.no_vertex_poles & side) == 0)
+            {
+                continue;
+            }
+
+            // for every edge on this face
+            for &edge in &edges {
+                // loop locals
+                let tol = xsect_tol_3d_from_zones(
+                    k,
+                    zone_tol3d(k, edge_mod::tolerance(b, edge)?),
+                    face_tol,
+                );
+                let interval = edge_mod::interval(b, edge)?;
+
+                let (start_vertex, end_vertex) = edge_mod::start_end_vertices(b, edge)?;
+                let start_vertex =
+                    start_vertex.ok_or_else(|| null(OP_STAGE2, "edge without start vertex"))?;
+                let end_vertex =
+                    end_vertex.ok_or_else(|| null(OP_STAGE2, "edge without end vertex"))?;
+                let start_tol = xsect_tol_3d_from_zones(
+                    k,
+                    zone_tol3d(k, vertex_mod::tolerance(b, start_vertex)?),
+                    face_tol,
+                );
+                let end_tol = xsect_tol_3d_from_zones(
+                    k,
+                    zone_tol3d(k, vertex_mod::tolerance(b, end_vertex)?),
+                    face_tol,
+                );
+
+                if vertex_mod::point(b, start_vertex)?.distance(pole) <= start_tol
+                    || vertex_mod::point(b, end_vertex)?.distance(pole) <= end_tol
+                {
+                    continue;
+                }
+
+                // Drop the pole to the edge curve. INTERSECT will be faster than MINIMIZE
+                // by culling out points that are too far away. (`SE`: a failing status
+                // is ignored, read as no drop point.)
+                let curve = edge_mod::curve(b, edge)?
+                    .ok_or_else(|| null(OP_STAGE2, "edge without curve"))?;
+                let drop = ignored(curve.drop_point(
+                    k,
+                    &interval,
+                    pole,
+                    None,
+                    tol,
+                    None,
+                    SolverOperation::Intersect,
+                ))?
+                .unwrap_or_default();
+
+                if drop.success
+                    && drop.distance <= tol
+                    && drop.parameter > interval.min()
+                    && drop.parameter < interval.max()
+                {
+                    self.bad_crossed_pole = Tri::True;
+                    self.crossed_pole_edge = Some(edge);
+                    self.crossed_pole_parameter = drop.parameter;
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// `SetProps_Stage3`: sets the loop values (after `Fix_SplitEdgesAtSeam`): the
     /// per-loop props, the closed loop count, and from `SmFace::ClassifyLoops` the
     /// containment, orientation and the loop problem counts.
+    /// By default a failed stage keeps its in-progress marker (`SM_PROPSTAGE_3a`), as
+    /// upstream; with the opt-in `Kernel::fixes.heal_stage3_failures_propagate`
+    /// (WR-266) it remains incomplete and can be retried.
     ///
     /// # Errors
     ///
@@ -1984,7 +2242,8 @@ impl<O: LoopObject> FaceProps<O> {
     /// `SM_ERR_NOTYET_HEAL_FACE` ([`SM_ERR_NOTYET_HEAL_FACE`]) for a face
     /// `ClassifyLoops` cannot classify; the errors of [`FaceProps::set_props_stage2`]
     /// and [`LoopProps::set_props`]; [`SolidError::InvalidInput`] where upstream reads
-    /// outside an array; [`SolidError::Unported`] from `SmFace::ClassifyLoops`.
+    /// outside an array; [`SolidError::Unported`] from `SmFace::ClassifyLoops` (with
+    /// the opt-in `Kernel::fixes.heal_stage3_failures_propagate`, all its errors).
     pub fn set_props_stage3(
         &mut self,
         k: &Kernel,
@@ -1992,6 +2251,65 @@ impl<O: LoopObject> FaceProps<O> {
         face: FaceId,
         face_index: u64,
         exe_heal_op: HealerOpType,
+    ) -> Result<()> {
+        let mut cache = CurveOnClassifyCache::default();
+        self.set_props_stage3_cached(k, b, face, face_index, exe_heal_op, &mut cache)
+    }
+
+    /// [`FaceProps::set_props_stage3`] on the face's B-rep: what `ClassifyLoops`' lazy
+    /// queries leave (the loop bisectors' UV trim curves, the tolerance growth and the gap
+    /// caches) is copied back to `b`, as upstream's `const` face queries leave it on the
+    /// B-rep (the Stage 2 props it builds first still run on a copy, as in
+    /// [`FaceProps::set_props_with_query_gaps`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`FaceProps::set_props_stage3`]; the copy-back's lookup errors.
+    pub fn set_props_stage3_mut(
+        &mut self,
+        k: &Kernel,
+        b: &mut Brep,
+        face: FaceId,
+        face_index: u64,
+        exe_heal_op: HealerOpType,
+    ) -> Result<()> {
+        let mut cache = CurveOnClassifyCache::default();
+        let result = self.set_props_stage3_cached(k, b, face, face_index, exe_heal_op, &mut cache);
+        cache.apply_uv_trim_updates(b)?;
+        result
+    }
+
+    /// [`FaceProps::set_props_stage3`] on the query state `cache`: what `ClassifyLoops`'
+    /// loop bisectors leave on its snapshot stays there for the caller to keep
+    /// ([`CurveOnClassifyCache::apply_uv_trim_updates`]).
+    pub(crate) fn set_props_stage3_cached(
+        &mut self,
+        k: &Kernel,
+        b: &Brep,
+        face: FaceId,
+        face_index: u64,
+        exe_heal_op: HealerOpType,
+        cache: &mut CurveOnClassifyCache,
+    ) -> Result<()> {
+        let result = self.set_props_stage3_inner(k, b, face, face_index, exe_heal_op, cache);
+        if k.fixes.heal_stage3_failures_propagate
+            && result.is_err()
+            && self.prop_stage == PropStage::Stage3A
+        {
+            // Keep diagnostics, but an unfinished stage is not a cached success.
+            self.prop_stage = PropStage::Stage2;
+        }
+        result
+    }
+
+    fn set_props_stage3_inner(
+        &mut self,
+        k: &Kernel,
+        b: &Brep,
+        face: FaceId,
+        face_index: u64,
+        exe_heal_op: HealerOpType,
+        cache: &mut CurveOnClassifyCache,
     ) -> Result<()> {
         // no work - already done or being done
         if self.prop_stage >= PropStage::Stage3A {
@@ -2039,9 +2357,7 @@ impl<O: LoopObject> FaceProps<O> {
             ..ClassifyLoopsOut::default()
         };
         let mut target_loops = closed_loops;
-        // (the status is only reported upstream; a handle type that cannot name the
-        // loop bisector's objects is a limitation of the caller, not a status)
-        let classify_status = match crate::query::face::p4::classify_loops(
+        let classify_result = crate::query::face::p4::classify_loops_cached(
             k,
             b,
             m_face,
@@ -2049,23 +2365,40 @@ impl<O: LoopObject> FaceProps<O> {
             &mut classified,
             &mut scratch,
             self,
-        ) {
-            Err(e @ SolidError::InvalidInput { reason, .. })
-                if reason == crate::query::face::p3::NO_CURVE_HANDLES =>
-            {
-                return Err(e);
+            cache,
+        );
+        let fix = k.fixes.heal_stage3_failures_propagate;
+        let classify_status = if fix {
+            classify_result.map(Some)
+        } else {
+            // (the status is only reported upstream; a handle type that cannot name the
+            // loop bisector's objects is a limitation of the caller, not a status)
+            match classify_result {
+                Err(
+                    e @ (SolidError::InvalidInput { reason, .. }
+                    | SolidError::PortInvariant { reason, .. }),
+                ) if reason == crate::query::face::p3::NO_CURVE_HANDLES => {
+                    return Err(e);
+                }
+                r => Ok(ignored(r)?),
             }
-            r => ignored(r)?,
         };
         let ClassifyLoopsOut {
             classifiable,
             classify_loop_ios,
+            classify_loop_io_slack,
             start_type: classify_crv_start_type,
             stop_type: classify_crv_stop_type,
             ordered_no_area_indices,
             looptree,
         } = classified;
         self.looptree = looptree;
+        if fix {
+            // WR-268: preserve the owned tree and problem classification on error, but
+            // do not consume output arrays that the failed classification did not fill.
+            self.not_yet_face_type = classifiable;
+            classify_status?;
+        }
 
         // watch out for problem faces that defy ClassifyLoops
         if classifiable != HealNotYetFaceType::NoProbs {
@@ -2090,7 +2423,7 @@ impl<O: LoopObject> FaceProps<O> {
 
             // match SmClassifyLoopIO and m_sLoopProps indices
             let p_loop = at(&loops, ii, OP_STAGE3)?;
-            let io = at(&classify_loop_ios, jj, OP_STAGE3)?;
+            let io = classify_io_at(&classify_loop_ios, &classify_loop_io_slack, jj)?;
 
             // guard against NULL m_pLooptreeRoot - can happen when ClassifyLoops cannot
             // process loops (a failed status is checked upstream by SE_MSG only)
@@ -2265,7 +2598,9 @@ impl<O: LoopObject> FaceProps<O> {
                 && closed.is_true()
             {
                 let lowest = match ordered_no_area_indices.first() {
-                    Some(&i) => Some(at(&classify_loop_ios, i, OP_STAGE3)?.containment),
+                    Some(&i) => Some(
+                        classify_io_at(&classify_loop_ios, &classify_loop_io_slack, i)?.containment,
+                    ),
                     None => None,
                 };
                 if lowest == Some(want) {
@@ -2427,6 +2762,7 @@ impl<O: LoopObject> FaceProps<O> {
                 || (self.bad_flat_corners & FC_UMIN_VMAX) != 0
                 || (self.bad_flat_corners & FC_UMAX_VMIN) != 0
                 || (self.bad_flat_corners & FC_UMAX_VMAX) != 0;
+            prob |= self.bad_crossed_pole.is_true();
             prob |= self.bad_crossed_seam.is_true();
             prob |= self.bad_missing_seam.is_true();
             // NOT yet - needed later when Fix_BadGaps() gets built: bad_near_miss_seam
@@ -2465,7 +2801,7 @@ fn not_yet_heal_face(operation: &'static str) -> SolidError {
 /// overwrites with the next stage's otherwise).
 fn keep_unported(r: &Result<()>) -> Result<()> {
     match r {
-        Err(e) if e.is_unported() => Err(e.clone()),
+        Err(e) if e.is_unported_or_cancelled() => Err(e.clone()),
         _ => Ok(()),
     }
 }
@@ -2527,6 +2863,44 @@ mod tests {
     }
 
     #[test]
+    fn stage3_reset_keeps_the_crossing_repair_result_and_stage2_clears_it() {
+        let mut p: FaceProps<H> = FaceProps::new();
+        p.prop_stage = PropStage::Stage3;
+        p.been_through_split_edges_at_seam = TriedLinkType::NoFix;
+        p.been_through_split_faces_at_seam = TriedLinkType::NoFix;
+        p.bad_crossed_pole = Tri::True;
+        p.crossed_pole_edge = Some(EdgeId::from_index(2));
+        p.crossed_pole_parameter = 0.5;
+        p.reset(PropStage::Stage3);
+        assert_eq!(p.been_through_split_edges_at_seam, TriedLinkType::NoFix);
+        assert_eq!(p.been_through_split_faces_at_seam, TriedLinkType::None);
+        assert_eq!(p.bad_crossed_pole, Tri::True);
+        p.reset(PropStage::Stage2);
+        assert_eq!(p.been_through_split_edges_at_seam, TriedLinkType::None);
+        assert_eq!(
+            (
+                p.bad_crossed_pole,
+                p.crossed_pole_edge,
+                p.crossed_pole_parameter
+            ),
+            (Tri::False, None, 0.0)
+        );
+    }
+
+    #[test]
+    fn a_crossed_pole_is_a_stage2_problem() {
+        let mut p: FaceProps<H> = FaceProps::new();
+        p.prop_stage = PropStage::Stage2;
+        p.sheet = MixedLinkType::NoProp;
+        p.poles_link = MixedLinkType::Okay;
+        p.bad_flat_corners = 0;
+        assert!(!p.has_problems(2));
+        p.bad_crossed_pole = Tri::True;
+        assert!(p.has_problems(2));
+        assert!(!p.has_problems(1));
+    }
+
+    #[test]
     fn has_problems_by_stage() {
         let mut p: FaceProps<H> = FaceProps::new();
         assert!(!p.has_problems(7));
@@ -2583,6 +2957,102 @@ mod tests {
         assert!(!p.has_props(PropStage::Stage2, None));
         assert!(!p.has_props(PropStage::Stage3, f));
         assert!(p.has_props(PropStage::Stage0, f));
+    }
+
+    #[test]
+    fn issue_521_stage3_propagates_classification_failure() {
+        let mut k = Kernel::default();
+        k.fixes.heal_stage3_failures_propagate = true;
+        let (b, f) = plane_without_loops();
+        let mut p: FaceProps<H> = FaceProps::for_face(f, 0);
+        p.set_props_stage2(&k, &b, f, 0, HealerOpType::All).unwrap();
+        let expected = crate::query::face::p4::classify_loops(
+            &k,
+            &b,
+            f,
+            &mut Vec::new(),
+            &mut ClassifyLoopsOut::default(),
+            &mut CurveClassification::new(&k),
+            &mut p,
+        )
+        .unwrap_err();
+        assert_eq!(
+            p.set_props_stage3(&k, &b, f, 0, HealerOpType::All),
+            Err(expected)
+        );
+        assert!(!p.has_props_stage3(Some(f)));
+    }
+
+    #[test]
+    fn issue_521_stage3_failure_does_not_certify_cached_properties() {
+        for cached in [false, true] {
+            let mut k = Kernel::default();
+            k.fixes.heal_stage3_failures_propagate = true;
+            let (mut b, f) = plane_without_loops();
+            let mut p: FaceProps<H> = FaceProps::for_face(f, 0);
+            p.set_props_stage2(&k, &b, f, 0, HealerOpType::All).unwrap();
+            b.faceuse_mut(crate::topology::FaceuseId::from_index(0))
+                .unwrap()
+                .loopuses
+                .push(crate::topology::LoopuseId::from_index(99));
+            let mut cache = CurveOnClassifyCache::default();
+            let mut run = |props: &mut FaceProps<H>| {
+                if cached {
+                    props.set_props_stage3_cached(&k, &b, f, 0, HealerOpType::All, &mut cache)
+                } else {
+                    props.set_props_stage3(&k, &b, f, 0, HealerOpType::All)
+                }
+            };
+            let first = run(&mut p).unwrap_err();
+            assert_eq!(run(&mut p), Err(first));
+            assert_eq!(p.prop_stage, PropStage::Stage2);
+        }
+    }
+
+    #[test]
+    fn stage3_failure_keeps_in_progress_marker_by_default() {
+        // WR-266: upstream leaves SM_PROPSTAGE_3a set, so a retry returns at once.
+        let k = Kernel::default();
+        let (mut b, f) = plane_without_loops();
+        let mut p: FaceProps<H> = FaceProps::for_face(f, 0);
+        p.set_props_stage2(&k, &b, f, 0, HealerOpType::All).unwrap();
+        b.faceuse_mut(crate::topology::FaceuseId::from_index(0))
+            .unwrap()
+            .loopuses
+            .push(crate::topology::LoopuseId::from_index(99));
+        assert!(p.set_props_stage3(&k, &b, f, 0, HealerOpType::All).is_err());
+        assert_eq!(p.prop_stage, PropStage::Stage3A);
+        assert_eq!(p.set_props_stage3(&k, &b, f, 0, HealerOpType::All), Ok(()));
+    }
+
+    fn plane_without_loops() -> (Brep, FaceId) {
+        use crate::topology::{Face, Faceuse, FaceuseId, Shell};
+        let mut b = Brep::new();
+        let s = b.add_shell_record(Shell::default()).unwrap();
+        let f = b
+            .add_face_record(Face {
+                surface: Some(crate::surface::surface::Surface::from(
+                    crate::surface::plane::Plane::from_normal(Vec3::ZERO, Vec3::Z),
+                )),
+                faceuse: Some(FaceuseId::from_index(0)),
+                ..Face::new(s)
+            })
+            .unwrap();
+        b.shell_mut(s).unwrap().faces.push(f);
+        for (i, orientation) in [OrientType::Same, OrientType::Opposite]
+            .into_iter()
+            .enumerate()
+        {
+            b.add_faceuse_record(Faceuse {
+                shell: Some(s),
+                face: Some(f),
+                mate: Some(FaceuseId::from_index(1 - i as u32)),
+                orientation,
+                ..Faceuse::default()
+            })
+            .unwrap();
+        }
+        (b, f)
     }
 
     #[test]

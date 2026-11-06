@@ -27,6 +27,7 @@
 //! | `FilletSolverOps for ConstantRadiusAssistedFs`          | delegates to the `SmFilletSolver` base of unit `blend.fillet_solver_p1`: `ComputeSurfaceValues`, `ComputeUVVectors`, `SetSurfacesToZeroOffset`, `ReloadSurfaceOffsets`, `SetStatus`, `GetLastFilletGeom`, `GetSelfIntersectionHandler`, `GetFilletSurfaceGenerator`, `m_pFSG->CreateSurface` |
 //! | [`FilStatus`] (re-export of `blend.fillet_geom_p1`'s)   | `SmFilStatus`                                   |
 //! | [`HandlingAlgorithmType`] (CO-PORTED)                   | `SmHandlingAlgorithmType`                       |
+//! | `one_sided_tangents` (private)                          | `sm_OneSidedTangents` (the fork's 6eecf04)      |
 //!
 //! Deviations:
 //! - **Solver.** Upstream holds the solver by reference (`m_rFilletSolver`); here every
@@ -119,7 +120,6 @@ use crate::intersect::surface_intersector::p4::{
 use crate::kernel::Kernel;
 use crate::math::{max2, max4, min2, EFF_ZERO, EFF_ZERO_SQ};
 use crate::nurbs::b_spline_curve::{BSplineCurve, BSplineCurveForm, CanonicalData, KnotType};
-use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::surface::surface::p2::{drop_vectors, TsectCurveType};
 use crate::surface::surface::Surface;
 use crate::topology::edgeuse::p1 as eu1;
@@ -149,7 +149,7 @@ const SRFS: [SrfIndex; 2] = [SrfIndex::First, SrfIndex::Second];
 // ---- co-ported enums ------------------------------------------------------------------------
 
 /// The filleting status `SmFilStatus` is unit `blend.fillet_geom_p1`'s
-/// [`FilStatus`](crate::blend::fillet_geom::p1::FilStatus) (one type per class).
+/// [`FilStatus`] (one type per class).
 pub use crate::blend::fillet_geom::p1::FilStatus;
 
 /// What a self-intersection handler does with self-intersecting fillets
@@ -287,6 +287,38 @@ pub trait FilletSolverOps {
     /// The solver's failure.
     fn reload_surface_offsets(&mut self) -> Result<()>;
 
+    /// `OffsetRadiiCanChange()`: whether the solver's offsets change along the trace
+    /// (a virtual: `TRUE` for the `SmFilletSolver` base and the variable radius solver,
+    /// `FALSE` for the constant radius solvers). Read only with
+    /// `fixes.fillet_variable_span_follows_fillet`.
+    ///
+    /// # Errors
+    ///
+    /// The solver's failure.
+    fn offset_radii_can_change(&self) -> Result<bool>;
+
+    /// `GetRadiusCornerParameters(rParams)` (virtual, the fork's 6eecf04): the parameters
+    /// on the filleted edge where the radius has a corner, ascending. None by default.
+    ///
+    /// # Errors
+    ///
+    /// The solver's failure.
+    fn radius_corner_parameters(&mut self, _k: &Kernel) -> Result<Vec<f64>> {
+        Ok(Vec::new())
+    }
+
+    /// `IsAtRadiusCorner(crTsectPnt)` (virtual, the fork's 6eecf04): whether the point lies
+    /// where the radius has a corner. `false` by default.
+    fn is_at_radius_corner(&mut self, _k: &Kernel, _point: &TsectPnt) -> bool {
+        false
+    }
+
+    /// `GetRadiusParameter(crTsectPnt, rdParam)` (virtual, the fork's 6eecf04): the point's
+    /// edge parameter, `None` where the solver has no radius corners (the default).
+    fn radius_parameter(&mut self, _k: &Kernel, _point: &TsectPnt) -> Option<f64> {
+        None
+    }
+
     /// `GetSurface(rail)->Evaluate1stDerivatives(uv, TRUE, TRUE, ..)`: the point and
     /// first partials of the rail's offset surface.
     ///
@@ -324,13 +356,16 @@ pub trait FilletSolverOps {
     fn self_intersection_handler(&self) -> Result<Option<HandlingAlgorithmType>>;
 
     /// The handler's `SmoothOutIntersection(pFilletGeom, r3DCurves, rUVCurves1,
-    /// rUVCurves2)`: joins the new curves to the fillet geometry's previous section.
+    /// rUVCurves2)`: joins the new curves to the fillet geometry's previous section
+    /// (stored in `pseudo`).
     ///
     /// # Errors
     ///
-    /// The handler's failure; [`SolidError::Unported`] until ported.
+    /// The handler's failure.
     fn smooth_out_intersection(
         &mut self,
+        k: &Kernel,
+        pseudo: &mut FilletBrep,
         geom: &Self::FilletGeom,
         curves_3d: &mut Vec<BSplineCurve>,
         uv_curves1: &mut Vec<BSplineCurve>,
@@ -362,7 +397,7 @@ pub trait FilletSolverOps {
         points: &[TsectPnt],
         uv1: &mut BSplineCurve,
         uv2: &mut BSplineCurve,
-    ) -> Result<Option<BSplineSurface>>;
+    ) -> Result<Option<Surface>>;
 
     /// `pFilletGeom->SetFilletSurface(pFilletSurface)` (after deleting the old one); the
     /// geometry is stored in `pseudo`.
@@ -374,7 +409,7 @@ pub trait FilletSolverOps {
         &mut self,
         pseudo: &mut FilletBrep,
         geom: &Self::FilletGeom,
-        surface: Option<BSplineSurface>,
+        surface: Option<Surface>,
     ) -> Result<()>;
 
     /// `pFilletGeom->m_pCenterLineCurve = pCenterLine` (after deleting the old one).
@@ -470,6 +505,11 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
         self.solver.reload_surface_offsets()
     }
 
+    fn offset_radii_can_change(&self) -> Result<bool> {
+        // SmConstantRadiusFS::OffsetRadiiCanChange
+        Ok(ConstantRadiusAssistedFs::offset_radii_can_change(self))
+    }
+
     fn compute_uv_vectors(&mut self, _k: &Kernel, point: &mut TsectPnt) -> Result<()> {
         // SmFilletSolver::ComputeUVVectors reads only the intersection point
         compute_uv_vectors(point)
@@ -537,26 +577,27 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
 
     fn self_intersection_handler(&self) -> Result<Option<HandlingAlgorithmType>> {
         // the handler is the executive's member: the base reports the missing
-        // executive (a NULL dereference upstream) or the unported executive data
-        self.solver.self_intersection_handler().map(|()| None)
+        // executive (a NULL dereference upstream)
+        self.solver.self_intersection_handler()
     }
 
     fn smooth_out_intersection(
         &mut self,
-        _geom: &FilletGeomId,
-        _curves_3d: &mut Vec<BSplineCurve>,
-        _uv_curves1: &mut Vec<BSplineCurve>,
-        _uv_curves2: &mut Vec<BSplineCurve>,
+        k: &Kernel,
+        pseudo: &mut FilletBrep,
+        geom: &FilletGeomId,
+        curves_3d: &mut Vec<BSplineCurve>,
+        uv_curves1: &mut Vec<BSplineCurve>,
+        uv_curves2: &mut Vec<BSplineCurve>,
     ) -> Result<()> {
-        // No handler can be held until the executive is ported
-        // (`self_intersection_handler` above fails first), and the handler's
-        // override `SmMakeCurveBlendSIH::SmoothOutIntersection` has no owning
-        // unit (plan/findings.md "fillet_solver_p1: SmoothOutIntersection").
-        // UNPORTED(blend.fillet_executive_p1): SmSelfIntersectionHandler::SmoothOutIntersection (justified: findings.md "fillet_solver_p1: SmoothOutIntersection")
-        Err(SolidError::unported(
-            "SmSelfIntersectionHandler::SmoothOutIntersection",
-            "blend.fillet_executive_p1",
-        ))
+        // FlushCurve calls this only after `self_intersection_handler` found the
+        // executive's smoothing handler (without an executive that read has already
+        // failed: a NULL dereference upstream), and the only smoothing handler is
+        // SmMakeCurveBlendSIH: run its SmoothOutIntersection on this solver
+        let handler = self.solver.executive_curve_blend_sih.ok_or_else(|| {
+            SolidError::invalid_input(OP_FLUSH, "no smoothing self-intersection handler")
+        })?;
+        handler.smooth_out_intersection(self, k, pseudo, *geom, curves_3d, uv_curves1, uv_curves2)
     }
 
     fn has_surface_generator(&self) -> Result<bool> {
@@ -573,23 +614,22 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
         points: &[TsectPnt],
         uv1: &mut BSplineCurve,
         uv2: &mut BSplineCurve,
-    ) -> Result<Option<BSplineSurface>> {
-        use crate::blend::fillet_standard_solver::p1::RailSurface;
+    ) -> Result<Option<Surface>> {
         // the virtual m_pFSG->CreateSurface(*this, pCenterLine, pCurve1, pCurve2,
         // sPnts, pSur[0], pUV1, pSur[1], pUV2, ..): the base's generator (SM_ERR for
         // the base class); it reads the solver's tolerance and GetSolverType()
         // (SM_FS_CONST_RADIUS_ASSISTED); pSur[i] = GetSurface(i), passed as copies
         let approx_tol_3d = self.solver.this_approx_tol_3d();
-        let generator = self
-            .solver
-            .fillet_surface_generator()
-            .ok_or(SolidError::null_pointer(
-                "blend::fillet_intersector::create_fillet_surface",
-            ))?;
         let sur0 = Surface::from(self.surface(0)?.surface.clone());
         let sur1 = Surface::from(self.surface(1)?.surface.clone());
+        let generator =
+            self.solver
+                .fillet_surface_generator_mut()
+                .ok_or(SolidError::null_pointer(
+                    "blend::fillet_intersector::create_fillet_surface",
+                ))?;
         generator
-            .create_surface(
+            .create_surface_replacing_uv(
                 k,
                 approx_tol_3d,
                 crate::blend::fillet_solver::p1::FilletSolverType::ConstRadiusAssisted,
@@ -597,16 +637,11 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
                 curve1,
                 curve2,
                 points,
-                RailSurface {
-                    surface: Some(&sur0),
-                    uv_curve: Some(uv1),
-                },
-                RailSurface {
-                    surface: Some(&sur1),
-                    uv_curve: Some(uv2),
-                },
+                [&sur0, &sur1],
+                [uv1, uv2],
+                None,
             )
-            .map(Some)
+            .map(|(surface, _)| Some(surface))
     }
 
     fn rail_surface_evaluate_1st_derivatives(
@@ -622,11 +657,9 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
         &mut self,
         pseudo: &mut FilletBrep,
         geom: &FilletGeomId,
-        surface: Option<BSplineSurface>,
+        surface: Option<Surface>,
     ) -> Result<()> {
-        pseudo
-            .geom_mut(*geom)?
-            .set_fillet_surface(surface.map(Surface::from));
+        pseudo.geom_mut(*geom)?.set_fillet_surface(surface);
         Ok(())
     }
 
@@ -636,7 +669,7 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
         geom: &FilletGeomId,
         center_line: BSplineCurve,
     ) -> Result<()> {
-        pseudo.geom_mut(*geom)?.center_line_curve = Some(center_line);
+        pseudo.geom_mut(*geom)?.center_line_curve = Some(Curve::from(center_line));
         Ok(())
     }
 
@@ -671,6 +704,56 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
     }
 }
 
+/// The solver members `SmMakeCurveBlendSIH::SmoothOutIntersection` reaches when this
+/// solver is the intersector's own (no target B-rep: the rail faces' surfaces cannot
+/// be read, [`SolidError::InvalidInput`] where upstream reads them).
+impl crate::blend::fillet_solver::curve_blend_sih::SmoothingSolver for ConstantRadiusAssistedFs {
+    fn original_face_has_surface(&self, _face: crate::topology::FaceId) -> Result<bool> {
+        Err(SolidError::invalid_input(
+            OP_FLUSH,
+            "no target B-rep for the rail faces",
+        ))
+    }
+
+    fn setup_offset_radius(&mut self, tsect: &TsectPnt) -> Result<f64> {
+        let mut radius = 0.0;
+        crate::blend::fillet_solver::p1::FilletSolverOps::setup_offset_values(
+            self,
+            tsect,
+            Some(&mut radius),
+        )?;
+        Ok(radius)
+    }
+
+    fn base_natural_uv_domain(&self, rail: usize) -> Result<Extent2d> {
+        Ok(own_offset_surface(&self.solver, rail)?
+            .base_surface()
+            // (kernel-free: a lazy analytic answers its NURB-less base's empty domain)
+            .natural_uv_domain_if_built())
+    }
+
+    fn rail_surface(&self, rail: usize) -> Result<Surface> {
+        Ok(Surface::from(
+            own_offset_surface(&self.solver, rail)?.surface.clone(),
+        ))
+    }
+
+    fn this_approx_tol_3d(&self) -> f64 {
+        self.solver.approx_tol_3d
+    }
+}
+
+/// `GetSurface(rail)` (an `SmOffsetSurface*`; upstream dereferences it unchecked).
+fn own_offset_surface(
+    solver: &FilletSolver,
+    rail: usize,
+) -> Result<&crate::blend::fillet_custom_solver::OffsetSurface> {
+    solver
+        .surface(rail)?
+        .map(|slot| &slot.surface)
+        .ok_or_else(|| SolidError::invalid_input(OP_FLUSH, "no offset surface"))
+}
+
 /// `pFilletGeom->GetRail(rail)`, dereferenced (`NULL` is [`SolidError::InvalidInput`]).
 fn geom_rail(pseudo: &FilletBrep, geom: FilletGeomId, rail: usize) -> Result<EdgeId> {
     pseudo
@@ -685,7 +768,7 @@ fn geom_rail(pseudo: &FilletBrep, geom: FilletGeomId, rail: usize) -> Result<Edg
 fn keep_unported<T>(r: Result<T>) -> Result<Option<T>> {
     match r {
         Ok(v) => Ok(Some(v)),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -925,7 +1008,7 @@ impl<'s, 't, O: SolutionObject + 't, G: Clone> FilletIntersector<'s, 't, O, G> {
             previous,
         ) {
             Ok(()) => Ok(()),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => Err(SolidError::sm_err(OP_VALUES)),
         }
     }
@@ -1177,6 +1260,96 @@ impl<'s, 't, O: SolutionObject + 't, G: Clone> FilletIntersector<'s, 't, O, G> {
         out
     }
 
+    /// The fork's 6eecf04 in `ComputeNextPoint`: where the step from `tsect` to `next_tsp`
+    /// (by `step_size`, found) crosses a corner of the radius law and `tsect` is not at
+    /// one, secant steps on the step size (at most 8) until the point lands on the
+    /// corner; then `next_tsp` is that point and `step_size` its step. Where it does not
+    /// land, the full step is solved again (`StepSolve` leaves the offsets at its last
+    /// point) and its flags replace `step`'s. Only the first corner crossed is tried.
+    ///
+    /// # Errors
+    ///
+    /// Those of `StepSolve`.
+    fn land_on_radius_corner<S: FilletSolverOps<FilletGeom = G>>(
+        &self,
+        solver: &mut S,
+        k: &Kernel,
+        tsect: &TsectPnt,
+        step_size: &mut f64,
+        step: &mut StepSolve,
+        next_tsp: &mut TsectPnt,
+    ) -> Result<()> {
+        let si = &self.base.base;
+        let (Some(from_param), Some(to_param)) = (
+            solver.radius_parameter(k, tsect),
+            solver.radius_parameter(k, next_tsp),
+        ) else {
+            return Ok(());
+        };
+        let Ok(corners) = solver.radius_corner_parameters(k) else {
+            return Ok(());
+        };
+        for &corner in &corners {
+            if solver.is_at_radius_corner(k, tsect)
+                || (corner - from_param) * (corner - to_param) >= 0.0
+            {
+                continue;
+            }
+
+            // secant steps on the step size until the point lands on the corner
+            let (mut step0, mut param0) = (0.0, from_param);
+            let (mut step1, mut param1) = (*step_size, to_param);
+            let mut on_corner = TsectPnt::new();
+            let mut landed = false;
+            for _ in 0..8 {
+                if landed || param1 == param0 {
+                    break;
+                }
+                let mut d_step = step0 + (step1 - step0) * (corner - param0) / (param1 - param0);
+                let mut flags = StepSolve::default();
+                solver.step_solve(
+                    k,
+                    tsect,
+                    &mut d_step,
+                    &si.uv_domains[0],
+                    &si.uv_domains[1],
+                    &mut flags,
+                    &mut on_corner,
+                )?;
+                let param = if flags.found_answer {
+                    solver.radius_parameter(k, &on_corner)
+                } else {
+                    None
+                };
+                let Some(param) = param else {
+                    break;
+                };
+                step0 = step1;
+                param0 = param1;
+                step1 = d_step;
+                param1 = param;
+                landed = solver.is_at_radius_corner(k, &on_corner);
+            }
+            if landed {
+                *next_tsp = on_corner;
+                *step_size = step1;
+            } else {
+                // back to the full step (StepSolve leaves the offsets at its last point)
+                solver.step_solve(
+                    k,
+                    tsect,
+                    step_size,
+                    &si.uv_domains[0],
+                    &si.uv_domains[1],
+                    step,
+                    next_tsp,
+                )?;
+            }
+            break;
+        }
+        Ok(())
+    }
+
     /// The body of [`Self::compute_next_point`] on detached points.
     #[allow(clippy::too_many_lines)]
     fn compute_next_point_on<S: FilletSolverOps<FilletGeom = G>>(
@@ -1206,6 +1379,17 @@ impl<'s, 't, O: SolutionObject + 't, G: Clone> FilletIntersector<'s, 't, O, G> {
         // rescaled and every later use below sees the new value.
         let mut step_size = step_size;
 
+        // SolidCraft (the fork's 6eecf04; a radius corner exists only under
+        // `fillet_gn_section_generator`): where the radius has a corner the curves turn. A
+        // step from a point at a corner starts along the tangents after it
+        // (ComputePointValues averages the two sides).
+        if solver.is_at_radius_corner(k, tsect) {
+            let mut after = tsect.clone();
+            if one_sided_tangents(solver, k, &si.uv_domains, 1.0, &mut after)? {
+                take_tangents(tsect, &after);
+            }
+        }
+
         // solve for the next SmTsectPt - save step output values
         let mut step = StepSolve::default();
         if keep_unported(solver.step_solve(
@@ -1220,6 +1404,13 @@ impl<'s, 't, O: SolutionObject + 't, G: Clone> FilletIntersector<'s, 't, O, G> {
         .is_none()
         {
             step.found_answer = false;
+        }
+
+        // SolidCraft (the fork's 6eecf04): a step across a radius corner is shortened to
+        // end at the corner (a span across it can't follow the turn, and the trace would
+        // creep up to it in tiny steps).
+        if step.found_answer {
+            self.land_on_radius_corner(solver, k, tsect, &mut step_size, &mut step, next_tsp)?;
         }
 
         // Set return values
@@ -1252,8 +1443,27 @@ impl<'s, 't, O: SolutionObject + 't, G: Clone> FilletIntersector<'s, 't, O, G> {
             return Ok(out);
         }
 
+        // SolidCraft (the fork's 6eecf04): a step that ends at a radius corner arrives
+        // along the tangents before it
+        if solver.is_at_radius_corner(k, next_tsp) {
+            let mut before = next_tsp.clone();
+            if one_sided_tangents(solver, k, &si.uv_domains, -1.0, &mut before)? {
+                take_tangents(next_tsp, &before);
+            }
+        }
+
         // stop criteria: next point stepsize is zero
         if next_tsp.crv_deriv().length_squared() < EFF_ZERO_SQ {
+            return Ok(out);
+        }
+
+        // (not upstream, `fixes.fillet_trace_rejects_short_step`, WR-503) a point far short of the
+        // step is another root of the equations, not the next point of this trace
+        if k.fixes.fillet_trace_rejects_short_step
+            && !step.clipped
+            && tsect.crv_pos().distance(next_tsp.crv_pos()) < 0.5 * step_size.abs()
+        {
+            demote_singularity(next_tsp);
             return Ok(out);
         }
 
@@ -1422,6 +1632,67 @@ impl<'s, 't, O: SolutionObject + 't, G: Clone> FilletIntersector<'s, 't, O, G> {
             // save the max deviation
             if dist_sq > max_dist_sq {
                 max_dist_sq = dist_sq;
+            }
+        }
+
+        // (not upstream, `fixes.fillet_variable_span_follows_fillet`, WR-646; the fork's
+        // tangency-labs/smlib@4438859) where the fillet's offsets change along the trace
+        // (a variable radius), the rails between two points must follow the fillet, not
+        // only lie on the faces: on a plane every uv curve does, so the test above holds
+        // for any span, the step grows to the angle tolerance, and the Hermite rails cut
+        // across the radius law between the points. The fillet is solved at the test
+        // points (a step of that share of the span from the start), and the span is
+        // rejected where a solution's contacts lie farther than the tolerance from the
+        // rails.
+        if k.fixes.fillet_variable_span_follows_fillet
+            && solver.offset_radii_can_change()?
+            && step_size > EFF_ZERO * 100.0
+        {
+            let rails = [&crv_3d0, &crv_3d1];
+            for &param in &PARAMS_TO_TEST {
+                let mut part_step = step_size * param;
+                let mut part_flags = StepSolve::default();
+                let mut part = TsectPnt::new();
+                solver.reload_surface_offsets()?;
+                solver.step_solve(
+                    k,
+                    tsect,
+                    &mut part_step,
+                    &si.uv_domains[0],
+                    &si.uv_domains[1],
+                    &mut part_flags,
+                    &mut part,
+                )?;
+                solver.set_surfaces_to_zero_offset()?;
+                if !part_flags.found_answer || part_flags.clipped {
+                    continue; // no solution inside the span there: the rails' own test stands
+                }
+                let contact0 = s0.evaluate_point(
+                    k,
+                    si.uv_domains[0].clamp_point(part.uv_pos(SrfIndex::First)),
+                )?;
+                let contact1 = s1.evaluate_point(
+                    k,
+                    si.uv_domains[1].clamp_point(part.uv_pos(SrfIndex::Second)),
+                )?;
+                for (rail, contact) in rails.into_iter().zip([contact0, contact1]) {
+                    let rail_curve = Curve::from(*rail);
+                    let (on, sol) = rail_curve.local_point_solve::<()>(
+                        k,
+                        &rail_curve.natural_interval(),
+                        SolverOperation::Minimize,
+                        contact,
+                        &PointSolveOptions::default(),
+                        param,
+                    )?;
+                    let t = if on { sol.start.param(0)? } else { param };
+                    let on_rail = rail.evaluate_point(t);
+                    if on_rail.distance_squared(contact) > tol_sq {
+                        solver.reload_surface_offsets()?;
+                        out.found_good_point = false;
+                        return Ok(out);
+                    }
+                }
             }
         }
 
@@ -1638,6 +1909,28 @@ impl<'s, 't, O: SolutionObject + 't, G: Clone> FilletIntersector<'s, 't, O, G> {
             }
         }
 
+        // 5b. SolidCraft (the fork's 6eecf04): where the fillet radius has a corner, the
+        //     center curve and rails turn. A point there carries the average of the
+        //     tangents of the two sides; the span that ends there takes the tangents from
+        //     before the corner (`incoming`), the span that starts there those from after
+        //     it, so the curves keep the turn.
+        let mut incoming: Vec<Option<TsectPnt>> = Vec::new();
+        let count = pnts.len();
+        for (kk, slot) in pnts.iter_mut().enumerate() {
+            let mut point_in = None;
+            if kk > 0 && kk + 1 < count && solver.is_at_radius_corner(k, slot) {
+                let mut point_out = slot.clone();
+                let mut before = slot.clone();
+                let b_in = one_sided_tangents(solver, k, &uv_domains, -1.0, &mut before)?;
+                let b_out = one_sided_tangents(solver, k, &uv_domains, 1.0, &mut point_out)?;
+                if b_in && b_out {
+                    point_in = Some(before);
+                    take_tangents(slot, &point_out);
+                }
+            }
+            incoming.push(point_in);
+        }
+
         // set the stored fillet-surface OffsetDistances to 0.0
         solver.set_surfaces_to_zero_offset()?;
 
@@ -1648,6 +1941,11 @@ impl<'s, 't, O: SolutionObject + 't, G: Clone> FilletIntersector<'s, 't, O, G> {
             let [tsp_last, tsp_curr] = pair else {
                 continue;
             };
+            // the end tangents of this span (the incoming ones at a radius corner)
+            let tsp_end = incoming
+                .get(i + 1)
+                .and_then(Option::as_ref)
+                .unwrap_or(tsp_curr);
 
             // save max angle between offset surfaces along xsect curve sample points
             max_angle = max2(max_angle, tsp_curr.tangent_plane_angle_rad);
@@ -1672,7 +1970,7 @@ impl<'s, 't, O: SolutionObject + 't, G: Clone> FilletIntersector<'s, 't, O, G> {
             let p1 = tsp_last.crv_pos();
             let p4 = tsp_curr.crv_pos();
             let d1 = tsp_last.crv_deriv() * scale;
-            let d2 = tsp_curr.crv_deriv() * scale;
+            let d2 = tsp_end.crv_deriv() * scale;
 
             // Hermite to Bezier
             let p2 = p1 + d1 / 3.0;
@@ -1693,7 +1991,7 @@ impl<'s, 't, O: SolutionObject + 't, G: Clone> FilletIntersector<'s, 't, O, G> {
                 let uv1 = tsp_last.uv_pos(s);
                 let uv4 = tsp_curr.uv_pos(s);
                 let der1 = tsp_last.uv_deriv(s) * scale;
-                let der2 = tsp_curr.uv_deriv(s) * scale;
+                let der2 = tsp_end.uv_deriv(s) * scale;
 
                 // Convert from Hermite to Bezier.
                 let uv2 = uv1 + der1 / 3.0;
@@ -1763,6 +2061,8 @@ impl<'s, 't, O: SolutionObject + 't, G: Clone> FilletIntersector<'s, 't, O, G> {
         if let Some(algorithm) = solver.self_intersection_handler()? {
             if algorithm == HandlingAlgorithmType::Smoothing {
                 let smoothed = solver.smooth_out_intersection(
+                    k,
+                    pseudo,
                     &fillet_geom,
                     &mut curves_3d,
                     &mut surface1_uv_curves,
@@ -2076,6 +2376,70 @@ fn rail_hermite(k: &Kernel, map: &CrvOnSurf, adjust: bool) -> Result<HermiteCurv
     Ok(HermiteCurve::new(p0, d0, p1, d1, 3))
 }
 
+/// `sm_OneSidedTangents` (the fork's 6eecf04, not upstream): `point`'s tangents from one
+/// side only, from a small step (`1e-5`, as `ComputePointValues` steps) backward
+/// (`side < 0`) or forward along the trace: the direction to the stepped point's centre
+/// (the middle of its two contacts on the solver's offset surfaces, evaluated before
+/// anything resets the offsets), then `ComputeUVVectors`. Where the radius has a corner
+/// the curves turn, and `ComputePointValues`' central difference averages the two sides.
+/// `false` (and `point` unchanged) when the step finds no point or a point on top of this
+/// one.
+///
+/// The contacts are read with `Evaluate1stDerivatives` (the fork: `EvaluatePoint`), the one
+/// evaluation of the offset surfaces the intersector's solver interface offers.
+///
+/// # Errors
+///
+/// Those of `StepSolve`, the evaluations, `Unitize` and `ComputeUVVectors`.
+fn one_sided_tangents<S: FilletSolverOps>(
+    solver: &mut S,
+    k: &Kernel,
+    uv_domains: &[Extent2d; 2],
+    side: f64,
+    point: &mut TsectPnt,
+) -> Result<bool> {
+    let mut d_step = if side < 0.0 { -1.0e-5 } else { 1.0e-5 };
+    let mut stepped = TsectPnt::new();
+    let mut flags = StepSolve::default();
+    solver.step_solve(
+        k,
+        point,
+        &mut d_step,
+        &uv_domains[0],
+        &uv_domains[1],
+        &mut flags,
+        &mut stepped,
+    )?;
+    if !flags.found_answer {
+        return Ok(false);
+    }
+
+    // the stepped point on the center curve, evaluated before anything resets the offsets
+    let (p0, _, _) =
+        solver.rail_surface_evaluate_1st_derivatives(k, 0, stepped.uv_pos(SrfIndex::First))?;
+    let (p1, _, _) =
+        solver.rail_surface_evaluate_1st_derivatives(k, 1, stepped.uv_pos(SrfIndex::Second))?;
+    let mut diff = (p0 + p1) / 2.0 - point.crv_pos();
+    if side < 0.0 {
+        diff = -diff;
+    }
+    if diff.length_squared() < EFF_ZERO_SQ {
+        return Ok(false);
+    }
+    *point.crv_deriv_mut() = diff.unitize()?;
+    solver.compute_uv_vectors(k, point)?;
+    Ok(true)
+}
+
+/// The fork's copy of a point's curve and uv tangents (`CrvDeriv()`, `UVDeriv(0)`,
+/// `UVDeriv(1)`) from `from` into `to`.
+fn take_tangents(to: &mut TsectPnt, from: &TsectPnt) {
+    *to.crv_deriv_mut() = from.crv_deriv();
+    for s in SRFS {
+        *to.uv_deriv_mut(s) = from.uv_deriv(s);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2350,6 +2714,10 @@ mod tests {
             Ok(())
         }
 
+        fn offset_radii_can_change(&self) -> Result<bool> {
+            Ok(false)
+        }
+
         fn rail_surface_evaluate_1st_derivatives(
             &mut self,
             _k: &Kernel,
@@ -2373,6 +2741,8 @@ mod tests {
 
         fn smooth_out_intersection(
             &mut self,
+            _k: &Kernel,
+            _pseudo: &mut FilletBrep,
             _geom: &(),
             _curves_3d: &mut Vec<BSplineCurve>,
             _uv_curves1: &mut Vec<BSplineCurve>,
@@ -2394,7 +2764,7 @@ mod tests {
             _points: &[TsectPnt],
             _uv1: &mut BSplineCurve,
             _uv2: &mut BSplineCurve,
-        ) -> Result<Option<BSplineSurface>> {
+        ) -> Result<Option<Surface>> {
             Ok(None)
         }
 
@@ -2402,7 +2772,7 @@ mod tests {
             &mut self,
             _pseudo: &mut FilletBrep,
             _geom: &(),
-            _surface: Option<BSplineSurface>,
+            _surface: Option<Surface>,
         ) -> Result<()> {
             Ok(())
         }
@@ -2598,7 +2968,12 @@ mod tests {
             .unwrap();
         assert!(pseudo.geom(g).unwrap().center_line_curve().is_some());
         s.set_fillet_surface(&mut pseudo, &g, None).unwrap();
-        assert!(pseudo.geom(g).unwrap().fillet_surface().is_none());
+        assert!(pseudo
+            .geom(g)
+            .unwrap()
+            .fillet_surface(None)
+            .unwrap()
+            .is_none());
         // a geometry without rails: upstream dereferences NULL
         assert!(matches!(
             s.set_rail_curve(&mut pseudo, &g, 0, line.clone())
@@ -2617,13 +2992,13 @@ mod tests {
             SolidError::InvalidInput { .. }
         ));
         s.solver.set_fillet_executive(Some(FilletExecutiveRef));
-        assert!(matches!(
-            s.self_intersection_handler().unwrap_err(),
-            SolidError::Unported {
-                unit: "blend.fillet_executive_p1",
-                ..
-            }
-        ));
+        assert_eq!(s.self_intersection_handler().unwrap(), None);
+        s.solver.executive_self_intersection_handler =
+            Some(crate::blend::fillet_solver::p1::MakeSurfaceBlendSih::new(1.0).algorithm_type());
+        assert_eq!(
+            s.self_intersection_handler().unwrap(),
+            Some(HandlingAlgorithmType::Blending)
+        );
 
         // ComputeSurfaceValues runs the SmConstantRadiusFS::SetupOffsetValues override
         // (blend.fillet_standard_solver_p1): radius times orientation on both rails

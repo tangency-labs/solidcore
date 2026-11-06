@@ -22,6 +22,10 @@
 //!   [`ConstantsRequest`] in and [`NetConstants`] (`Some` for each requested value)
 //!   out; which outputs are requested still steers the control flow exactly as the
 //!   NULL tests do upstream.
+//! - Angle walks also report a non-finite segment length before normalization in
+//!   [`NetConstants::nonfinite_angle_length`]. This diagnostic does not change the
+//!   evaluations, arithmetic, branches or numeric outputs; approximate surface caches
+//!   use it to refuse further refinement driven by an invalid angle measurement.
 //! - The `const SmSurface*` of both routines is an evaluator closure standing for
 //!   `SmSurface::EvaluatePoint` (the virtual call, unit `surface.surface_p2`), so the
 //!   routines do not depend on the surface class hierarchy. Its errors propagate as
@@ -39,7 +43,11 @@
 //!   `sm_InitNurbSurfaceMemory`) have no counterpart: [`Surface`] owns its storage.
 //!   [`allocate_nurb_surface`] returns a zero-filled surface (upstream
 //!   `smos_Calloc`), allocated fallibly: `InvalidInput` where the size overflows or
-//!   does not fit in memory (upstream: `NULL`); [`copy_nurb_surface`] returns a compact copy (upstream returns
+//!   does not fit in memory (upstream: `NULL`). A logical surface storage — the
+//!   control net's row headers and points plus both knot arrays — above
+//!   [`limits::MAX_ALLOC_BYTES`] is refused before allocating; that bounds one
+//!   surface's arrays, not process memory or allocator overhead.
+//!   [`copy_nurb_surface`] returns a compact copy (upstream returns
 //!   NULL for a surface without a net, which a [`Surface`] cannot be).
 //! - `sm_DecomposeSrf` fills a caller-allocated array of `nsu * nsv` patches (degrees
 //!   `p`, `q`, highest knot indices `2p+1`, `2q+1`, as its caller
@@ -72,6 +80,7 @@ use crate::geom::extent2d::Extent2d;
 use crate::geom::extent3d::Extent3d;
 use crate::geom::geom_utility::p1::line_closest_point;
 use crate::geom::vector3d::{acos, sqrt};
+use crate::limits;
 use crate::math::{max2, Point2, Point3, Vec3, EFF_ZERO, EFF_ZERO_SQ, PI};
 use crate::nurbs::index::oob;
 use crate::nurbs::knots::Side;
@@ -140,6 +149,10 @@ pub struct NetConstants {
     pub v_angle_deg: Option<f64>,
     /// Largest distance of a diagonal sample from its base segment.
     pub uv_chord_height: Option<f64>,
+    /// A requested angle walk encountered an infinite or NaN segment length before
+    /// normalization. Numeric outputs retain upstream's IEEE arithmetic, which can
+    /// hide this failure (e.g. division by infinity produces a zero direction).
+    pub nonfinite_angle_length: bool,
 }
 
 /// Accumulated (squared) outputs before the final conversion.
@@ -150,6 +163,7 @@ struct Acc {
     uv_ch: f64,
     max_u_ang_rad: f64,
     max_v_ang_rad: f64,
+    nonfinite_angle_length: bool,
 }
 
 impl Acc {
@@ -162,6 +176,7 @@ impl Acc {
             u_chord_height: req.u_chord_height.then(|| sqrt(self.u_ch)),
             v_chord_height: req.v_chord_height.then(|| sqrt(self.v_ch)),
             uv_chord_height: req.uv_chord_height.then(|| sqrt(self.uv_ch)),
+            nonfinite_angle_length: self.nonfinite_angle_length,
         }
     }
 }
@@ -284,6 +299,7 @@ pub fn compute_net_constants(
 
                 let mut curr_vec = next - curr;
                 let dist = curr_vec.length();
+                acc.nonfinite_angle_length |= !dist.is_finite();
 
                 // Skip control points within the zone tolerance.
                 if dist < zone_tol3d {
@@ -361,6 +377,7 @@ pub fn compute_net_constants(
 
                 let mut curr_vec = next - curr;
                 let dist = curr_vec.length();
+                acc.nonfinite_angle_length |= !dist.is_finite();
 
                 // Skip control points within the zone tolerance (coincident points).
                 if dist < zone_tol3d {
@@ -560,6 +577,7 @@ pub fn compute_surf_constants(
             if req.v_angle_deg {
                 let mut curr_vec = next - curr;
                 let dist = curr_vec.length();
+                acc.nonfinite_angle_length |= !dist.is_finite();
                 if dist < EFF_ZERO {
                     break; // avoid a divide by zero
                 }
@@ -622,6 +640,7 @@ pub fn compute_surf_constants(
             if req.u_angle_deg {
                 let mut curr_vec = next - curr;
                 let dist = curr_vec.length();
+                acc.nonfinite_angle_length |= !dist.is_finite();
                 if dist < EFF_ZERO {
                     break;
                 }
@@ -683,12 +702,23 @@ pub fn compute_surf_constants(
     Ok(acc.finish(req))
 }
 
+/// Bytes one surface's logical storage takes: `rows` row headers of the Rust control
+/// net, its `rows * cols` control points and the `u_len + v_len` knot values; `None`
+/// when an intermediate count overflows `usize`.
+fn storage_bytes(rows: usize, cols: usize, u_len: usize, v_len: usize) -> Option<usize> {
+    rows.checked_mul(size_of::<Vec<CPoint>>())
+        .and_then(|b| b.checked_add(rows.checked_mul(cols)?.checked_mul(size_of::<CPoint>())?))
+        .and_then(|b| b.checked_add(u_len.checked_add(v_len)?.checked_mul(size_of::<f64>())?))
+}
+
 /// A zero-filled surface with highest control point indices `n`, `m`, degrees `p`,
 /// `q` and highest knot indices `r`, `s` (`sm_AllocateNurbSurface`, memory from
 /// `smos_Calloc`).
 ///
-/// Errors with `InvalidInput` when an index is `usize::MAX` (no storage size) or the
-/// storage does not fit in memory (upstream: `smos_Calloc` returns `NULL`).
+/// Errors with `InvalidInput` when an index is `usize::MAX` (no storage size), the
+/// logical storage (net row headers and points, both knot arrays) exceeds
+/// [`limits::MAX_ALLOC_BYTES`], or the storage does not fit in memory (upstream:
+/// `smos_Calloc` returns `NULL`).
 pub fn allocate_nurb_surface(
     n: usize,
     m: usize,
@@ -710,13 +740,13 @@ pub fn allocate_nurb_surface(
         reason: "storage too large for memory",
     };
     // upstream allocates the whole surface as one smos_Calloc block and returns NULL
-    // (NERN) when that fails: reserve (and release) a block of that size first, so
-    // an absurd size fails before any row is allocated
-    let total = rows
-        .checked_mul(cols)
-        .and_then(|k| k.checked_mul(size_of::<CPoint>()))
-        .and_then(|b| b.checked_add(u_len.checked_add(v_len)?.checked_mul(size_of::<f64>())?))
-        .ok_or_else(too_big)?;
+    // (NERN) when that fails: bound the logical storage (row headers, points and both
+    // knot arrays), then reserve (and release) a block of that size first, so an
+    // absurd size fails before any row is allocated
+    let total = storage_bytes(rows, cols, u_len, v_len).ok_or_else(too_big)?;
+    if !limits::fits::<u8>(total) {
+        return Err(no_memory());
+    }
     Vec::<u8>::new()
         .try_reserve_exact(total)
         .map_err(|_| no_memory())?;
@@ -743,9 +773,7 @@ pub fn allocate_nurb_surface(
 /// (`sm_AllocateAndCopyNurbSurface`).
 #[must_use]
 pub fn copy_nurb_surface(from: &Surface) -> Surface {
-    let mut c = from.clone();
-    c.compress();
-    c
+    from.compressed_copy()
 }
 
 // ---- Bezier decomposition ---------------------------------------------------------
@@ -1165,6 +1193,42 @@ mod tests {
         assert_eq!(c.u_chord_height, Some(0.0));
         assert_eq!(c.uv_chord_height, Some(0.0));
         assert_eq!(c.u_angle_deg, Some(0.0));
+        assert!(!c.nonfinite_angle_length);
+    }
+
+    #[test]
+    fn angle_length_diagnostic_uses_differences_not_positions() {
+        let dom = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        let angles = ConstantsRequest {
+            u_chord_height: false,
+            v_chord_height: false,
+            uv_chord_height: false,
+            ..ConstantsRequest::ALL
+        };
+        for x in [0.0, 1e155] {
+            let mut eval = |uv: Point2| Ok(Vec3::new(x, uv.x, uv.y));
+            let c = compute_surf_constants(&mut eval, &dom, angles).unwrap();
+            assert!(!c.nonfinite_angle_length, "translation {x}");
+            assert_eq!((c.u_angle_deg, c.v_angle_deg), (Some(0.0), Some(0.0)));
+        }
+
+        let mut eval = |uv: Point2| Ok(Vec3::new(uv.x * 1e300, uv.y, 0.0));
+        let c = compute_surf_constants(&mut eval, &dom, angles).unwrap();
+        assert!(c.nonfinite_angle_length);
+        // Preserve the original computed outputs, even though division by infinity
+        // turns the u-direction into zero and reports spurious 90-degree turns.
+        assert_eq!((c.u_angle_deg, c.v_angle_deg), (Some(270.0), Some(0.0)));
+
+        let no_angles = ConstantsRequest {
+            u_angle_deg: false,
+            v_angle_deg: false,
+            ..angles
+        };
+        let c = compute_surf_constants(&mut eval, &dom, no_angles).unwrap();
+        assert!(
+            !c.nonfinite_angle_length,
+            "unrequested measurements must not run"
+        );
     }
 
     #[test]
@@ -1230,5 +1294,88 @@ mod tests {
         assert!(allocate_nurb_surface(1 << 62, 1 << 62, 1, 1, 3, 3).is_err());
         assert!(allocate_nurb_surface(1, 1, 1, 1, 1 << 47, 3).is_err());
         assert!(allocate_nurb_surface(1, 1, 1, 1, 3, 3).is_ok());
+    }
+
+    #[test]
+    fn alloc_zero_fills_small_surface() {
+        let s = allocate_nurb_surface(1, 1, 1, 1, 3, 3).unwrap();
+        assert_eq!(s.array_sizes(), (1, 1, 3, 3));
+        assert!(s.cpts().iter().flatten().all(|c| *c == CPoint::ZERO));
+        assert!(s.u_knots().iter().all(|k| *k == 0.0));
+        assert!(s.v_knots().iter().all(|k| *k == 0.0));
+    }
+
+    #[test]
+    fn storage_bytes_counts_headers_and_payload() {
+        let (rows, cols, u_len, v_len) = (2, 3, 4, 5);
+        let payload = rows * cols * size_of::<CPoint>() + (u_len + v_len) * size_of::<f64>();
+        let expected = rows * size_of::<Vec<CPoint>>() + payload;
+        assert_eq!(storage_bytes(rows, cols, u_len, v_len), Some(expected));
+        // The row headers are not in the point and knot payload alone.
+        assert!(expected > payload);
+    }
+
+    #[test]
+    fn storage_boundary_uses_one_surface_budget() {
+        let fixed = size_of::<Vec<CPoint>>() + 2 * size_of::<f64>();
+        let cols = (limits::MAX_ALLOC_BYTES - fixed) / size_of::<CPoint>();
+        let at_cap = storage_bytes(1, cols, 1, 1).unwrap();
+        assert!(at_cap <= limits::MAX_ALLOC_BYTES);
+        assert!(limits::fits::<u8>(at_cap));
+        let over = storage_bytes(1, cols + 1, 1, 1).unwrap();
+        assert!(over > limits::MAX_ALLOC_BYTES);
+        assert!(!limits::fits::<u8>(over));
+    }
+
+    #[test]
+    fn tall_narrow_net_headers_count() {
+        let knots = 2 * size_of::<f64>();
+        let per_row = size_of::<CPoint>() + size_of::<Vec<CPoint>>();
+        let rows = (limits::MAX_ALLOC_BYTES - knots) / per_row + 1;
+        let total = storage_bytes(rows, 1, 1, 1).unwrap();
+        assert!(total > limits::MAX_ALLOC_BYTES);
+        // Without the row headers this tall net would look affordable.
+        assert!(rows * size_of::<CPoint>() + knots <= limits::MAX_ALLOC_BYTES);
+    }
+
+    #[test]
+    fn storage_bytes_overflow_is_none() {
+        assert_eq!(storage_bytes(usize::MAX, 1, 1, 1), None); // row headers
+        assert_eq!(storage_bytes(1, usize::MAX, 1, 1), None); // point product
+        assert_eq!(storage_bytes(1, 1, usize::MAX, 1), None); // knot sum
+    }
+
+    #[test]
+    fn allocate_over_cap_is_refused_before_allocation() {
+        let fixed = size_of::<Vec<CPoint>>() + 2 * size_of::<f64>();
+        let cols = (limits::MAX_ALLOC_BYTES - fixed) / size_of::<CPoint>();
+        // One column past the largest one-row surface that fits the logical budget.
+        let err = allocate_nurb_surface(0, cols, 1, 1, 0, 0).unwrap_err();
+        assert!(matches!(
+            err,
+            SolidError::InvalidInput {
+                operation: OP_ALLOC,
+                reason: "storage too large for memory",
+            }
+        ));
+    }
+
+    #[test]
+    fn allocate_overflow_is_index_too_large() {
+        let point_overflow = usize::MAX / 2 + 1;
+        for (n, m, r, s) in [
+            (usize::MAX, 1, 0, 0),
+            (0, point_overflow, 0, 0),
+            (0, 0, usize::MAX - 1, usize::MAX - 1),
+        ] {
+            let err = allocate_nurb_surface(n, m, 1, 1, r, s).unwrap_err();
+            assert!(matches!(
+                err,
+                SolidError::InvalidInput {
+                    operation: OP_ALLOC,
+                    reason: "index too large",
+                }
+            ));
+        }
     }
 }

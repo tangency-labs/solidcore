@@ -32,6 +32,7 @@
 //! | [`create_partial_torus`]           | `SmApiCreatePartialTorus`                             |
 //! | [`create_blend_primitive`]         | `SmApiCreateBlendPrimitive`                           |
 //! | [`create_swung_primitive`]         | `SmApiCreateSwungPrimitive`                           |
+//! | [`create_offset_profile`]          | `SmApiCreateOffsetProfile`                            |
 //!
 //! Deviations:
 //! - **Out-params.** The created surface or B-rep is the return value; on failure there
@@ -53,8 +54,12 @@
 //!   `SmPrimitiveCreation` runs on it directly (p1 methods) or through a
 //!   [`PrimitiveModel`] (p2/p3 methods, which resolve their B-rep services through it).
 //!   They stop at the first unported call inside `SmPrimitiveCreation`.
-//! - `SmApiCreateOffsetProfile`, `SmApiCreateSkinPrimitive` and
-//!   `SmApiCreateSkinFromFaces`, also in this file, belong to other units.
+//! - [`create_offset_profile`] copies the borrowed curves (`SmCurve::Copy`) as upstream
+//!   and lets [`p1::offset_profile`] own the copies; upstream's per-copy ownership
+//!   bookkeeping after a partial transfer has nothing to free in Rust. A `None` curve is
+//!   upstream's `NULL` entry.
+//! - `SmApiCreateSkinPrimitive` and `SmApiCreateSkinFromFaces`, also in this file,
+//!   belong to other units.
 //! - No recursion.
 
 use crate::curve::curve::Curve;
@@ -72,17 +77,20 @@ use crate::primitive::primitive_creation::p1::{self, PrimitiveCreation};
 use crate::surface::cone::Cone;
 use crate::surface::plane::Plane;
 use crate::surface::torus::{Torus, TorusOptions};
+use crate::sweep::topology_sweep::access::SweepAccess;
 use crate::topology::brep::p2::ArenaNotifyState;
 use crate::topology::{Brep, EdgeId, FaceId};
 
 const OP_BOX: &str = "primitive::api_primitives::create_box";
 const OP_SPHERE: &str = "primitive::api_primitives::create_sphere";
 const OP_CYLINDER: &str = "primitive::api_primitives::create_cylinder_surface";
+const OP_CYLINDER_SOLID: &str = "primitive::api_primitives::create_cylinder";
 const OP_CONE: &str = "primitive::api_primitives::create_cone";
 const OP_CONE_SURFACE: &str = "primitive::api_primitives::create_cone_surface";
 const OP_PYRAMID: &str = "primitive::api_primitives::create_pyramid";
 const OP_CYLINDRICAL_BOX: &str = "primitive::api_primitives::create_cylindrical_box";
 const OP_SPHERE_NO_POLE: &str = "primitive::api_primitives::create_sphere_no_pole";
+const OP_OFFSET_PROFILE: &str = "primitive::api_primitives::create_offset_profile";
 
 /// `SmApiIsPositiveDim`: a finite dimension (radius, length, height) above
 /// `SM_EFF_ZERO`.
@@ -137,12 +145,14 @@ fn extent_from_zero(max_x: f64, max_y: f64) -> Extent2d {
 /// with `SM_ERR` when no face is made.
 pub fn create_plane(k: &mut Kernel, origin: Point3, x: f64, y: f64) -> Result<Brep> {
     let frame = xy_frame(origin);
-    let brep = p1::create_rectangle(k, 1.0e-5, x, y, &frame)?;
+    let mut brep = p1::create_rectangle(k, 1.0e-5, x, y, &frame)?;
     if brep.face_list().is_empty() {
         return Err(SolidError::sm_err(
             "primitive::api_primitives::create_plane",
         ));
     }
+    // (not upstream: the port's cached topology fields, true for the caller)
+    brep.refresh_cached_topology();
     Ok(brep)
 }
 
@@ -169,12 +179,14 @@ pub fn create_plane_surface(origin: Point3, length: f64, width: f64) -> Result<P
 /// `SM_ERR` when no face is made.
 pub fn create_planar_circle(k: &mut Kernel, origin: Point3, radius: f64) -> Result<Brep> {
     let frame = xy_frame(origin);
-    let brep = p1::create_circle(k, 1.0e-5, radius, &frame)?;
+    let mut brep = p1::create_circle(k, 1.0e-5, radius, &frame)?;
     if brep.face_list().is_empty() {
         return Err(SolidError::sm_err(
             "primitive::api_primitives::create_planar_circle",
         ));
     }
+    // (not upstream: the port's cached topology fields, true for the caller)
+    brep.refresh_cached_topology();
     Ok(brep)
 }
 
@@ -198,6 +210,8 @@ pub fn create_box(
     let frame = xy_frame(origin);
     let (mut pc, mut brep) = new_primitive(k)?;
     pc.create_box(k, &mut brep, length, width, height, &frame)?;
+    // (not upstream: the port's cached topology fields, true for the caller)
+    brep.refresh_cached_topology();
     Ok(brep)
 }
 
@@ -216,14 +230,26 @@ pub fn create_sphere(k: &mut Kernel, origin: Point3, radius: f64) -> Result<Brep
 }
 
 /// The solid cylinder of `radius` from the base circle centred at `origin` to
-/// `height` along Z (`SmApiCreateCylinder`, `SmBrep*&` overload: [`create_cone`] with
-/// equal radii).
+/// `height` along Z (`SmApiCreateCylinder`, `SmBrep*&` overload:
+/// `CreateCylinder(height, radius, frame)`).
 ///
 /// # Errors
 ///
-/// Those of [`create_cone`].
+/// [`SolidError::InvalidInput`] unless the radius and height are finite and above
+/// `SM_EFF_ZERO`; those of [`PrimitiveCreation::create_cylinder`].
 pub fn create_cylinder(k: &mut Kernel, origin: Point3, radius: f64, height: f64) -> Result<Brep> {
-    create_cone(k, origin, radius, radius, height)
+    if !is_positive_dim(radius) || !is_positive_dim(height) {
+        return Err(SolidError::invalid_input(
+            OP_CYLINDER_SOLID,
+            "non-positive radius or height",
+        ));
+    }
+    let frame = xy_frame(origin);
+    let (mut pc, mut brep) = new_primitive(k)?;
+    pc.create_cylinder(k, &mut brep, height, radius, &frame)?;
+    // (not upstream: the port's cached topology fields, true for the caller)
+    brep.refresh_cached_topology();
+    Ok(brep)
 }
 
 /// The cylinder surface (no caps) of `radius` about the Z axis through `origin`,
@@ -441,6 +467,8 @@ pub fn create_pyramid(
             ..crate::query::brep::BrepIdentity::default()
         }),
     )?;
+    // (not upstream: the port's cached topology fields, true for the caller)
+    brep.refresh_cached_topology();
     Ok(brep)
 }
 
@@ -497,6 +525,8 @@ pub fn create_cylindrical_box(
         &frame,
         &mut env,
     )?;
+    // (not upstream: the port's cached topology fields, true for the caller)
+    brep.refresh_cached_topology();
     Ok(brep)
 }
 
@@ -597,6 +627,8 @@ fn sphere_no_pole(
         tolerance.unwrap_or(ZONE_TOL_3D),
         &mut env,
     )?;
+    // (not upstream: the port's cached topology fields, true for the caller)
+    brep.refresh_cached_topology();
     Ok(brep)
 }
 
@@ -623,7 +655,10 @@ fn partial_cone(
             start_angle_deg,
             end_angle_deg,
             &frame,
-        )
+        )?;
+        // CreateCone leaves edit mode on, in which face caches ignore the trim loops
+        model.set_editing(PrimitiveModel::MAIN, false)?;
+        Ok(())
     })
 }
 
@@ -697,6 +732,8 @@ pub fn create_cone_elliptic_ends(k: &mut Kernel, params: &ConeEllipticEnds) -> R
         },
         params.end_caps,
     )?;
+    // (not upstream: the port's cached topology fields, true for the caller)
+    brep.refresh_cached_topology();
     Ok(brep)
 }
 
@@ -779,10 +816,14 @@ pub fn create_partial_torus(
 /// The blend face between the boundary edges `edge1` (of `face1`) and `edge2` (of
 /// `face2`) of `brep`, added to `brep` (`SmApiCreateBlendPrimitive`): from the start
 /// of `edge1`'s curve to the start (`same_dir_curves`) or end of `edge2`'s curve.
+/// Returns `None` on upstream success with a null output face: the face/edge
+/// overload ignores the inner blend-construction status. This is distinct from
+/// failure; `brep` retains any mutations in either successful outcome.
 ///
 /// # Errors
 ///
-/// [`SolidError::Unported`] (`SmBrep::CreateFaceFromSurface`).
+/// Invalid edge/face associations and topology lookup/restoration errors;
+/// [`SolidError::Unported`] from dependencies the native caller requires.
 pub fn create_blend_primitive(
     k: &mut Kernel,
     brep: &mut Brep,
@@ -791,7 +832,7 @@ pub fn create_blend_primitive(
     edge2: EdgeId,
     face2: FaceId,
     same_dir_curves: bool,
-) -> Result<FaceId> {
+) -> Result<Option<FaceId>> {
     let mut pc = PrimitiveCreation::new(brep.infinite_region(), 0, true);
     let mut model = PrimitiveModel::new(k, core::mem::take(brep));
     let mut blend_face = None;
@@ -806,9 +847,7 @@ pub fn create_blend_primitive(
     );
     *brep = model.into_brep()?;
     result?;
-    blend_face.ok_or_else(|| {
-        SolidError::null_pointer("primitive::api_primitives::create_blend_primitive")
-    })
+    Ok(blend_face)
 }
 
 /// The swung solid of the XY path curves and XZ profile curves scaled by `scale`
@@ -838,6 +877,46 @@ pub fn create_swung_primitive(
     })
 }
 
+/// The offset of the closed planar profile `curves` by `offset_distance`
+/// (`SmApiCreateOffsetProfile`: [`p1::offset_profile`] at `SM_ZONE_TOL_3D` on copies of
+/// the curves). `offset_type` is 1 left, 2 right, 3 both; `round_corners` rounds
+/// expanding corners (else they are extended); `shell_result` (left or right only)
+/// returns the region between the profile and its offset. The curves are not consumed.
+///
+/// # Errors
+///
+/// [`SolidError::InvalidInput`] for a `None` curve; those of the curve copies and of
+/// [`p1::offset_profile`].
+pub fn create_offset_profile(
+    k: &mut Kernel,
+    planar_curves: &[Option<&Curve>],
+    offset_distance: f64,
+    offset_type: u64,
+    round_corners: bool,
+    shell_result: bool,
+) -> Result<Brep> {
+    // OffsetProfile consumes its curve array on success, so pass private copies
+    let mut copies = Vec::new();
+    for curve in planar_curves {
+        let Some(curve) = curve else {
+            return Err(SolidError::invalid_input(OP_OFFSET_PROFILE, "null curve"));
+        };
+        copies.push(curve.copy(k)?);
+    }
+    let mut result = p1::offset_profile(
+        k,
+        &copies,
+        ZONE_TOL_3D,
+        offset_distance,
+        offset_type,
+        round_corners,
+        shell_result,
+    )?;
+    // (not upstream: the port's cached topology fields, true for the caller)
+    result.refresh_cached_topology();
+    Ok(result)
+}
+
 /// `new SmBrep()` in `k`'s context ([`crate::topology::brep::p3::new_brep`]).
 fn new_brep(k: &mut Kernel) -> Result<Brep> {
     crate::topology::brep::p3::new_brep(k, USE_DEFAULT, USE_DEFAULT)
@@ -858,6 +937,7 @@ fn with_model(
     k: &mut Kernel,
     body: impl FnOnce(&mut PrimitiveCreation, &mut PrimitiveModel<'_>) -> Result<()>,
 ) -> Result<Brep> {
+    // (PrimitiveModel::build_new refreshes the port's cached topology fields)
     PrimitiveModel::build_new(k, body).map(|(brep, ())| brep)
 }
 
@@ -950,12 +1030,75 @@ mod tests {
         assert!(crate::topology::brep::p2::is_manifold_solid(&sphere).unwrap());
         let cylinder = create_partial_cylinder(k, o(), 5.0, 10.0, 0.0, 90.0).unwrap();
         assert!(crate::topology::brep::p2::is_manifold_solid(&cylinder).unwrap());
-        let torus = create_partial_torus(k, o(), 10.0, 2.0, 0.0, 90.0).unwrap();
-        assert!(crate::topology::brep::p2::is_manifold_solid(&torus).unwrap());
+        // with `fixes.revolve_analytic_profile_faces` (WR-448, #545) the swept face is
+        // an analytic torus; upstream's is a B-spline surface
+        for (fix, expected) in [(false, 0), (true, 1)] {
+            k.fixes.revolve_analytic_profile_faces = fix;
+            let torus = create_partial_torus(k, o(), 10.0, 2.0, 0.0, 90.0).unwrap();
+            assert!(crate::topology::brep::p2::is_manifold_solid(&torus).unwrap());
+            let tori = torus
+                .face_list()
+                .iter()
+                .filter(|&&f| {
+                    let surface = torus.face(f).unwrap().surface.as_ref().unwrap();
+                    matches!(
+                        surface.kind(),
+                        crate::surface::surface::SurfaceKind::Torus(_)
+                    )
+                })
+                .count();
+            assert_eq!(tori, expected, "{fix}");
+        }
+        k.fixes.revolve_analytic_profile_faces = false;
         // edges without an edge use on their face
         let mut brep = Brep::new_with_infinite_region().unwrap();
         let (edge, face) = (EdgeId::from_index(0), FaceId::from_index(0));
         assert!(create_blend_primitive(k, &mut brep, edge, face, edge, face, true).is_err());
+    }
+
+    #[test]
+    fn blend_success_can_return_a_face_or_no_face() {
+        let mut k = Kernel::default();
+        for (edge2_index, face2_index, has_face) in [(3, 2, false), (2, 2, true), (1, 1, true)] {
+            let mut brep = create_box(&mut k, Vec3::ZERO, 1.0, 1.0, 1.0).unwrap();
+            let edges = crate::topology::brep::p1::edges(&brep, None).unwrap();
+            let faces = crate::topology::brep::p1::faces(&brep, None).unwrap();
+            let blend = create_blend_primitive(
+                &mut k,
+                &mut brep,
+                edges[0],
+                faces[1],
+                edges[edge2_index],
+                faces[face2_index],
+                true,
+            )
+            .unwrap();
+            assert_eq!(blend.is_some(), has_face);
+            let after_faces = crate::topology::brep::p1::faces(&brep, None).unwrap();
+            assert_eq!(after_faces.len(), faces.len() + usize::from(has_face));
+            if let Some(face) = blend {
+                assert!(after_faces.contains(&face));
+                assert!(brep.face(face).unwrap().surface.is_some());
+            } else {
+                assert_eq!(
+                    crate::topology::brep::p1::edges(&brep, None).unwrap(),
+                    edges
+                );
+            }
+        }
+
+        // Missing edge/face association remains an error, not success/None.
+        let mut brep = create_box(&mut k, Vec3::ZERO, 1.0, 1.0, 1.0).unwrap();
+        let edges = crate::topology::brep::p1::edges(&brep, None).unwrap();
+        let faces = crate::topology::brep::p1::faces(&brep, None).unwrap();
+        assert!(create_blend_primitive(
+            &mut k, &mut brep, edges[0], faces[0], edges[1], faces[1], true,
+        )
+        .is_err());
+        assert_eq!(
+            crate::topology::brep::p1::faces(&brep, None).unwrap(),
+            faces
+        );
     }
 
     #[test]

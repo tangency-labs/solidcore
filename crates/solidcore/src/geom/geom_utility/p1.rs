@@ -22,7 +22,7 @@
 //! | [`segment_point_angle_deg_to_perp`]   | `smgu_SegmentPointAngleDegToPerp`                |
 //! | [`circle_center_from_3_points`]       | `smgu_CircleCenterFrom3Points`                   |
 //! | [`circle_from_3_points`], [`Circle3Points`] | `smgu_CircleFrom3Points`                   |
-//! | [`circle_find_silhouette_points`]     | `smgu_CircleFindSilhouettePoints`                |
+//! | [`circle_find_silhouette_points`], [`circle_find_silhouette_points_opt_in`], [`circle_find_silhouette_points_with_kernel`] | `smgu_CircleFindSilhouettePoints` |
 //! | [`cones_are_disjoint_perpen`]         | `smgu_ConesAreDisjointPerpen`                    |
 //! | [`line_coplanar_circle_intersect`]    | `smgu_LineCoPlanarCircleIntersect`               |
 //! | [`circle_coplanar_circle_intersect`], [`CircleCircle`] | `smgu_CircleCoPlanarCircleIntersect` |
@@ -38,7 +38,7 @@
 //! | [`vec_lin_comb_two_vectors`]          | `smgu_VecLinCombTwoVectors`                      |
 //! | [`PointSetType`]                      | `SmPointSetType`                                 |
 //! | [`best_fit_point_to_points`], [`BestFitPoint`] | `smgu_BestFitPointToPoints`             |
-//! | [`best_fit_line_to_points`], [`BestFitLine`]   | `smgu_BestFitLineToPoints`              |
+//! | [`best_fit_line_to_points`], [`best_fit_line_to_points_opt_in`], [`best_fit_line_to_points_with_kernel`], [`BestFitLine`] | `smgu_BestFitLineToPoints` |
 //! | [`vec_triple_product`]                | `smgu_VecTripleProduct`                          |
 //! | [`copy_3x3`]                          | `smgu_3x3Copy`                                   |
 //! | [`determinate_3x3`]                   | `smgu_3x3Determinate` (nine coefficients)        |
@@ -74,10 +74,24 @@
 //!   written only when the points are scattered) is [`BestFitLine::m`].
 //! - `smgu_PolygonArea` with no points reads `sPoints[-1]` upstream; the port returns
 //!   [`SolidError::InvalidInput`]. The derivative functions check the derivative array
-//!   length (upstream reads out of bounds) and return only the directional derivatives
-//!   upstream writes.
+//!   length and consumed index arithmetic (upstream reads out of bounds), returning
+//!   `InvalidInput` for unrepresentable indices, and return only the directional
+//!   derivatives upstream writes.
 //! - `smgu_AddSorted` takes `Vec`s for `SmTArray`s; `sm_AddPoint`'s `ULONG&` count and
 //!   `SmPoint3d[2]` array are a `Vec` of at most two points.
+//! - [`circle_find_silhouette_points_opt_in`] (and
+//!   [`circle_find_silhouette_points_with_kernel`], reading
+//!   [`crate::kernel::UpstreamFixes::circle_silhouette_perspective_center`]) adds an
+//!   opt-in perspective fix (`WR-11`) that rotates `proj_eye_point - circle_center` as a
+//!   vector about `circle_normal` and adds `circle_center`, returning `None` when
+//!   `circle_normal` is degenerate; [`circle_find_silhouette_points`] keeps pinned C++
+//!   parity.
+//! - [`best_fit_line_to_points_opt_in`] (and [`best_fit_line_to_points_with_kernel`],
+//!   reading
+//!   [`crate::kernel::UpstreamFixes::best_fit_line_largest_scatter_eigenvector`]) adds an
+//!   opt-in least-squares line direction fix (`WR-10`) that takes the largest-eigenvalue
+//!   eigenvector of a clone of the symmetric scatter matrix `M` while preserving
+//!   [`BestFitLine::m`]; [`best_fit_line_to_points`] keeps pinned C++ parity.
 //! - `SM_ASSERT*` and `SM_DEBUG_CODE` blocks are not compiled upstream (release build)
 //!   and are not ported.
 
@@ -89,6 +103,7 @@ use crate::geom::polynomial::{solve_quadratic, Roots};
 use crate::geom::tol::{are_same_to_tol, is_zero};
 use crate::geom::vector2d::{Point2, Vec2};
 use crate::geom::vector3d::{acos as sm_acos, sqrt as sm_sqrt, Point3, Vec3};
+use crate::kernel::Kernel;
 use crate::math::{rad_to_deg, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI};
 
 /// `ANALYTIC_TOL_SCALE` (`SmConfig.h`).
@@ -653,8 +668,11 @@ pub fn circle_from_3_points(
 /// along a view direction, or `None` when there are none
 /// (`smgu_CircleFindSilhouettePoints`).
 ///
-/// In the perspective case upstream returns the rotated unit directions scaled by the
-/// radius (not offset by the center); the port does the same.
+/// In the perspective case pinned upstream negates `to_eye`, rotates a placement at
+/// `circle_center` about the global origin and scales by `circle_radius` without adding
+/// `circle_center`; this default entry point preserves that behaviour (see
+/// [`circle_find_silhouette_points_opt_in`] and
+/// [`circle_find_silhouette_points_with_kernel`] for `WR-11`).
 pub fn circle_find_silhouette_points(
     circle_center: Point3,
     circle_normal: Vec3,
@@ -662,7 +680,85 @@ pub fn circle_find_silhouette_points(
     perspective: bool,
     eye_point_or_vector: Vec3,
 ) -> Result<Option<(Point3, Point3)>> {
+    circle_find_silhouette_points_opt_in(
+        circle_center,
+        circle_normal,
+        circle_radius,
+        perspective,
+        eye_point_or_vector,
+        false,
+    )
+}
+
+/// [`circle_find_silhouette_points`] forwarding
+/// [`Kernel::fixes`]'s `circle_silhouette_perspective_center` (`WR-11`).
+pub fn circle_find_silhouette_points_with_kernel(
+    k: &Kernel,
+    circle_center: Point3,
+    circle_normal: Vec3,
+    circle_radius: f64,
+    perspective: bool,
+    eye_point_or_vector: Vec3,
+) -> Result<Option<(Point3, Point3)>> {
+    circle_find_silhouette_points_opt_in(
+        circle_center,
+        circle_normal,
+        circle_radius,
+        perspective,
+        eye_point_or_vector,
+        k.fixes.circle_silhouette_perspective_center,
+    )
+}
+
+/// [`circle_find_silhouette_points`] with an explicit opt-in (`fix_perspective`) for
+/// `WR-11`.
+///
+/// When `perspective && fix_perspective`, projects `eye_point_or_vector` onto the
+/// circle's plane, rotates the unit direction `proj_eye_point - circle_center` as a pure
+/// vector by `±acos(circle_radius / length)` about `circle_normal` and returns
+/// `circle_center + dir * circle_radius` (or `None` when `circle_normal` is degenerate,
+/// `circle_radius` is negative or non-finite, or the projected eye lies inside
+/// `circle_radius + SM_EFF_ZERO`). When `!fix_perspective`, matches pinned C++ parity.
+pub fn circle_find_silhouette_points_opt_in(
+    circle_center: Point3,
+    circle_normal: Vec3,
+    circle_radius: f64,
+    perspective: bool,
+    eye_point_or_vector: Vec3,
+    fix_perspective: bool,
+) -> Result<Option<(Point3, Point3)>> {
     if perspective {
+        if fix_perspective {
+            let norm_sq = circle_normal.length_squared();
+            if !norm_sq.is_finite() || norm_sq < EFF_ZERO_SQ {
+                return Ok(None);
+            }
+            if !circle_radius.is_finite() || circle_radius < 0.0 {
+                return Ok(None);
+            }
+            let proj_eye_point =
+                point_project_to_plane(eye_point_or_vector, circle_center, circle_normal);
+            let toward_eye = proj_eye_point - circle_center;
+            let length = toward_eye.length();
+            if !length.is_finite() || length < circle_radius + EFF_ZERO {
+                return Ok(None);
+            }
+            let toward_eye = toward_eye.unitize_or_z();
+
+            let angle_rad = sm_acos(circle_radius / length);
+            let mut a2p = Axis2Placement::IDENTITY;
+            a2p.rotate_about_axis(angle_rad, circle_normal);
+            let to_p1 = a2p.transform_vector(toward_eye);
+            a2p = Axis2Placement::IDENTITY;
+            a2p.rotate_about_axis(-angle_rad, circle_normal);
+            let to_p2 = a2p.transform_vector(toward_eye);
+
+            return Ok(Some((
+                circle_center + to_p1 * circle_radius,
+                circle_center + to_p2 * circle_radius,
+            )));
+        }
+
         let proj_eye_point =
             point_project_to_plane(eye_point_or_vector, circle_center, circle_normal);
         let to_eye = circle_center - proj_eye_point;
@@ -1319,10 +1415,46 @@ pub struct BestFitLine {
 /// [`Matrix::compute_3x3_eigen_vectors`], classified against `tol_3d`
 /// (`smgu_BestFitLineToPoints`). As upstream, that vector is not always the
 /// least-squares direction (for axis-aligned collinear points it is perpendicular to
-/// them); see `plan/findings.md`.
+/// them); see `plan/findings.md` and [`best_fit_line_to_points_with_kernel`] (`WR-10`).
 ///
 /// Errors: from the matrix helpers (not for finite input).
 pub fn best_fit_line_to_points(points: &[Point3], tol_3d: f64) -> Result<BestFitLine> {
+    best_fit_line_to_points_opt_in(points, tol_3d, false)
+}
+
+/// [`best_fit_line_to_points`] reading
+/// [`Kernel::fixes.best_fit_line_largest_scatter_eigenvector`](crate::kernel::UpstreamFixes::best_fit_line_largest_scatter_eigenvector)
+/// (`smgu_BestFitLineToPoints`, `WR-10`).
+///
+/// Errors: from the matrix helpers (not for finite input).
+pub fn best_fit_line_to_points_with_kernel(
+    k: &Kernel,
+    points: &[Point3],
+    tol_3d: f64,
+) -> Result<BestFitLine> {
+    best_fit_line_to_points_opt_in(
+        points,
+        tol_3d,
+        k.fixes.best_fit_line_largest_scatter_eigenvector,
+    )
+}
+
+/// [`best_fit_line_to_points`] with an explicit opt-in (`use_scatter_eigenvector`) for
+/// `WR-10`.
+///
+/// When `use_scatter_eigenvector` is `true`, takes the eigenvector of the largest
+/// eigenvalue (`vectors[2]`) of a clone of the symmetric scatter matrix
+/// `M = sum_i Y_i Y_i^T` (leaving [`BestFitLine::m`] unmodified for
+/// [`crate::geom::geom_utility::p2::best_fit_plane_to_points_opt_in`]), maximising
+/// `v^T M v` and minimising the squared orthogonal residuals `del - v^T M v`. When
+/// `false`, matches pinned C++ parity.
+///
+/// Errors: from the matrix helpers (not for finite input).
+pub fn best_fit_line_to_points_opt_in(
+    points: &[Point3],
+    tol_3d: f64,
+    use_scatter_eigenvector: bool,
+) -> Result<BestFitLine> {
     let fit = best_fit_point_to_points(points, tol_3d);
     let line_pt = fit.center;
 
@@ -1339,7 +1471,6 @@ pub fn best_fit_line_to_points(points: &[Point3], tol_3d: f64) -> Result<BestFit
 
     let mut del = 0.0;
     let mut m = Matrix::new(3, 3);
-    let mut c = Matrix::new(3, 3);
 
     for p in points {
         let yx = p.x - line_pt.x;
@@ -1361,20 +1492,30 @@ pub fn best_fit_line_to_points(points: &[Point3], tol_3d: f64) -> Result<BestFit
     m.set_at(2, 0, m.at(0, 2)?)?;
     m.set_at(2, 1, m.at(1, 2)?)?;
 
-    c.set_at(0, 0, del - m.at(0, 0)?)?;
-    c.set_at(0, 1, m.at(0, 1)?)?;
-    c.set_at(0, 2, m.at(0, 2)?)?;
+    let largest = if use_scatter_eigenvector {
+        // Clone M so Compute3x3EigenVectors does not mutate BestFitLine::m in place.
+        let mut m_eig = m.clone();
+        let (_, [_, _, largest]) = m_eig.compute_3x3_eigen_vectors()?;
+        largest
+    } else {
+        let mut c = Matrix::new(3, 3);
 
-    c.set_at(1, 0, m.at(1, 0)?)?;
-    c.set_at(1, 1, del - m.at(1, 1)?)?;
-    c.set_at(1, 2, m.at(1, 2)?)?;
+        c.set_at(0, 0, del - m.at(0, 0)?)?;
+        c.set_at(0, 1, m.at(0, 1)?)?;
+        c.set_at(0, 2, m.at(0, 2)?)?;
 
-    c.set_at(2, 0, m.at(2, 0)?)?;
-    c.set_at(2, 1, m.at(2, 1)?)?;
-    c.set_at(2, 2, del - m.at(2, 2)?)?;
+        c.set_at(1, 0, m.at(1, 0)?)?;
+        c.set_at(1, 1, del - m.at(1, 1)?)?;
+        c.set_at(1, 2, m.at(1, 2)?)?;
 
-    // Get Eigenvalues and EigenVectors of C(LinePt)
-    let (_, [_, _, largest]) = c.compute_3x3_eigen_vectors()?;
+        c.set_at(2, 0, m.at(2, 0)?)?;
+        c.set_at(2, 1, m.at(2, 1)?)?;
+        c.set_at(2, 2, del - m.at(2, 2)?)?;
+
+        // Get Eigenvalues and EigenVectors of C(LinePt)
+        let (_, [_, _, largest]) = c.compute_3x3_eigen_vectors()?;
+        largest
+    };
 
     // LineVec = unitized(aEigenVectors[2]) -- largest Eigenvalue.
     let line_vec = largest.unitize_or_z();
@@ -1528,7 +1669,8 @@ fn deriv_at(derivs: &[Vec3], i: usize, op: &'static str) -> Result<Vec3> {
 /// Returns `min(highest_u, highest_v, 3) + 1` vectors: the position, then the
 /// derivatives upstream sets.
 ///
-/// Errors: `InvalidInput` when `derivs` is too short for the requested derivatives.
+/// Errors: `InvalidInput` when a consumed derivative index overflows or `derivs` is
+/// too short for the requested derivatives.
 pub fn directional_derivs(
     dir: Vec2,
     highest_u_deriv: usize,
@@ -1536,29 +1678,35 @@ pub fn directional_derivs(
     derivs: &[Vec3],
 ) -> Result<Vec<Vec3>> {
     const OP: &str = "geom::geom_utility::p1::directional_derivs";
-    let d = |i: usize| deriv_at(derivs, i, OP);
-    let hv = highest_v_deriv;
+    let d = |u: usize, v: usize| {
+        let i = highest_v_deriv
+            .checked_add(1)
+            .and_then(|stride| u.checked_mul(stride))
+            .and_then(|i| i.checked_add(v))
+            .ok_or_else(|| invalid(OP, "derivative index overflow"))?;
+        deriv_at(derivs, i, OP)
+    };
 
     // unitize sDir (status ignored: a zero vector stays unchanged)
     let dir = dir.unitize().unwrap_or(dir);
     let (x, y) = (dir.x, dir.y);
 
-    let mut out = vec![d(0)?];
+    let mut out = vec![deriv_at(derivs, 0, OP)?];
 
     if highest_u_deriv >= 1 && highest_v_deriv >= 1 {
-        out.push(x * d(hv + 1)? + y * d(1)?);
+        out.push(x * d(1, 0)? + y * d(0, 1)?);
     }
 
     if highest_u_deriv >= 2 && highest_v_deriv >= 2 {
-        out.push(x * x * d(2 * (hv + 1))? + 2.0 * x * y * d(hv + 1 + 1)? + y * y * d(2)?);
+        out.push(x * x * d(2, 0)? + 2.0 * x * y * d(1, 1)? + y * y * d(0, 2)?);
     }
 
     if highest_u_deriv >= 3 && highest_v_deriv >= 3 {
         out.push(
-            x * x * x * d(3 * (hv + 1))?
-                + 3.0 * x * x * y * d(2 * (hv + 1) + 1)?
-                + 3.0 * x * y * y * d(hv + 1 + 2)?
-                + y * y * y * d(3)?,
+            x * x * x * d(3, 0)?
+                + 3.0 * x * x * y * d(2, 1)?
+                + 3.0 * x * y * y * d(1, 2)?
+                + y * y * y * d(0, 3)?,
         );
     }
 
@@ -1572,15 +1720,26 @@ pub fn directional_derivs(
 ///
 /// Returns `min(highest_deriv, 3) + 1` vectors.
 ///
-/// Errors: `InvalidInput` when `derivs` is too short for the requested derivatives.
+/// Errors: `InvalidInput` when the layout stride or a consumed derivative index
+/// overflows, or `derivs` is too short for the requested derivatives.
 pub fn vol_directional_derivs(
     dir: Vec3,
     highest_deriv: usize,
     derivs: &[Vec3],
 ) -> Result<Vec<Vec3>> {
     const OP: &str = "geom::geom_utility::p1::vol_directional_derivs";
-    let n1 = highest_deriv + 1;
-    let sv = |u: usize, v: usize, w: usize| deriv_at(derivs, (u * n1 + v) * n1 + w, OP);
+    let n1 = highest_deriv
+        .checked_add(1)
+        .ok_or_else(|| invalid(OP, "derivative index overflow"))?;
+    let sv = |u: usize, v: usize, w: usize| {
+        let i = u
+            .checked_mul(n1)
+            .and_then(|i| i.checked_add(v))
+            .and_then(|i| i.checked_mul(n1))
+            .and_then(|i| i.checked_add(w))
+            .ok_or_else(|| invalid(OP, "derivative index overflow"))?;
+        deriv_at(derivs, i, OP)
+    };
 
     let dir = dir.unitize_or_z();
     let (x, y, z) = (dir.x, dir.y, dir.z);
@@ -1923,6 +2082,176 @@ mod tests {
     }
 
     #[test]
+    fn derivs_address_overflow() {
+        let surface_op = "geom::geom_utility::p1::directional_derivs";
+        let volume_op = "geom::geom_utility::p1::vol_directional_derivs";
+        assert_eq!(
+            directional_derivs(Vec2::new(1.0, 0.0), 1, usize::MAX, &[Vec3::ZERO; 2]),
+            Err(invalid(surface_op, "derivative index overflow"))
+        );
+        assert_eq!(
+            vol_directional_derivs(Vec3::Z, usize::MAX, &[Vec3::ZERO; 4]),
+            Err(invalid(volume_op, "derivative index overflow"))
+        );
+        let k = 1usize << (usize::BITS / 2);
+        assert_eq!(
+            vol_directional_derivs(Vec3::Z, k, &[Vec3::ZERO]),
+            Err(invalid(volume_op, "derivative index overflow"))
+        );
+        // Zero coefficients still consume the same derivative entries.
+        assert_eq!(
+            directional_derivs(Vec2::ZERO, 1, usize::MAX, &[Vec3::ZERO; 2]),
+            Err(invalid(surface_op, "derivative index overflow"))
+        );
+        // Surface position is read before its branch-local stride arithmetic.
+        assert_eq!(
+            directional_derivs(Vec2::ZERO, 1, usize::MAX, &[]),
+            Err(invalid(surface_op, "derivative array too short"))
+        );
+        // Volume checks n+1 before reading position, but not unused products.
+        assert_eq!(
+            vol_directional_derivs(Vec3::ZERO, usize::MAX, &[]),
+            Err(invalid(volume_op, "derivative index overflow"))
+        );
+        assert_eq!(
+            vol_directional_derivs(Vec3::ZERO, k, &[]),
+            Err(invalid(volume_op, "derivative array too short"))
+        );
+    }
+
+    #[test]
+    fn derivs_position_short_and_zero_directions() {
+        let p = v(7.0, -2.0, 5.0);
+        let surface_op = "geom::geom_utility::p1::directional_derivs";
+        let volume_op = "geom::geom_utility::p1::vol_directional_derivs";
+        for (hu, hv) in [(0, 0), (0, usize::MAX), (usize::MAX, 0), (0, 4), (4, 0)] {
+            assert_eq!(directional_derivs(Vec2::ZERO, hu, hv, &[p]), Ok(vec![p]));
+            assert_eq!(
+                directional_derivs(Vec2::ZERO, hu, hv, &[]),
+                Err(invalid(surface_op, "derivative array too short"))
+            );
+        }
+        assert_eq!(vol_directional_derivs(Vec3::ZERO, 0, &[p]), Ok(vec![p]));
+        assert_eq!(
+            vol_directional_derivs(Vec3::ZERO, 0, &[]),
+            Err(invalid(volume_op, "derivative array too short"))
+        );
+        for order in 1..=4 {
+            assert_eq!(
+                directional_derivs(Vec2::ZERO, order, order, &[p]),
+                Err(invalid(surface_op, "derivative array too short"))
+            );
+            assert_eq!(
+                vol_directional_derivs(Vec3::ZERO, order, &[p]),
+                Err(invalid(volume_op, "derivative array too short"))
+            );
+        }
+        let mut surface = [v(2.0, 3.0, 4.0); 16];
+        surface[0] = p;
+        assert_eq!(
+            directional_derivs(Vec2::ZERO, 3, 3, &surface),
+            Ok(vec![p, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO])
+        );
+        let volume = [v(2.0, 3.0, 4.0); 64];
+        assert_eq!(
+            vol_directional_derivs(Vec3::ZERO, 3, &volume),
+            vol_directional_derivs(Vec3::Z, 3, &volume)
+        );
+        assert_eq!(
+            vol_directional_derivs(Vec3::ZERO, 3, &volume).unwrap(),
+            vec![volume[0]; 4]
+        );
+    }
+
+    fn mixed_deriv(u: usize, v: usize, w: usize) -> Vec3 {
+        let (u, v, w) = (u as f64, v as f64, w as f64);
+        Vec3::new(
+            1.0 + u + 4.0 * v + 16.0 * w,
+            2.0 + u * v + w,
+            3.0 + u - v * w,
+        )
+    }
+
+    #[test]
+    fn derivs_surface_mixed_orders_and_strides() {
+        let dir = Vec2::new(3.0, -4.0);
+        let unit = dir.unitize().unwrap();
+        let (x, y) = (unit.x, unit.y);
+        let d = |u, v| mixed_deriv(u, v, 0);
+        let expected = [
+            d(0, 0),
+            x * d(1, 0) + y * d(0, 1),
+            x * x * d(2, 0) + 2.0 * x * y * d(1, 1) + y * y * d(0, 2),
+            x * x * x * d(3, 0)
+                + 3.0 * x * x * y * d(2, 1)
+                + 3.0 * x * y * y * d(1, 2)
+                + y * y * y * d(0, 3),
+        ];
+        // Order four is a Rust layout control, not an upstream order-four guarantee.
+        for (hu, hv) in [(1, 1), (2, 2), (3, 3), (4, 4), (1, 4), (4, 2)] {
+            let mut buffer = [Vec3::ZERO; 25];
+            for u in 0..=hu {
+                for v in 0..=hv {
+                    buffer[u * (hv + 1) + v] = d(u, v);
+                }
+            }
+            let order = hu.min(hv).min(3);
+            // Only the consumed prefix is needed, not the full declared rectangle.
+            let end = order * (hv + 1) + 1;
+            assert_eq!(
+                directional_derivs(dir, hu, hv, &buffer[..end]).unwrap(),
+                expected[..=order]
+            );
+        }
+    }
+
+    #[test]
+    fn derivs_volume_mixed_orders_and_strides() {
+        let dir = v(2.0, -3.0, 6.0);
+        let unit = dir.unitize_or_z();
+        let (x, y, z) = (unit.x, unit.y, unit.z);
+        let d = mixed_deriv;
+        let expected = [
+            d(0, 0, 0),
+            x * d(1, 0, 0) + y * d(0, 1, 0) + z * d(0, 0, 1),
+            x * x * d(2, 0, 0)
+                + 2.0 * x * y * d(1, 1, 0)
+                + 2.0 * x * z * d(1, 0, 1)
+                + y * y * d(0, 2, 0)
+                + 2.0 * y * z * d(0, 1, 1)
+                + z * z * d(0, 0, 2),
+            x * x * x * d(3, 0, 0)
+                + 3.0 * x * x * y * d(2, 1, 0)
+                + 3.0 * x * x * z * d(2, 0, 1)
+                + 3.0 * x * y * y * d(1, 2, 0)
+                + 6.0 * x * y * z * d(1, 1, 1)
+                + 3.0 * x * z * z * d(1, 0, 2)
+                + y * y * y * d(0, 3, 0)
+                + 3.0 * y * y * z * d(0, 2, 1)
+                + 3.0 * y * z * z * d(0, 1, 2)
+                + z * z * z * d(0, 0, 3),
+        ];
+        // Order four preserves the existing Rust stride, not an upstream guarantee.
+        for order in 1usize..=4 {
+            let n1 = order + 1;
+            let mut buffer = [Vec3::ZERO; 125];
+            for u in 0..=order {
+                for v in 0..=order {
+                    for w in 0..=order {
+                        buffer[(u * n1 + v) * n1 + w] = d(u, v, w);
+                    }
+                }
+            }
+            let consumed_order = order.min(3);
+            let end = consumed_order * n1 * n1 + 1;
+            assert_eq!(
+                vol_directional_derivs(dir, order, &buffer[..end]).unwrap(),
+                expected[..=consumed_order]
+            );
+        }
+    }
+
+    #[test]
     fn misc() {
         assert!(cones_are_disjoint_perpen(Vec3::X, 0.1, Vec3::X, 0.1));
         assert!(!cones_are_disjoint_perpen(Vec3::X, 0.1, Vec3::Y, 0.1));
@@ -1965,5 +2294,279 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn wr11_perspective_origin_circle_to_eye_sign() {
+        let c = Vec3::ZERO;
+        let n = Vec3::Z;
+        let r = 1.0;
+        let eye = v(2.0, 0.0, 3.0);
+        let half_rt3 = 3.0f64.sqrt() * 0.5;
+
+        let def = circle_find_silhouette_points(c, n, r, true, eye);
+        let opt_off = circle_find_silhouette_points_opt_in(c, n, r, true, eye, false);
+        let (d1, d2) = def.unwrap().unwrap();
+        assert_eq!(opt_off.unwrap(), Some((d1, d2)));
+        assert!((d1 - v(-0.5, -half_rt3, 0.0)).length() < 1e-14);
+        assert!((d2 - v(-0.5, half_rt3, 0.0)).length() < 1e-14);
+        for d in [d1, d2] {
+            assert!(d.x < 0.0);
+            assert!(((d - eye).dot(d - c) - 2.0).abs() < 1e-13);
+        }
+
+        let fixed = circle_find_silhouette_points_opt_in(c, n, r, true, eye, true);
+        let (p1, p2) = fixed.unwrap().unwrap();
+        assert!((p1 - v(0.5, half_rt3, 0.0)).length() < 1e-14);
+        assert!((p2 - v(0.5, -half_rt3, 0.0)).length() < 1e-14);
+        for p in [p1, p2] {
+            assert!(p.x > 0.0);
+            assert!(((p - c).length() - r).abs() < 1e-14);
+            assert!((p - c).dot(n).abs() < 1e-14);
+            assert!((p - eye).dot(p - c).abs() < 1e-14);
+        }
+    }
+
+    #[test]
+    fn wr11_perspective_translated_tilted_circle_and_non_unit_normal() {
+        let c = v(10.0, -4.0, 3.0);
+        let n_unit = v(1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0);
+        let n_scaled = v(2.0, 4.0, 4.0);
+        let u1 = v(2.0 / 3.0, -2.0 / 3.0, 1.0 / 3.0);
+        let v1 = v(2.0 / 3.0, 1.0 / 3.0, -2.0 / 3.0);
+        let r = 3.0;
+        let eye = c + 5.0 * u1 + 7.0 * n_unit;
+
+        let def = circle_find_silhouette_points(c, n_unit, r, true, eye);
+        let (d1, d2) = def.unwrap().unwrap();
+        assert!(((d1 - c).length() - r).abs() > 10.0);
+        assert!(((d2 - c).length() - r).abs() > 10.0);
+
+        let fixed = circle_find_silhouette_points_opt_in(c, n_unit, r, true, eye, true);
+        let (p1, p2) = fixed.unwrap().unwrap();
+        let exp1 = c + r * (0.6 * u1 + 0.8 * v1);
+        let exp2 = c + r * (0.6 * u1 - 0.8 * v1);
+        assert!((p1 - exp1).length() < 1e-13);
+        assert!((p2 - exp2).length() < 1e-13);
+        for p in [p1, p2] {
+            assert!(((p - c).length() - r).abs() < 1e-13);
+            assert!((p - c).dot(n_unit).abs() < 1e-13);
+            assert!((p - eye).dot(p - c).abs() < 1e-13);
+        }
+
+        let scaled = circle_find_silhouette_points_opt_in(c, n_scaled, r, true, eye, true);
+        let (s1, s2) = scaled.unwrap().unwrap();
+        assert!((s1 - p1).length() < 1e-13);
+        assert!((s2 - p2).length() < 1e-13);
+    }
+
+    #[test]
+    fn wr11_inside_radius_parallel_degenerate_and_kernel_wiring() {
+        let c = v(10.0, -4.0, 3.0);
+        let n = v(1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0);
+        let u1 = v(2.0 / 3.0, -2.0 / 3.0, 1.0 / 3.0);
+        let r = 3.0;
+
+        for dist in [0.0, 1.5, r] {
+            let inside_eye = c + dist * u1 + 4.0 * n;
+            let off = circle_find_silhouette_points_opt_in(c, n, r, true, inside_eye, false);
+            let on = circle_find_silhouette_points_opt_in(c, n, r, true, inside_eye, true);
+            assert_eq!(off.unwrap(), None);
+            assert_eq!(on.unwrap(), None);
+        }
+
+        let far_eye = c + 5.0 * u1 + 4.0 * n;
+        let zero_n = circle_find_silhouette_points_opt_in(c, Vec3::ZERO, r, true, far_eye, true);
+        assert_eq!(zero_n.unwrap(), None);
+        let neg_r = circle_find_silhouette_points_opt_in(c, n, -1.0, true, far_eye, true);
+        assert_eq!(neg_r.unwrap(), None);
+
+        let view_dir = v(1.0, -0.5, 0.25);
+        let par_off = circle_find_silhouette_points_opt_in(c, n, r, false, view_dir, false);
+        let par_on = circle_find_silhouette_points_opt_in(c, n, r, false, view_dir, true);
+        let (q1, q2) = par_off.unwrap().unwrap();
+        assert_eq!(par_on.unwrap(), Some((q1, q2)));
+        for q in [q1, q2] {
+            assert!(((q - c).length() - r).abs() < 1e-13);
+            assert!((q - c).dot(n).abs() < 1e-13);
+            assert!((q - c).dot(view_dir).abs() < 1e-13);
+        }
+        let par_axis = circle_find_silhouette_points_opt_in(c, n, r, false, n, true);
+        assert_eq!(par_axis.unwrap(), None);
+
+        let k0 = Kernel::default();
+        assert!(!k0.fixes.circle_silhouette_perspective_center);
+        let mut k1 = Kernel::default();
+        let flag = k1.fixes.flag_mut("circle_silhouette_perspective_center");
+        *flag.unwrap() = true;
+        assert!(k1.fixes.circle_silhouette_perspective_center);
+
+        let def_res = circle_find_silhouette_points(c, n, r, true, far_eye);
+        let k0_res = circle_find_silhouette_points_with_kernel(&k0, c, n, r, true, far_eye);
+        assert_eq!(k0_res, def_res);
+
+        let opt_res = circle_find_silhouette_points_opt_in(c, n, r, true, far_eye, true);
+        let k1_res = circle_find_silhouette_points_with_kernel(&k1, c, n, r, true, far_eye);
+        assert_eq!(k1_res, opt_res);
+        assert!(k1_res.unwrap().is_some());
+    }
+
+    #[test]
+    fn wr10_axis_aligned_collinear_points() {
+        use crate::geom::geom_utility::p2::{
+            best_fit_plane_to_points, best_fit_plane_to_points_opt_in,
+            best_fit_plane_to_points_with_kernel,
+        };
+
+        let tol = 1e-6;
+        let k_def = Kernel::default();
+        let mut k_opt = Kernel::default();
+        k_opt.fixes.best_fit_line_largest_scatter_eigenvector = true;
+
+        for (axis, perp_def) in [(Vec3::X, Vec3::Z), (Vec3::Y, Vec3::Z), (Vec3::Z, Vec3::X)] {
+            let pts = [-3.0 * axis, Vec3::ZERO, 3.0 * axis];
+
+            let def = best_fit_line_to_points(&pts, tol).unwrap();
+            assert_eq!(
+                best_fit_line_to_points_opt_in(&pts, tol, false).unwrap(),
+                def
+            );
+            assert_eq!(
+                best_fit_line_to_points_with_kernel(&k_def, &pts, tol).unwrap(),
+                def
+            );
+            assert_eq!(def.set_type, PointSetType::Scattered);
+            assert_eq!(def.line_vec, perp_def);
+            assert!((def.max_line_gap - 3.0).abs() < 1e-12);
+
+            let plane_def = best_fit_plane_to_points(&pts, tol).unwrap();
+            assert_eq!(plane_def.set_type, PointSetType::Planar);
+
+            let opt = best_fit_line_to_points_with_kernel(&k_opt, &pts, tol).unwrap();
+            assert_eq!(
+                best_fit_line_to_points_opt_in(&pts, tol, true).unwrap(),
+                opt
+            );
+            assert_eq!(opt.set_type, PointSetType::Linear);
+            assert!(opt.line_vec.dot(axis).abs() > 1.0 - 1e-12);
+            assert!(opt.max_line_gap <= 1e-15);
+            assert_eq!(opt.m, def.m);
+
+            let plane_opt = best_fit_plane_to_points_with_kernel(&k_opt, &pts, tol).unwrap();
+            assert_eq!(
+                best_fit_plane_to_points_opt_in(&pts, tol, true).unwrap(),
+                plane_opt
+            );
+            assert_eq!(plane_opt.set_type, PointSetType::Linear);
+            assert!(plane_opt.normal.dot(axis).abs() > 1.0 - 1e-12);
+            assert!(plane_opt.max_plane_gap <= 1e-15);
+        }
+
+        // Asymmetric translated X-axis collinear set.
+        let shift = v(5.0, -4.0, 2.0);
+        let asym = [shift - 2.0 * Vec3::X, shift, shift + 3.0 * Vec3::X];
+        let asym_def = best_fit_line_to_points(&asym, tol).unwrap();
+        assert_eq!(asym_def.set_type, PointSetType::Scattered);
+        assert_eq!(asym_def.line_vec, Vec3::Z);
+        assert!((asym_def.max_line_gap - 8.0 / 3.0).abs() < 1e-12);
+
+        let asym_opt = best_fit_line_to_points_with_kernel(&k_opt, &asym, tol).unwrap();
+        assert_eq!(asym_opt.set_type, PointSetType::Linear);
+        assert!(asym_opt.line_vec.dot(Vec3::X).abs() > 1.0 - 1e-12);
+        assert!(asym_opt.max_line_gap <= 1e-15);
+
+        // Void and PointSized early exits match default bit-for-bit.
+        assert_eq!(
+            best_fit_line_to_points_with_kernel(&k_opt, &[], tol).unwrap(),
+            best_fit_line_to_points(&[], tol).unwrap()
+        );
+        let tiny = [v(1.0, 2.0, 3.0), v(1.0 + 1e-8, 2.0, 3.0)];
+        let tiny_opt = best_fit_line_to_points_with_kernel(&k_opt, &tiny, tol).unwrap();
+        assert_eq!(tiny_opt, best_fit_line_to_points(&tiny, tol).unwrap());
+        assert_eq!(tiny_opt.set_type, PointSetType::PointSized);
+        assert_eq!(tiny_opt.line_vec, Vec3::ZERO);
+        assert!(tiny_opt.m.is_none());
+    }
+
+    #[test]
+    fn wr10_general_oblique_collinear_and_noisy_line() {
+        use crate::geom::geom_utility::p2::{
+            best_fit_plane_to_points, best_fit_plane_to_points_with_kernel,
+        };
+
+        let mut k_opt = Kernel::default();
+        k_opt.fixes.best_fit_line_largest_scatter_eigenvector = true;
+
+        // Oblique collinear line where all off-diagonal entries of M are non-zero.
+        let dir = v(2.0, 1.0, -3.0);
+        let unit_dir = dir.unitize().unwrap();
+        let origin = v(4.0, -1.5, 2.0);
+        let pts = [-2.0, -0.5, 1.0, 3.5].map(|t| origin + t * dir);
+
+        let def = best_fit_line_to_points(&pts, 1e-6).unwrap();
+        let m_def = def.m.as_ref().unwrap();
+        assert!(m_def.at(0, 1).unwrap().abs() > 1.0);
+        assert!(m_def.at(0, 2).unwrap().abs() > 1.0);
+        assert!(m_def.at(1, 2).unwrap().abs() > 1.0);
+        assert_eq!(def.set_type, PointSetType::Scattered);
+        assert!(def.line_vec.dot(unit_dir).abs() < 0.95);
+        assert!(def.max_line_gap > 1.0);
+        assert_eq!(
+            best_fit_plane_to_points(&pts, 1e-6).unwrap().set_type,
+            PointSetType::Planar
+        );
+
+        let opt = best_fit_line_to_points_with_kernel(&k_opt, &pts, 1e-6).unwrap();
+        assert_eq!(opt.set_type, PointSetType::Linear);
+        assert!(opt.line_vec.dot(unit_dir).abs() > 1.0 - 1e-12);
+        assert!(opt.max_line_gap < 1e-14);
+        assert_eq!(opt.m, def.m);
+
+        let plane_opt = best_fit_plane_to_points_with_kernel(&k_opt, &pts, 1e-6).unwrap();
+        assert_eq!(plane_opt.set_type, PointSetType::Linear);
+        assert!(plane_opt.normal.dot(unit_dir).abs() > 1.0 - 1e-12);
+        assert!(plane_opt.max_plane_gap < 1e-14);
+
+        // Noisy near-collinear points with orthogonal perturbation eps = 1e-4.
+        let perp = dir.cross(Vec3::Y).unitize().unwrap();
+        let eps = 1e-4;
+        let noisy = [
+            origin - 10.0 * unit_dir + eps * perp,
+            origin - 5.0 * unit_dir - eps * perp,
+            origin + 5.0 * unit_dir - eps * perp,
+            origin + 10.0 * unit_dir + eps * perp,
+        ];
+        let noisy_tight = best_fit_line_to_points_with_kernel(&k_opt, &noisy, 1e-5).unwrap();
+        assert_eq!(noisy_tight.set_type, PointSetType::Scattered);
+        assert!(noisy_tight.line_vec.dot(unit_dir).abs() > 1.0 - 1e-12);
+        assert!((noisy_tight.max_line_gap - eps).abs() < 1e-13);
+
+        let noisy_loose = best_fit_line_to_points_with_kernel(&k_opt, &noisy, 2e-4).unwrap();
+        assert_eq!(noisy_loose.set_type, PointSetType::Linear);
+        assert!(noisy_loose.line_vec.dot(unit_dir).abs() > 1.0 - 1e-12);
+        assert!((noisy_loose.max_line_gap - eps).abs() < 1e-13);
+
+        // Tilted planar rectangle on x + 2y - z = 4: BestFitLine.m stays unmodified
+        // so best_fit_plane_to_points_with_kernel recovers the exact plane normal.
+        let n_unit = v(1.0, 2.0, -1.0).unitize().unwrap();
+        let u1 = v(2.0, -1.0, 0.0).unitize().unwrap();
+        let u2 = n_unit.cross(u1);
+        let center = v(1.0, 1.0, -1.0);
+        let rect = [
+            center - 4.0 * u1 - 1.5 * u2,
+            center + 4.0 * u1 - 1.5 * u2,
+            center + 4.0 * u1 + 1.5 * u2,
+            center - 4.0 * u1 + 1.5 * u2,
+        ];
+        let rect_line_def = best_fit_line_to_points(&rect, 1e-6).unwrap();
+        let rect_line_opt = best_fit_line_to_points_with_kernel(&k_opt, &rect, 1e-6).unwrap();
+        assert_eq!(rect_line_opt.set_type, PointSetType::Scattered);
+        assert!(rect_line_opt.line_vec.dot(u1).abs() > 1.0 - 1e-12);
+        assert_eq!(rect_line_opt.m, rect_line_def.m);
+
+        let rect_plane = best_fit_plane_to_points_with_kernel(&k_opt, &rect, 1e-6).unwrap();
+        assert_eq!(rect_plane.set_type, PointSetType::Planar);
+        assert!(rect_plane.normal.dot(n_unit).abs() > 1.0 - 1e-12);
+        assert!(rect_plane.max_plane_gap < 1e-13);
     }
 }

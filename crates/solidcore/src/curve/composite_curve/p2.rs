@@ -9,6 +9,7 @@
 //! |--------------------------------------------------------|-------------------------------------------------------|
 //! | [`CompositeCurveSegment::new`]                         | `SmCompositeCurveSegment(pParentCurve, bSameSense, dGapStart, dGapEnd)` |
 //! | [`CompositeCurveSegment::read_from_db`]                | `SmCompositeCurveSegment::ReadFromDB` (static)        |
+//! | [`CompositeCurveSegment::write_to_db`]                 | `SmCompositeCurveSegment::WriteToDB`                  |
 //! | [`OffsetMapAttribute::make_copy`]                      | `SmOffsetMapAttribute::MakeCopy`                      |
 //! | [`check_bow_ties`]                                     | `sm_CheckBowTies` (static)                            |
 //! | [`fix_bow_tie`]                                        | `sm_FixBowTie`                                        |
@@ -17,6 +18,7 @@
 //! | [`CompositeCurve::create_trimmed_offsets`], [`OffsetDirection`] | `CreateTrimmedOffsets`, `SmOffsetDirectionType` |
 //! | [`CompositeCurve::make_composite_nurb`]                | `MakeCompositeNurb`                                   |
 //! | [`CompositeCurve::read_from_db`]                       | `SmCompositeCurve::ReadFromDB` (static)               |
+//! | [`CompositeCurve::write_to_db`]                        | `SmCompositeCurve::WriteToDB`                         |
 //!
 //! Deviations:
 //! - **Attributes.** A [`Curve`] carries no attribute list, so the offsetters pass each
@@ -50,7 +52,8 @@
 //!   statuses of `SmCompositeCurve::ReadFromDB` are ignored upstream, leaving a
 //!   segment with a `NULL` curve that every later use dereferences; the port returns
 //!   [`SolidError::InvalidInput`] for a segment without a curve (no curve stored, or a
-//!   curve that fails to read).
+//!   curve that fails to read). `SmCompositeCurve::WriteToDB` ignores its segments'
+//!   statuses, leaving a short record; the port passes a segment's error on.
 //! - **Undefined behaviour upstream.** These return [`SolidError::InvalidInput`]:
 //!   `sm_CheckBowTies` without original curves (`crOrigCurves[0]`) or with fewer
 //!   offsets than original curves (it reads `crOffsets[lNumOrig - 1]`; its caller
@@ -67,7 +70,7 @@
 //!   so a `const` method changes them); segments that are analytic curves derived from
 //!   `SmBSplineCurve` (lines, ellipses, ...) join through a copy of their B-spline part
 //!   and are left unchanged.
-//! - `CreateOffsetsOfCurve`, `AddCurve`, `WriteToDB`, `Dump`, `Draw` and the region
+//! - `CreateOffsetsOfCurve`, `AddCurve`, `Dump`, `Draw` and the region
 //!   constructor belong to other units or are unused.
 
 use crate::curve::curve::p1::GlobalPointSolveOptions;
@@ -89,7 +92,8 @@ use crate::kernel::Kernel;
 use crate::math::{EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI};
 use crate::nurbs::b_spline_curve::{BSplineCurve, BSplineCurveForm, CanonicalData, KnotType};
 use crate::nurbs::b_spline_curve_n_lib::TrimMode;
-use crate::topology::database_io::{DatabaseReader, FileType, InputStream};
+use crate::topology::database_io::{DatabaseReader, DatabaseWriter, FileType, InputStream};
+use crate::topology::geometry_write::write_curve_at;
 
 use super::p1::{
     convert_to_bspline_curves_indexed, create_corner, curve_classify_cached, insert_sorted_breaks,
@@ -226,6 +230,46 @@ impl CompositeCurveSegment {
             owns_curve: true,
         })
     }
+
+    /// `SmCompositeCurveSegment::WriteToDB`, the record
+    /// [`CompositeCurveSegment::read_from_db`] reads: transition, sense, gaps, the
+    /// has-curve flag (always set: a segment holds its curve), then the curve's type
+    /// header and record, as a curve nested `depth` levels deep.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`write_curve_at`] for the curve.
+    pub fn write_to_db(&self, db: &mut DatabaseWriter, version: u64, depth: usize) -> Result<()> {
+        let ascii = db.file_type() == FileType::Ascii;
+        let transition = self.transition as u64;
+        let same_sense = i32::from(self.same_sense);
+        let has_curve: i32 = 1;
+        if ascii {
+            db.out_u64(transition);
+            db.out_str(" SmCompositeCurveSegment Continuity Transition Type \n");
+            db.out_i64(same_sense.into());
+            db.out_str(" SmCompositeCurveSegment Same Sense \n");
+            db.out_f64(self.gap_start);
+            db.out_str(" SmCompositeCurveSegment Gap Start \n");
+            db.out_f64(self.gap_end);
+            db.out_str(" SmCompositeCurveSegment Gap End \n");
+            db.out_i64(has_curve.into());
+            db.out_str(" SmCompositeCurveSegment bHasCurve \n");
+        } else {
+            db.write_long(transition as i64);
+            db.write_boolean(same_sense);
+            db.write_double(self.gap_start);
+            db.write_double(self.gap_end);
+            db.write_boolean(has_curve);
+        }
+
+        // has curve
+        if ascii {
+            db.out_str(" SmCompositeCurve->CurveBeingConverted \n");
+        }
+        db.write_type(self.curve.type_code(), Some(self.curve.dim()));
+        write_curve_at(&self.curve, db, version, depth + 1)
+    }
 }
 
 impl OffsetMapAttribute {
@@ -261,7 +305,8 @@ fn take_cache(
     index: usize,
     handle: Option<PieceHandle>,
 ) -> Option<CurveCache<PieceHandle>> {
-    let (built_for, cache) = caches.get_mut(index)?.take()?;
+    let slot = 2 * index + handle.map_or(0, |h| usize::from(h.1));
+    let (built_for, cache) = caches.get_mut(slot)?.take()?;
     (Some(built_for) == handle).then_some(cache)
 }
 
@@ -272,8 +317,11 @@ fn put_cache(
     handle: Option<PieceHandle>,
     cache: Option<CurveCache<PieceHandle>>,
 ) {
-    if let (Some(slot), Some(h), Some(c)) = (caches.get_mut(index), handle, cache) {
-        *slot = Some((h, c));
+    if let (Some(h), Some(c)) = (handle, cache) {
+        let slot = 2 * index + usize::from(h.1);
+        if let Some(s) = caches.get_mut(slot) {
+            *s = Some((h, c));
+        }
     }
 }
 
@@ -755,7 +803,7 @@ impl CompositeCurve {
         for _ in 0..n {
             match CompositeCurveSegment::read_from_db(k, db, version) {
                 Ok(s) => segments.push(s),
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => {
                     return Err(SolidError::invalid_input(
                         OP_READ,
@@ -770,6 +818,35 @@ impl CompositeCurve {
             segments,
             closed: closed != 0,
         })
+    }
+
+    /// `SmCompositeCurve::WriteToDB`, the record [`CompositeCurve::read_from_db`]
+    /// reads: the segment count and the closed flag, then every segment
+    /// ([`CompositeCurveSegment::write_to_db`]), as a curve nested `depth` levels deep.
+    ///
+    /// # Errors
+    ///
+    /// Those of the segments' writers (upstream ignores them; see the module docs).
+    pub fn write_to_db(&self, db: &mut DatabaseWriter, version: u64, depth: usize) -> Result<()> {
+        let num_segments = self.segments.len() as u64;
+        let closed = i32::from(self.closed);
+        if db.file_type() == FileType::Ascii {
+            db.out_u64(num_segments);
+            db.out_str(" SmCompositeCurve Segment Count \n");
+            db.out_i64(closed.into());
+            db.out_str(" SmCompositeCurve Closed Flag \n");
+        } else {
+            db.write_long(num_segments as i64);
+            db.write_boolean(closed);
+        }
+
+        // for every CompositeCurveSegment
+        for s in &self.segments {
+            s.write_to_db(db, version, depth)?;
+        }
+
+        // all done
+        Ok(())
     }
 
     /// `MakeCompositeNurb`: one B-spline joining the segments in order with their
@@ -881,6 +958,16 @@ impl CompositeCurve {
         params: &OffsetParams,
     ) -> Result<TrimmedOffsets> {
         let mut p = *params;
+
+        // SolidCraft change (tangency-labs/smlib 54148db): corners that keep the curves'
+        // curvature are made by CreateTaperExtrude only so far; here they would get no
+        // corner curves at all.
+        if p.corner == OffsetCornerType::CurveExtension {
+            return Err(SolidError::invalid_input(
+                OP_OFFSETS,
+                "SM_OC_CURVE_EXTENSION is for CreateTaperExtrude only",
+            ));
+        }
 
         // Offset distance must be positive.
         let mut flip = false;
@@ -1104,7 +1191,7 @@ impl CompositeCurve {
     /// ([`check_bow_ties`], [`fix_bow_tie`]) are added, then every offset is split at
     /// its breaks (spans under `SM_EFF_ZERO_SQRT` and pieces shorter than
     /// `xsect_tol_3d / 100` dropped) and each piece is kept when
-    /// [`curve_classify`] says so (with its attribute's originator: the attribute's
+    /// [`curve_classify`](super::p1::curve_classify) says so (with its attribute's originator: the attribute's
     /// [`ObjectRef`] key indexes `orig_curves`).
     ///
     /// # Errors
@@ -1141,8 +1228,10 @@ impl CompositeCurve {
         // every offset's curve cache with the handle it was built for (performance
         // only: upstream keeps the cache on the curve until the curve changes; see
         // `Curve::global_curve_intersect_cached`)
+        // Two slots per offset: one for the analytic handle and one for the
+        // non-analytic handle (upstream keeps both on the curve).
         let mut caches: Vec<Option<(PieceHandle, CurveCache<PieceHandle>)>> =
-            (0..num_offs).map(|_| None).collect();
+            (0..2 * num_offs).map(|_| None).collect();
 
         // Intersect every offset curve with every offset curve, including itself.
         for ii in 0..num_offs {

@@ -6,6 +6,8 @@
 //! |------|----------|
 //! | [`MappedCacheFace`] | `GetFace()->GetBrep()` during `SmTrimSrfCache::BuildTree` |
 //! | [`FaceQueries`], [`PreparedFaceQueries`] | `SmFace::PointClassify`, `SmTol::GetZoneTol3d` |
+//! | [`prepare_face_surface_cache`] | `smsurf_GetSurfaceCache` of a face's surface, then `GetTree` |
+//! | [`prepare_face_surface_cache_state`] | `smsurf_GetSurfaceCache` of a face's surface (no `GetTree`) |
 //!
 //! Deviations: [`MappedCacheFace`] only translates handles over the shared
 //! [`BrepCacheFace`] implementation of [`CacheFace`]; it does not duplicate topology
@@ -21,6 +23,9 @@ use crate::kernel::Kernel;
 use crate::math::Point2;
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::query::face::p2::{point_classify_prepared, BrepCacheFace, PointClassifyOptions};
+use crate::surface::surface::p1::get_surface_cache_with_face;
+use crate::surface::surface::CacheTreeState;
+use crate::surface::surface_cache::p1::{FaceContainment, SurfaceCache};
 use crate::surface::trim_srf_cache::CacheFace;
 use crate::topology::{Brep, FaceId};
 
@@ -48,6 +53,14 @@ pub trait FaceQueries<O>: Debug {
         uv: Point2,
         src_tol: f64,
     ) -> Result<(i32, Option<O>)>;
+
+    /// `SmEdge::GetTolerance` of the edge owning the curve behind `curve` (upstream's
+    /// `crCurve.GetOwner()`), for the curve/surface solves of a face's surface.
+    /// `None` (the default) when the adapter cannot resolve the curve's edge.
+    fn curve_edge_tolerance(&self, curve: O) -> Option<Result<f64>> {
+        let _ = curve;
+        None
+    }
 }
 
 /// The shared B-rep cache-face adapter in a caller's handle space.
@@ -60,6 +73,7 @@ pub struct MappedCacheFace<'a, O> {
     face_handle: O,
     handle_of: &'a dyn Fn(EntityRef) -> Result<O>,
     entity_of: &'a dyn Fn(O) -> Result<EntityRef>,
+    implants_while_editing: bool,
 }
 
 impl<O> Debug for MappedCacheFace<'_, O> {
@@ -92,7 +106,16 @@ impl<'a, O: Copy + PartialEq> MappedCacheFace<'a, O> {
             face_handle,
             handle_of,
             entity_of,
+            implants_while_editing: false,
         })
+    }
+
+    /// This adapter with the face's trims implanted even while its B-rep is being
+    /// edited ([`CacheFace::implants_while_editing`]).
+    #[must_use]
+    pub const fn implanting_while_editing(mut self) -> Self {
+        self.implants_while_editing = true;
+        self
     }
 
     fn mapping_error() -> SolidError {
@@ -134,6 +157,10 @@ impl<O: Copy + PartialEq> CacheFace<O> for MappedCacheFace<'_, O> {
 
     fn set_brep_editing_enabled(&mut self, enabled: bool) -> Result<()> {
         self.inner.set_brep_editing_enabled(enabled)
+    }
+
+    fn implants_while_editing(&self) -> bool {
+        self.implants_while_editing
     }
 
     fn create_uv_trim_curves(&mut self, k: &Kernel) -> Result<()> {
@@ -294,4 +321,80 @@ impl<O: Copy + PartialEq> FaceQueries<O> for PreparedFaceQueries<'_, O> {
     ) -> Result<(i32, Option<O>)> {
         self.classify(k, face, uv, src_tol, true, false)
     }
+}
+
+/// `smsurf_GetSurfaceCache` of the surface of face `face` of `b` followed by the
+/// solve's `GetTree`: the face surface's trimmed cache built through the face (which
+/// may create the face's UV trim curves on `b`), with its tree ready, in the caller's
+/// handle space. `surface_handle` names the face's surface; `handle_of` and
+/// `entity_of` are the caller's inverse mappings of `b`'s entities (faces, edges,
+/// vertices, loop uses, edge uses and vertex uses), as for [`MappedCacheFace`].
+///
+/// # Errors
+///
+/// Those of the face lookups, the mappings and the cache build.
+pub fn prepare_face_surface_cache<O: Copy + PartialEq>(
+    k: &Kernel,
+    b: &mut Brep,
+    face: FaceId,
+    surface_handle: O,
+    handle_of: &dyn Fn(EntityRef) -> Result<O>,
+    entity_of: &dyn Fn(O) -> Result<EntityRef>,
+) -> Result<SurfaceCache<O>> {
+    face_surface_cache(k, b, face, surface_handle, handle_of, entity_of, true)
+}
+
+/// [`prepare_face_surface_cache`] without the solve's `GetTree`: the cache as
+/// `smsurf_GetSurfaceCache` hands it to a reader that reads only its state bits
+/// (`GlobalPointSolve`'s fast-drop face test). A cache the factory leaves without
+/// tree (made during a Boolean operation, or reused unbuilt:
+/// [`crate::surface::surface::Surface::cache_tree_state`]) keeps the state bits the `SmTrimSrfCache`
+/// constructor set; a surface whose cache upstream has built is built here as well.
+///
+/// # Errors
+///
+/// As [`prepare_face_surface_cache`].
+pub fn prepare_face_surface_cache_state<O: Copy + PartialEq>(
+    k: &Kernel,
+    b: &mut Brep,
+    face: FaceId,
+    surface_handle: O,
+    handle_of: &dyn Fn(EntityRef) -> Result<O>,
+    entity_of: &dyn Fn(O) -> Result<EntityRef>,
+) -> Result<SurfaceCache<O>> {
+    face_surface_cache(k, b, face, surface_handle, handle_of, entity_of, false)
+}
+
+fn face_surface_cache<O: Copy + PartialEq>(
+    k: &Kernel,
+    b: &mut Brep,
+    face: FaceId,
+    surface_handle: O,
+    handle_of: &dyn Fn(EntityRef) -> Result<O>,
+    entity_of: &dyn Fn(O) -> Result<EntityRef>,
+    get_tree: bool,
+) -> Result<SurfaceCache<O>> {
+    const OP: &str = "surface::surface_cache::face_context::prepare_face_surface_cache";
+    // the cache refers to the face's surface (an exact evaluation copy: the face's
+    // B-rep is changed through the face while the cache is built)
+    let surface = b
+        .face(face)?
+        .surface
+        .as_ref()
+        .ok_or(SolidError::null_pointer(OP))?
+        .clone_for_evaluation()?;
+    // upstream reuses a cache whose tree is built, with the built tree's state bits
+    let get_tree = get_tree || surface.cache_tree_state() == CacheTreeState::Built;
+    let mut mapped = MappedCacheFace::new(BrepCacheFace { b, f: face }, handle_of, entity_of)?;
+    let mut cache = get_surface_cache_with_face(k, &surface, Some(surface_handle), &mut mapped)?;
+    // A Boolean operation can defer the factory's tree build until GetTree.
+    if get_tree
+        && (cache.base().tree().is_none()
+            || (!cache.base().have_t_surface_cache
+                && surface.face()?.is_some()
+                && cache.base().face_containment_done != FaceContainment::UnderConstruction))
+    {
+        cache.build_tree_with_face(k, &mut mapped)?;
+    }
+    Ok(cache.into_base())
 }

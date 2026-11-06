@@ -57,9 +57,9 @@
 //! | [`object_zone_tol_3d`]                            | `SmTol::GetZoneTol3d(const SmObject*)`           |
 //! | [`PointClassification::xsect_tol_3d`]             | `SmTol::GetXSectTol3d(const SmPointClassification*)` |
 //! | [`PointClassification::set_src_zone_tol_3d`]      | `SetSrcZoneTol3d`                                |
-//! | [`PointClassification::combine`], [`PointClassification::combine_in_brep`], [`Precedence`] | `Combine` |
+//! | [`PointClassification::combine`], [`PointClassification::combine_in_brep`], [`PointClassification::combine_setting_vertex_point`], [`Precedence`] | `Combine` |
 //! | [`CombineBrep`]                                   | the arena behind the classified object           |
-//! | [`PointClassification::compute_point_parameters`] | `ComputePointParameters`                         |
+//! | [`PointClassification::compute_point_parameters`], [`PointClassification::compute_point_parameters_mut`]| `ComputePointParameters`                         |
 //! | [`PointClassification::find_obj_point_3d`]        | `FindObjPoint3d`                                 |
 //! | [`PointClassification::load_from_intersection`]   | `LoadFromIntersection`                           |
 //! | [`MergeOutputs`]                                  | `MergeIntoObject`'s `pOptNewEdges`, `pOptNewVertices` |
@@ -69,10 +69,18 @@
 //! | `Drop` (implicit)                                 | `~SmSpaceBend`, `~SmSpaceUnbend`, `~SmLineSegClassification` |
 //!
 //! Deviations:
+//! - **Edge split point (WR-751, #2621).** `MergeIntoObject` (through
+//!   [`PointClassification::merge_into_brep`]) splits an edge where its curve passes
+//!   nearest the classified point, not at the classification's parameter, which upstream
+//!   assumes is the point's (`SmPointClass.cpp:951`); off a grazing intersection the two
+//!   differ by an edge's accuracy over the angle's sine, and the edge then ended that far
+//!   from its vertex (`split_parameter`).
 //! - **Mutable topology.** [`BrepMerge`] supplies an arena, resolved target,
 //!   handle mapping and notification environment for [`PointClassification::merge_into_brep`],
 //!   and [`CombineBrep`] the arena and notifications
-//!   [`PointClassification::combine_in_brep`] writes a propagated vertex point to.
+//!   [`PointClassification::combine_in_brep`] writes a propagated vertex point to;
+//!   [`PointClassification::combine_setting_vertex_point`] takes the caller's
+//!   `SmVertex::SetPoint` instead (an adapter resolving the vertex on demand).
 //!   The older opaque-handle entrypoints cannot resolve their object's arena and return
 //!   an `Unported(topology.brep_p1)` / `Unported(topology.vertex)` deferral until the
 //!   caller supplies that context. Region/face owner queries retain their own blockers.
@@ -116,8 +124,22 @@
 //!   kinds without a `GetTolerance` override (region, faceuse, loop, loopuse,
 //!   vertexuse) get `SmTopology::GetTolerance`, `SM_ZONE_TOL_3D`, and a faceuse
 //!   `SmTopology::IsConnectedTo`, `FALSE`.
-//! - **`GetGap3d` failure.** With a surface and no single drop point, upstream returns
-//!   `SM_ERR` *as the gap value*; so does [`PointClassification::gap_3d`].
+//! - **Fast-drop trim test.** `GlobalPointSolve` of a face's surface (in
+//!   `ComputePointParameters` and `GetGap3d`) tests its fast-drop solutions against the
+//!   face (`smsurf_GetSurfaceCache`, then `PointClassify(uv, tol, TRUE, FALSE)`): the
+//!   read-only forms reuse the trimmed cache the face's surface keeps and classify
+//!   without changing the B-rep, deferring ([`SolidError::Unported`]) when a new cache
+//!   would have to be made; [`PointClassification::compute_point_parameters_mut`] makes
+//!   it on the B-rep the adapter resolves the face to mutably
+//!   ([`ClassGeometryMut::topology_entity_mut`]). The cache is looked up when the first
+//!   solution is tested; upstream looks it up once the fast drop found solutions, also
+//!   when the domain filter then removed them all (that lookup's side effects are not
+//!   made here then).
+//! - **`GetGap3d` failure (WR-58).** With a surface and no single drop point, upstream
+//!   returns `SM_ERR` (`1001.0`) *as the gap value* and ignores failing statuses along the
+//!   surface-drop path; [`PointClassification::gap_3d`] matches that by default, and with
+//!   `Kernel::fixes.point_class_gap_3d_propagates_no_drop_error` returns `Err(SM_ERR)` and
+//!   propagates object-point, surface-drop, and surface-evaluation errors instead.
 //! - **Topology members.** `GetCurveObject`, `IsConnectedTo`, `ComputePointParameters`,
 //!   `FindObjPoint3d` and `SmTol::GetZoneTol3d` of a vertex, edge, edge use, face, loop,
 //!   vertex use or loop use call the ported topology members (`SmEdge::GetCurve` /
@@ -127,14 +149,18 @@
 //!   the earlier [`SolidError::Unported`] deferral, and an `IsConnectedTo` target in another
 //!   B-rep is connected to nothing. `SmFace::IsConnectedTo` (`topology.face_p4`) and the
 //!   B-rep of `GetBrep` (a [`BrepId`] the handle hooks cannot name) are still unported.
+//! - **Opt-in (WR-537).** With `Kernel::fixes.seam_point_solutions_are_one`,
+//!   `ComputePointParameters` keeps the nearest of a face or surface solve's solutions
+//!   when they all evaluate to one point within the source zone tolerance (a point on a
+//!   closed face's seam; the fork's tangency-labs/smlib@577f7be).
 //! - **Not in this unit.** `GetLoop`, `GetSurfaceObject`, `GetVolumeObject`,
 //!   `operator==`, `AssertValid`, `Dump`, `Draw` and the RTTI of
 //!   `SmPointClassification` are unreachable from the in-scope entry points
 //!   (`harness/callgraph`) and not ported.
 
 use crate::curve::curve::p2::Curve;
-use crate::error::{ignored, EntityRef, Result, SolidError, SM_ERR};
-use crate::geom::assert_array::labels::{SPACE_BEND_TYPE, SPACE_UNBEND_TYPE};
+use crate::error::{ignored_or_pass_on, EntityRef, Result, SolidError, SM_ERR};
+use crate::geom::assert_array::labels::{FACE_TYPE, SPACE_BEND_TYPE, SPACE_UNBEND_TYPE};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::extent3d::Extent3d;
@@ -145,11 +171,12 @@ use crate::geom::tol::{
     xsect_tol3d, xsect_tol_3d_from_zones, zone_tol3d, zone_tol_3d, SmallTopoType, UNINIT_TOL,
     ZONE_TOL_3D,
 };
+use crate::intersect::curve_class::p5::ClassGeometryMut;
 use crate::kernel::Kernel;
 use crate::math::{max2, Point2, Point3, Vec3, BIG_DOUBLE};
 use crate::nurbs::knots::Side;
-use crate::surface::surface::p4::global_point_solve_starts;
-use crate::surface::surface::Surface;
+use crate::surface::surface::p4::{global_point_solve_starts, NoObject};
+use crate::surface::surface::{Surface, TrimCacheSlot};
 use crate::surface::volume::Volume;
 use crate::topology::{
     edge, edgeuse, face, loopuse, vertex, vertexuse, Brep, BrepId, EdgeId, FaceId,
@@ -170,6 +197,31 @@ pub struct BrepMerge<'a, 'env, O> {
     pub notifications: &'a mut edge::NotifyEnv<'env>,
     /// Identity of each edge's curve from its id and actual native type code, including a new split edge.
     pub curve_ref: &'a dyn Fn(EdgeId, i64) -> ObjectRef,
+}
+
+/// Actual merge context with checked identity access to newly constructed curves.
+pub struct BrepMergeWithIdentity<'a, 'env, O> {
+    /// Actual arena containing the classified object.
+    pub brep: &'a mut Brep,
+    /// Target in that arena.
+    pub target: EntityRef,
+    /// Caller handle for each arena entity.
+    pub handle: &'a dyn Fn(EntityRef) -> O,
+    /// Retained records, attributes and notification context.
+    pub notifications: &'a mut edge::NotifyEnv<'env>,
+    /// Legacy or actual-curve identity authority at construction.
+    pub curve_identity: crate::topology::brep::p9::CurveIdentity<'a>,
+}
+impl<'a, 'env, O> From<BrepMerge<'a, 'env, O>> for BrepMergeWithIdentity<'a, 'env, O> {
+    fn from(context: BrepMerge<'a, 'env, O>) -> Self {
+        Self {
+            brep: context.brep,
+            target: context.target,
+            handle: context.handle,
+            notifications: context.notifications,
+            curve_identity: crate::topology::brep::p9::CurveIdentity::Legacy(context.curve_ref),
+        }
+    }
 }
 
 /// The arena [`PointClassification::combine_in_brep`] writes a propagated surf/surf/surf
@@ -594,6 +646,9 @@ impl<O: ClassObject> PointClassification<O> {
                         Some(_) => return Err(wrong_entity(OP_GEOMETRY)),
                         // UNPORTED(topology.edge): SmEdge::GetBrep (of SmCurve::GetEdge; an
                         // adapter that cannot resolve the owning edge)
+                        // Proof (unreachable): fires only for an adapter whose owner_entity
+                        // fails on this owner; the library adapters resolve it; 0 hits in
+                        // the green difftest sweep.
                         None => {
                             return Err(SolidError::unported("SmEdge::GetBrep", "topology.edge"))
                         }
@@ -612,6 +667,9 @@ impl<O: ClassObject> PointClassification<O> {
                         Some(_) => return Err(wrong_entity(OP_GEOMETRY)),
                         // UNPORTED(topology.face_p4): SmFace::GetBrep (of SmSurface::GetFace;
                         // an adapter that cannot resolve the owning face)
+                        // Proof (unreachable): fires only for an adapter whose owner_entity
+                        // fails on this owner; the library adapters resolve it; 0 hits in
+                        // the green difftest sweep.
                         None => {
                             return Err(SolidError::unported("SmFace::GetBrep", "topology.face_p4"))
                         }
@@ -720,12 +778,18 @@ impl<O: ClassObject> PointClassification<O> {
     /// gap for `opt_surface = None`, else the length of the gap component tangent to
     /// `opt_surface` at the object point's drop point on it. Upstream returns
     /// `SM_ERR` (as a value) when the object point has no single drop point on the
-    /// surface, even at a hundred times the object's zone tolerance; so does this.
+    /// surface, even at a hundred times the object's zone tolerance; so does this by
+    /// default. With
+    /// [`UpstreamFixes::point_class_gap_3d_propagates_no_drop_error`](crate::kernel::UpstreamFixes::point_class_gap_3d_propagates_no_drop_error)
+    /// enabled (WR-58), returns [`SM_ERR`] as an [`Err`] and propagates object-point,
+    /// surface-drop, and surface-evaluation failures instead.
     ///
     /// # Errors
     ///
-    /// [`SolidError::Unported`] for a surface: the surface point solve (unit
-    /// `surface.surface_p4`), and topology objects.
+    /// [`SolidError::Upstream`] (`SM_ERR`) or the underlying evaluation/solve error
+    /// when `Kernel::fixes.point_class_gap_3d_propagates_no_drop_error` is enabled and
+    /// no single drop point is found; [`SolidError::Unported`] for unported surface or
+    /// topology callees.
     pub fn gap_3d(
         &self,
         k: &Kernel,
@@ -737,44 +801,54 @@ impl<O: ClassObject> PointClassification<O> {
             return Ok(self.gap_3d);
         };
 
+        let propagate = k.fixes.point_class_gap_3d_propagates_no_drop_error;
+
         // else - in surface gaps
         // Get Object Point
-        let uv_domain = surface.natural_uv_domain();
-        let obj_pt_3d = ignored(self.find_obj_point_3d(k, geometry))?.unwrap_or(Vec3::UNDEF);
+        let uv_domain = surface.natural_uv_domain_with_nurb(k)?;
+        let obj_pt_3d = ignored_or_pass_on(self.find_obj_point_3d(k, geometry), propagate)?
+            .unwrap_or(Vec3::UNDEF);
         let obj_zone_tol_3d = self.obj_zone_tol_3d(k, geometry)?;
 
         // find SurfaceDropPt for ObjPt
-        let mut solutions = ignored(surface_global_point_solve(
-            k,
-            surface,
-            &uv_domain,
-            obj_pt_3d,
-            obj_zone_tol_3d,
-        ))?
+        let owner = owner_face(geometry, surface);
+        let mut solutions = ignored_or_pass_on(
+            surface_global_point_solve(k, surface, owner, &uv_domain, obj_pt_3d, obj_zone_tol_3d),
+            propagate,
+        )?
         .unwrap_or_default();
 
         // when a distinct solution was not found
         if solutions.len() != 1 {
             // find point/face->surface intersection point to 100 * face->Tolerance
-            solutions = ignored(surface_global_point_solve(
-                k,
-                surface,
-                &uv_domain,
-                obj_pt_3d,
-                zone_tol3d(k, obj_zone_tol_3d * 100.0),
-            ))?
+            solutions = ignored_or_pass_on(
+                surface_global_point_solve(
+                    k,
+                    surface,
+                    owner,
+                    &uv_domain,
+                    obj_pt_3d,
+                    zone_tol3d(k, obj_zone_tol_3d * 100.0),
+                ),
+                propagate,
+            )?
             .unwrap_or_default();
 
             // still no solutions - return an error
             if solutions.len() != 1 {
+                if propagate {
+                    return Err(SolidError::sm_err(OP_GAP));
+                }
                 return Ok(f64::from(SM_ERR));
             }
         }
 
         let first = solutions.first().ok_or_else(|| unresolved(OP_GAP))?;
         let uv = Point2::new(first.param(0)?, first.param(1)?);
-        let surf_pt_3d = ignored(surface.evaluate_point(k, uv))?.unwrap_or(Vec3::UNDEF);
-        let surf_norm = ignored(surface_evaluate_normal(k, surface, uv))?.unwrap_or(Vec3::UNDEF);
+        let surf_pt_3d =
+            ignored_or_pass_on(surface.evaluate_point(k, uv), propagate)?.unwrap_or(Vec3::UNDEF);
+        let surf_norm = ignored_or_pass_on(surface_evaluate_normal(k, surface, uv), propagate)?
+            .unwrap_or(Vec3::UNDEF);
 
         let gap_3d = obj_pt_3d - surf_pt_3d;
         let in_surf_gap_3d = gap_3d - gap_3d.dot(surf_norm) * surf_norm;
@@ -1030,14 +1104,66 @@ impl<O: ClassObject> PointClassification<O> {
         other: &Self,
         context: CombineBrep<'_, '_, O>,
     ) -> Result<Precedence> {
-        self.combine_with(other, Some(context))
+        let CombineBrep {
+            brep,
+            target,
+            handle,
+            notifications,
+        } = context;
+        self.combine_with(
+            other,
+            Some(&mut |object: Option<O>, point: Point3| {
+                if object.is_some_and(|object| handle(target) != object) {
+                    return Err(SolidError::invalid_input(
+                        OP_COMBINE,
+                        "target does not resolve classification object",
+                    ));
+                }
+                let EntityRef::Vertex(v) = target else {
+                    return Err(SolidError::invalid_input(
+                        OP_COMBINE,
+                        "combine target is not a vertex",
+                    ));
+                };
+                let key_of = notifications.key_of;
+                let this = key_of(EntityRef::Vertex(v));
+                vertex::set_point(
+                    brep,
+                    v,
+                    point,
+                    notifications.records,
+                    notifications.attributes,
+                    notifications.context.as_deref_mut(),
+                    this,
+                    &|vu| key_of(EntityRef::Vertexuse(vu)),
+                )
+            }),
+        )
     }
 
-    /// [`Self::combine`] with an optional arena for the propagated vertex point.
+    /// `Combine(other)` with the caller's `SmVertex::SetPoint`: a surf/surf/surf point
+    /// propagated to a vertex classification is written by
+    /// `set_vertex_point(object, point)`, with this classification's object (the
+    /// vertex upstream casts `m_pObject` to) and the point, at the moment upstream
+    /// calls `pVertex->SetPoint(m_vSSSPoint)`.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Self::combine`], without the deferral; those of `set_vertex_point`.
+    pub fn combine_setting_vertex_point(
+        &mut self,
+        other: &Self,
+        set_vertex_point: &mut dyn FnMut(Option<O>, Point3) -> Result<()>,
+    ) -> Result<Precedence> {
+        self.combine_with(other, Some(set_vertex_point))
+    }
+
+    /// [`Self::combine`] with an optional `SmVertex::SetPoint` for the propagated vertex
+    /// point.
     fn combine_with(
         &mut self,
         other: &Self,
-        arena: Option<CombineBrep<'_, '_, O>>,
+        set_vertex_point: Option<&mut dyn FnMut(Option<O>, Point3) -> Result<()>>,
     ) -> Result<Precedence> {
         use PointClassType as Pc;
         let this_class = self.point_class;
@@ -1085,40 +1211,16 @@ impl<O: ClassObject> PointClassification<O> {
 
             // set vertex position when appropriate
             if self.point_class == Pc::Vertex {
-                let Some(arena) = arena else {
-                    // UNPORTED(topology.vertex): SmVertex::SetPoint
+                let Some(set_vertex_point) = set_vertex_point else {
+                    // DISPATCH GAP: SmVertex::SetPoint (topology.vertex, green)
+                    // Proof (unreachable): needs a None vertex setter with an SSS point on
+                    // a vertex class; 0 hits in the green difftest sweep.
                     return Err(SolidError::unported(
                         "SmVertex::SetPoint",
                         "topology.vertex",
                     ));
                 };
-                if self
-                    .object
-                    .is_some_and(|object| (arena.handle)(arena.target) != object)
-                {
-                    return Err(SolidError::invalid_input(
-                        OP_COMBINE,
-                        "target does not resolve classification object",
-                    ));
-                }
-                let EntityRef::Vertex(v) = arena.target else {
-                    return Err(SolidError::invalid_input(
-                        OP_COMBINE,
-                        "combine target is not a vertex",
-                    ));
-                };
-                let key_of = arena.notifications.key_of;
-                let this = key_of(EntityRef::Vertex(v));
-                vertex::set_point(
-                    arena.brep,
-                    v,
-                    self.sss_point,
-                    arena.notifications.records,
-                    arena.notifications.attributes,
-                    arena.notifications.context.as_deref_mut(),
-                    this,
-                    &|vu| key_of(EntityRef::Vertexuse(vu)),
-                )?;
+                set_vertex_point(self.object, self.sss_point)?;
             }
         }
 
@@ -1149,6 +1251,36 @@ impl<O: ClassObject> PointClassification<O> {
         geometry: &impl ClassGeometry<O>,
         point: Point3,
     ) -> Result<()> {
+        self.compute_point_parameters_in(k, &mut ReadOnlyDrop(geometry), point)
+    }
+
+    /// [`PointClassification::compute_point_parameters`] over topology it may change:
+    /// the point solve of a face's surface makes the face's trimmed surface cache that
+    /// its fast-drop trim test reads (`smsurf_GetSurfaceCache`, which may create the
+    /// face's UV trim curves) and classifies on the B-rep that
+    /// [`ClassGeometryMut::topology_entity_mut`] resolves the face to, as upstream. A
+    /// face the adapter cannot resolve mutably is solved as by
+    /// [`PointClassification::compute_point_parameters`].
+    ///
+    /// # Errors
+    ///
+    /// Those of [`PointClassification::compute_point_parameters`].
+    pub fn compute_point_parameters_mut(
+        &mut self,
+        k: &Kernel,
+        geometry: &mut impl ClassGeometryMut<O>,
+        point: Point3,
+    ) -> Result<()> {
+        self.compute_point_parameters_in(k, &mut MutableDrop(geometry), point)
+    }
+
+    fn compute_point_parameters_in(
+        &mut self,
+        k: &Kernel,
+        access: &mut impl SurfaceDrop<O>,
+        point: Point3,
+    ) -> Result<()> {
+        let geometry = access.geometry();
         // init side effect values
         self.gap_3d = 0.0;
         self.t_param = 0.0;
@@ -1166,7 +1298,9 @@ impl<O: ClassObject> PointClassification<O> {
         // branch on m_ePointClass to get geometry object and domain for upcoming point
         // drop
         let mut obj_curve: Option<(&Curve, Extent1d)> = None;
-        let mut obj_surface: Option<(&Surface, Extent2d)> = None;
+        // (the surface or face is named by its handle: its point solve may reach the
+        // face's B-rep mutably)
+        let mut obj_surface: Option<(DropTarget<O>, Extent2d)> = None;
         let mut obj_volume: Option<&Volume> = None;
         match self.point_class {
             PointClassType::Curve => {
@@ -1175,7 +1309,8 @@ impl<O: ClassObject> PointClassification<O> {
             }
             PointClassType::Surface => {
                 let s = self.surface_of(geometry, OP_COMPUTE)?;
-                obj_surface = Some((s, s.natural_uv_domain()));
+                let o = self.object.ok_or_else(|| null_object(OP_COMPUTE))?;
+                obj_surface = Some((DropTarget::Surface(o), s.natural_uv_domain_with_nurb(k)?));
             }
             PointClassType::Volume => {
                 obj_volume = Some(
@@ -1195,8 +1330,8 @@ impl<O: ClassObject> PointClassification<O> {
                 let o = self.object.ok_or_else(|| null_object(OP_COMPUTE))?;
                 let (b, f) = topology_face(geometry, o, OP_COMPUTE)?;
                 // a NULL surface is dereferenced by the point solve upstream
-                let srf = face::p2::surface(b, f)?.ok_or_else(|| null_object(OP_COMPUTE))?;
-                obj_surface = Some((srf, face::p2::uv_domain(b, f)?));
+                face::p2::surface(b, f)?.ok_or_else(|| null_object(OP_COMPUTE))?;
+                obj_surface = Some((DropTarget::Face(o), face::p2::uv_domain(b, f)?));
             }
             PointClassType::Point
             | PointClassType::Vertex
@@ -1229,21 +1364,40 @@ impl<O: ClassObject> PointClassification<O> {
             self.param_set = true;
         }
         // when point classifies to a face or surface branch
-        else if let Some((surface, uv_domain)) = obj_surface {
+        else if let Some((target, uv_domain)) = obj_surface {
             // find point/face->surface intersection point to face->Tolerance
             let mut solutions =
-                surface_global_point_solve(k, surface, &uv_domain, point, self.src_zone_tol_3d)?;
+                access.global_point_solve(k, target, &uv_domain, point, self.src_zone_tol_3d)?;
+            // not upstream (WR-537, opt-in): solutions that are one point are one
+            if k.fixes.seam_point_solutions_are_one {
+                one_point(
+                    k,
+                    access.geometry(),
+                    target,
+                    &mut solutions,
+                    self.src_zone_tol_3d,
+                )?;
+            }
 
             // when a distinct solution was not found
             if solutions.len() != 1 {
                 // find point/face->surface intersection point to 100 * face->Tolerance
-                solutions = surface_global_point_solve(
+                solutions = access.global_point_solve(
                     k,
-                    surface,
+                    target,
                     &uv_domain,
                     point,
                     zone_tol3d(k, self.src_zone_tol_3d * 100.0),
                 )?;
+                if k.fixes.seam_point_solutions_are_one {
+                    one_point(
+                        k,
+                        access.geometry(),
+                        target,
+                        &mut solutions,
+                        self.src_zone_tol_3d,
+                    )?;
+                }
 
                 // still no solutions - return an error
                 if solutions.len() != 1 {
@@ -1362,9 +1516,9 @@ impl<O: ClassObject> PointClassification<O> {
     /// # Errors
     ///
     /// `SM_ERR_NULL_POINTER` for no object (upstream's `NER`); `SM_ERR` for an object
-    /// that is not a region, face, edge or vertex; unresolved region/face owners
-    /// return `Unported`. An opaque edge needs [`Self::merge_into_brep`] to supply
-    /// its mutable arena and defers the split here until it is supplied.
+    /// that is not a region, face, edge or vertex. A region, face or edge is edited in
+    /// its owning B-rep, which [`Self::merge_into_brep`] takes mutably: through an
+    /// opaque handle the edit returns `Unported` here.
     pub fn merge_into_object(&mut self, k: &Kernel, src_point: Point3) -> Result<MergeOutputs<O>> {
         let _ = k;
         let object = self.object.ok_or_else(|| null_object(OP_MERGE))?;
@@ -1376,19 +1530,16 @@ impl<O: ClassObject> PointClassification<O> {
 
         // the vertex the point merges into
         let new_v: O = match object.class_kind() {
-            ClassObjectKind::Region | ClassObjectKind::Edge => {
-                // The opaque API has no mutable owning-arena lookup. The actual
-                // p9 operation is available through merge_into_brep; canonical
-                // B-rep owner storage remains part 1's integration boundary.
-                // UNPORTED(topology.brep_p1): SmBrep mutable owning context
+            ClassObjectKind::Region | ClassObjectKind::Face | ClassObjectKind::Edge => {
+                // `GetBrep()->MakeShellVertex / MakeVertexLoop / MakeVertexSplitEdge`
+                // edit the B-rep that owns the object, which an opaque handle cannot
+                // reach mutably (the face's `GetBrep` itself is ported): the edit runs
+                // through merge_into_brep, which callers with the B-rep use.
+                // DISPATCH GAP: SmBrep mutable owning context (opaque handle without a Brep)
                 return Err(SolidError::unported(
                     "SmBrep mutable owning context",
                     "topology.brep_p1",
                 ));
-            }
-            ClassObjectKind::Face => {
-                // UNPORTED(topology.face_p4): SmFace::GetBrep
-                return Err(SolidError::unported("SmFace::GetBrep", "topology.face_p4"));
             }
             // Almost no work to do. There is already a vertex here.
             ClassObjectKind::Vertex => object,
@@ -1455,15 +1606,27 @@ impl<O: ClassObject> PointClassification<O> {
         src_point: Point3,
         context: BrepMerge<'_, '_, O>,
     ) -> Result<MergeOutputs<O>> {
+        self.merge_into_brep_with_curve_identity(k, src_point, context.into())
+    }
+
+    /// The same merge with checked identity issuance for actual copied curves.
+    /// # Errors
+    /// Original merge errors and identity failures, retaining prior edits.
+    pub fn merge_into_brep_with_curve_identity(
+        &mut self,
+        k: &mut Kernel,
+        src_point: Point3,
+        context: BrepMergeWithIdentity<'_, '_, O>,
+    ) -> Result<MergeOutputs<O>> {
         use crate::error::EntityRef;
         use crate::geom::tol::ScaledZero;
         use crate::topology::{brep::p9, vertex};
-        let BrepMerge {
+        let BrepMergeWithIdentity {
             brep: b,
             target,
             handle,
             notifications: env,
-            curve_ref,
+            curve_identity,
         } = context;
         let object = self.object.ok_or_else(|| null_object(OP_MERGE))?;
         let kind = match target {
@@ -1501,7 +1664,16 @@ impl<O: ClassObject> PointClassification<O> {
                 v
             }
             EntityRef::Edge(e) => {
-                let split = p9::make_vertex_split_edge(k, b, e, self.t_param(), env, curve_ref)?;
+                // Not upstream (#2621, WR-751): where the edge passes the point
+                let t = split_parameter(k, b, e, self.t_param(), src_point)?;
+                let split = p9::make_vertex_split_edge_with_curve_identity(
+                    k,
+                    b,
+                    e,
+                    t,
+                    env,
+                    curve_identity,
+                )?;
                 let v = split.vertex.ok_or_else(|| SolidError::sm_err(OP_MERGE))?;
                 if !split.split {
                     // Native assigns these two fields directly; in particular an
@@ -1732,6 +1904,9 @@ pub fn object_zone_tol_3d<O: ClassObject>(
                         Some(_) => Err(wrong_entity(OP_GEOMETRY)),
                         // UNPORTED(topology.face_p2): SmFace::GetTolerance (a bare face
                         // owner the adapter cannot resolve)
+                        // Proof (unreachable): a B-rep face's surface carries the face
+                        // tolerance (Brep::sync_face_surface_tolerance invariant, see
+                        // Surface::face_zone_tol_3d); 0 hits in the green difftest sweep.
                         None => Err(SolidError::unported(
                             "SmFace::GetTolerance",
                             "topology.face_p2",
@@ -1750,6 +1925,9 @@ pub fn object_zone_tol_3d<O: ClassObject>(
                     Some(_) => Err(wrong_entity(OP_GEOMETRY)),
                     // UNPORTED(topology.edge): SmEdge::GetTolerance (an adapter that
                     // cannot resolve the curve's owning edge)
+                    // Proof (unreachable): fires only when the adapter cannot resolve the
+                    // curve's owning edge; the library adapters resolve it; 0 hits in the
+                    // green difftest sweep.
                     None => Err(SolidError::unported(
                         "SmEdge::GetTolerance",
                         "topology.edge",
@@ -1760,6 +1938,47 @@ pub fn object_zone_tol_3d<O: ClassObject>(
         // SmVolume and other objects: the "unsupported object" branch (it warns)
         ClassObjectKind::Volume | ClassObjectKind::Point | ClassObjectKind::Other => Ok(system),
     }
+}
+
+/// Not upstream (#2621, WR-751): where `MergeIntoObject` splits the edge `e` for the
+/// classified point `src_point`: the parameter where the edge's curve passes nearest the
+/// point, from the classification's own `t` (the parameter upstream splits at), when that
+/// is nearer than `t`'s point, inside the edge's interval and within the edge's tolerance
+/// of the point (the point is on the edge); else `t`. A point off the edge (an offset's
+/// vertex 6.3e-2 from the edge it was classified to, at the edge's end) keeps `t`: moved,
+/// the split left a sliver 1.2e-3 long in place of the end vertex.
+///
+/// Upstream assumes the point is the edge's at `t` (`dParam = GetTParam(); // note:
+/// sSrcPoint expected to = Edge->Evaluate(TParam)`, `SmPointClass.cpp:951`). It is not
+/// where several surfaces meet at a grazing angle: the point is the vertex definition's,
+/// the consensus of every intersection that met there, and `t` that of the one which
+/// classified it to this edge, which fixes it along the edge only to the edge's accuracy
+/// over the angle's sine. Split at `t`, the edge ends that far from its vertex once the
+/// vertex moves to the point (2.9e-5 in #2621, where a groove flank meets a fillet's top
+/// circle at 5 degrees, against the edge's 2.7e-6 from the point); split nearest the
+/// point, both pieces end within the edge's accuracy of it.
+fn split_parameter(k: &Kernel, b: &Brep, e: EdgeId, t: f64, src_point: Point3) -> Result<f64> {
+    let Some(curve) = edge::curve(b, e)? else {
+        return Ok(t);
+    };
+    let interval = edge::interval(b, e)?;
+    let at_t = curve.evaluate_point(k, t)?.distance(src_point);
+    let nearest = curve.drop_point(
+        k,
+        &interval,
+        src_point,
+        None,
+        0.0,
+        Some(t),
+        SolverOperation::Minimize,
+    )?;
+    // the point must lie on the edge (within its tolerance) for the edge to pass it
+    let on_edge = nearest.distance <= edge::tolerance(b, e)?;
+    Ok(if nearest.success && on_edge && nearest.distance < at_t {
+        nearest.parameter
+    } else {
+        t
+    })
 }
 
 /// The position, tolerance and exactness of a merged vertex.
@@ -1818,24 +2037,425 @@ fn surface_evaluate_normal(k: &Kernel, surface: &Surface, uv: Point2) -> Result<
 
 // ---- callees in units not ported yet --------------------------------------------
 
-/// `SmSurface::GlobalPointSolve(domain, SM_SO_INTERSECT, point, tol, NULL,
-/// SM_SR_SINGLE, solutions)`: the start ends of the solutions.
+/// `pObjSurface->GlobalPointSolve(domain, SM_SO_INTERSECT, point, tol, NULL,
+/// SM_SR_SINGLE, sols)`: the solutions' start ends. For a surface whose owning face
+/// the adapter resolves (`owner`), the fast drop's trim test reads the trimmed
+/// surface cache the face's surface keeps and classifies on the B-rep read-only.
+///
+/// # Errors
+///
+/// Those of the point solve; [`SolidError::Unported`] when the trim test would make
+/// a new trimmed cache ([`face_point_test_on`]) or the read-only classification
+/// would create a UV trim curve.
 fn surface_global_point_solve(
+    k: &Kernel,
+    surface: &Surface,
+    owner: Option<(&Brep, FaceId)>,
+    uv_domain: &Extent2d,
+    point: Point3,
+    zone_tol_3d: f64,
+) -> Result<Vec<SolutionEnd>> {
+    let Some((b, f)) = owner else {
+        return global_point_solve_starts(
+            k,
+            surface,
+            uv_domain,
+            SolverOperation::Intersect,
+            point,
+            zone_tol_3d,
+            SolutionRequested::Single,
+        );
+    };
+    // The fast drop's trim test: `smsurf_GetSurfaceCache(this)` is looked up when the
+    // first solution is tested (upstream: once its solutions are in the domain), then
+    // each solution is `pFace->PointClassify(uv, tol, TRUE, FALSE, sPtClass)`.
+    let mut test_on: Option<bool> = None;
+    let mut classify = |k: &Kernel, uv: Point2, src_tol: f64| -> Result<bool> {
+        let on = if let Some(on) = test_on {
+            on
+        } else {
+            let on = face_point_test_on(b, f, surface)?;
+            test_on = Some(on);
+            on
+        };
+        if !on {
+            return Ok(true);
+        }
+        let mut pc = PointClassification::new(src_tol);
+        let status = crate::query::face::p2::point_classify_prepared(
+            k,
+            b,
+            f,
+            uv,
+            &mut pc,
+            fast_drop_classify_options(src_tol),
+        );
+        fast_drop_good_point(status, &pc)
+    };
+    face_tested_point_solve(k, surface, uv_domain, point, zone_tol_3d, &mut classify)
+}
+
+/// The fast drop's trim test of face `f`'s surface (`pFace->PointClassify(uv, tol,
+/// TRUE, FALSE, ..)` in `SmSurface::GlobalPointSolve`) with the face's B-rep at hand:
+/// `true` keeps the solution. Whether the test runs at all (the face's surface cache is
+/// trimmed, point testing is on and its face was not modified; `GetOwner()` is not
+/// cleared) is decided on the first call and kept in `test_on`. The face's trimmed
+/// surface cache is made when it has none
+/// ([`crate::query::face::p2::face_surface_cache`]).
+///
+/// # Errors
+///
+/// Those of the cache lookup and the classification's [`SolidError::Unported`].
+pub(crate) fn live_face_fast_drop_test(
+    k: &Kernel,
+    b: &mut Brep,
+    f: FaceId,
+    test_on: &mut Option<bool>,
+    uv: Point2,
+    src_tol: f64,
+) -> Result<bool> {
+    let on = if let Some(on) = *test_on {
+        on
+    } else {
+        // `GetOwner()` is NULL while `CreateUVTrimCurve(s)` clears it: no face
+        let on = !b.is_surface_owner_cleared(f) && {
+            let lease = crate::query::face::p2::face_surface_cache(k, b, f)?;
+            let base = lease.cache.base();
+            let on = lease.trimmed && base.point_test_enabled && !base.face_was_modified;
+            lease.release();
+            on
+        };
+        *test_on = Some(on);
+        on
+    };
+    if !on {
+        return Ok(true);
+    }
+    let mut pc = PointClassification::new(src_tol);
+    let status = crate::query::face::p2::point_classify(
+        k,
+        b,
+        f,
+        uv,
+        &mut pc,
+        fast_drop_classify_options(src_tol),
+    );
+    fast_drop_good_point(status, &pc)
+}
+
+/// [`surface_global_point_solve`] of face `f`'s surface with the face's B-rep at hand:
+/// the trim test makes the face's trimmed surface cache when it has none
+/// ([`crate::query::face::p2::face_surface_cache`], kept on the surface as upstream's
+/// cache manager keeps it) and classifies on the B-rep, which both may change (UV trim
+/// curves). The solve reads a copy of the face's surface that shares its cache slot.
+///
+/// # Errors
+///
+/// Those of the point solve, the cache lookup and the classification's
+/// [`SolidError::Unported`].
+fn live_surface_global_point_solve(
+    k: &Kernel,
+    b: &mut Brep,
+    f: FaceId,
+    uv_domain: &Extent2d,
+    point: Point3,
+    zone_tol_3d: f64,
+) -> Result<Vec<SolutionEnd>> {
+    let surface = face::p2::surface(b, f)?
+        .ok_or_else(|| null_object(OP_COMPUTE))?
+        .clone_for_evaluation()?;
+    let mut test_on: Option<bool> = None;
+    let mut classify = |k: &Kernel, uv: Point2, src_tol: f64| -> Result<bool> {
+        live_face_fast_drop_test(k, b, f, &mut test_on, uv, src_tol)
+    };
+    face_tested_point_solve(k, &surface, uv_domain, point, zone_tol_3d, &mut classify)
+}
+
+/// `GlobalPointSolve(domain, op, point, tol, NULL, requested, sols)` of `surface`, the
+/// surface of face `f` of `b` (or a copy standing for it), with the fast drop's trim
+/// test on the B-rep ([`live_face_fast_drop_test`]: the face's trimmed surface cache
+/// is made when it has none): the solutions' start ends.
+///
+/// # Errors
+///
+/// Those of the point solve, the cache lookup and the classification.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn live_owned_surface_global_point_solve(
+    k: &Kernel,
+    surface: &Surface,
+    b: &mut Brep,
+    f: FaceId,
+    uv_domain: &Extent2d,
+    op: SolverOperation,
+    point: Point3,
+    zone_tol_3d: f64,
+    requested: SolutionRequested,
+) -> Result<Vec<SolutionEnd>> {
+    let mut test_on: Option<bool> = None;
+    let mut classify = |k: &Kernel, uv: Point2, src_tol: f64| -> Result<bool> {
+        live_face_fast_drop_test(k, b, f, &mut test_on, uv, src_tol)
+    };
+    let solutions = surface.global_point_solve_face_tested::<NoObject>(
+        k,
+        Some(NoObject),
+        uv_domain,
+        op,
+        point,
+        zone_tol_3d,
+        None,
+        requested,
+        Some(&mut classify),
+    )?;
+    Ok(solutions.as_slice().iter().map(|s| s.start).collect())
+}
+
+/// `GlobalPointSolve(domain, SM_SO_INTERSECT, point, tol, NULL, SM_SR_SINGLE, sols)`
+/// of a face's surface whose fast-drop trim test is `classify`: the solutions' start
+/// ends.
+fn face_tested_point_solve(
     k: &Kernel,
     surface: &Surface,
     uv_domain: &Extent2d,
     point: Point3,
     zone_tol_3d: f64,
+    classify: &mut dyn FnMut(&Kernel, Point2, f64) -> Result<bool>,
 ) -> Result<Vec<SolutionEnd>> {
-    global_point_solve_starts(
+    let solutions = surface.global_point_solve_face_tested::<NoObject>(
         k,
-        surface,
+        Some(NoObject),
         uv_domain,
         SolverOperation::Intersect,
         point,
         zone_tol_3d,
+        None,
         SolutionRequested::Single,
-    )
+        Some(classify),
+    )?;
+    Ok(solutions.as_slice().iter().map(|s| s.start).collect())
+}
+
+/// `pFace->PointClassify(uv, sSrcZoneTol3d, TRUE, FALSE, sPtClass)`'s arguments in the
+/// fast drop's trim test.
+fn fast_drop_classify_options(
+    src_tol: f64,
+) -> crate::query::face::p2::PointClassifyOptions<'static> {
+    crate::query::face::p2::PointClassifyOptions {
+        src_zone_tol_3d: src_tol,
+        do_boundary_intersections: true,
+        use_uv_classification: false,
+        ..crate::query::face::p2::PointClassifyOptions::default()
+    }
+}
+
+/// `bGoodPoint` of the fast drop's trim test: `SM_SUCCESS` and a face, edge or vertex
+/// class. [`SolidError::Unported`] propagates.
+fn fast_drop_good_point(status: Result<()>, pc: &PointClassification<EntityRef>) -> Result<bool> {
+    match status {
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
+        Err(_) => Ok(false),
+        Ok(()) => Ok(matches!(
+            pc.point_class(),
+            PointClassType::Face | PointClassType::Edge | PointClassType::Vertex
+        )),
+    }
+}
+
+/// The surface `ComputePointParameters` drops its point on: the classification's
+/// surface (`SM_PC_SURFACE`) or the surface of its face (`SM_PC_FACE`), by handle.
+#[derive(Debug, Clone, Copy)]
+enum DropTarget<O> {
+    Surface(O),
+    Face(O),
+}
+
+/// Not upstream (WR-537, opt-in `Kernel::fixes.seam_point_solutions_are_one`; the fork's
+/// tangency-labs/smlib@577f7be): a point on the seam of a face that closes on itself (a
+/// whole cylinder's wall) has its parameters at both ends of the period, several
+/// solutions that are one point. When every solution evaluates within `tol` of the
+/// first's point, only the nearest (the first of the smallest solution values) is
+/// kept; a failed evaluation keeps them all.
+///
+/// # Errors
+///
+/// [`SolidError::Unported`] from the evaluations; [`SolidError::InvalidInput`] for an
+/// object that does not resolve to a surface or face with a surface.
+fn one_point<O: ClassObject>(
+    k: &Kernel,
+    geometry: &impl ClassGeometry<O>,
+    target: DropTarget<O>,
+    solutions: &mut Vec<SolutionEnd>,
+    tol: f64,
+) -> Result<()> {
+    if solutions.len() < 2 {
+        return Ok(());
+    }
+    let surface = match target {
+        DropTarget::Surface(o) => geometry.surface(o).ok_or_else(|| unresolved(OP_COMPUTE))?,
+        DropTarget::Face(o) => {
+            let (b, f) = topology_face(geometry, o, OP_COMPUTE)?;
+            face::p2::surface(b, f)?.ok_or_else(|| null_object(OP_COMPUTE))?
+        }
+    };
+    let evaluate = |sol: &SolutionEnd| -> Result<Option<Point3>> {
+        let uv = Point2::new(sol.param(0)?, sol.param(1)?);
+        match surface.evaluate_point(k, uv) {
+            Ok(p) => Ok(Some(p)),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
+            Err(_) => Ok(None),
+        }
+    };
+    let Some(first) = solutions.first() else {
+        return Ok(());
+    };
+    let Some(first_point) = evaluate(first)? else {
+        return Ok(());
+    };
+    let mut best = *first;
+    for sol in solutions.iter().skip(1) {
+        match evaluate(sol)? {
+            Some(p) if p.distance(first_point) > tol => return Ok(()),
+            Some(_) => {}
+            None => return Ok(()),
+        }
+        if sol.solution_value < best.solution_value {
+            best = *sol;
+        }
+    }
+    solutions.clear();
+    solutions.push(best);
+    Ok(())
+}
+
+/// How `ComputePointParameters` reaches its objects: the geometry, and the point solve
+/// of its surface or face, read-only or with the face's B-rep mutable.
+trait SurfaceDrop<O> {
+    type Geometry: ClassGeometry<O>;
+    fn geometry(&self) -> &Self::Geometry;
+    fn global_point_solve(
+        &mut self,
+        k: &Kernel,
+        target: DropTarget<O>,
+        uv_domain: &Extent2d,
+        point: Point3,
+        zone_tol_3d: f64,
+    ) -> Result<Vec<SolutionEnd>>;
+}
+
+/// Read-only access ([`PointClassification::compute_point_parameters`]).
+struct ReadOnlyDrop<'g, G>(&'g G);
+
+impl<O: ClassObject, G: ClassGeometry<O>> SurfaceDrop<O> for ReadOnlyDrop<'_, G> {
+    type Geometry = G;
+    fn geometry(&self) -> &G {
+        self.0
+    }
+    fn global_point_solve(
+        &mut self,
+        k: &Kernel,
+        target: DropTarget<O>,
+        uv_domain: &Extent2d,
+        point: Point3,
+        zone_tol_3d: f64,
+    ) -> Result<Vec<SolutionEnd>> {
+        let geometry = self.0;
+        let (surface, owner) = match target {
+            DropTarget::Surface(o) => {
+                let s = geometry.surface(o).ok_or_else(|| unresolved(OP_COMPUTE))?;
+                (s, owner_face(geometry, s))
+            }
+            DropTarget::Face(o) => {
+                let (b, f) = topology_face(geometry, o, OP_COMPUTE)?;
+                let s = face::p2::surface(b, f)?.ok_or_else(|| null_object(OP_COMPUTE))?;
+                (s, Some((b, f)))
+            }
+        };
+        surface_global_point_solve(k, surface, owner, uv_domain, point, zone_tol_3d)
+    }
+}
+
+/// Mutable access ([`PointClassification::compute_point_parameters_mut`]).
+struct MutableDrop<'g, G>(&'g mut G);
+
+impl<O: ClassObject, G: ClassGeometryMut<O>> SurfaceDrop<O> for MutableDrop<'_, G> {
+    type Geometry = G;
+    fn geometry(&self) -> &G {
+        self.0
+    }
+    fn global_point_solve(
+        &mut self,
+        k: &Kernel,
+        target: DropTarget<O>,
+        uv_domain: &Extent2d,
+        point: Point3,
+        zone_tol_3d: f64,
+    ) -> Result<Vec<SolutionEnd>> {
+        let face = match target {
+            DropTarget::Face(o) => Some(o),
+            DropTarget::Surface(o) => {
+                let geometry = &*self.0;
+                geometry
+                    .surface(o)
+                    .and_then(|s| owner_face(geometry, s))
+                    .and_then(|(b, f)| geometry.topology_handle_in(b, EntityRef::Face(f)))
+            }
+        };
+        if let Some((b, EntityRef::Face(f))) =
+            face.and_then(|o| self.0.topology_entity_for_query(o))
+        {
+            return live_surface_global_point_solve(k, b, f, uv_domain, point, zone_tol_3d);
+        }
+        ReadOnlyDrop(&*self.0).global_point_solve(k, target, uv_domain, point, zone_tol_3d)
+    }
+}
+
+/// The face owning `surface` (`SM_CAST_PTR(SmFace, GetOwner())`), when the adapter
+/// resolves the owner ([`ClassGeometry::owner_entity`]).
+fn owner_face<'g, O>(
+    geometry: &'g impl ClassGeometry<O>,
+    surface: &Surface,
+) -> Option<(&'g Brep, FaceId)> {
+    let owner = surface.owner().filter(|o| o.type_code == FACE_TYPE)?;
+    match geometry.owner_entity(owner) {
+        Some((b, EntityRef::Face(f))) => Some((b, f)),
+        _ => None,
+    }
+}
+
+/// Whether `smsurf_GetSurfaceCache(pFace->GetSurface())` is a trimmed surface cache
+/// with point testing on (`m_bPointTestEnabled`) whose face was not modified
+/// (`m_bFaceWasModified`): the condition of `GlobalPointSolve`'s fast-drop trim test.
+/// A face whose surface owner is cleared (inside `CreateUVTrimCurve(s)`) has no face
+/// upstream, so no test. The lookup reuses the trimmed cache the surface keeps, as
+/// [`crate::query::face::p2::face_surface_cache`] does.
+///
+/// # Errors
+///
+/// [`SolidError::Unported`] when the lookup would make a new cache (none kept, one in
+/// use, or a kept one whose face was modified outside a B-rep edit): that build
+/// creates the face's UV trim curves, which read-only topology cannot.
+fn face_point_test_on(b: &Brep, f: FaceId, surface: &Surface) -> Result<bool> {
+    if b.is_surface_owner_cleared(f) {
+        return Ok(false);
+    }
+    let kept = match surface.take_trim_cache() {
+        TrimCacheSlot::Stored(cache) => {
+            let base = cache.base();
+            // a modified face's cache is made again unless its B-rep is being edited
+            let reused = !base.face_was_modified || b.editing_enabled();
+            let on = base.point_test_enabled && !base.face_was_modified;
+            Surface::store_trim_cache(*cache);
+            reused.then_some(on)
+        }
+        TrimCacheSlot::Empty | TrimCacheSlot::CheckedOut => None,
+    };
+    // DISPATCH GAP: smsurf_GetSurfaceCache is ported (`query::face::p2::
+    // face_surface_cache`), but making the cache needs the face's B-rep mutably.
+    kept.ok_or_else(|| {
+        SolidError::unported(
+            "smsurf_GetSurfaceCache (a face's new trimmed cache from read-only topology)",
+            "query.face_p2",
+        )
+    })
 }
 
 /// The solution handle of the volume point solve, whose solutions never leave
@@ -1876,7 +2496,11 @@ fn volume_evaluate_point(volume: &Volume, uvw: Point3) -> Result<Point3> {
 
 /// `SmVertex::GetPoint`.
 fn vertex_point<O>(_vertex: O) -> Result<Point3> {
-    // UNPORTED(topology.vertex): SmVertex::GetPoint
+    // DISPATCH GAP: SmVertex::GetPoint (topology.vertex, green)
+    // Proof (unreachable): adapter-less free fn used only by
+    // PointClassification::merge_into_object (Vertex arm); library callers use the
+    // B-rep-carrying variants (merge_into_brep, Mutable); 0 hits in the green difftest
+    // sweep.
     Err(SolidError::unported(
         "SmVertex::GetPoint",
         "topology.vertex",
@@ -1885,7 +2509,11 @@ fn vertex_point<O>(_vertex: O) -> Result<Point3> {
 
 /// `SmVertex::SetPoint`.
 fn set_vertex_point<O>(_vertex: O, _point: Point3) -> Result<()> {
-    // UNPORTED(topology.vertex): SmVertex::SetPoint
+    // DISPATCH GAP: SmVertex::SetPoint (topology.vertex, green)
+    // Proof (unreachable): adapter-less free fn used only by
+    // PointClassification::merge_into_object (Vertex arm); library callers use the
+    // B-rep-carrying variants (merge_into_brep, Mutable); 0 hits in the green difftest
+    // sweep.
     Err(SolidError::unported(
         "SmVertex::SetPoint",
         "topology.vertex",
@@ -1894,7 +2522,11 @@ fn set_vertex_point<O>(_vertex: O, _point: Point3) -> Result<()> {
 
 /// `SmVertex::SetTolerance(zone_tol_3d)` (defaults `bUpdateOnlyIfLarger = TRUE`, ...).
 fn set_vertex_tolerance<O>(_vertex: O, _zone_tol_3d: f64) -> Result<()> {
-    // UNPORTED(topology.vertex): SmVertex::SetTolerance
+    // DISPATCH GAP: SmVertex::SetTolerance (topology.vertex, green)
+    // Proof (unreachable): adapter-less free fn used only by
+    // PointClassification::merge_into_object (Vertex arm); library callers use the
+    // B-rep-carrying variants (merge_into_brep, Mutable); 0 hits in the green difftest
+    // sweep.
     Err(SolidError::unported(
         "SmVertex::SetTolerance",
         "topology.vertex",
@@ -1903,7 +2535,11 @@ fn set_vertex_tolerance<O>(_vertex: O, _zone_tol_3d: f64) -> Result<()> {
 
 /// `SmVertex::SetExact`.
 fn set_vertex_exact<O>(_vertex: O, _exact: bool) -> Result<()> {
-    // UNPORTED(topology.vertex): SmVertex::SetExact
+    // DISPATCH GAP: SmVertex::SetExact (topology.vertex, green)
+    // Proof (unreachable): adapter-less free fn used only by
+    // PointClassification::merge_into_object (Vertex arm); library callers use the
+    // B-rep-carrying variants (merge_into_brep, Mutable); 0 hits in the green difftest
+    // sweep.
     Err(SolidError::unported(
         "SmVertex::SetExact",
         "topology.vertex",
@@ -1912,7 +2548,12 @@ fn set_vertex_exact<O>(_vertex: O, _exact: bool) -> Result<()> {
 
 /// `SmTol::GetScaledZero(const SmVertex&)`.
 fn vertex_scaled_zero<O>(_vertex: O) -> Result<f64> {
-    // UNPORTED(topology.vertex): SmTol::GetScaledZero(const SmVertex&) (SmVertex::GetPoint)
+    // DISPATCH GAP: SmTol::GetScaledZero(const SmVertex&) (SmVertex::GetPoint;
+    // topology.vertex, green)
+    // Proof (unreachable): adapter-less free fn used only by
+    // PointClassification::merge_into_object (Vertex arm); library callers use the
+    // B-rep-carrying variants (merge_into_brep, Mutable); 0 hits in the green difftest
+    // sweep.
     Err(SolidError::unported(
         "SmVertex::GetPoint",
         "topology.vertex",
@@ -1921,7 +2562,11 @@ fn vertex_scaled_zero<O>(_vertex: O) -> Result<f64> {
 
 /// `SmTol::GetZoneTol3d(const SmVertex*)`.
 fn vertex_tolerance<O>(_vertex: O) -> Result<f64> {
-    // UNPORTED(topology.vertex): SmVertex::GetTolerance
+    // DISPATCH GAP: SmVertex::GetTolerance (topology.vertex, green)
+    // Proof (unreachable): adapter-less free fn used only by
+    // PointClassification::merge_into_object (Vertex arm); library callers use the
+    // B-rep-carrying variants (merge_into_brep, Mutable); 0 hits in the green difftest
+    // sweep.
     Err(SolidError::unported(
         "SmVertex::GetTolerance",
         "topology.vertex",
@@ -1941,7 +2586,7 @@ fn topology_of<'g, O: ClassObject>(
 ) -> Result<(&'g Brep, EntityRef)> {
     geometry
         .topology_entity(o)
-        .ok_or(SolidError::unported(upstream, unit))
+        .ok_or_else(|| SolidError::unported(upstream, unit))
 }
 
 /// The edge of an edge handle, or `GetEdge()` of an edge use handle (whose `NULL` edge
@@ -1983,10 +2628,10 @@ fn topology_face<'g, O: ClassObject>(
 fn brep_id_of<O>(geometry: &impl ClassGeometry<O>, brep: Option<&Brep>) -> Result<Option<BrepId>> {
     match brep {
         None => Ok(None),
-        Some(b) => geometry.brep_id(b).map(Some).ok_or(
-            // UNPORTED(topology.brep_p1): SmBrep identity (an adapter without B-rep ids)
-            SolidError::unported("SmBrep identity of GetBrep", "topology.brep_p1"),
-        ),
+        Some(b) => geometry.brep_id(b).map(Some).ok_or_else(|| {
+            // DISPATCH GAP: SmBrep identity (an adapter without B-rep ids)
+            SolidError::unported("SmBrep identity of GetBrep", "topology.brep_p1")
+        }),
     }
 }
 
@@ -2046,6 +2691,10 @@ pub const fn space_unbend_is_kind_of(t: i64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernel::UpstreamFixes;
+    use crate::math::Vec2;
+    use crate::nurbs::b_spline_surface::BSplineSurface;
+    use crate::surface::plane::Plane;
 
     #[derive(Debug, Clone, Copy, PartialEq)]
     struct H(ClassObjectKind, u32);
@@ -2070,6 +2719,23 @@ mod tests {
         }
         fn point(&self, _o: H) -> Option<Point3> {
             Some(Point3::new(1.0, 2.0, 3.0))
+        }
+    }
+
+    struct PointGeo(Point3);
+
+    impl ClassGeometry<H> for PointGeo {
+        fn curve(&self, _o: H) -> Option<&Curve> {
+            None
+        }
+        fn surface(&self, _o: H) -> Option<&Surface> {
+            None
+        }
+        fn volume(&self, _o: H) -> Option<&Volume> {
+            None
+        }
+        fn point(&self, _o: H) -> Option<Point3> {
+            Some(self.0)
         }
     }
 
@@ -2202,5 +2868,153 @@ mod tests {
         assert!(space_bend_is_kind_of(SPACE_BEND_TYPE));
         assert!(space_unbend_is_kind_of(object::OBJECT_TYPE));
         assert!(!space_bend_is_kind_of(SPACE_UNBEND_TYPE));
+    }
+
+    fn bounded_unit_plane() -> Surface {
+        Surface::from(Plane::new(
+            Point3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+            Vec2::new(1.0, 1.0),
+            &Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+        ))
+    }
+
+    fn bounded_unit_bspline() -> Surface {
+        Surface::from(
+            BSplineSurface::create_bilinear_surface(
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(0.0, 1.0, 0.0),
+                Point3::new(1.0, 1.0, 0.0),
+            )
+            .expect("bilinear unit patch"),
+        )
+    }
+
+    fn classified_point() -> PointClassification<H> {
+        let mut p = PointClassification::new(ZONE_TOL_3D);
+        p.set_class_object(PointClassType::Point, Some(H(ClassObjectKind::Point, 1)));
+        p
+    }
+
+    #[test]
+    fn wr58_flag_default_off_and_lookup_by_name() {
+        let mut k = Kernel::default();
+        assert!(!k.fixes.point_class_gap_3d_propagates_no_drop_error);
+        assert!(UpstreamFixes::all().point_class_gap_3d_propagates_no_drop_error);
+        assert!(UpstreamFixes::NAMES.contains(&"point_class_gap_3d_propagates_no_drop_error"));
+
+        let slot = k
+            .fixes
+            .flag_mut("point_class_gap_3d_propagates_no_drop_error")
+            .expect("flag should be registered in UpstreamFixes");
+        *slot = true;
+        assert!(k.fixes.point_class_gap_3d_propagates_no_drop_error);
+    }
+
+    #[test]
+    fn wr58_gap_3d_far_from_bounded_plane_and_bspline_propagates_sm_err_when_enabled() {
+        let k_default = Kernel::default();
+        let mut k_fixed = Kernel::default();
+        k_fixed.fixes.point_class_gap_3d_propagates_no_drop_error = true;
+
+        let p = classified_point();
+        let plane = bounded_unit_plane();
+        let bspline = bounded_unit_bspline();
+
+        for surface in [&plane, &bspline] {
+            for pt in [Point3::new(0.0, 0.0, 50.0), Point3::new(50.0, 0.5, 0.0)] {
+                let geo = PointGeo(pt);
+                assert_eq!(
+                    p.gap_3d(&k_default, &geo, Some(surface)).unwrap(),
+                    f64::from(SM_ERR),
+                );
+                let err = p
+                    .gap_3d(&k_fixed, &geo, Some(surface))
+                    .expect_err("opt-in WR-58 should return Err(SM_ERR) instead of 1001.0");
+                assert_eq!(
+                    err,
+                    SolidError::Upstream {
+                        operation: OP_GAP,
+                        code: SM_ERR,
+                        entity: None,
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wr58_gap_3d_propagates_surface_solve_and_obj_point_errors_when_enabled() {
+        let k_default = Kernel::default();
+        let mut k_fixed = Kernel::default();
+        k_fixed.fixes.point_class_gap_3d_propagates_no_drop_error = true;
+
+        // 1. Failing surface drop (empty BSplineSurface without NURB -> SM_ERR from surface drop).
+        let p = classified_point();
+        let empty_bspline = Surface::from(BSplineSurface::new());
+        let geo = PointGeo(Point3::new(0.5, 0.5, 0.0));
+        assert_eq!(
+            p.gap_3d(&k_default, &geo, Some(&empty_bspline)).unwrap(),
+            f64::from(SM_ERR),
+        );
+        let solve_err = p
+            .gap_3d(&k_fixed, &geo, Some(&empty_bspline))
+            .expect_err("opt-in WR-58 should propagate surface solve failure");
+        assert_eq!(solve_err.sm_status(), Some(SM_ERR));
+
+        // 2. Failing object-point lookup (unclassified PointClassification: default drops
+        // Vec3::UNDEF near (0, 0, 0) onto the unit plane, fabricating ~0.0; opt-in propagates
+        // find_obj_point_3d's SM_ERR).
+        let unset = pc();
+        let plane = bounded_unit_plane();
+        assert!(unset.gap_3d(&k_default, &geo, Some(&plane)).unwrap() <= 1.0e-50);
+        let obj_err = unset
+            .gap_3d(&k_fixed, &geo, Some(&plane))
+            .expect_err("opt-in WR-58 should propagate find_obj_point_3d failure");
+        assert_eq!(
+            obj_err,
+            SolidError::Upstream {
+                operation: OP_FIND,
+                code: SM_ERR,
+                entity: None,
+            }
+        );
+    }
+
+    #[test]
+    fn wr58_gap_3d_within_drop_range_and_without_surface_unchanged() {
+        let k_default = Kernel::default();
+        let mut k_fixed = Kernel::default();
+        k_fixed.fixes.point_class_gap_3d_propagates_no_drop_error = true;
+
+        let mut p = classified_point();
+        let plane = bounded_unit_plane();
+
+        // Within 1x zone tolerance (5e-6 <= 1e-5): purely normal offset has zero tangential gap.
+        let geo_1x = PointGeo(Point3::new(0.25, 0.75, 5.0e-6));
+        let g_def_1x = p.gap_3d(&k_default, &geo_1x, Some(&plane)).unwrap();
+        let g_fix_1x = p.gap_3d(&k_fixed, &geo_1x, Some(&plane)).unwrap();
+        assert_eq!(g_def_1x, 0.0);
+        assert_eq!(g_def_1x.to_bits(), g_fix_1x.to_bits());
+
+        // Outside 1x zone tolerance (~1.044e-4 > 1e-5) but within 100x retry (<= 1e-3):
+        // clamps to (1.0, 0.5, 0.0) and strips normal z = 3e-5, leaving tangential gap 1e-4.
+        let geo_100x = PointGeo(Point3::new(1.0 + 1.0e-4, 0.5, 3.0e-5));
+        let g_def_100x = p.gap_3d(&k_default, &geo_100x, Some(&plane)).unwrap();
+        let g_fix_100x = p.gap_3d(&k_fixed, &geo_100x, Some(&plane)).unwrap();
+        assert!((g_def_100x - 1.0e-4).abs() < 1.0e-15);
+        assert_eq!(g_def_100x.to_bits(), g_fix_100x.to_bits());
+
+        // Cached gap without an optional surface (`opt_surface = None`) returns stored gap.
+        p.set_gap_3d(0.375);
+        assert_eq!(p.gap_3d(&k_default, &geo_1x, None).unwrap(), 0.375);
+        assert_eq!(p.gap_3d(&k_fixed, &geo_1x, None).unwrap(), 0.375);
+
+        let mut unset = pc();
+        unset.set_gap_3d(0.625);
+        assert_eq!(unset.gap_3d(&k_default, &NoGeometry, None).unwrap(), 0.625);
+        assert_eq!(unset.gap_3d(&k_fixed, &NoGeometry, None).unwrap(), 0.625);
     }
 }

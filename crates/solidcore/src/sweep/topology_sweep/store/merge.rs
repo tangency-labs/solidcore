@@ -9,7 +9,9 @@
 //!
 //! Deviations: never-reused handles replace pointers. The existing merge ports own
 //! all algorithms. Operands move into their nullable slots for Boolean calls and
-//! surviving bodies return to the same store slots, including after errors. The
+//! surviving bodies return to the same store slots, including after errors; a
+//! caller-borrowed operand (`DoSweep` merging into `pBrepToSweepInto`) lends its
+//! content and gets the edited body back in the caller's own B-rep. The
 //! scope releases its temporary bodies; traversal caches follow body identities.
 //! The merge constructor's context may differ from the primary body's context;
 //! subsequent modeling services use the actual operand contexts.
@@ -43,6 +45,8 @@ use std::collections::BTreeMap;
 #[derive(Debug)]
 pub(super) struct Session {
     context: ContextId,
+    /// The constructed primary (`PiecewiseMerge`'s final result).
+    destination: BrepId,
     primary: Option<BrepId>,
     other: Option<BrepId>,
     pub(super) intersector: KernelManifoldIntersector,
@@ -74,6 +78,7 @@ impl Session {
         let engine = MergeEngine::from_merge(&merge)?;
         Ok(Self {
             context,
+            destination,
             primary: Some(destination),
             other: Some(source),
             intersector: engine.intersector,
@@ -94,7 +99,7 @@ pub(super) struct Driver<'a, 'caller> {
     identities: Identities<'caller>,
     session: &'a mut Session,
     bodies: &'a mut BodySlots<'caller>,
-    records: &'a mut BTreeMap<ObjectKey, Topology>,
+    records: &'a mut crate::topology::topology::NotifyRecords,
     attributes: &'a mut AttributeStore,
     cleanup_errors: &'a mut Vec<SolidError>,
     other_kernel: Option<(ContextId, &'a mut Kernel)>,
@@ -240,6 +245,7 @@ impl Driver<'_, '_> {
                 primary_curve: &primary_curve,
                 other_curve: &other_curve,
                 source_lists: &source_lists,
+                actual_curve_identities: identities.actual_curve_identities(),
             },
             ids,
             self.records,
@@ -325,21 +331,57 @@ impl Driver<'_, '_> {
 
 // Restore each surviving operand to its original slot; deletion must invalidate
 // the handle even when the Boolean returns an error after consuming an operand.
-fn restore_body(
-    bodies: &mut BodySlots<'_>,
+/// Returns a Boolean operand to its slot: an owned body as owned, a borrowed caller
+/// body into the caller's own B-rep (still borrowed). A borrowed body the Boolean
+/// deleted leaves its slot empty and the caller's B-rep empty, and is reported:
+/// upstream would leave the caller holding a deleted B-rep.
+fn restore_body<'caller>(
+    bodies: &mut BodySlots<'caller>,
     id: BrepId,
     context: ContextId,
     namespace: u32,
     body: Option<Brep>,
+    borrowed: Option<&'caller mut Brep>,
 ) -> Result<()> {
-    *bodies
+    let slot = bodies
         .get_mut(id.index() as usize)
-        .ok_or_else(|| invalid("body slot lost"))? = body.map(|b| BodyEntry {
+        .ok_or_else(|| invalid("body slot lost"))?;
+    let consumed_borrow = body.is_none() && borrowed.is_some();
+    *slot = match (body, borrowed) {
+        (Some(b), Some(original)) => {
+            *original = b;
+            Some(Body::Borrowed(original))
+        }
+        (Some(b), None) => Some(Body::Owned(Box::new(b))),
+        (None, _) => None,
+    }
+    .map(|body| BodyEntry {
         context,
         namespace,
-        body: Body::Owned(Box::new(b)),
+        body,
     });
+    if consumed_borrow {
+        return Err(invalid("a Boolean deleted a borrowed caller body"));
+    }
     Ok(())
+}
+
+/// Moves a Boolean operand out of its slot entry: an owned body itself, or a
+/// borrowed caller body's content together with the borrow it returns to
+/// ([`restore_body`]). A retained HCR scene is never an operand: its slot is left
+/// as it is.
+fn take_operand<'caller>(
+    slot: Option<&mut Option<BodyEntry<'caller>>>,
+    what: &'static str,
+) -> Result<(Brep, Option<&'caller mut Brep>)> {
+    let entry = slot
+        .and_then(|slot| slot.take_if(|e| !matches!(e.body, Body::Hcr(_))))
+        .ok_or_else(|| invalid(what))?;
+    match entry.body {
+        Body::Owned(b) => Ok((*b, None)),
+        Body::Borrowed(original) => Ok((core::mem::take(original), Some(original))),
+        Body::Hcr(_) => Err(invalid(what)),
+    }
 }
 
 fn curve_keys(
@@ -387,7 +429,7 @@ fn curve_key(
 }
 
 fn clear_deleted(
-    records: &mut BTreeMap<ObjectKey, Topology>,
+    records: &mut crate::topology::topology::NotifyRecords,
     attributes: &mut AttributeStore,
     keys: &[ObjectKey],
 ) -> Result<()> {
@@ -406,26 +448,41 @@ struct BooleanBodies<'a, 'caller> {
     slots: &'a mut BodySlots<'caller>,
     primary: Option<Brep>,
     other: Option<Brep>,
+    /// The caller B-reps that borrowed operands return to ([`restore_body`]).
+    primary_borrow: Option<&'caller mut Brep>,
+    other_borrow: Option<&'caller mut Brep>,
     primary_meta: (BrepId, ContextId, u32),
     other_meta: (BrepId, ContextId, u32),
     primary_keys: Vec<ObjectKey>,
     other_keys: Vec<ObjectKey>,
-    records: &'a mut BTreeMap<ObjectKey, Topology>,
+    records: &'a mut crate::topology::topology::NotifyRecords,
     attributes: &'a mut AttributeStore,
     cleanup_errors: &'a mut Vec<SolidError>,
 }
 impl Drop for BooleanBodies<'_, '_> {
     fn drop(&mut self) {
-        for (body, (id, context, namespace), keys) in [
-            (&mut self.primary, self.primary_meta, &self.primary_keys),
-            (&mut self.other, self.other_meta, &self.other_keys),
+        for (body, borrowed, (id, context, namespace), keys) in [
+            (
+                &mut self.primary,
+                self.primary_borrow.take(),
+                self.primary_meta,
+                &self.primary_keys,
+            ),
+            (
+                &mut self.other,
+                self.other_borrow.take(),
+                self.other_meta,
+                &self.other_keys,
+            ),
         ] {
             if body.is_none() {
                 if let Err(error) = clear_deleted(self.records, self.attributes, keys) {
                     self.cleanup_errors.push(error);
                 }
             }
-            if let Err(error) = restore_body(self.slots, id, context, namespace, body.take()) {
+            if let Err(error) =
+                restore_body(self.slots, id, context, namespace, body.take(), borrowed)
+            {
                 self.cleanup_errors.push(error);
             }
         }
@@ -479,7 +536,10 @@ impl BooleanDriver for Driver<'_, '_> {
         let a = primary.ok_or_else(|| SolidError::null_pointer(OP))?;
         let b = other.ok_or_else(|| SolidError::null_pointer(OP))?;
         let (source, destination) = body_pair_mut(self.bodies, b, a)?;
-        if !matches!(destination.body, Body::Owned(_)) || !matches!(source.body, Body::Owned(_)) {
+        // `SmMerge::ManifoldBoolean` edits its operands in place: an owned body or a
+        // caller-borrowed one (`DoSweep`'s merge into `pBrepToSweepInto`), never a
+        // retained HCR scene.
+        if matches!(destination.body, Body::Hcr(_)) || matches!(source.body, Body::Hcr(_)) {
             return Err(invalid(
                 "a retained HCR scene cannot be consumed by a Boolean",
             ));
@@ -508,26 +568,16 @@ impl BooleanDriver for Driver<'_, '_> {
             }
             Some(&mut **kernel)
         };
-        let ae = self
-            .bodies
-            .get_mut(a.index() as usize)
-            .and_then(Option::take)
-            .ok_or_else(|| invalid("unknown primary"))?;
-        let be = self
-            .bodies
-            .get_mut(b.index() as usize)
-            .and_then(Option::take)
-            .ok_or_else(|| invalid("unknown other"))?;
-        let Body::Owned(ab) = ae.body else {
-            return Err(invalid("non-owned primary"));
-        };
-        let Body::Owned(bb) = be.body else {
-            return Err(invalid("non-owned other"));
-        };
+        let (ab, primary_borrow) =
+            take_operand(self.bodies.get_mut(a.index() as usize), "unknown primary")?;
+        let (bb, other_borrow) =
+            take_operand(self.bodies.get_mut(b.index() as usize), "unknown other")?;
         let mut operands = BooleanBodies {
             slots: self.bodies,
-            primary: Some(*ab),
-            other: Some(*bb),
+            primary: Some(ab),
+            other: Some(bb),
+            primary_borrow,
+            other_borrow,
             primary_meta: (a, ac, an),
             other_meta: (b, bc, bn),
             primary_keys: ag,
@@ -563,6 +613,7 @@ impl BooleanDriver for Driver<'_, '_> {
                 primary_curve: &primary_curve,
                 other_curve: &other_curve,
                 source_lists: &source_lists,
+                actual_curve_identities: identities.actual_curve_identities(),
             },
             (a, b),
             &mut *operands.records,
@@ -737,12 +788,21 @@ impl PiecewiseAccess for Driver<'_, '_> {
         .mark_action(|contexts| lock.release(contexts))
     }
     fn register_empty_ssi(&mut self, skip: ObjectRef, user: ObjectRef) -> Result<()> {
-        let (a, af) = self.surface_face(skip)?;
-        let (b, bf) = self.surface_face(user)?;
-        if self.session.operands()? != (a, b) {
-            return Err(invalid("SSI surfaces outside merge operands"));
+        // PiecewiseMerge registers the pair for its next Merge (the final result with
+        // the new face B-rep) while the operands are still the PartialMerge's (the
+        // new face B-rep with the original other). The users also name the surfaces
+        // of other bodies (the original other's own); upstream registers those pairs
+        // too, but no surface of the next Merge's operands ever matches them, so they
+        // are skipped here (face ids are per body). See [`next_merge_pair`].
+        // A user whose face no longer exists in any body (deleted by the
+        // PartialMerge) is no operand surface either: upstream registers its
+        // pointer, which never matches, so it is skipped too.
+        let (Ok((a, af)), Ok((b, bf))) = (self.surface_face(skip), self.surface_face(user)) else {
+            return Ok(());
+        };
+        if next_merge_pair(self.session.destination, self.session.primary, a, b) {
+            self.session.intersector.register_empty_ssi(af, bf);
         }
-        self.session.intersector.register_empty_ssi(af, bf);
         Ok(())
     }
     fn clear_existing_ssi(&mut self) -> Result<()> {
@@ -782,6 +842,25 @@ impl PiecewiseAccess for Driver<'_, '_> {
         }
         Ok(())
     }
+}
+
+/// Whether a `RegisterExistingSSI(pSkip2, pSurfUser)` pair of `SmMerge::PiecewiseMerge`
+/// (`SmMerge.cpp:638`) can ever be found by the next Merge, whose operands are the
+/// final result `destination` (`m_vTI.m_pBrep = pFinalResult`, cpp:647) and the new
+/// face B-rep `primary` (`m_vTI.m_pOther = m_vTI.m_pBrep`, cpp:646), before the table
+/// is cleared after it (`ClearExistingSSI`, cpp:682). Upstream keys the table by
+/// surface pointer and `SmTopologyIntersector::CheckIfHaveExistingSSI`
+/// (`SmTopologyIntersector.cpp:184-248`) matches a pair only when both pointers are
+/// the queried operand surfaces, so a pair naming a surface of any other body is
+/// registered but never matches. The port's table keys surfaces by per-body face id,
+/// where such a pair could alias an operand face, so it is not registered instead.
+fn next_merge_pair(
+    destination: BrepId,
+    primary: Option<BrepId>,
+    skip_body: BrepId,
+    user_body: BrepId,
+) -> bool {
+    skip_body == destination && primary == Some(user_body) && skip_body != user_body
 }
 
 #[cfg(test)]
@@ -1271,5 +1350,54 @@ mod tests {
         assert_eq!(store.merge_operands(merge).unwrap(), (dest, source));
         assert!(store.take_cleanup_errors().is_empty());
         store.delete_merge(merge);
+    }
+
+    #[test]
+    fn only_pairs_of_the_next_merge_operands_are_registered() {
+        let [dest, face_brep, other] = [0, 1, 2].map(BrepId::from_index);
+        // (final-result surface, new face B-rep surface): the next Merge can find it
+        assert!(next_merge_pair(dest, Some(face_brep), dest, face_brep));
+        // a user naming the original other's surface, a reversed pair, a pair on one
+        // body, or no primary: upstream registers these but never matches them
+        assert!(!next_merge_pair(dest, Some(face_brep), dest, other));
+        assert!(!next_merge_pair(dest, Some(face_brep), other, face_brep));
+        assert!(!next_merge_pair(dest, Some(face_brep), face_brep, dest));
+        assert!(!next_merge_pair(dest, Some(dest), dest, dest));
+        assert!(!next_merge_pair(dest, None, dest, face_brep));
+    }
+
+    #[test]
+    fn registering_a_pair_outside_the_operands_succeeds_without_an_entry() {
+        use crate::boolean::merge::p3::PiecewiseAccess;
+        use crate::geom::extent2d::Extent2d;
+        use crate::surface::plane::Plane;
+        use crate::topology::{Face, ShellId};
+        let (mut store, source, dest, _, _) = models(true);
+        let third = store.new_brep(dest).unwrap();
+        let face_of = |store: &mut SweepStore, body| {
+            let face = store
+                .brep_mut(body)
+                .unwrap()
+                .add_face_record(Face {
+                    surface: Some(Plane::from_normal(Vec3::ZERO, Vec3::Z).into()),
+                    uv_domain: Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+                    ..Face::new(ShellId::from_index(0))
+                })
+                .unwrap();
+            store.object_ref(body, EntityRef::Face(face)).unwrap()
+        };
+        let in_dest = face_of(&mut store, dest);
+        let in_third = face_of(&mut store, third);
+        store
+            .with_merge(dest, dest, source, 0.1, 0.2, |store, id| {
+                store.run_merge(id, |_, driver| {
+                    // the session's primary is the destination itself: no pair of the
+                    // next merge: both calls succeed (upstream registers them too)
+                    driver.register_empty_ssi(in_dest, in_third)?;
+                    driver.register_empty_ssi(in_third, in_dest)?;
+                    Ok(())
+                })
+            })
+            .unwrap();
     }
 }

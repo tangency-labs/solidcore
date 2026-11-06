@@ -26,7 +26,7 @@
 //! | [`Surface::copy_into`], `Clone`              | `N_SrfCopy`                       |
 //! | [`Surface::counts_are_valid`]                | `N_SrfCountsAreValid`             |
 //! | [`Surface::weights_are_valid`]               | `N_SrfWeightsAreValid`            |
-//! | [`Surface::is_valid`]                        | `N_SrfIsValid`                    |
+//! | [`Surface::is_valid`], [`Surface::is_valid_with_kernel`] | `N_SrfIsValid`        |
 //! | [`Surface::is_sized`]                        | `N_SrfIsSized`                    |
 //! | [`Surface::is_rational`]                     | `N_IsSrfRat`                      |
 //! | [`Surface::is_closed`], [`Surface::is_closed_tol`] | `N_SrfIsClosed`             |
@@ -71,8 +71,14 @@
 //!   anything.
 //! - `N_SrfIsFlatCheap` leaves its outputs unwritten when `N_PlanePtNormalToImplicit`
 //!   fails; [`Surface::is_flat_cheap`] returns only the error then.
+//! - [`Surface::is_valid`] matches upstream `N_SrfIsValid`;
+//!   [`Surface::is_valid_with_kernel`] forwards `k` to
+//!   [`KnotVector::validate_with_kernel`] for the opt-in `WR-24` span check.
+
+use std::sync::Arc;
 
 use crate::error::{NlibCode, Result, SolidError};
+use crate::kernel::Kernel;
 use crate::limits;
 use crate::math::Vec3;
 use crate::nurbs::geom::{
@@ -186,19 +192,23 @@ pub struct SurfaceIndices {
 ///
 /// The indices in use are kept apart from the storage (which may be larger), as
 /// upstream; the constructors guarantee that the storage holds them.
+///
+/// The net and knot storage are shared copy-on-write (`Arc`, written through
+/// [`Arc::make_mut`]): a clone shares them until one side writes, so the many
+/// evaluation copies of a surface do not copy its control net.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Surface {
     /// Net storage; rows `0..=n` hold at least `m + 1` points.
-    net: Vec<Vec<CPoint>>,
+    net: Arc<Vec<Vec<CPoint>>>,
     n: usize,
     m: usize,
     p: usize,
     q: usize,
     /// U knot storage, at least `r + 1` entries.
-    u: Vec<f64>,
+    u: Arc<Vec<f64>>,
     r: usize,
     /// V knot storage, at least `s + 1` entries.
-    v: Vec<f64>,
+    v: Arc<Vec<f64>>,
     s: usize,
 }
 
@@ -249,14 +259,14 @@ impl Surface {
             .checked_sub(1)
             .ok_or_else(|| invalid(OP_NEW, "empty v knot vector"))?;
         Ok(Self {
-            net,
+            net: Arc::new(net),
             n,
             m,
             p,
             q,
-            u,
+            u: Arc::new(u),
             r,
-            v,
+            v: Arc::new(v),
             s,
         })
     }
@@ -280,14 +290,14 @@ impl Surface {
             return Err(invalid(OP_WITH_INDICES, "knot array smaller than (r, s)"));
         }
         Ok(Self {
-            net,
+            net: Arc::new(net),
             n,
             m,
             p,
             q,
-            u,
+            u: Arc::new(u),
             r,
-            v,
+            v: Arc::new(v),
             s,
         })
     }
@@ -370,7 +380,7 @@ impl Surface {
         if i > self.n || j > self.m {
             return Err(invalid(OP_CPT, "control point index out of range"));
         }
-        self.net
+        Arc::make_mut(&mut self.net)
             .get_mut(i)
             .and_then(|row| row.get_mut(j))
             .ok_or_else(|| invalid(OP_CPT, "control point index out of range"))
@@ -399,7 +409,7 @@ impl Surface {
     /// Mutable rows `Pw[0..=n][0..=m]` in use.
     fn rows_mut(&mut self) -> impl Iterator<Item = &mut [CPoint]> + '_ {
         let m = self.m;
-        self.net
+        Arc::make_mut(&mut self.net)
             .iter_mut()
             .take(self.n.saturating_add(1))
             .map(move |row| row.get_mut(..=m).unwrap_or(&mut []))
@@ -425,12 +435,16 @@ impl Surface {
 
     /// Mutable u knots `U[0..=r]`.
     pub fn u_knots_mut(&mut self) -> &mut [f64] {
-        self.u.get_mut(..=self.r).unwrap_or(&mut [])
+        Arc::make_mut(&mut self.u)
+            .get_mut(..=self.r)
+            .unwrap_or(&mut [])
     }
 
     /// Mutable v knots `V[0..=s]`.
     pub fn v_knots_mut(&mut self) -> &mut [f64] {
-        self.v.get_mut(..=self.s).unwrap_or(&mut [])
+        Arc::make_mut(&mut self.v)
+            .get_mut(..=self.s)
+            .unwrap_or(&mut [])
     }
 
     /// The knot vectors over the knot storage (`N_SrfGetKnotVectors`).
@@ -455,9 +469,9 @@ impl Surface {
         if !net_holds(&net, self.n, self.m) || u.len() <= self.r || v.len() <= self.s {
             return Err(invalid(OP_SET_CPTS, "storage smaller than the indices"));
         }
-        self.net = net;
-        self.u = u;
-        self.v = v;
+        self.net = Arc::new(net);
+        self.u = Arc::new(u);
+        self.v = Arc::new(v);
         Ok(())
     }
 
@@ -494,12 +508,51 @@ impl Surface {
 
     /// Shrinks the storage to exactly the indices in use (`N_SrfCompress`).
     pub fn compress(&mut self) {
+        if self.is_compact() {
+            // (already exactly the indices in use: the same storage values, kept
+            // shared)
+            return;
+        }
         let net = self.cpts();
         let u = self.u_knots().to_vec();
         let v = self.v_knots().to_vec();
-        self.net = net;
-        self.u = u;
-        self.v = v;
+        self.net = Arc::new(net);
+        self.u = Arc::new(u);
+        self.v = Arc::new(v);
+    }
+
+    /// Whether the storage holds exactly the indices in use (what
+    /// [`Surface::compress`] leaves).
+    fn is_compact(&self) -> bool {
+        self.net.len() == self.n.saturating_add(1)
+            && self
+                .net
+                .iter()
+                .all(|row| row.len() == self.m.saturating_add(1))
+            && self.u.len() == self.r.saturating_add(1)
+            && self.v.len() == self.s.saturating_add(1)
+    }
+
+    /// A copy with the storage shrunk to the indices in use: the same surface as a
+    /// clone followed by [`Surface::compress`], without copying the unused storage
+    /// first.
+    #[must_use]
+    pub fn compressed_copy(&self) -> Self {
+        if self.is_compact() {
+            // (the same values: share the storage)
+            return self.clone();
+        }
+        Self {
+            net: Arc::new(self.cpts()),
+            n: self.n,
+            m: self.m,
+            p: self.p,
+            q: self.q,
+            u: Arc::new(self.u_knots().to_vec()),
+            r: self.r,
+            v: Arc::new(self.v_knots().to_vec()),
+            s: self.s,
+        }
     }
 
     /// Swaps the roles of u and v, `S_new(v, u) = S_old(u, v)` (`N_SwapUV`): the net
@@ -514,7 +567,7 @@ impl Surface {
                 }
             }
         }
-        self.net = qw;
+        self.net = Arc::new(qw);
         core::mem::swap(&mut self.n, &mut self.m);
         core::mem::swap(&mut self.p, &mut self.q);
         core::mem::swap(&mut self.u, &mut self.v);
@@ -537,26 +590,26 @@ impl Surface {
             sur
         } else {
             dst.insert(Surface {
-                net: zero_net(n, m),
+                net: Arc::new(zero_net(n, m)),
                 n,
                 m,
                 p,
                 q,
-                u: vec![0.0; r.saturating_add(1)],
+                u: Arc::new(vec![0.0; r.saturating_add(1)]),
                 r,
-                v: vec![0.0; s.saturating_add(1)],
+                v: Arc::new(vec![0.0; s.saturating_add(1)]),
                 s,
             })
         };
-        for (qrow, prow) in sur.net.iter_mut().zip(self.rows()) {
+        for (qrow, prow) in Arc::make_mut(&mut sur.net).iter_mut().zip(self.rows()) {
             for (q, p) in qrow.iter_mut().zip(prow) {
                 *q = *p;
             }
         }
-        for (q, p) in sur.u.iter_mut().zip(self.u_knots()) {
+        for (q, p) in Arc::make_mut(&mut sur.u).iter_mut().zip(self.u_knots()) {
             *q = *p;
         }
-        for (q, p) in sur.v.iter_mut().zip(self.v_knots()) {
+        for (q, p) in Arc::make_mut(&mut sur.v).iter_mut().zip(self.v_knots()) {
             *q = *p;
         }
     }
@@ -614,6 +667,9 @@ impl Surface {
 
     /// Complete check: counts, weights, then both knot vectors (`N_SrfIsValid`).
     ///
+    /// Matches pinned C++ parity; see [`Surface::is_valid_with_kernel`] for the
+    /// opt-in `WR-24` knot-vector span check.
+    ///
     /// Errors with the first failing check's code ([`NlibCode::Surface`],
     /// [`NlibCode::Degree`], [`NlibCode::Weight`] or [`NlibCode::Knot`]).
     pub fn is_valid(&self) -> Result<()> {
@@ -622,6 +678,21 @@ impl Surface {
         let (knu, knv) = self.knot_vectors()?;
         knu.validate(self.p)?;
         knv.validate(self.q)?;
+        Ok(())
+    }
+
+    /// Complete check: counts, weights, then both knot vectors using `k`'s
+    /// [`crate::kernel::UpstreamFixes::knot_vector_valid_requires_span`] setting
+    /// (`N_SrfIsValid`, `WR-24`).
+    ///
+    /// Errors with the first failing check's code ([`NlibCode::Surface`],
+    /// [`NlibCode::Degree`], [`NlibCode::Weight`] or [`NlibCode::Knot`]).
+    pub fn is_valid_with_kernel(&self, k: &Kernel) -> Result<()> {
+        self.counts_are_valid()?;
+        self.weights_are_valid()?;
+        let (knu, knv) = self.knot_vectors()?;
+        knu.validate_with_kernel(k, self.p)?;
+        knv.validate_with_kernel(k, self.q)?;
         Ok(())
     }
 
@@ -818,10 +889,22 @@ impl Surface {
             return Err(invalid(OP_REPARAM, "knot vector shorter than the degree"));
         }
         if needs_u {
-            rescale(&mut self.u, self.r, self.p, a, b)?;
+            rescale(
+                Arc::make_mut(&mut self.u).as_mut_slice(),
+                self.r,
+                self.p,
+                a,
+                b,
+            )?;
         }
         if needs_v {
-            rescale(&mut self.v, self.s, self.q, c, d)?;
+            rescale(
+                Arc::make_mut(&mut self.v).as_mut_slice(),
+                self.s,
+                self.q,
+                c,
+                d,
+            )?;
         }
         Ok(())
     }
@@ -1026,14 +1109,14 @@ pub fn size_arrays(slot: &mut Option<Surface>, idx: SurfaceIndices) -> Result<&m
             *r = copy;
         }
         Ok(Surface {
-            net,
+            net: Arc::new(net),
             n,
             m,
             p,
             q,
-            u: try_filled(r, 0.0)?,
+            u: Arc::new(try_filled(r, 0.0)?),
             r,
-            v: try_filled(s, 0.0)?,
+            v: Arc::new(try_filled(s, 0.0)?),
             s,
         })
     };
@@ -1054,6 +1137,25 @@ pub fn size_arrays(slot: &mut Option<Surface>, idx: SurfaceIndices) -> Result<&m
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clones_share_storage_until_written() {
+        let a = bilinear();
+        let mut b = a.clone();
+        assert!(Arc::ptr_eq(&a.net, &b.net) && Arc::ptr_eq(&a.u, &b.u));
+        // compress of compact storage keeps it shared
+        b.compress();
+        assert!(Arc::ptr_eq(&a.net, &b.net));
+        let c = a.compressed_copy();
+        assert!(Arc::ptr_eq(&a.net, &c.net) && Arc::ptr_eq(&a.v, &c.v));
+        // a write copies only what it writes
+        b.u_knots_mut()[0] = -1.0;
+        assert!(!Arc::ptr_eq(&a.u, &b.u) && Arc::ptr_eq(&a.net, &b.net));
+        *b.cpt_mut(1, 1).unwrap() = CPoint::ZERO;
+        assert!(!Arc::ptr_eq(&a.net, &b.net));
+        assert_eq!(a, bilinear());
+        assert_ne!(a, b);
+    }
 
     fn bilinear() -> Surface {
         let net = vec![

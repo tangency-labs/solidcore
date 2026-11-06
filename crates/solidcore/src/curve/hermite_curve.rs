@@ -20,6 +20,7 @@
 //! | [`HermiteCurve::evaluate`]                 | `SmHermiteCurve::Evaluate`                       |
 //! | [`HermiteCurve::evaluate_point`]           | `SmHermiteCurve::EvaluatePoint`                  |
 //! | [`HermiteCurve::read_from_db`]             | `SmHermiteCurve::ReadFromDB`                     |
+//! | [`HermiteCurve::write_to_db`]              | `SmHermiteCurve::WriteToDB`                      |
 //! | [`HermiteCurve::TYPE`], [`HermiteCurve::type_code`], [`HermiteCurve::type_string`], [`HermiteCurve::class_string`] | `GetType`, `GetTypeString`, `GetClassString` (`SM_COMMON`) |
 //! | [`HermiteCurve::is_kind_of`]               | `SmHermiteCurve::IsKindOf`                       |
 //!
@@ -40,7 +41,7 @@
 //! - `Evaluate` returns `num_derivs + 1` vectors. Upstream zeroes derivatives
 //!   `4..num_derivs` (exclusive) and leaves entry `num_derivs` (for
 //!   `num_derivs >= 4`) as the caller had it; the port returns zero there too
-//!   (`plan/findings.md`).
+//!   (WR-26).
 //! - `ReadFromDB` always builds a new curve (upstream's "fill the curve passed in"
 //!   branch and its `IsKindOf` check have no counterpart; its type, dimension,
 //!   context and version arguments are unused upstream and dropped). The new curve
@@ -48,12 +49,15 @@
 //!   `SmVector3d` member initialisers), so an ASCII value whose extraction is
 //!   skipped stays `SM_UNDEF_DOUBLE`. A short binary read is an
 //!   error (upstream: undefined values, see `topology::database_io`).
+//! - `WriteToDB` is not in the plan's unit list (the write side has no unit); it is
+//!   ported here, next to its reader, for `topology::geometry_write`. Its version
+//!   argument is unused upstream and kept for the dispatcher.
 //! - `CalculateBoundingBox` ignores a failure of `MakeUnitOrthoVectors`, as upstream
 //!   (a chord whose squared length overflows); upstream then passes an uninitialised
 //!   second axis and a zero third axis to `SetBasis`, which fails on the zero
 //!   determinant, so the port leaves the pseudo box's basis unchanged.
 //! - The offset constructor, `ComputeAngleSpannedInDegrees`,
-//!   `GetBSplineControlPolygon`, `AssertValid`, `WriteToDB`, `GetMemoryUsed`,
+//!   `GetBSplineControlPolygon`, `AssertValid`, `GetMemoryUsed`,
 //!   `GetRootCurve` and `Dump` are not part of this unit.
 
 use crate::curve::curve::p2::HERMITE_CURVE_TYPE;
@@ -68,7 +72,7 @@ use crate::geom::tol::is_zero;
 use crate::geom::vector2d::{Point2, Vec2};
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::math::{max2, EFF_ZERO, EFF_ZERO_SQ};
-use crate::topology::database_io::{DatabaseReader, FileType};
+use crate::topology::database_io::{DatabaseReader, DatabaseWriter, FileType};
 
 /// A cubic Hermite curve on `[0, 1]` (`SmHermiteCurve`):
 ///
@@ -293,8 +297,16 @@ impl HermiteCurve {
     /// `1.1 * EFF_ZERO * (1 + max |coordinate of the position|)` is replaced by the
     /// second derivative scaled to that length (negated in the upper half of the
     /// domain), when the second derivative is longer than that.
-    #[must_use]
-    pub fn evaluate(&self, param: f64, num_derivs: usize, non_zero_tangents: bool) -> Vec<Vec3> {
+    ///
+    /// # Errors
+    /// Returns invalid input when the derivative order exceeds the curve evaluation bound.
+    pub fn evaluate(
+        &self,
+        param: f64,
+        num_derivs: usize,
+        non_zero_tangents: bool,
+    ) -> Result<Vec<Vec3>> {
+        crate::curve::check_eval_derivs(num_derivs, "curve::hermite_curve::evaluate")?;
         // Derivatives above the third stay zero.
         let mut out = vec![Vec3::ZERO; num_derivs.saturating_add(1)];
 
@@ -337,7 +349,7 @@ impl HermiteCurve {
                     // make sure 2nd order derivatives are available
                     if num_derivs < 2 {
                         // recurse so the next section sets the 1st derivative
-                        let vals = self.evaluate(param, 2, true);
+                        let vals = self.evaluate(param, 2, true)?;
 
                         // save the 1st derivative
                         if let (Some(o), Some(v)) = (out.get_mut(1), vals.get(1)) {
@@ -366,7 +378,7 @@ impl HermiteCurve {
                 }
             }
         }
-        out
+        Ok(out)
     }
 
     /// The point at `param` (`EvaluatePoint`).
@@ -469,6 +481,36 @@ impl HermiteCurve {
         Ok(h)
     }
 
+    /// Writes the curve (`WriteToDB`): points, derivatives and the power basis, three
+    /// doubles each (one labelled line each in ASCII files). `version` is unused, as
+    /// upstream.
+    ///
+    /// # Errors
+    ///
+    /// None (upstream's `WriteDouble` statuses cannot fail on the in-memory writer).
+    pub fn write_to_db(&self, db: &mut DatabaseWriter, version: u64) -> Result<()> {
+        let _ = version;
+        let rows = [
+            (self.p1, " SmHermiteCurve Initial point        \n"),
+            (self.d1, " SmHermiteCurve Initial direction    \n"),
+            (self.p2, " SmHermiteCurve Final point          \n"),
+            (self.d2, " SmHermiteCurve Final direction      \n"),
+            (self.c, " SmHermiteCurve C of power basis eqn \n"),
+            (self.d, " SmHermiteCurve D of power basis eqn \n"),
+        ];
+        if db.file_type() == FileType::Ascii {
+            for (v, label) in rows {
+                db.out_reals(&[v.x, v.y, v.z]).out_str(label);
+            }
+        } else {
+            for (v, _) in rows {
+                db.write_doubles(&[v.x, v.y, v.z]);
+            }
+        }
+        // all done
+        Ok(())
+    }
+
     /// `SmHermiteCurve_TYPE` (`GetType`).
     #[must_use]
     pub const fn type_code(&self) -> i64 {
@@ -499,7 +541,55 @@ impl HermiteCurve {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hermite_trait_rejects_order_above_evaluation_bound() {
+        use crate::curve::curve::p2::CurveEvaluate;
+        let h = HermiteCurve::new(Vec3::ZERO, Vec3::X, Vec3::X, Vec3::X, 3);
+        let result = CurveEvaluate::evaluate(&h, &Kernel::default(), 0.5, 65, false, false);
+        assert!(matches!(
+            result,
+            Err(crate::error::SolidError::InvalidInput { .. })
+        ));
+    }
+
+    #[test]
+    fn hermite_direct_bound_and_values() {
+        use crate::error::SolidError;
+        let k = Kernel::default();
+        for tangent in [Vec3::X, Vec3::ZERO] {
+            let h = HermiteCurve::new(Vec3::ZERO, tangent, Vec3::new(2.0, 3.0, 4.0), Vec3::X, 3);
+            for nonzero in [false, true] {
+                let full = h.evaluate(0.0, 64, nonzero).unwrap();
+                assert_eq!(full.len(), 65);
+                assert!(full[4..].iter().all(|v| *v == Vec3::ZERO));
+                for n in [0, 1, 2, 3, 5] {
+                    let values = h.evaluate(0.0, n, nonzero).unwrap();
+                    for (a, b) in values.iter().zip(&full) {
+                        assert_eq!(
+                            (a.x.to_bits(), a.y.to_bits(), a.z.to_bits()),
+                            (b.x.to_bits(), b.y.to_bits(), b.z.to_bits())
+                        );
+                    }
+                }
+                for n in [65, usize::MAX] {
+                    assert!(matches!(
+                        h.evaluate(0.0, n, nonzero),
+                        Err(SolidError::InvalidInput { .. })
+                    ));
+                    assert!(matches!(
+                        Curve::from(h).evaluate(&k, 0.0, n, false, nonzero),
+                        Err(SolidError::InvalidInput {
+                            operation: "curve::curve::p2::Curve::evaluate",
+                            ..
+                        })
+                    ));
+                }
+            }
+        }
+    }
     use super::*;
+    use crate::curve::curve::Curve;
+    use crate::kernel::Kernel;
 
     fn sample() -> HermiteCurve {
         HermiteCurve::new(
@@ -512,13 +602,38 @@ mod tests {
     }
 
     #[test]
+    fn write_then_read_round_trips() {
+        let h = sample();
+        for ft in [FileType::Ascii, FileType::Binary] {
+            let mut w = DatabaseWriter::open_for_write(ft);
+            h.write_to_db(&mut w, 30).unwrap();
+            let bytes = w.into_bytes();
+            if ft == FileType::Ascii {
+                let text = String::from_utf8(bytes.clone()).unwrap();
+                assert_eq!(text.lines().count(), 6);
+                assert!(text.starts_with(
+                    "0.0000000000000000 0.0000000000000000 0.0000000000000000 SmHermiteCurve Initial point        \n"
+                ));
+            } else {
+                assert_eq!(bytes.len(), 18 * 8);
+            }
+            let mut r = DatabaseReader::new();
+            r.open_for_read(bytes, ft);
+            let back = HermiteCurve::read_from_db(&mut r).unwrap();
+            assert_eq!(back.start_point(), h.start_point());
+            assert_eq!(back.end_derivative(), h.end_derivative());
+            assert_eq!(back.power_basis(), h.power_basis());
+        }
+    }
+
+    #[test]
     fn interpolates_ends() {
         let h = sample();
         assert_eq!(h.evaluate_point(0.0), h.start_point());
         assert_eq!(h.evaluate_point(1.0), h.end_point());
-        let e = h.evaluate(1.0, 1, false);
+        let e = h.evaluate(1.0, 1, false).unwrap();
         assert_eq!(e[1], h.end_derivative());
-        let e = h.evaluate(0.0, 5, false);
+        let e = h.evaluate(0.0, 5, false).unwrap();
         assert_eq!(e.len(), 6);
         assert_eq!(e[1], h.start_derivative());
         assert_eq!(e[4], Vec3::ZERO);
@@ -559,9 +674,9 @@ mod tests {
     fn zero_tangent_is_fixed() {
         // D1 = 0: the tangent at 0 is replaced by a tiny vector along H''(0).
         let h = HermiteCurve::new(Vec3::ZERO, Vec3::ZERO, Vec3::X, Vec3::X, 3);
-        let e = h.evaluate(0.0, 1, true);
+        let e = h.evaluate(0.0, 1, true).unwrap();
         assert!(e[1].length() > 0.0 && e[1].x > 0.0);
-        assert_eq!(h.evaluate(0.0, 1, false)[1], Vec3::ZERO);
+        assert_eq!(h.evaluate(0.0, 1, false).unwrap()[1], Vec3::ZERO);
     }
 
     #[test]
@@ -599,5 +714,85 @@ mod tests {
         assert_eq!(h.start_point(), Vec3::new(1.0, 2.0, 3.0));
         assert_eq!(h.power_basis().1, Vec3::new(3.0, 3.0, 3.0));
         assert_eq!(h.dim(), 3);
+    }
+
+    #[test]
+    fn wr26_evaluate_zeroes_all_higher_derivative_slots_including_last() {
+        let p1 = Vec3::new(1.0, -2.0, 0.5);
+        let d1 = Vec3::new(2.5, 1.0, -3.0);
+        let p2 = Vec3::new(-1.5, 4.0, 2.0);
+        let d2 = Vec3::new(-0.5, 3.0, 1.25);
+        let h = HermiteCurve::new(p1, d1, p2, d2, 3);
+        let (c, d) = h.power_basis();
+        assert!(c.x != 0.0 && c.y != 0.0 && c.z != 0.0);
+        assert!(d.x != 0.0 && d.y != 0.0 && d.z != 0.0);
+
+        for u in [0.0, 0.35, 0.7, 1.0] {
+            let expected_0 = p1 + u * (d1 + u * (c + u * d));
+            let expected_1 = d1 + u * (2.0 * c + 3.0 * u * d);
+            let expected_2 = 2.0 * c + 6.0 * u * d;
+            let expected_3 = 6.0 * d;
+
+            for num_derivs in [4, 5, 6, 10] {
+                for non_zero_tangents in [false, true] {
+                    let out = h.evaluate(u, num_derivs, non_zero_tangents).unwrap();
+                    assert_eq!(out.len(), num_derivs + 1);
+                    assert_eq!(out[0], expected_0);
+                    assert_eq!(out[1], expected_1);
+                    assert_eq!(out[2], expected_2);
+                    assert_eq!(out[3], expected_3);
+                    assert_eq!(out[num_derivs], Vec3::ZERO);
+                    for (k, &deriv) in out.iter().enumerate().skip(4) {
+                        assert_eq!(deriv, Vec3::ZERO, "non-zero derivative at order {k}");
+                    }
+                }
+            }
+        }
+
+        // Zero start tangent at u = 0 with non_zero_tangents = true exercises the
+        // second-derivative fallback branch while still zero-filling orders 4..=num_derivs.
+        let h_zero_start = HermiteCurve::new(p1, Vec3::ZERO, p2, d2, 3);
+        let (c0, d0) = h_zero_start.power_basis();
+        let scaled_zero = EFF_ZERO * (1.0 + p1.max_dimension());
+        let new_len = 1.1 * scaled_zero;
+        let second = 2.0 * c0;
+        let expected_fixed_d1 = (new_len / second.length()) * second;
+        for num_derivs in [4, 5, 6, 10] {
+            let out = h_zero_start.evaluate(0.0, num_derivs, true).unwrap();
+            assert_eq!(out.len(), num_derivs + 1);
+            assert_eq!(out[0], p1);
+            assert_eq!(out[1], expected_fixed_d1);
+            assert!(out[1].length() > 0.0);
+            assert_eq!(out[2], second);
+            assert_eq!(out[3], 6.0 * d0);
+            assert_eq!(out[num_derivs], Vec3::ZERO);
+            for (k, &deriv) in out.iter().enumerate().skip(4) {
+                assert_eq!(deriv, Vec3::ZERO, "non-zero derivative at order {k}");
+            }
+        }
+    }
+
+    #[test]
+    fn wr26_curve_dispatch_preserves_zero_last_slot() {
+        let h = HermiteCurve::new(
+            Vec3::new(1.0, -2.0, 0.5),
+            Vec3::new(2.5, 1.0, -3.0),
+            Vec3::new(-1.5, 4.0, 2.0),
+            Vec3::new(-0.5, 3.0, 1.25),
+            3,
+        );
+        let curve = Curve::from(h);
+        let k = Kernel::default();
+        let out = curve.evaluate(&k, 0.4, 5, true, false).unwrap();
+        assert_eq!(out.len(), 6);
+        assert_eq!(&out[..4], h.evaluate(0.4, 3, false).unwrap().as_slice());
+        assert_eq!(out[4], Vec3::ZERO);
+        assert_eq!(out[5], Vec3::ZERO);
+
+        let mut buf = [Vec3::UNDEF; 6];
+        curve.evaluate_into(&k, 0.4, true, false, &mut buf).unwrap();
+        assert_eq!(buf.as_slice(), out.as_slice());
+        assert_eq!(buf[4], Vec3::ZERO);
+        assert_eq!(buf[5], Vec3::ZERO);
     }
 }

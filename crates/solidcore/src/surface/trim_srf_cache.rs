@@ -15,6 +15,7 @@
 //! | [`TrimSrfCache::point_test`]              | `SmTrimSrfCache::PointTest`                |
 //! | [`TrimSrfCache::point_classify`]          | `SmTrimSrfCache::PointClassify`            |
 //! | [`TrimSrfCache::build_tree`], [`TrimSrfCache::build_tree_with_face`] | `SmTrimSrfCache::BuildTree` |
+//! | [`TrimSrfCache::get_tree_with_face`]      | `SmSurfaceCache::GetTree` of a trimmed cache (virtual `BuildTree`) |
 //! | [`TrimSrfCache::point_test_in`], [`TrimSrfCache::point_classify_in`] | `PointTest`, `PointClassify` over the given face |
 //! | [`CacheFace`]                             | `GetFace()` and what the cache reads from the face and its B-rep |
 //! | [`TrimSrfCache::bind_face`]                 | `GetFace()` with an explicit caller-handle mapping |
@@ -45,8 +46,14 @@
 //!   falling back to the cache surface only when the adapter does not supply it.
 //!   An explicit [`TrimSrfCache::bind_face`] validates the source owner key and
 //!   records its caller handle without decoding the key as a topology id.
-//!   `SubdivideNode` re-implants a moved edge use with the curve it was implanted with
-//!   (its `GetUVTrimCurve`, retained as an exact B-spline copy).
+//!   `SubdivideNode` re-implants a moved edge use with its retained exact UV curve
+//!   and resolved edge owner tolerance, without cloning it for either child.
+//!   [`EdgeuseInput`] transfers that input into the cache; face construction resolves
+//!   the tolerance through [`CacheFace::zone_tol_3d`], and `None` is reserved for
+//!   ownerless standalone UV curves. Handle mapping retains the same tolerance.
+//!   Poly edges retain their endpoints, tolerance and an evaluation copy of their
+//!   original face surface;
+//!   callers must reimplant an edited edge before subdividing, as for edge-use curves.
 //! - **Node lists.** `SmTList::Prepend` onto a node's edge use, vertex and poly edge
 //!   lists inserts at the front of the [`BezierAux2d`] `Vec`s (list order, head first).
 //!   The list memory managers (`m_sVLMgr`, `m_sEdgeuseListMgr`) have no counterpart.
@@ -58,32 +65,45 @@
 //!   [`sc::FaceContainmentClassifier`], with the face as classifier. Point tests on
 //!   an unwrapped base retain trimmed dispatch and require an operation-scoped
 //!   [`FaceQueries`] service. A base fallback wrapped by [`TrimSrfCache::from_base`]
-//!   keeps its untrimmed dispatch. Poly-edge reimplantation still requires its
-//!   separate poly-topology context.
+//!   keeps its untrimmed dispatch. Poly-edge reimplantation reads the retained
+//!   geometry, visits the parent list head first and leaves that list intact, as native.
 //! - **Recursion.** Edge implantation uses an explicit subdivision stack. Its
 //!   nested reimplantation always disables subdivision, so that call chain has
 //!   at most one nested implantation. Geometric subdivision retains the base
 //!   cache's documented bounds; construction uses its containment guard.
+//! - **Subdivision stop.** `ImplantEdgeuse` splits a leaf near the curve (or near a
+//!   pole side) until it is smaller than the minimum node size, which it derives from
+//!   the cache domain and the curve's box. Upstream subdivides whatever those are; a
+//!   trim curve with a non-finite box (one evaluated on an invalid surface) makes the
+//!   size NaN, no comparison with it is true, and the leaves at a pole split forever
+//!   down to zero width. The port refuses a curve whose box is not finite, and a
+//!   subdividing implant whose minimum node size is not a positive finite number,
+//!   with [`SolidError::InvalidInput`] before splitting anything.
 //! - **Unported callees** (all return [`SolidError::Unported`]): `SmSurface::GetFace`
 //!   without a [`CacheFace`] (through [`SurfaceCache::face`]); `SmTol::GetZoneTol3d`
 //!   and `SmFace::PointClassify` of [`TrimSrfCache::point_test`] /
-//!   [`TrimSrfCache::point_classify`] without a [`CacheFace`]; `SmFace::GetSurface` of
-//!   a moved poly edge's original face.
+//!   [`TrimSrfCache::point_classify`] without a [`CacheFace`].
 //! - **Undefined behaviour.** Upstream dereferences a null face in `PointTest` /
 //!   `PointClassify` of a cache whose surface has no face; the port returns
 //!   `SM_ERR_NULL_POINTER`. A node without surface data in this cache gives
 //!   [`SolidError::InvalidInput`].
+//! - **Statuses.** `BuildTree`'s `SER(sSurfaceDomain.Intersect(sFaceDomain, ..))` of
+//!   disjoint domains (no edge use grew the face domain) is the upstream status
+//!   `SM_ERR_INVALID_INPUT` ([`SolidError::Upstream`]), not
+//!   [`SolidError::InvalidInput`], so the cache factory falls back to the plain
+//!   surface cache as `smsurf_GetSurfaceCache` does when `CacheMakeOrValidate` fails;
+//!   a `GetTree` that builds a deferred tree returns the same status.
 //! - **Not ported here.** `GetMemoryUsed` (the base class sum) and `Dump` (debug
 //!   output).
 
 use crate::curve::curve::Curve;
 use crate::curve::curve_cache::{CurveCache, CurveCacheOptions};
-use crate::error::{Result, SolidError};
+use crate::error::{Result, SolidError, SM_ERR_INVALID_INPUT};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::extent3d::Extent3d;
 use crate::geom::object::ObjectRef;
-use crate::geom::tree::{NodeClass, NodeData, NodeId};
+use crate::geom::tree::{NodeClass, NodeData, NodeId, Tree};
 use crate::geom::vector2d::{Point2, Vec2};
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
@@ -128,6 +148,7 @@ pub const POINT_CLASS_VERTEX: i32 = 104;
 const OP_CLASSIFY: &str = "surface::trim_srf_cache::TrimSrfCache::point_classify";
 const OP_EU: &str = "surface::trim_srf_cache::TrimSrfCache::implant_edgeuse";
 const OP_VU: &str = "surface::trim_srf_cache::TrimSrfCache::implant_vertexuse";
+const OP_GET_TREE: &str = "surface::trim_srf_cache::TrimSrfCache::get_tree_with_face";
 const OP_BUILD: &str = "surface::trim_srf_cache::TrimSrfCache::build_tree_with_face";
 
 /// `SmTrimSrfCache::IsKindOf`: the trimmed surface cache or a base type.
@@ -149,6 +170,20 @@ pub struct VertexuseInput<O> {
     pub uv_point: Point2,
     /// `GetVertex()->GetTolerance()`.
     pub vertex_tolerance: f64,
+}
+
+/// What `ImplantEdgeuse` reads from the edge use, transferred into the cache for
+/// later child reimplantation without copying the curve.
+#[derive(Debug)]
+pub struct EdgeuseInput<O> {
+    /// The edge use stored in the node lists.
+    pub edgeuse: O,
+    /// The exact `GetUVTrimCurve()` geometry; `None` preserves the native null error.
+    pub uv_trim_curve: Option<BSplineCurve>,
+    /// The zone tolerance of the edge reached through the curve's owning edge use.
+    /// Supply `Some` for an owned UV curve, resolved from its actual B-rep; `None`
+    /// is only for an ownerless standalone curve and retains the system tolerance.
+    pub owner_zone_tol_3d: Option<f64>,
 }
 
 /// What `ImplantPolyEdge` reads from the poly edge (see the module deviations).
@@ -188,6 +223,14 @@ pub trait CacheFace<O> {
     ///
     /// The implementor's (a face without B-rep).
     fn set_brep_editing_enabled(&mut self, enabled: bool) -> Result<()>;
+
+    /// Whether `BuildTree` implants the face's trims even while its B-rep is being
+    /// edited. Not upstream, which builds the tree untrimmed then: a B-rep point
+    /// classification answers against the face's current trims (WR-732, #2503). `false` by
+    /// default, as upstream.
+    fn implants_while_editing(&self) -> bool {
+        false
+    }
 
     /// `GetFace()->CreateUVTrimCurves(TRUE, NULL, NULL, ..)` (its gap statistics are
     /// not read).
@@ -311,15 +354,47 @@ fn classify_in_face<O>(
     Ok((class, object))
 }
 
+/// Geometry read again when `SubdivideNode` reimplants a polygon edge. The surface
+/// is an exact evaluation copy, independent of the cache's surface and handle space.
+#[derive(Debug, Clone)]
+struct PolyEdgeGeometry {
+    start: Point3,
+    end: Point3,
+    tolerance: f64,
+    surface: Surface,
+}
+
+impl PolyEdgeGeometry {
+    fn input<O>(&self, poly_edge: O) -> PolyEdgeInput<'_, O> {
+        PolyEdgeInput {
+            poly_edge,
+            start: self.start,
+            end: self.end,
+            tolerance: self.tolerance,
+            surface: &self.surface,
+        }
+    }
+}
+
+/// Exact UV input and its resolved owner context, retained together across
+/// subdivision and handle mapping.
+#[derive(Debug, Clone)]
+struct EdgeuseGeometry {
+    curve: BSplineCurve,
+    owner_zone_tol_3d: Option<f64>,
+}
+
 /// The trimmed surface cache (`SmTrimSrfCache`): a [`SurfaceCache`] whose tree
 /// knows the face boundary.
 #[derive(Debug, Clone)]
 pub struct TrimSrfCache<O> {
     /// The `SmSurfaceCache` base.
     base: SurfaceCache<O>,
-    /// The UV trim curve of every edge use implanted (`GetUVTrimCurve`, read again
-    /// when a subdivision moves the edge use into the new children).
-    edgeuse_curves: Vec<(O, BSplineCurve)>,
+    /// UV trim geometry and resolved owner tolerance, read again when subdivision
+    /// moves an edge use into the new children.
+    edgeuse_curves: Vec<(O, EdgeuseGeometry)>,
+    /// Geometry of implanted polygon edges, keyed by their opaque handles.
+    poly_edge_geometry: Vec<(O, PolyEdgeGeometry)>,
 }
 
 impl<O: Copy + PartialEq> TrimSrfCache<O> {
@@ -329,7 +404,8 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
     /// finds out.
     #[must_use]
     pub fn new(surface: Surface, opts: SurfaceCacheOptions) -> Self {
-        let domain = surface.natural_uv_domain();
+        // (kernel-free: a lazy analytic answers its NURB-less base's empty domain)
+        let domain = surface.natural_uv_domain_if_built();
         let mut base = SurfaceCache::new(surface, domain, opts);
 
         // set state bits anticipating a Trim Surface cache with UVTrimCurves.
@@ -343,6 +419,7 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
         Self {
             base,
             edgeuse_curves: Vec::new(),
+            poly_edge_geometry: Vec::new(),
         }
     }
 
@@ -352,6 +429,7 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
         Self {
             base,
             edgeuse_curves: Vec::new(),
+            poly_edge_geometry: Vec::new(),
         }
     }
 
@@ -367,7 +445,7 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
     }
 
     /// The same cache with every handle mapped by `map` (the base's
-    /// [`SurfaceCache::map_handles`] and the implanted edge uses' curves).
+    /// [`SurfaceCache::map_handles`] and the implanted edge-use and polygon-edge geometry).
     ///
     /// # Errors
     ///
@@ -379,11 +457,34 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
         let edgeuse_curves = self
             .edgeuse_curves
             .iter()
-            .map(|(o, c)| Ok((map(*o)?, c.clone_exact())))
+            .map(|(o, g)| {
+                Ok((
+                    map(*o)?,
+                    EdgeuseGeometry {
+                        curve: g.curve.clone_exact(),
+                        owner_zone_tol_3d: g.owner_zone_tol_3d,
+                    },
+                ))
+            })
             .collect::<Result<_>>()?;
         Ok(TrimSrfCache {
             base: self.base.map_handles(&map)?,
             edgeuse_curves,
+            poly_edge_geometry: self
+                .poly_edge_geometry
+                .iter()
+                .map(|(o, g)| {
+                    Ok((
+                        map(*o)?,
+                        PolyEdgeGeometry {
+                            start: g.start,
+                            end: g.end,
+                            tolerance: g.tolerance,
+                            surface: g.surface.clone_for_evaluation()?,
+                        },
+                    ))
+                })
+                .collect::<Result<_>>()?,
         })
     }
 
@@ -619,6 +720,39 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
         self.build_tree_in(k, Some(face))
     }
 
+    /// The tree, built first when there is none, or when the surface belongs to a face
+    /// whose boundary is not in the tree yet and no build is under way
+    /// (`SmSurfaceCache::GetTree`, whose virtual `BuildTree` is this cache's
+    /// [`TrimSrfCache::build_tree_with_face`]); `face` is the face owning the cache's
+    /// surface (`GetFace()`). A cache that is not a trimmed one (the plain
+    /// `SmSurfaceCache` fallback of `smsurf_GetSurfaceCache`) runs its own
+    /// [`SurfaceCache::get_tree`].
+    ///
+    /// # Errors
+    ///
+    /// Those of [`TrimSrfCache::build_tree_with_face`] (upstream returns NULL), and
+    /// of [`SurfaceCache::get_tree`] for a plain cache.
+    pub fn get_tree_with_face(
+        &mut self,
+        k: &Kernel,
+        face: &mut dyn CacheFace<O>,
+    ) -> Result<&mut Tree<O>> {
+        if !self.base.trimmed_dispatch {
+            return self.base.get_tree(k);
+        }
+        let face_owned = self.base.surface().face()?.is_some();
+        if self.base.tree().is_none()
+            || (!self.base.have_t_surface_cache
+                && face_owned
+                && self.base.face_containment_done != FaceContainment::UnderConstruction)
+        {
+            self.build_tree_with_face(k, face)?;
+        }
+        self.base
+            .tree_mut()
+            .ok_or_else(|| invalid(OP_GET_TREE, "cache has no tree"))
+    }
+
     fn build_tree_in(&mut self, k: &Kernel, face: Option<&mut dyn CacheFace<O>>) -> Result<()> {
         // prevent bad recursion back into BuildTree
         let saved = self.base.face_containment_done;
@@ -659,7 +793,7 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
         let editing_face = match face {
             None => None,
             Some(f) => {
-                if f.brep_editing_enabled()? {
+                if f.brep_editing_enabled()? && !f.implants_while_editing() {
                     None
                 } else {
                     Some(f)
@@ -716,8 +850,14 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
                 let curve = face.edgeuse_uv_trim_curve(eu)?;
                 self.implant_edgeuse(
                     k,
-                    eu,
-                    curve.as_ref(),
+                    EdgeuseInput {
+                        edgeuse: eu,
+                        owner_zone_tol_3d: curve
+                            .as_ref()
+                            .map(|_| face.zone_tol_3d(k, eu))
+                            .transpose()?,
+                        uv_trim_curve: curve,
+                    },
                     do_subdivision,
                     &mut face_domain,
                     None,
@@ -738,10 +878,19 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
         }
 
         // set SurfaceCacheDomain as SurfaceNaturalDomain/FaceDomain intersection
-        let surface_domain = face
-            .natural_uv_domain()?
-            .unwrap_or_else(|| self.base.surface().natural_uv_domain());
-        let domain = surface_domain.intersect(&face_domain)?;
+        let surface_domain = match face.natural_uv_domain()? {
+            Some(d) => d,
+            None => self.base.surface().natural_uv_domain_with_nurb(k)?,
+        };
+        // SER: disjoint domains (a face domain no edge use grew) are the status
+        // SM_ERR_INVALID_INPUT, a failed build the cache factory falls back from
+        let domain = surface_domain
+            .intersect(&face_domain)
+            .map_err(|_| SolidError::Upstream {
+                operation: OP_BUILD,
+                code: SM_ERR_INVALID_INPUT,
+                entity: None,
+            })?;
         self.base.set_uv_domain(domain);
 
         // When the surface has UVTrimCurves
@@ -821,7 +970,7 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
         self.base.aux_mut(node)
     }
 
-    /// Embeds the edge use `edgeuse`, whose UV trim curve is `uv_trim_curve`, into
+    /// Embeds the edge use and its UV curve / owner context from `input` into
     /// the decomposition (`ImplantEdgeuse`): every leaf near the curve (or near a pole
     /// side of the surface) is marked on the boundary and gets the edge use, the
     /// change is propagated to its ancestors; with `do_subdivision` large leaves are
@@ -830,36 +979,61 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
     ///
     /// # Errors
     ///
-    /// `SM_ERR_NULL_POINTER` without trim curve; those of the curve box, the curve
-    /// cache and the tree; [`SolidError::Unported`] for `FindUVNodes` and
-    /// `SubdivideNode`.
-    #[allow(clippy::too_many_lines)]
+    /// `SM_ERR_NULL_POINTER` without trim curve; [`SolidError::InvalidInput`] for a
+    /// curve box that is not finite, or with `do_subdivision` a minimum node size that
+    /// is not a positive finite number (module docs, subdivision stop); those of the
+    /// curve box, the curve cache and the tree; [`SolidError::Unported`] for
+    /// `FindUVNodes` and `SubdivideNode`.
     pub fn implant_edgeuse(
         &mut self,
         k: &Kernel,
-        edgeuse: O,
-        uv_trim_curve: Option<&BSplineCurve>,
+        input: EdgeuseInput<O>,
         do_subdivision: bool,
         face_extent: &mut Extent2d,
         opt_tree_node: Option<NodeId>,
     ) -> Result<()> {
-        // locals
-        let eu_curve = uv_trim_curve.ok_or(SolidError::null_pointer(OP_EU))?;
-        // Subdivision may need a curve implanted by an earlier call. Retain its
-        // exact input data instead of trying to resolve an opaque edge-use handle.
-        if let Some((_, curve)) = self
+        let geometry = EdgeuseGeometry {
+            curve: input.uv_trim_curve.ok_or(SolidError::null_pointer(OP_EU))?,
+            owner_zone_tol_3d: input.owner_zone_tol_3d,
+        };
+        let index = if let Some(index) = self
             .edgeuse_curves
-            .iter_mut()
-            .find(|(handle, _)| *handle == edgeuse)
+            .iter()
+            .position(|(handle, _)| *handle == input.edgeuse)
         {
-            *curve = eu_curve.clone_exact();
+            let (_, retained) = self
+                .edgeuse_curves
+                .get_mut(index)
+                .ok_or_else(|| invalid(OP_EU, "edge use has no retained geometry"))?;
+            *retained = geometry;
+            index
         } else {
-            self.edgeuse_curves.push((edgeuse, eu_curve.clone_exact()));
-        }
+            let index = self.edgeuse_curves.len();
+            self.edgeuse_curves.push((input.edgeuse, geometry));
+            index
+        };
+        self.implant_retained_edgeuse(k, index, do_subdivision, face_extent, opt_tree_node)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn implant_retained_edgeuse(
+        &mut self,
+        k: &Kernel,
+        index: usize,
+        do_subdivision: bool,
+        face_extent: &mut Extent2d,
+        opt_tree_node: Option<NodeId>,
+    ) -> Result<()> {
+        let (edgeuse, geometry) = self
+            .edgeuse_curves
+            .get(index)
+            .ok_or_else(|| invalid(OP_EU, "edge use has no retained geometry"))?;
+        let edgeuse = *edgeuse;
+        let eu_curve = &geometry.curve;
 
         // set up for poles
         let (poles, u_ivl, v_ivl, u_tol, v_tol) = {
-            let uv_domain = self.base.surface().natural_uv_domain();
+            let uv_domain = self.base.surface().natural_uv_domain_with_nurb(k)?;
 
             // save natural domain sizes
             let u_ivl = uv_domain.u_interval();
@@ -905,8 +1079,13 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
             )?
             .normal
             .ok_or_else(|| invalid(OP_EU, "no curve box"))?;
-        let mut curve_bbox =
-            Extent2d::from_bounds(bbox.min().x, bbox.min().y, bbox.max().x, bbox.max().y);
+        let corners = [bbox.min().x, bbox.min().y, bbox.max().x, bbox.max().y];
+        // (not upstream) every size below derives from this box: see the module docs
+        if !corners.iter().all(|c| c.is_finite()) {
+            return Err(invalid(OP_EU, "trim curve box is not finite"));
+        }
+        let [x0, y0, x1, y1] = corners;
+        let mut curve_bbox = Extent2d::from_bounds(x0, y0, x1, y1);
         let expand = (1.0 + curve_bbox.size().length()) * EFF_ZERO_SQRT;
         curve_bbox.expand_absolute(expand);
 
@@ -953,6 +1132,14 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
             min_node_size_squared = max2(min_node_size_squared, line_size * line_size);
         }
 
+        // (not upstream) the subdivision stops only below a positive finite size
+        if do_subdivision && !(min_node_size_squared.is_finite() && min_node_size_squared > 0.0) {
+            return Err(invalid(
+                OP_EU,
+                "minimum node size is not a positive finite number",
+            ));
+        }
+
         // sMinSize
         let mut min_size = Vec2::new(0.0, 0.0);
         if clamp_node_growth {
@@ -987,6 +1174,7 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
                     ..CurveCacheOptions::default()
                 },
             );
+            cc.set_owner_zone_tol_3d(geometry.owner_zone_tol_3d);
             cc.tessellate(k)?;
             Some(cc)
         } else {
@@ -1104,9 +1292,9 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
     ///
     /// # Errors
     ///
-    /// Those of [`SurfaceCache::subdivide_node_split`]; [`SolidError::Unported`]:
-    /// `SmFace::GetSurface` (`topology.face_p2`) for a poly edge to move. An edge use's
-    /// `GetUVTrimCurve` is the curve it was implanted with.
+    /// Those of [`SurfaceCache::subdivide_node_split`]. `InvalidInput` for a polygon
+    /// edge handle inserted directly into the base lists without its geometry. An
+    /// edge use's `GetUVTrimCurve` is the curve it was implanted with.
     fn subdivide_node(
         &mut self,
         k: &Kernel,
@@ -1120,23 +1308,22 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
                 while let Some(eu) = self.base.aux(node)?.edgeuse_list.last().copied() {
                     // implant the edge use in both children without subsequent
                     // subdivision (the status is ignored)
-                    let curve = self
-                        .edgeuse_curves
-                        .iter()
-                        .find(|(e, _)| *e == eu)
-                        .map(|(_, c)| c.clone_exact());
+                    let index = self.edgeuse_curves.iter().position(|(e, _)| *e == eu);
                     for child in [node1, node2] {
                         let mut temp_ext = Extent2d::new();
-                        let r = self.implant_edgeuse(
-                            k,
-                            eu,
-                            curve.as_ref(),
-                            false,
-                            &mut temp_ext,
-                            Some(child),
-                        );
+                        let r = if let Some(index) = index {
+                            self.implant_retained_edgeuse(
+                                k,
+                                index,
+                                false,
+                                &mut temp_ext,
+                                Some(child),
+                            )
+                        } else {
+                            Err(SolidError::null_pointer(OP_EU))
+                        };
                         if let Err(e) = r {
-                            if e.is_unported() {
+                            if e.is_unported_or_cancelled() {
                                 return Err(e);
                             }
                         }
@@ -1144,14 +1331,30 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
                     self.base.aux_mut(node)?.edgeuse_list.pop();
                 }
             } else {
-                // UNPORTED(topology.face_p2): SmFace::GetSurface of the poly edge's
-                // original face (the PolyEdgeInput of ImplantPolyEdge; the poly edge
-                // points and tolerance are query::poly, but the cache keeps opaque
-                // handles with no poly B-rep to read them from)
-                return Err(SolidError::unported(
-                    "SmFace::GetSurface",
-                    "topology.face_p2",
-                ));
+                // Native GetAllNodes visits head first and leaves the parent's list
+                // intact. Each child's Prepend reverses that order independently.
+                let poly_edges = self.base.aux(node)?.poly_edge_list.clone();
+                for pe in poly_edges {
+                    for child in [node1, node2] {
+                        let geometry = self
+                            .poly_edge_geometry
+                            .iter()
+                            .find(|(handle, _)| *handle == pe)
+                            .map(|(_, geometry)| geometry)
+                            .ok_or_else(|| invalid(OP, "polygon edge has no retained geometry"))?;
+                        let domain = self.base.aux(child)?.uv_domain;
+                        // The native caller ignores ordinary implantation errors.
+                        let embed = match poly_edge_in_domain(k, &geometry.input(pe), domain) {
+                            Ok(embed) => embed,
+                            Err(e) if e.is_unported_or_cancelled() => return Err(e),
+                            Err(_) => continue,
+                        };
+                        if embed {
+                            self.set_on_boundary(child, false)?;
+                            self.aux_mut(child)?.poly_edge_list.insert(0, pe);
+                        }
+                    }
+                }
             }
         }
         let n = self
@@ -1178,54 +1381,41 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
     ///
     /// # Errors
     ///
-    /// `InvalidInput` for a node without surface data; [`SolidError::Unported`]:
-    /// `SmTol::MapTo2d` over a surface (`surface.surface_p1`).
+    /// `InvalidInput` for a node without surface data; errors from tolerance mapping
+    /// or from making the bounded evaluation copy of the original surface.
     pub fn implant_poly_edge(
         &mut self,
         k: &Kernel,
         input: PolyEdgeInput<'_, O>,
         node: NodeId,
     ) -> Result<()> {
-        // get segment endpoints
-        let start = Point2::new(input.start.x, input.start.y);
-        let end = Point2::new(input.end.x, input.end.y);
-
-        // Tolerance: get uv space tols, expand the uv domain of the node by tols
-        let tol_3d = input.tolerance;
-        let mid_uv = (start + end) / 2.0;
-        let tol_u = map_to_2d(k, tol_3d, mid_uv, Vec2::new(1.0, 0.0), input.surface)?;
-        let tol_v = map_to_2d(k, tol_3d, mid_uv, Vec2::new(0.0, 1.0), input.surface)?;
-        let tol_expansion = Vec2::new(tol_u, tol_v);
-
         let domain = self.base.aux(node)?.uv_domain;
-        let mut domain_exp = domain;
-        domain_exp.expand_absolute_vec(tol_expansion * 10.0);
-
-        // locals for intersection test with node domain
-        let line_vec = end - start;
-        let is_degenerate = line_vec.x.abs() <= tol_u && line_vec.y.abs() <= tol_v;
-        let unit = Extent1d::from_min_max(0.0, 1.0);
-
-        // testing to see if node contains the start/end points of PolyEdge or
-        // PolyEdge intersects the domain
-        let mut embed = true;
-        if !domain_exp.contains_point(start, 0.0) && !domain_exp.contains_point(end, 0.0) {
-            if is_degenerate {
-                embed = false;
+        let embed = poly_edge_in_domain(k, &input, domain)?;
+        // An existing handle can occur in other nodes even when this particular
+        // implantation misses. Those nodes must also see the caller's latest input.
+        if embed
+            || self
+                .poly_edge_geometry
+                .iter()
+                .any(|(handle, _)| *handle == input.poly_edge)
+        {
+            let geometry = PolyEdgeGeometry {
+                start: input.start,
+                end: input.end,
+                tolerance: input.tolerance,
+                surface: input.surface.clone_for_evaluation()?,
+            };
+            if let Some((_, retained)) = self
+                .poly_edge_geometry
+                .iter_mut()
+                .find(|(handle, _)| *handle == input.poly_edge)
+            {
+                *retained = geometry;
             } else {
-                match domain.intersect_with_infinite_line(start, line_vec, None, None) {
-                    None => embed = false,
-                    Some(ivl) => {
-                        if ivl.intersect(&unit).is_err() {
-                            embed = false;
-                        }
-                    }
-                }
+                self.poly_edge_geometry.push((input.poly_edge, geometry));
             }
         }
-
         if embed {
-            // Add segment to this node's m_sPolyEdgeList
             self.set_on_boundary(node, false)?;
             self.aux_mut(node)?
                 .poly_edge_list
@@ -1272,7 +1462,7 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
         );
 
         // expand the UV tolerances when near surface poles
-        let uv_domain = self.base.surface().natural_uv_domain();
+        let uv_domain = self.base.surface().natural_uv_domain_with_nurb(k)?;
         let u_ivl = uv_domain.u_interval();
         let v_ivl = uv_domain.v_interval();
         let u_tol = u_ivl.length() / 100.0;
@@ -1400,6 +1590,52 @@ fn evaluate_1st_derivatives(
         crate::nurbs::knots::Side::Left,
         crate::nurbs::knots::Side::Left,
     )
+}
+
+/// The geometric test shared by initial polygon-edge implantation and subdivision.
+fn poly_edge_in_domain<O>(
+    k: &Kernel,
+    input: &PolyEdgeInput<'_, O>,
+    domain: Extent2d,
+) -> Result<bool> {
+    // get segment endpoints
+    let start = Point2::new(input.start.x, input.start.y);
+    let end = Point2::new(input.end.x, input.end.y);
+
+    // Tolerance: get uv space tols, expand the uv domain of the node by tols
+    let tol_3d = input.tolerance;
+    let mid_uv = (start + end) / 2.0;
+    let tol_u = map_to_2d(k, tol_3d, mid_uv, Vec2::new(1.0, 0.0), input.surface)?;
+    let tol_v = map_to_2d(k, tol_3d, mid_uv, Vec2::new(0.0, 1.0), input.surface)?;
+    let tol_expansion = Vec2::new(tol_u, tol_v);
+
+    let mut domain_exp = domain;
+    domain_exp.expand_absolute_vec(tol_expansion * 10.0);
+
+    // locals for intersection test with node domain
+    let line_vec = end - start;
+    let is_degenerate = line_vec.x.abs() <= tol_u && line_vec.y.abs() <= tol_v;
+    let unit = Extent1d::from_min_max(0.0, 1.0);
+
+    // testing to see if node contains the start/end points of PolyEdge or
+    // PolyEdge intersects the domain
+    let mut embed = true;
+    if !domain_exp.contains_point(start, 0.0) && !domain_exp.contains_point(end, 0.0) {
+        if is_degenerate {
+            embed = false;
+        } else {
+            match domain.intersect_with_infinite_line(start, line_vec, None, None) {
+                None => embed = false,
+                Some(ivl) => {
+                    if ivl.intersect(&unit).is_err() {
+                        embed = false;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(embed)
 }
 
 /// `SmTol::MapTo2d(tol, uv, dir, surface)`.
@@ -1531,18 +1767,85 @@ mod tests {
         let mut c = cache();
         let mut ext = Extent2d::new();
         let crv = line_2d([0.3, 0.3], [0.4, 0.7]);
-        c.implant_edgeuse(&k, 7, Some(&crv), false, &mut ext, Some(NodeId(1)))
-            .unwrap();
+        c.implant_edgeuse(
+            &k,
+            EdgeuseInput {
+                edgeuse: 7,
+                uv_trim_curve: Some(crv.clone_exact()),
+                owner_zone_tol_3d: None,
+            },
+            false,
+            &mut ext,
+            Some(NodeId(1)),
+        )
+        .unwrap();
         assert_eq!(c.base().aux(NodeId(1)).unwrap().edgeuse_list, vec![7]);
         // the other leaf is not visited, the root is not a leaf
-        c.implant_edgeuse(&k, 8, Some(&crv), false, &mut ext, Some(NodeId(2)))
-            .unwrap();
+        c.implant_edgeuse(
+            &k,
+            EdgeuseInput {
+                edgeuse: 8,
+                uv_trim_curve: Some(crv),
+                owner_zone_tol_3d: None,
+            },
+            false,
+            &mut ext,
+            Some(NodeId(2)),
+        )
+        .unwrap();
         assert!(c.base().aux(NodeId(2)).unwrap().edgeuse_list.is_empty());
         assert!(ext.min().x < 0.3 && ext.max().y > 0.7);
         // without trim curve
         assert!(c
-            .implant_edgeuse(&k, 9, None, false, &mut ext, Some(NodeId(1)))
+            .implant_edgeuse(
+                &k,
+                EdgeuseInput {
+                    edgeuse: 9,
+                    uv_trim_curve: None,
+                    owner_zone_tol_3d: None,
+                },
+                false,
+                &mut ext,
+                Some(NodeId(1)),
+            )
             .is_err());
+    }
+
+    /// A trim curve whose box is not finite (one evaluated on an invalid surface) is
+    /// refused before any split: its NaN minimum node size stopped no subdivision, and
+    /// the leaves at a pole split forever.
+    #[test]
+    fn non_finite_trim_curve_is_refused_before_subdividing() {
+        let k = Kernel::default();
+        let mut c = cache();
+        let mut ext = Extent2d::new();
+        let crv = line_2d([f64::NAN, 0.3], [0.4, 0.7]);
+        let refused = c.implant_edgeuse(
+            &k,
+            EdgeuseInput {
+                edgeuse: 7,
+                uv_trim_curve: Some(crv),
+                owner_zone_tol_3d: None,
+            },
+            true,
+            &mut ext,
+            None,
+        );
+        assert!(
+            matches!(
+                refused,
+                Err(SolidError::InvalidInput {
+                    reason: "trim curve box is not finite",
+                    ..
+                })
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(c.base().tree().map(|t| t.nodes().len()), Some(3));
+        for node in 0..3 {
+            assert!(c.base().aux(NodeId(node)).unwrap().edgeuse_list.is_empty());
+        }
+        assert!(ext.is_init());
     }
 
     #[test]
@@ -1552,7 +1855,17 @@ mod tests {
         let crv = line_2d([0.3, 0.3], [0.4, 0.7]);
         let mut ext = Extent2d::new();
         assert!(c
-            .implant_edgeuse(&k, 7, Some(&crv), false, &mut ext, Some(NodeId(usize::MAX)))
+            .implant_edgeuse(
+                &k,
+                EdgeuseInput {
+                    edgeuse: 7,
+                    uv_trim_curve: Some(crv),
+                    owner_zone_tol_3d: None,
+                },
+                false,
+                &mut ext,
+                Some(NodeId(usize::MAX)),
+            )
             .is_err());
         assert!(c.base().aux(NodeId(1)).unwrap().edgeuse_list.is_empty());
         assert!(ext.is_init());
@@ -1596,6 +1909,63 @@ mod tests {
     }
 
     #[test]
+    fn subdivision_preserves_parent_polygons_and_reverses_child_list_order() {
+        let k = Kernel::default();
+        let mut c = cache();
+        let surface = plane();
+        for poly_edge in [7, 8] {
+            c.implant_poly_edge(
+                &k,
+                PolyEdgeInput {
+                    poly_edge,
+                    start: Point3::new(0.21, 0.4, 0.0),
+                    end: Point3::new(0.49, 0.4, 0.0),
+                    tolerance: 0.001,
+                    surface: &surface,
+                },
+                NodeId(1),
+            )
+            .unwrap();
+        }
+        // Map the retained geometry as well as the node lists, then drop the input
+        // surface. Subdivision must still resolve every polygon's original surface.
+        let mut c = c.map_handles(|h| Ok(h + 100)).unwrap();
+        drop(surface);
+        let (left, right) = c.subdivide_node(&k, NodeId(1), SurfParamType::U).unwrap();
+        assert_eq!(c.base().aux(NodeId(1)).unwrap().poly_edge_list, [108, 107]);
+        for child in [left, right] {
+            assert_eq!(c.base().aux(child).unwrap().poly_edge_list, [107, 108]);
+        }
+        let (lower, upper) = c.subdivide_node(&k, left, SurfParamType::V).unwrap();
+        assert_eq!(c.base().aux(lower).unwrap().poly_edge_list, [108, 107]);
+        assert!(c.base().aux(upper).unwrap().poly_edge_list.is_empty());
+    }
+
+    #[test]
+    fn reimplanting_an_edited_polygon_updates_the_retained_geometry() {
+        let k = Kernel::default();
+        let mut c = cache();
+        let surface = plane();
+        for (x, node) in [(0.22, NodeId(1)), (0.48, NodeId(2))] {
+            c.implant_poly_edge(
+                &k,
+                PolyEdgeInput {
+                    poly_edge: 8,
+                    start: Point3::new(x, 0.3, 0.0),
+                    end: Point3::new(x, 0.7, 0.0),
+                    tolerance: 0.001,
+                    surface: &surface,
+                },
+                node,
+            )
+            .unwrap();
+        }
+        let (left, right) = c.subdivide_node(&k, NodeId(1), SurfParamType::U).unwrap();
+        assert!(c.base().aux(left).unwrap().poly_edge_list.is_empty());
+        assert_eq!(c.base().aux(right).unwrap().poly_edge_list, [8]);
+    }
+
+    #[test]
     fn build_tree_without_face_restores_state() {
         let k = Kernel::default();
         let mut c: TrimSrfCache<i64> = TrimSrfCache::new(plane(), SurfaceCacheOptions::default());
@@ -1625,7 +1995,7 @@ mod tests {
         let mut brep = Brep::new();
         let surface = plane();
         let mut face = Face::new(ShellId::from_index(0));
-        face.uv_domain = surface.natural_uv_domain();
+        face.uv_domain = surface.natural_uv_domain_if_built();
         face.surface = Some(surface);
         face.tolerance = 2.5e-4;
         let face = brep.add_face_record(face).unwrap();
@@ -1778,7 +2148,7 @@ mod tests {
         assert_eq!(mapped.face(), 100);
         assert_eq!(
             mapped.natural_uv_domain().unwrap(),
-            Some(plane().natural_uv_domain())
+            Some(plane().natural_uv_domain_if_built())
         );
         assert_eq!(mapped.zone_tol_3d(&Kernel::default(), 100).unwrap(), 2.5e-4);
         // Even if the reverse mapping accepts this alias, the forward mapping
@@ -1789,7 +2159,7 @@ mod tests {
     #[test]
     fn base_fallback_keeps_untrimmed_dispatch() {
         let surface = plane();
-        let domain = surface.natural_uv_domain();
+        let domain = surface.natural_uv_domain_if_built();
         let mut base: SurfaceCache<i64> =
             SurfaceCache::new(surface, domain, SurfaceCacheOptions::default());
         base.point_test_enabled = true;

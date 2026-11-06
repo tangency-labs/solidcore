@@ -24,9 +24,11 @@
 //! | [`BSplineCurve::create_arc_from_points`]     | `CreateArcFromPoints`                             |
 //! | [`BSplineCurve::create_canonical`], [`CanonicalData`] | `CreateCanonical`                        |
 //! | [`BSplineCurve::create_circle_segment`]      | `CreateCircleSegment`                             |
+//! | [`BSplineCurve::create_circle_segment_min_arcs`] | not upstream (WR-711)                         |
 //! | [`BSplineCurve::create_degenerate_curve`]    | `CreateDegenerateCurve`                           |
 //! | [`BSplineCurve::create_line_segment`]        | `CreateLineSegment`                               |
 //! | [`BSplineCurve::create_mirror_curve`]        | `CreateMirrorCurve`                               |
+//! | [`BSplineCurve::create_transposed_curve`]    | (not upstream, WR-729)                            |
 //! | [`BSplineCurve::create_plane_projection`]    | `CreatePlaneProjection`                           |
 //! | [`BSplineCurve::edit_parameterization`]      | `EditParameterization`                            |
 //! | [`BSplineCurve::edit_end_point`]             | `EditEndPoint`                                    |
@@ -63,6 +65,8 @@
 //! | [`KnotType`], [`BSplineCurveForm`], [`NurbCircleParam`], [`ProjectionType`] | `SmKnotType`, `SmBSplineCurveForm`, `SmNurbCircleParam`, `SmProjectionType` |
 //!
 //! Deviations:
+//! - [`BSplineCurve::create_circle_segment_min_arcs`] (not upstream, WR-711) is
+//!   `CreateCircleSegment` with a floor on the quadratic form's arc count.
 //! - **Curve base.** `SmBSplineCurve` derives from `SmCurve` (units `curve.curve_*`).
 //!   The base state it uses is the image-space dimension (`m_lDim`), kept here as
 //!   [`BSplineCurve::dim`] (`SmCurve::GetDim`). `SmCurve::operator==` (same type,
@@ -131,15 +135,15 @@ use crate::geom::vector3d::{Point3, Vec3};
 use crate::math::{min2, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI};
 use crate::nurbs::basis_basic::reparam;
 use crate::nurbs::crv_basic::{ConicType, Curve};
-use crate::nurbs::crv_common::{circ_arc, Arc};
+use crate::nurbs::crv_common::{circ_arc, quadratic_arc_min_arcs, Arc, DEFAULT_ANGLE_TOL};
 use crate::nurbs::crv_nurb::{line_from_pt_and_vector, Projection};
 use crate::nurbs::geom::Interval;
 use crate::nurbs::iges::{iges_126_curve, Entity126};
 use crate::nurbs::knots::Side;
 use crate::nurbs::math::{CPoint, MatrixType, RealMatrix, NOW, NOZ};
 use crate::nurbs::nurbs_crv::{
-    allocate_nurb_curve, copy_nurb_curve, crv_derivs, crv_eval, crv_remove_knots, extract_frame,
-    fixup_knot_vector, get_knots, to_euclid,
+    allocate_nurb_curve, copy_nurb_curve, crv_derivs, crv_derivs_into, crv_eval, crv_remove_knots,
+    extract_frame, fixup_knot_vector, get_knots, to_euclid, MAX_DERIV,
 };
 
 const OP_DATA: &str = "nurbs::b_spline_curve::p1::BSplineCurve::from_data";
@@ -953,7 +957,7 @@ impl BSplineCurve {
     /// # Errors
     ///
     /// `SM_ERR` without a NURB or when the NLib evaluation fails (including
-    /// `num_derivs >= GW_MAX_DERIV`).
+    /// `num_derivs > GW_MAX_DERIV`).
     pub fn evaluate(
         &self,
         t: f64,
@@ -964,6 +968,43 @@ impl BSplineCurve {
         // pass simple calls along to EvaluatePoint
         if num_derivs == 0 {
             return Ok(vec![self.evaluate_point(t)?]);
+        }
+        if num_derivs > MAX_DERIV {
+            // (NLib's order error, after the NURB check, without allocating an output
+            // of that size)
+            let cur = self.nurb_ref()?;
+            let side = if from_left { Side::Left } else { Side::Right };
+            return crv_derivs(cur, t, side, num_derivs).map_err(SolidError::nl_ser(OP_EVAL));
+        }
+        let mut pv = vec![Vec3::ZERO; num_derivs + 1];
+        self.evaluate_into(t, from_left, non_zero_tangents, &mut pv)?;
+        Ok(pv)
+    }
+
+    /// [`BSplineCurve::evaluate`] into the caller's slice: `out[k]` is derivative `k`,
+    /// `num_derivs = out.len() - 1` (up to `GW_MAX_DERIV`), without a heap allocation
+    /// (except for the rare zero-tangent re-evaluation).
+    ///
+    /// # Errors
+    ///
+    /// As [`BSplineCurve::evaluate`]; `SM_ERR` for an empty `out`.
+    pub fn evaluate_into(
+        &self,
+        t: f64,
+        from_left: bool,
+        non_zero_tangents: bool,
+        out: &mut [Vec3],
+    ) -> Result<()> {
+        let num_derivs = out
+            .len()
+            .checked_sub(1)
+            .ok_or_else(|| SolidError::sm_err(OP_EVAL))?;
+        // pass simple calls along to EvaluatePoint
+        if num_derivs == 0 {
+            if let Some(slot) = out.first_mut() {
+                *slot = self.evaluate_point(t)?;
+            }
+            return Ok(());
         }
 
         // natural extent
@@ -978,19 +1019,16 @@ impl BSplineCurve {
         }
 
         let side = if from_left { Side::Left } else { Side::Right };
-        let mut pv = crv_derivs(cur, t, side, num_derivs).map_err(SolidError::nl_ser(OP_EVAL))?;
-        if pv.len() != num_derivs + 1 {
-            return Err(SolidError::sm_err(OP_EVAL));
-        }
+        crv_derivs_into(cur, t, side, out).map_err(SolidError::nl_ser(OP_EVAL))?;
 
         // When asked, find a direction for zero-length first derivatives from the
         // 2nd derivative value.
         if non_zero_tangents {
-            let p0 = pv.first().copied().unwrap_or(Vec3::UNDEF);
+            let p0 = out.first().copied().unwrap_or(Vec3::UNDEF);
             let scaled_zero = EFF_ZERO * (1.0 + p0.max_dimension());
             let new_len = 1.1 * scaled_zero;
 
-            let d1 = pv.get(1).copied().unwrap_or(Vec3::UNDEF);
+            let d1 = out.get(1).copied().unwrap_or(Vec3::UNDEF);
             if num_derivs >= 1 && d1.length_squared() < new_len * new_len {
                 if num_derivs < 2 {
                     // recurse so the next section sets the 1st derivative; the call
@@ -999,11 +1037,11 @@ impl BSplineCurve {
                     let vals = self
                         .evaluate(t, 2, from_left, false)
                         .unwrap_or_else(|_| vec![Vec3::UNDEF; 3]);
-                    if let (Some(slot), Some(&v)) = (pv.get_mut(1), vals.get(1)) {
+                    if let (Some(slot), Some(&v)) = (out.get_mut(1), vals.get(1)) {
                         *slot = v;
                     }
                 } else {
-                    let d2 = pv.get(2).copied().unwrap_or(Vec3::UNDEF);
+                    let d2 = out.get(2).copied().unwrap_or(Vec3::UNDEF);
                     let len = d2.length();
                     if len > new_len {
                         let mut d1 = (new_len / len) * d2;
@@ -1012,14 +1050,14 @@ impl BSplineCurve {
                         if t > self.natural_interval().mid() {
                             d1 *= -1.0;
                         }
-                        if let Some(slot) = pv.get_mut(1) {
+                        if let Some(slot) = out.get_mut(1) {
                             *slot = d1;
                         }
                     }
                 }
             }
         }
-        Ok(pv)
+        Ok(())
     }
 
     /// Tessellates the curve over `interval` (`Tessellate`): bisection with the chord
@@ -1274,6 +1312,20 @@ impl BSplineCurve {
         Ok(bsc)
     }
 
+    /// A copy with its coordinates `x` and `y` swapped exactly: the mirror about the
+    /// plane `x = y` that [`BSplineCurve::create_mirror_curve`] makes with a rounded
+    /// matrix (not upstream, WR-729). The copy keeps this curve's dimension; a 2D NURB
+    /// is made 3D, as the mirror makes it.
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR` without a NURB.
+    pub fn create_transposed_curve(&self) -> Result<Self> {
+        let mut bsc = self.copy();
+        bsc.get_or_create_gw_nurb()?.swap_xy();
+        Ok(bsc)
+    }
+
     /// The 3D projection of this curve onto the plane through `plane_point` with
     /// normal `plane_normal` (`CreatePlaneProjection`): along the direction
     /// `dir_or_center` ([`ProjectionType::Parallel`]) or from the eye point
@@ -1448,6 +1500,26 @@ impl BSplineCurve {
         end_deg: f64,
         param: NurbCircleParam,
     ) -> Result<Self> {
+        Self::create_circle_segment_min_arcs(dim, frame, radius, start_deg, end_deg, param, 0)
+    }
+
+    /// [`BSplineCurve::create_circle_segment`] whose quadratic form is split into at
+    /// least `min_arcs` equal arcs (at most four; `0` is upstream's count from the
+    /// sweep). Not upstream: an exact circular fillet's sections take one arc count
+    /// along the rails (`fixes.fillet_exact_arc_spans`, WR-711).
+    ///
+    /// # Errors
+    ///
+    /// As [`BSplineCurve::create_circle_segment`].
+    pub fn create_circle_segment_min_arcs(
+        dim: u64,
+        frame: &Axis2Placement,
+        radius: f64,
+        start_deg: f64,
+        end_deg: f64,
+        param: NurbCircleParam,
+        min_arcs: usize,
+    ) -> Result<Self> {
         // check input
         check(radius >= EFF_ZERO, OP_CIRCLE, "radius below SM_EFF_ZERO")?;
         if !(2..=3).contains(&dim) {
@@ -1479,7 +1551,12 @@ impl BSplineCurve {
             start: start_deg,
             end: end_deg,
         };
-        let mut cur = circ_arc(&arc, ctp).map_err(SolidError::nl_ser(OP_CIRCLE))?;
+        let made = if min_arcs > 0 && ctp == ConicType::Quadratic {
+            quadratic_arc_min_arcs(&arc, DEFAULT_ANGLE_TOL, min_arcs)
+        } else {
+            circ_arc(&arc, ctp)
+        };
+        let mut cur = made.map_err(SolidError::nl_ser(OP_CIRCLE))?;
         if dim == 2 {
             cur.to_2d();
         }
@@ -1735,7 +1812,7 @@ impl BSplineCurve {
 }
 
 /// A 4x4 [`RealMatrix`] (`N_SetRealMatrix(.., 3, 3, NL_MT_FULL, 3)`) filled from `m`.
-fn matrix_of(m: &[[f64; 4]; 4]) -> Result<RealMatrix> {
+pub(crate) fn matrix_of(m: &[[f64; 4]; 4]) -> Result<RealMatrix> {
     let mut rma = RealMatrix::new(3, 3, MatrixType::Full, 3)?;
     for (i, row) in m.iter().enumerate() {
         for (j, &v) in row.iter().enumerate() {
@@ -1822,6 +1899,45 @@ mod tests {
         ];
         let u = vec![0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0];
         BSplineCurve::from_nurb(Curve::new(pw, 3, u).unwrap(), 3, false)
+    }
+
+    #[test]
+    fn evaluate_into_matches_evaluate_bit_for_bit() {
+        let bits = |v: &[Vec3]| -> Vec<[u64; 3]> {
+            v.iter()
+                .map(|p| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()])
+                .collect()
+        };
+        // the second curve has a zero first derivative at t = 0 (repeated point)
+        let pw = vec![
+            CPoint::new(0.0, 0.0, 0.0, NOW),
+            CPoint::new(0.0, 0.0, 0.0, NOW),
+            CPoint::new(3.0, 2.0, 1.0, NOW),
+            CPoint::new(4.0, 0.0, 0.0, NOW),
+        ];
+        let u = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+        let cusp = BSplineCurve::from_nurb(Curve::new(pw, 3, u).unwrap(), 3, false);
+        for c in [cubic(), cusp] {
+            for t in [-0.25, 0.0, 0.3, 0.5, 0.75, 1.0, 1.5] {
+                for from_left in [true, false] {
+                    for nzt in [true, false] {
+                        for nd in 0..MAX_DERIV + 2 {
+                            let full = c.evaluate(t, nd, from_left, nzt);
+                            let mut out = vec![Vec3::new(7.0, 7.0, 7.0); nd + 1];
+                            let r = c.evaluate_into(t, from_left, nzt, &mut out);
+                            match full {
+                                Ok(full) => {
+                                    assert!(r.is_ok());
+                                    assert_eq!(bits(&full), bits(&out));
+                                }
+                                Err(e) => assert_eq!(r.err(), Some(e)),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(cubic().evaluate_into(0.5, true, false, &mut []).is_err());
     }
 
     #[test]

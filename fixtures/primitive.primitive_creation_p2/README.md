@@ -1,7 +1,7 @@
 # Primitive creation p2 comparisons
 
-A case is `{ "op": N, "data": [...] }`, checked by the FFI wrapper before either
-engine runs (layouts in `crates/solidcore-ffi/src/units/primitive_primitive_creation_p2.rs`).
+A case is `{ "op": N, "data": [...] }`, checked against the runner's input contract
+before it runs (layouts in `crates/goldens/src/units/primitive_primitive_creation_p2.rs`).
 Curve records are p1's `[kind, x, y, z, a, b, c]`: a B-spline line, or a quadratic
 circular arc (the same construction as `SmApiCreateArc`). Each op calls the public
 `SmPrimitiveCreation` entry point on a fresh native B-rep with only its infinite
@@ -70,7 +70,7 @@ Four guards come from isolated native probes (one process per input, 20-25 s lim
 | --- | --- | --- |
 | A taper whose chaining deletes a curve | UB-50: `FixChainCurvesList` (`2 * SM_ZONE_TOL_3D`, deleting duplicates) deletes a curve whose ends and mid point match the chain built so far, then reads it again (segfault) | the wrapper repeats the chaining on the curves' end and mid points: two identical lines or arcs, a line and its reverse, a line from a chain's end back to its start through its last link's mid point (a repeat of no curve). With a supplied normal upstream reverses the curves and chains them again when their computed normal (`ComputeCrvsNormal`) is antiparallel to it; the wrapper repeats that pass unless its own sum of the same sampled cross products surely points along the normal (a half circle and both its chords segfault under -Z and run under +Z). The end cap at the offset end (caps 2 and 3) chains the trimmed offset curves through a copy of their list, so one deleted there is freed again at cleanup (`double free or corruption`, or a segfault); where upstream may reverse the curves, the wrapper refuses a closed chain whose short curve meets one over 100 times longer at a corner sharper than `3e-5` radians. Natively (7,236 probes over widths, lengths, sizes 1 to 1,000, heights 1 to 100, drafts -45 to 45 degrees, every normal and cap): such slivers crash up to a 1e-6 corner and run from 3e-6, links up to 5e-4 of the long side crash and 1e-3 run, and none crashed where upstream does not reverse |
 | A taper with the start cap (caps 1 and 3) whose curves close a loop while an end meets no other end or more than one | UB-247: `CreatePlanarFaceWith3DCurves` needs each curve end to meet exactly one other; when it fails, the taper deletes input curves that edges of the result still use (a segfault in `SmEdgeuse::~SmEdgeuse` as the B-rep is deleted, or inside `CreateTaperExtrude`) | the wrapper joins the curve ends within `2 * SM_ZONE_TOL_3D` (a repeat of another curve, the same ends either way and the same mid point, left out) and refuses the curves when an end meets no other end or more than one and a curve closes a loop: a line into a unit square ending at its corner (`difftest --fuzz` case `fuzz00880`), the same line stopping `1e-3` short, two squares at a corner, a line from a corner into the square, a half circle across a side (the side's ends, another mid point: no repeat). Natively (about 400 probes over tails, squares, spikes and arcs, every cap and normal) each crashes under one normal or another with the start cap and runs without it; curves that close no loop fail first and harmlessly, and clean loops ran in every probe |
-| A swept profile edge shorter than the zone tolerance (`1e-5`) | UB-215: `SweepEdgeHigh` uses the edge's curve after `MakeFaceWithCurves` freed it (segfault) | partial cones (turn below `359.99999`) that build a profile line below `1e-5`, mirroring the cone's own early failures; partial tori whose minor circle is below `1e-5` |
+| A swept profile edge shorter than the zone tolerance (`1e-5`) | UB-215: `SweepEdgeHigh` uses the edge's curve after `MakeFaceWithCurves` freed it (segfault) | partial cones (turn below `359.99999`) that build a side, base or top line from `0.9999e-6` up to `1e-5`, mirroring the cone's own early failures (a shorter line's face fails `IsDegenerateCurve` first, `SM_ERR_INVALID_INPUT`; the axis line sweeps to no face); partial tori whose minor circle is below `1e-5` |
 | A closed shell from half the zone tolerance to `1.5e-4` across | HANG-35: the ray fire that places the shell in its region takes minutes | spheres, tori and cones of that size at any turn (analytic faces from `359.99999`, stitched sweeps below) |
 
 Early failures stay compared: a cone without height or turn, a zero side, a radius
@@ -90,7 +90,29 @@ a square with a diagonal and two squares at a corner listed in another order run
 the corner rule count a chain without area as reversible under either normal (a line
 back from `1` along the same span runs under +Z), the corner rule keeps a tenfold
 margin, and the offsets' chaining before the caps (`SmPrimitiveCreation.cpp:3884`) is not
-checked. Partial spheres are not guarded: their
+checked. The cone and torus guards follow `SweepEdgeHigh`: a profile curve's swept face is refused
+(`1007`) by `IsDegenerateCurve` when `|Sv|` (the profile curve's speed, `L` for a line) or
+`|Su|` (its distance from the axis times the sweep circle's speed) is at most
+`max(1e-6, SM_EFF_ZERO * (1 + size of the curve's ends))` at all thirteen samples, or by
+`IsDegeneratePoint` when the control net's box is at most `max(1e-6, 1000 * SM_EFF_ZERO *
+(1 + its size))` along each axis; otherwise a curve shorter than the zone tolerance is
+freed by `MakeFaceWithCurves` and read after it. The sweep circle is `N_CreateCircArc`'s:
+a turn below `1e-6` degrees, or a negative one, wraps round to a (nearly) full circle,
+which is why a `1e-9` degree turn segfaults while `0.01` degrees is refused. The guard
+evaluates that predicate (`Revolution::refuses`) with a rounding margin of `1e-6`
+relative plus `1e-13` times the coordinates' size. Native probes (an instrumented
+`SmTopologySweep.cpp` reporting refusal or the freed read per face) bisected 27
+boundaries to 12 digits (cone top, base and side lines at unit size, 1,000 away and in
+`|Su|`-limited small turns; tori at major radii `0`, `0.01` and `1` over four turns);
+the predicate matched each within `2e-7` relative. Over 1,500 random cones and tori
+(origins up to `1e6`, turns from `1e-10` to 359 degrees and negative ones) every freed
+read was rejected, and the guard accepts 195 cones and 250 tori the earlier guards
+rejected (`ub215_exact_guard_accepted.json` compares 30 of them and hand-picked edges).
+It still refuses some inputs that run: faces within the margin, a short line behind a
+face refused earlier in the sweep, and tori whose face build fails (`SM_ERR`) before the
+read, which is most minor radii from about `6.3e-7` up to the zone tolerance (not
+modelled). The generator keeps the earlier cone and torus guards for its redraws
+(`generator_refuses`), so the generated cases are the same draws. Partial spheres are not guarded: their
 axis line sweeps to no face and their arc's face fails the degenerate-surface test
 first, so no probe crashed. Every rejected case that reaches the native sweep defers in
 Rust today (`topology.brep_p8`), so the guards remove no compared value. The generator

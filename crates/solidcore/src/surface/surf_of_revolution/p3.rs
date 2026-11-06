@@ -92,6 +92,7 @@ use crate::kernel::Kernel;
 use crate::math::{min2, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_DEG, EFF_ZERO_SQRT, PI};
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_curve_n_lib::TrimMode;
+use crate::nurbs::b_spline_surface::p2::EditNotify;
 use crate::nurbs::b_spline_surface::{
     BSplineSurface, BoundingBoxRequest, IsoCurveOptions, SurfParamType,
 };
@@ -207,7 +208,7 @@ fn iso_point_inversion(
         &mut sol,
     );
     if let Err(e) = &r {
-        if e.is_unported() {
+        if e.is_unported_or_cancelled() {
             return Err(e.clone());
         }
     }
@@ -319,30 +320,36 @@ impl SurfOfRevolution {
         rotate_n_move: &Axis2Placement,
         scale: Option<Vec3>,
     ) -> Result<()> {
-        self.transform_at_depth(k, rotate_n_move, scale, 0)
+        self.transform_at_depth(k, rotate_n_move, scale, 0, &mut |_| Ok(()))
     }
 
+    /// [`Self::transform`] at geometry depth `depth`, with the edit notifications of
+    /// the NURB transform ([`BSplineSurface::transform_notifying`]) sent through
+    /// `notify`.
     pub(crate) fn transform_at_depth(
         &mut self,
         k: &Kernel,
         rotate_n_move: &Axis2Placement,
         scale: Option<Vec3>,
         depth: usize,
+        notify: &mut EditNotify<'_>,
     ) -> Result<()> {
-        self.transform_using_at_depth(k, rotate_n_move, scale, &Self::own_sweep_iso, depth)
+        self.transform_using_at_depth(k, rotate_n_move, scale, &Self::own_sweep_iso, depth, notify)
     }
 
     /// [`Self::transform`] with the polar converter rebuilt from the sweep iso curves
     /// of `iso` (upstream's virtual `CreateIsoParametricCurve`: a derived class such
-    /// as `SmTorus` passes its override).
+    /// as `SmTorus` passes its override), and the edit notifications of the NURB
+    /// transform sent through `notify`.
     pub(crate) fn transform_using(
         &mut self,
         k: &Kernel,
         rotate_n_move: &Axis2Placement,
         scale: Option<Vec3>,
         iso: SweepIsoFn<'_>,
+        notify: &mut EditNotify<'_>,
     ) -> Result<()> {
-        self.transform_using_at_depth(k, rotate_n_move, scale, iso, 0)
+        self.transform_using_at_depth(k, rotate_n_move, scale, iso, 0, notify)
     }
 
     fn transform_using_at_depth(
@@ -352,6 +359,7 @@ impl SurfOfRevolution {
         scale: Option<Vec3>,
         iso: SweepIsoFn<'_>,
         depth: usize,
+        notify: &mut EditNotify<'_>,
     ) -> Result<()> {
         let identity_scale = Vec3::new(1.0, 1.0, 1.0);
 
@@ -390,7 +398,8 @@ impl SurfOfRevolution {
 
         // apply transformation to underlying Nurb
         if self.base.nurb.is_some() {
-            self.base.transform(rotate_n_move, scale)?;
+            self.base
+                .transform_notifying(rotate_n_move, scale, notify)?;
         }
 
         // update PolarConverter
@@ -495,8 +504,7 @@ impl SurfOfRevolution {
 
         // arrive here when polar conversions are possible
         let circle = self
-            .polar_curve
-            .as_ref()
+            .polar_curve()
             .ok_or(SolidError::null_pointer(OP_TO_NURBS))?;
         let (mut x, exact_conversion) = self
             .polar
@@ -641,7 +649,7 @@ impl SurfOfRevolution {
         let gen = tmp.as_ref().unwrap_or(gen_own);
 
         // construct and init global solver
-        let mut gs: GlobalSolver<'_, O> = GlobalSolver::new();
+        let mut gs: GlobalSolver<'_, O> = GlobalSolver::new_with_kernel(k);
         gs.set_3d_tolerance(distance_tolerance);
         gs.set_solver_operation(operation);
         gs.set_solution_requested(SolutionRequested::All);
@@ -720,8 +728,7 @@ impl SurfOfRevolution {
         sol.num_variables = 2;
 
         let circle = self
-            .polar_curve
-            .as_ref()
+            .polar_curve()
             .ok_or(SolidError::null_pointer(OP_DROP))?;
         let num_gen = gen_solutions.len();
 
@@ -914,6 +921,51 @@ impl SurfOfRevolution {
         approx_tol_3d: Option<f64>,
     ) -> Result<(bool, SurfaceIntersection)> {
         intersect_revolved(self, k, uv_domain, other, other_uv_domain, approx_tol_3d)
+    }
+
+    /// [`Self::intersect_with_cone`] into `out` (reset first). On an error `out` keeps
+    /// what was appended before it, as upstream leaves its output arrays.
+    pub(crate) fn intersect_with_cone_into<R: Revolved + ?Sized>(
+        &self,
+        k: &Kernel,
+        uv_domain: &Extent2d,
+        cone: &R,
+        cone_uv_domain: &Extent2d,
+        approx_tol_3d: Option<f64>,
+        out: &mut SurfaceIntersection,
+    ) -> Result<bool> {
+        if !self.planar_generator {
+            *out = SurfaceIntersection::default();
+            return Ok(true);
+        }
+        intersect_revolved_into(self, k, uv_domain, cone, cone_uv_domain, approx_tol_3d, out)
+    }
+
+    /// [`Self::intersect_with_sphere`] into `out` (reset first). On an error `out` keeps
+    /// what was appended before it, as upstream leaves its output arrays.
+    pub(crate) fn intersect_with_sphere_into<R: Revolved + ?Sized>(
+        &self,
+        k: &Kernel,
+        uv_domain: &Extent2d,
+        sphere: &R,
+        sphere_uv_domain: &Extent2d,
+        approx_tol_3d: Option<f64>,
+        out: &mut SurfaceIntersection,
+    ) -> Result<bool> {
+        // Can not intersect things with non planar generator curves here
+        if !self.planar_generator {
+            *out = SurfaceIntersection::default();
+            return Ok(true);
+        }
+        intersect_revolved_into(
+            self,
+            k,
+            uv_domain,
+            sphere,
+            sphere_uv_domain,
+            approx_tol_3d,
+            out,
+        )
     }
 
     // ---- analytic data from the NURB ------------------------------------------------
@@ -1183,7 +1235,7 @@ impl SurfOfRevolution {
         if is_ascii {
             db.go_to_next_line();
         }
-        let (polar, polar_curve) = PolarConversion::read_from_db_with_curve(k, db, version)?;
+        let (polar, polar_curve) = PolarConversion::read_from_db_with_curve_object(k, db, version)?;
         surf.polar = polar;
         surf.polar_curve = polar_curve;
 
@@ -1245,19 +1297,43 @@ pub(crate) fn intersect_revolved<T: Revolved + ?Sized, R: Revolved + ?Sized>(
     other_uv_domain: &Extent2d,
     approx_tol_3d: Option<f64>,
 ) -> Result<(bool, SurfaceIntersection)> {
+    let mut out = SurfaceIntersection::default();
+    let more = intersect_revolved_into(
+        this,
+        k,
+        uv_domain,
+        other,
+        other_uv_domain,
+        approx_tol_3d,
+        &mut out,
+    )?;
+    Ok((more, out))
+}
+
+/// [`intersect_revolved`] into `out` (reset first). On an error `out` keeps what was appended
+/// before it, as upstream leaves its output arrays.
+pub(crate) fn intersect_revolved_into<T: Revolved + ?Sized, R: Revolved + ?Sized>(
+    this: &T,
+    k: &Kernel,
+    uv_domain: &Extent2d,
+    other: &R,
+    other_uv_domain: &Extent2d,
+    approx_tol_3d: Option<f64>,
+    out: &mut SurfaceIntersection,
+) -> Result<bool> {
     // init output
     let me = this.as_surf_of_revolution();
-    let mut out = SurfaceIntersection::default();
+    *out = SurfaceIntersection::default();
     let other_rev = other.as_surf_of_revolution();
 
     // no work - non planar generator curves
     if !me.planar_generator || !other_rev.planar_generator {
-        return Ok((true, out));
+        return Ok(true);
     }
 
     // no work - Self Intersection is best done by NURBS to get UV curves.
     if core::ptr::eq(me, other_rev) {
-        return Ok((true, out));
+        return Ok(true);
     }
 
     // locals
@@ -1273,7 +1349,7 @@ pub(crate) fn intersect_revolved<T: Revolved + ?Sized, R: Revolved + ?Sized>(
 
     // no work - coordinate systems are not parallel
     if !z_axis.is_parallel_to(other_z_axis, angular_tolerance) {
-        return Ok((true, out));
+        return Ok(true);
     }
 
     // arrive here when both rotation axes are parallel to one another
@@ -1297,7 +1373,7 @@ pub(crate) fn intersect_revolved<T: Revolved + ?Sized, R: Revolved + ?Sized>(
     // no work = rotation axes are not coincident
     let (distance, _) = line_point_distance(origin, z_axis, other_origin);
     if distance > tol / 100.0 {
-        return Ok((true, out));
+        return Ok(true);
     }
 
     // map input NurbDomains to StepDomains
@@ -1333,7 +1409,7 @@ pub(crate) fn intersect_revolved<T: Revolved + ?Sized, R: Revolved + ?Sized>(
 
     // no work - no sweep intersections
     if ivls.is_empty() {
-        return Ok((false, out));
+        return Ok(false);
     }
 
     // get temp genCurves in the same plane
@@ -1478,7 +1554,7 @@ pub(crate) fn intersect_revolved<T: Revolved + ?Sized, R: Revolved + ?Sized>(
     }
 
     // all done
-    Ok((false, out))
+    Ok(false)
 }
 
 #[cfg(test)]

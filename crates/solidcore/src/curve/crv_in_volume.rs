@@ -20,20 +20,27 @@
 //! | [`CrvInVolume::evaluate_point`]                | `EvaluatePoint`                                   |
 //! | [`CrvInVolume::calculate_continuities`]        | `CalculateContinuities`                           |
 //! | [`CrvInVolume::knots`], [`CrvInVolume::knots_ref`] | `GetKnots`                                    |
-//! | [`CrvInVolume::generate_mults`]                | `GenerateMults`                                   |
+//! | [`CrvInVolume::generate_mults`], `_opt_in`, `_with_kernel` | `GenerateMults`                       |
 //! | [`CrvInVolume::number_natural_knots`]          | `GetNumberNaturalKnots`                           |
 //! | [`CrvInVolume::edit_parameterization`]         | `EditParameterization`                            |
 //! | [`CrvInVolume::reverse_parameterization`]      | `ReverseParameterization`                         |
 //! | [`CrvInVolume::trim`]                          | `Trim`                                            |
 //! | [`CrvInVolume::transform`]                     | `Transform`                                       |
 //! | [`CrvInVolume::read_from_db`]                  | `ReadFromDB`                                      |
+//! | [`CrvInVolume::make_exact_b_spline_if_possible_with`] | `MakeExactBSplineIfPossible`               |
+//! | `make_exact_b_spline_out_curve_from_{in,param}_space` (private) | `SmVolume::MakeExactBSplineOutCurveFrom{In,Param}Space` |
+//! | `make_exact_b_spline_1st_out_curve` (private)  | `SmVolume`/`SmBSplineVolume`/`SmTransform::MakeExactBSpline1stOutCurve` |
 //! | `SetContext` (dropped)                         | `SetContext`                                      |
 //!
 //! Deviations:
 //! - **Nesting.** `new` returns `InvalidInput` when the curve or the volume would nest
-//!   deeper than [`MAX_GEOMETRY_NESTING`](crate::surface::surface::p2::MAX_GEOMETRY_NESTING)
+//!   deeper than [`MAX_GEOMETRY_NESTING`]
 //!   (32; upstream fixtures nest at most 3), which bounds the recursive dispatch,
-//!   cloning and dropping of nested geometry (no limit upstream).
+//!   cloning and dropping of nested geometry (no limit upstream). A database read bounds
+//!   the same graph through `DatabaseReader::enter_nested` (32) on both nested readers.
+//!   No method replaces the curve or the volume after construction, so every
+//!   `CrvInVolume` holds a bounded graph; that is what [`CrvInVolume::copy`] and the
+//!   infallible `Clone` rely on.
 //! - **Volumes.** The volume is a [`Volume`] (units `surface.volume_p1`, `_p2`);
 //!   the queries of the unported volume kinds return [`SolidError::Unported`].
 //! - **Curve classification.** `GetKnots` classifies the base curve against the
@@ -46,10 +53,20 @@
 //!   in is already this object's copy) and the owner flag is kept as data: it
 //!   decides [`CrvInVolume::owns_curve`], [`CrvInVolume::owns_volume`] and whether
 //!   `Trim` / `ReverseParameterization` are allowed, as upstream. The copy
-//!   constructor clones both parts (upstream copies owned parts and shares the
-//!   rest; the result is the same geometry) and recomputes the owner flag as
-//!   upstream. The owner links of the contained objects (`SetOwner(this)`) and the
-//!   notifications (`Notify`) are not modelled; `SetContext` and the `SmContext`
+//!   constructor - [`CrvInVolume::copy`] and `Clone` alike - follows upstream part by
+//!   part: a part this object owns is copied with that part's copy constructor, one it
+//!   does not own is an exact copy that keeps its owner (upstream shares it), and the
+//!   owner flag is normalized using the recognized ownership predicates, not a bit
+//!   mask: noncanonical flags own neither part. The volume is copied field-wise; upstream
+//!   copy-constructs the volume whenever it owns either part (also for flag 1, which
+//!   owns only the curve) and shares it at flag 0, and the `Copy` knot fix-up of a
+//!   B-spline volume is not modelled, as in [`CrvInVolume::copy`]. The break cache is
+//!   copied only when `m_bNeedBreaks` is FALSE, as upstream; the operations here leave
+//!   the cache empty whenever they invalidate it (`Trim` and `EditParameterization`
+//!   clear both arrays when they set the flag), so that branch is not observable
+//!   through them. The owner links of the contained objects (`SetOwner(this)`) are recorded
+//!   as bits ([`CrvInVolume::owner_links`], read by `AssertValid`: `ReadFromDB` sets
+//!   flag 3 without linking); the notifications (`Notify`) are not modelled; `SetContext` and the `SmContext`
 //!   arguments (they only choose where upstream allocates) are dropped.
 //! - **Equality.** Upstream first compares the curve and volume pointers; held by
 //!   value, the parts are always compared by value ([`Volume::approx_eq`]), after the parameter-space flag and the curves, in
@@ -80,7 +97,20 @@
 //!   stream had already failed) leaves upstream's variable uninitialised; the port
 //!   returns [`SolidError::InvalidInput`]. Counts are bounded by the bytes left
 //!   (`plan/findings.md`, "header-declared sizes").
-//! - **Not in this unit.** `EvaluateVolume`, `MakeExactBSplineIfPossible`,
+//! - **Exact B-spline.** `MakeExactBSplineIfPossible` and the volume functions it
+//!   needs (`MakeExactBSplineOutCurveFrom{Param,In}Space`, the
+//!   `MakeExactBSpline1stOutCurve` of `SmVolume`, `SmBSplineVolume` (both `NULL`) and
+//!   `SmTransform`) are in no unit in `units.json`; they are ported here as
+//!   [`CrvInVolume::make_exact_b_spline_if_possible_with`], which takes the kernel the
+//!   curve copies need (upstream's takes the context). The bend, unbend and twist
+//!   overrides are ported beside their volumes
+//!   ([`BendVolume::make_exact_b_spline_1st_out_curve`](crate::surface::bend_volume::BendVolume::make_exact_b_spline_1st_out_curve)
+//!   and the unbend and twist counterparts). The compounding loops stop with
+//!   `InvalidInput` past `MAX_GEOMETRY_NESTING` maps (upstream walks the whole chain);
+//!   the result is a [`Curve`] (upstream an `SmBSplineCurve*`, which a twist fills with
+//!   a copy of any input kind); a failed `Copy` (upstream then dereferences `NULL`) is
+//!   returned as its error.
+//! - **Not in this unit.** `EvaluateVolume`,
 //!   `CreateMirrorCurve`, `SetBaseCurve`, `SetVolume`, `SetOwnerFlag`, `MakeOwner`,
 //!   `GetMemoryUsed`, `WriteToDB`, `Dump`, `AssertValid` and `GetRootCurve` belong
 //!   to other units or are out of scope; the base constructor `SmCurve(ULONG)`
@@ -89,10 +119,19 @@
 //!   `num_derivs` exceeds [`crate::curve::MAX_EVAL_DERIVS`] (upstream fills a
 //!   caller-supplied array of any length; the port's output `Vec` must not be sized by
 //!   an unbounded caller value).
+//! - **Break-continuity indexing (`WR-33`).** Upstream `GenerateMults` indexes `m_sConts`
+//!   by the query knot index `ii` instead of the matched break index `bi`
+//!   (`SmCrvInVolume.cpp:968`). Default behaviour keeps `ii` (returning
+//!   [`SolidError::InvalidInput`] where `ii >= conts.len()`); setting
+//!   [`crate::kernel::UpstreamFixes::crv_in_volume_mults_by_break_index`] indexes
+//!   `conts[bi]` in [`CrvInVolume::knots`], [`CrvInVolume::knots_ref`],
+//!   [`CrvInVolume::knots_with_status`], [`CrvInVolume::knots_with_status_ref`] and
+//!   [`CrvInVolume::generate_mults_with_kernel`] (and `by_break = true` in
+//!   [`CrvInVolume::generate_mults_opt_in`]).
 
 use crate::curve::curve::p2::{
     at, evaluate_continuity, is_kind_of as curve_is_kind_of, Curve, CurveEvaluate, KnotsWithStatus,
-    CRV_IN_VOLUME_TYPE,
+    BSPLINE_CURVE_TYPE, CRV_IN_VOLUME_TYPE,
 };
 use crate::error::{ignored, Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;
@@ -104,11 +143,12 @@ use crate::intersect::curve_class::p8::volume_discontinuity_intervals;
 use crate::kernel::Kernel;
 use crate::math::{max2, BIG_DOUBLE, BOUNDED_INFINITE_PARAM, EFF_ZERO};
 use crate::nurbs::b_spline_curve_n_lib::TrimMode;
-use crate::surface::surface::p2::{check_geometry_nesting, NestedGeometry};
+use crate::surface::srf_in_volume::transform_axis2_placement;
+use crate::surface::surface::p2::{check_geometry_nesting, NestedGeometry, MAX_GEOMETRY_NESTING};
 use crate::surface::volume::p1::{
     lift_first_derivative, lift_second_derivative, lift_third_derivative,
 };
-use crate::surface::volume::{EvalOptions, Volume};
+use crate::surface::volume::{EvalOptions, Volume, VolumeKind};
 use crate::topology::database_io::{DatabaseReader, FileType};
 
 const OP: &str = "curve::crv_in_volume::CrvInVolume";
@@ -116,6 +156,7 @@ const OP_KNOTS: &str = "curve::crv_in_volume::CrvInVolume::knots";
 const OP_MULTS: &str = "curve::crv_in_volume::CrvInVolume::generate_mults";
 const OP_CONTS: &str = "curve::crv_in_volume::CrvInVolume::calculate_continuities";
 const OP_READ: &str = "curve::crv_in_volume::CrvInVolume::read_from_db";
+const OP_EXACT: &str = "curve::crv_in_volume::CrvInVolume::make_exact_b_spline_if_possible_with";
 
 /// `MAX_DERIVS` of `Evaluate`: the volume lifts go up to third derivatives.
 const MAX_DERIVS: usize = 3;
@@ -149,6 +190,117 @@ fn classify_against_volume(
     volume_discontinuity_intervals(k, curve, *interval, tol, volume, in_param_space)
 }
 
+// ---- exact B-spline images ------------------------------------------------------------
+
+/// `MakeExactBSpline1stOutCurve(eInputSpace, rInputCurve, rpNewCurve)` of one map (no
+/// compounding), from in-space when `in_space` (`SM_VS_IN_SPACE`), else from parameter
+/// space: `None` when the map cannot produce an exact B-spline.
+///
+/// `SmVolume` and `SmBSplineVolume` never can (header bodies); `SmTransform` copies a
+/// B-spline-derived curve and transforms it by its placement when the matrix is a
+/// right-handed unit orthonormal one (upstream asserts the orient map is NULL for a
+/// parameter-space input and uses the same mapping either way); the bend, unbend and
+/// twist overrides are [`BendVolume::make_exact_b_spline_1st_out_curve`](crate::surface::bend_volume::BendVolume::make_exact_b_spline_1st_out_curve)
+/// and its unbend and twist counterparts.
+fn make_exact_b_spline_1st_out_curve(
+    k: &Kernel,
+    map: &Volume,
+    in_space: bool,
+    curve: &Curve,
+) -> Result<Option<Curve>> {
+    match map.kind() {
+        VolumeKind::Base | VolumeKind::BSpline(_) => Ok(None),
+        VolumeKind::Transform(t) => {
+            // for geometry derived from SmBSpline
+            if curve.is_kind_of(BSPLINE_CURVE_TYPE) {
+                // for Transforms which can be represented by SmAxis2Placement mappings
+                if let Some(placement) = transform_axis2_placement(t) {
+                    // copy and transform the curve (statuses ignored)
+                    let mut new_curve = curve.copy(k)?;
+                    ignored(new_curve.transform(k, &placement, None))?;
+                    return Ok(Some(new_curve));
+                }
+            }
+            Ok(None)
+        }
+        VolumeKind::Bend(b) => b.make_exact_b_spline_1st_out_curve(k, map, in_space, curve),
+        VolumeKind::Unbend(u) => u.make_exact_b_spline_1st_out_curve(k, map, in_space, curve),
+        VolumeKind::Twist(t) => t.make_exact_b_spline_1st_out_curve(k, map, in_space, curve),
+    }
+}
+
+/// `SmVolume::MakeExactBSplineOutCurveFromInSpace`: `curve` projected exactly through
+/// every compounded map, or `None` when one cannot.
+fn make_exact_b_spline_out_curve_from_in_space(
+    k: &Kernel,
+    volume: &Volume,
+    in_space_curve: &Curve,
+) -> Result<Option<Curve>> {
+    // init output and locals
+    let mut this_map = Some(volume);
+    let mut this_in_space: Option<Curve> = None;
+
+    // for every compounding map
+    let mut depth = 0;
+    while let Some(map) = this_map {
+        depth += 1;
+        if depth > MAX_GEOMETRY_NESTING {
+            return Err(SolidError::invalid_input(
+                OP_EXACT,
+                "volume chain deeper than MAX_GEOMETRY_NESTING",
+            ));
+        }
+        // see if the current InSpaceCurve can project exactly to the Next OutSpace
+        let input = this_in_space.as_ref().unwrap_or(in_space_curve);
+        let Some(new_curve) = make_exact_b_spline_1st_out_curve(k, map, true, input)? else {
+            // return NULL when an exact projection was not possible
+            return Ok(None);
+        };
+
+        // set up for the next iteration
+        this_in_space = Some(new_curve);
+        this_map = map.next_map();
+    }
+    Ok(this_in_space)
+}
+
+/// `SmVolume::MakeExactBSplineOutCurveFromParamSpace`: the first map from parameter
+/// space, then every compounded map from in-space; `None` when one cannot.
+fn make_exact_b_spline_out_curve_from_param_space(
+    k: &Kernel,
+    volume: &Volume,
+    param_space_curve: &Curve,
+) -> Result<Option<Curve>> {
+    // for 1st volume mapping - Get 1stOutSpace project if possible
+    let Some(mut new_curve) =
+        make_exact_b_spline_1st_out_curve(k, volume, false, param_space_curve)?
+    else {
+        // return NULL when an exact projection was not possible
+        return Ok(None);
+    };
+
+    // for every subsequent compounding map
+    let mut this_map = volume.next_map();
+    let mut depth = 1;
+    while let Some(map) = this_map {
+        depth += 1;
+        if depth > MAX_GEOMETRY_NESTING {
+            return Err(SolidError::invalid_input(
+                OP_EXACT,
+                "volume chain deeper than MAX_GEOMETRY_NESTING",
+            ));
+        }
+        // see if the current InSpaceCurve can project exactly to the Next OutSpace
+        let Some(next) = make_exact_b_spline_1st_out_curve(k, map, true, &new_curve)? else {
+            // return NULL when an exact projection was not possible
+            return Ok(None);
+        };
+        new_curve = next;
+        this_map = map.next_map();
+    }
+    Ok(Some(new_curve))
+}
+
 // ---- continuity codes ---------------------------------------------------------------
 
 /// The `SmContinuityType` of integer `code` (the C cast in `ReadFromDB`); `None`
@@ -180,7 +332,7 @@ pub const fn continuity_from_code(code: i64) -> Option<ContinuityType> {
 /// volume's parameter space or in-space and is mapped to the volume's final
 /// out-space. Its "knots" are the base curve's knots plus the parameters where the
 /// base curve crosses the volume's discontinuity iso-planes, cached once computed.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CrvInVolume {
     /// `m_pCurve`: the base curve.
     curve: Curve,
@@ -198,6 +350,56 @@ pub struct CrvInVolume {
     /// `m_lOwnerFlag`: bit 1 owns the curve, bit 2 owns the volume (only the values
     /// 1 and 3, and 2 and 3, count as owning).
     owner_flag: u64,
+    /// Which parts upstream links back to this object (`SetOwner(this)`): bit 1 the
+    /// curve, bit 2 the volume. The constructors, the copy constructor and `Copy` link
+    /// what the owner flag owns; `ReadFromDB` sets flag 3 without linking.
+    owner_links: u64,
+}
+
+/// The copy constructor `SmCrvInVolume::SmCrvInVolume(const SmCrvInVolume&)`
+/// (`SmCrvInVolume.cpp:102-159`), not the virtual `Copy` (that is
+/// [`CrvInVolume::copy`]): the owner flag is normalized from the recognized ownership
+/// predicates, the break cache is kept only when it is current, and the base curve is
+/// copied with the copy constructor (which fixes its knots up) when this object owns
+/// it, but exactly - keeping the curve and its owner - when upstream would share it
+/// instead. The volume is held by value, so it is a field-wise copy either way.
+///
+/// Infallible, unlike [`CrvInVolume::copy`]: the exact copy of a borrowed curve is
+/// [`Curve`]'s `clone_exact_bounded`, which walks the same nesting-bounded graph the
+/// derived `Clone` this replaces walked (see the module's nesting deviation).
+impl Clone for CrvInVolume {
+    fn clone(&self) -> Self {
+        let owns_curve = self.owns_curve();
+        let owns_volume = self.owns_volume();
+        let owner_flag = match (owns_curve, owns_volume) {
+            (true, true) => 3,
+            (true, false) => 1,
+            (false, true) => 2,
+            (false, false) => 0,
+        };
+        // copy knots when appropriate
+        let (breaks, conts) = if self.need_breaks {
+            (Vec::new(), Vec::new())
+        } else {
+            (self.breaks.clone(), self.conts.clone())
+        };
+        Self {
+            curve: if owns_curve {
+                // an owned curve is copied by its copy constructor
+                self.curve.clone()
+            } else {
+                // a curve shared upstream is an exact copy here
+                self.curve.clone_exact_bounded()
+            },
+            in_param_space: self.in_param_space,
+            volume: self.volume.clone(),
+            need_breaks: self.need_breaks,
+            breaks,
+            conts,
+            owner_flag,
+            owner_links: owner_flag & 3,
+        }
+    }
 }
 
 impl CrvInVolume {
@@ -211,6 +413,7 @@ impl CrvInVolume {
             breaks: self.breaks.clone(),
             conts: self.conts.clone(),
             owner_flag: self.owner_flag,
+            owner_links: self.owner_links,
         }
     }
 
@@ -227,6 +430,7 @@ impl CrvInVolume {
             breaks: self.breaks.clone(),
             conts: self.conts.clone(),
             owner_flag: self.owner_flag,
+            owner_links: self.owner_links,
         })
     }
 
@@ -240,7 +444,7 @@ impl CrvInVolume {
     /// # Errors
     ///
     /// `InvalidInput` when `curve` or `volume` nests deeper than
-    /// [`MAX_GEOMETRY_NESTING`](crate::surface::surface::p2::MAX_GEOMETRY_NESTING) - 1.
+    /// [`MAX_GEOMETRY_NESTING`] - 1.
     pub fn new(
         curve: Curve,
         in_param_space: bool,
@@ -267,14 +471,20 @@ impl CrvInVolume {
             breaks: Vec::new(),
             conts: Vec::new(),
             owner_flag,
+            owner_links: owner_flag & 3,
         })
     }
 
     /// The copy constructor (`Copy`): copies both parts, keeps the break cache when
     /// it is current, and sets the owner flag to 3, 1, 2 or 0 from what this object
-    /// owns.
-    #[must_use]
-    pub fn copy(&self) -> Self {
+    /// owns. A curve this object does not own is shared upstream, so here it is an
+    /// exact copy that keeps its owner (`Curve::clone` would fix its knots up).
+    ///
+    /// # Errors
+    ///
+    /// Those of `Curve::clone_for_evaluation` on a curve not owned (geometry
+    /// nested too deeply).
+    pub fn copy(&self) -> Result<Self> {
         let owns_curve = self.owns_curve();
         let owns_volume = self.owns_volume();
         let owner_flag = if owns_curve && owns_volume {
@@ -291,15 +501,37 @@ impl CrvInVolume {
         } else {
             (self.breaks.clone(), self.conts.clone())
         };
-        Self {
-            curve: self.curve.clone(),
+        let curve = if owns_curve {
+            self.curve.clone()
+        } else {
+            self.curve.clone_for_evaluation()?
+        };
+        Ok(Self {
+            curve,
             in_param_space: self.in_param_space,
             volume: self.volume.clone(),
             need_breaks: self.need_breaks,
             breaks,
             conts,
             owner_flag,
-        }
+            owner_links: owner_flag & 3,
+        })
+    }
+
+    /// `CreateMirrorCurve`: a copy of this curve whose volume is mirrored about
+    /// `mirror_plane`. The parts are held by value, so the copy never shares (and the
+    /// mirror never edits) this curve's volume, which upstream does for a volume the
+    /// curve does not own.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Volume::mirror`].
+    pub fn create_mirror_curve(&self, mirror_plane: &Axis2Placement) -> Result<Self> {
+        // copy this curve
+        let mut new_curve = self.copy()?;
+        // mirror the the volume
+        new_curve.volume.mirror(mirror_plane)?;
+        Ok(new_curve)
     }
 
     // ---- simple access --------------------------------------------------------------
@@ -358,6 +590,13 @@ impl CrvInVolume {
         self.need_breaks = need_breaks;
         self.breaks = breaks;
         self.conts = conts;
+    }
+
+    /// Whether upstream's curve (bit 1) and volume (bit 2) name this object as their
+    /// owner (`GetOwner() == this`; see the `owner_links` field).
+    #[must_use]
+    pub const fn owner_links(&self) -> u64 {
+        self.owner_links
     }
 
     /// `OwnsCurve`: owner flag 1 or 3.
@@ -445,6 +684,7 @@ impl CrvInVolume {
     /// points forward along it, else from the other side.
     fn volume_derivs(
         &self,
+        k: &Kernel,
         crv: &[Vec3],
         n: usize,
         from_left: bool,
@@ -458,6 +698,7 @@ impl CrvInVolume {
             if t.z > 0.0 { from_left } else { !from_left },
         ];
         let opts = EvalOptions {
+            fixes: k.fixes,
             from_left: sides,
             non_zero_tangents,
             ..EvalOptions::default()
@@ -499,13 +740,13 @@ impl CrvInVolume {
             .evaluate(k, t, n_eval, from_left, non_zero_tangents)?;
 
         // Volume Evaluate / Map - with fewer derivatives while the volume can't
-        let mut vol = self.volume_derivs(&crv, n_eval, from_left, non_zero_tangents);
+        let mut vol = self.volume_derivs(k, &crv, n_eval, from_left, non_zero_tangents);
         while let Err(e) = &vol {
-            if e.is_unported() || n_eval == 0 {
+            if e.is_unported_or_cancelled() || n_eval == 0 {
                 break;
             }
             n_eval -= 1;
-            vol = self.volume_derivs(&crv, n_eval, from_left, non_zero_tangents);
+            vol = self.volume_derivs(k, &crv, n_eval, from_left, non_zero_tangents);
         }
         let vol = vol?;
 
@@ -600,9 +841,9 @@ impl CrvInVolume {
     // ---- breaks ---------------------------------------------------------------------
 
     /// The cached breaks inside `interval` (`ContainsValue`, no tolerance) or all of
-    /// them, with their multiplicities from [`Self::generate_mults`] (status
+    /// them, with their multiplicities from [`Self::generate_mults_opt_in`] (status
     /// ignored, as upstream: none when its state check fails, else partly filled).
-    fn cached_knots(&self, interval: Option<&Extent1d>) -> (Vec<f64>, Vec<usize>) {
+    fn cached_knots(&self, interval: Option<&Extent1d>, by_break: bool) -> (Vec<f64>, Vec<usize>) {
         let knots: Vec<f64> = match interval {
             None => self.breaks.clone(),
             Some(ivl) => self
@@ -618,7 +859,7 @@ impl CrvInVolume {
         } else {
             vec![0; knots.len()]
         };
-        let _ = self.fill_mults(&knots, &mut mults);
+        let _ = self.fill_mults(&knots, &mut mults, by_break);
         (knots, mults)
     }
 
@@ -666,7 +907,7 @@ impl CrvInVolume {
             self.in_param_space,
         ) {
             Ok(classes) => classes,
-            Err(e @ SolidError::Unported { .. }) => return Err(e),
+            Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => return Err(e),
             Err(e) => {
                 let status = Err(e);
                 return Ok((
@@ -810,7 +1051,8 @@ impl CrvInVolume {
     ) -> Result<KnotsWithStatus> {
         // low work - Knots and Conts already cached
         if !self.need_breaks {
-            let (knots, mults) = self.cached_knots(interval);
+            let by_break = k.fixes.crv_in_volume_mults_by_break_index;
+            let (knots, mults) = self.cached_knots(interval, by_break);
             return Ok(KnotsWithStatus::success(knots, mults));
         }
         let (mut r, tol) = self.compute_breaks(k)?;
@@ -840,7 +1082,8 @@ impl CrvInVolume {
         interval: Option<&Extent1d>,
     ) -> Result<KnotsWithStatus> {
         if !self.need_breaks {
-            let (knots, mults) = self.cached_knots(interval);
+            let by_break = k.fixes.crv_in_volume_mults_by_break_index;
+            let (knots, mults) = self.cached_knots(interval, by_break);
             return Ok(KnotsWithStatus::success(knots, mults));
         }
         let (mut r, tol) = self.compute_breaks(k)?;
@@ -876,8 +1119,10 @@ impl CrvInVolume {
         self.knots_with_status_ref(k, interval)?.into_result()
     }
 
-    /// Fills `mults` (one per knot, zero-initialised) from the cached continuities.
-    fn fill_mults(&self, knots: &[f64], mults: &mut [usize]) -> Result<()> {
+    /// Fills `mults` (one per knot, zero-initialised) from the cached continuities,
+    /// indexing `self.conts` by the matched break index `bi` when `by_break` is `true`
+    /// (`WR-33`), else by the query knot index `ii` (pinned upstream).
+    fn fill_mults(&self, knots: &[f64], mults: &mut [usize], by_break: bool) -> Result<()> {
         // check state - cached breaks and conts are current
         if self.need_breaks || self.breaks.len() != self.conts.len() {
             return Err(SolidError::sm_err(OP_MULTS));
@@ -913,8 +1158,9 @@ impl CrvInVolume {
                 continue;
             }
 
-            // check cache currency (upstream indexes the continuities by the knot index)
-            let cont = *self.conts.get(ii).ok_or_else(|| {
+            // check cache currency (upstream indexes continuities by `ii`; WR-33 uses `bi`)
+            let cont_idx = if by_break { bi } else { ii };
+            let cont = *self.conts.get(cont_idx).ok_or_else(|| {
                 SolidError::invalid_input(OP_MULTS, "more knots matched than continuities")
             })?;
             if cont == ContinuityType::Undefined {
@@ -940,15 +1186,44 @@ impl CrvInVolume {
     /// (`GenerateMults`): 3 for a discontinuity, 2 up to G1-G2-G3, 1 up to
     /// C1-C2-G3, else 0; 0 for a knot that is not a break.
     ///
+    /// Indexes `self.conts` by the query knot index (pinned upstream behaviour; see
+    /// [`Self::generate_mults_with_kernel`] for the `WR-33` opt-in).
+    ///
     /// # Errors
     ///
     /// `SM_ERR` when the cache is not current, a knot lies past the last break or a
     /// continuity is undefined; [`SolidError::InvalidInput`] when a matched knot's
     /// index has no continuity (upstream reads past the array).
     pub fn generate_mults(&self, knots: &[f64]) -> Result<Vec<usize>> {
+        self.generate_mults_opt_in(knots, false)
+    }
+
+    /// [`Self::generate_mults`], indexing cached continuities by the matched break
+    /// index when `by_break` is `true` (`WR-33`), or by the query knot index when
+    /// `false` (pinned upstream).
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR` when the cache is not current, a knot lies past the last break or the
+    /// selected continuity is undefined; [`SolidError::InvalidInput`] when `by_break`
+    /// is `false` and a matched knot's index exceeds the cached continuities.
+    pub fn generate_mults_opt_in(&self, knots: &[f64], by_break: bool) -> Result<Vec<usize>> {
         let mut mults = vec![0; knots.len()];
-        self.fill_mults(knots, &mut mults)?;
+        self.fill_mults(knots, &mut mults, by_break)?;
         Ok(mults)
+    }
+
+    /// [`Self::generate_mults`] reading [`crv_in_volume_mults_by_break_index`][fix]
+    /// from [`Kernel::fixes`] (`WR-33`).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::generate_mults_opt_in`].
+    ///
+    /// [fix]: crate::kernel::UpstreamFixes::crv_in_volume_mults_by_break_index
+    pub fn generate_mults_with_kernel(&self, k: &Kernel, knots: &[f64]) -> Result<Vec<usize>> {
+        let by_break = k.fixes.crv_in_volume_mults_by_break_index;
+        self.generate_mults_opt_in(knots, by_break)
     }
 
     /// The sum of the break multiplicities (`GetNumberNaturalKnots`), caching the
@@ -1096,13 +1371,30 @@ impl CrvInVolume {
     ///
     /// `SM_ERR` when the curve is not owned; those of the base curve's trim.
     pub fn trim(&mut self, k: &Kernel, trim_interval: &mut Extent1d, mode: TrimMode) -> Result<()> {
+        self.trim_with_zone_tol(
+            k,
+            trim_interval,
+            mode,
+            crate::geom::tol::zone_tol_3d(k, crate::geom::tol::SmallTopoType::NormalSize),
+        )
+    }
+
+    /// Trims the owned curve with the caller-resolved owning object's tolerance.
+    pub(crate) fn trim_with_zone_tol(
+        &mut self,
+        k: &Kernel,
+        trim_interval: &mut Extent1d,
+        mode: TrimMode,
+        zone_tol_3d: f64,
+    ) -> Result<()> {
         // Don't own curve can not trim the curve
         if !self.owns_curve() {
             return Err(SolidError::sm_err(OP));
         }
 
         // pass the call along to the Curve
-        self.curve.trim(k, trim_interval, mode)?;
+        self.curve
+            .trim_with_zone_tol(k, trim_interval, mode, zone_tol_3d)?;
 
         // clear the knots
         if !self.need_breaks {
@@ -1120,7 +1412,7 @@ impl CrvInVolume {
     ///
     /// Those of [`Volume::transform`], including `InvalidInput` if appending a
     /// volume map would nest deeper than
-    /// [`MAX_GEOMETRY_NESTING`](crate::surface::surface::p2::MAX_GEOMETRY_NESTING).
+    /// [`MAX_GEOMETRY_NESTING`].
     pub fn transform(&mut self, rotate_n_move: &Axis2Placement, scale: Option<Vec3>) -> Result<()> {
         self.transform_at_depth(rotate_n_move, scale, 0)
     }
@@ -1142,6 +1434,28 @@ impl CrvInVolume {
         // compound the Transform onto the contained volume
         self.volume
             .transform_at_depth(rotate_n_move, scale, depth + 1)
+    }
+
+    // ---- exact B-spline -------------------------------------------------------------
+
+    /// `MakeExactBSplineIfPossible`: the exact B-spline equivalent (upstream an
+    /// `SmBSplineCurve` or a derived kind) of the base curve mapped through every
+    /// compounded map of the volume to its final out-space; `None` (upstream `NULL`
+    /// with `SM_SUCCESS`) when a map cannot produce one.
+    ///
+    /// # Errors
+    ///
+    /// Those of the curve copies (a twist copies any input curve; upstream then
+    /// dereferences the `NULL` a failed `Copy` leaves); [`SolidError::Unported`] from
+    /// the curve and volume services; `InvalidInput` for a volume chain deeper than
+    /// `MAX_GEOMETRY_NESTING`.
+    pub fn make_exact_b_spline_if_possible_with(&self, k: &Kernel) -> Result<Option<Curve>> {
+        // Ask Volume to make exact BSpline if Possible
+        if self.in_param_space {
+            make_exact_b_spline_out_curve_from_param_space(k, &self.volume, &self.curve)
+        } else {
+            make_exact_b_spline_out_curve_from_in_space(k, &self.volume, &self.curve)
+        }
     }
 
     // ---- persistence ----------------------------------------------------------------
@@ -1268,6 +1582,8 @@ impl CrvInVolume {
             breaks,
             conts,
             owner_flag: 3,
+            // no SetOwner after the read
+            owner_links: 0,
         })
     }
 }
@@ -1300,6 +1616,8 @@ impl CurveEvaluate for CrvInVolume {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geom::transform::Transform;
+    use crate::kernel::UpstreamFixes;
     use crate::nurbs::b_spline_curve::BSplineCurve;
     use crate::nurbs::nurbs_crv::allocate_nurb_curve;
     use crate::surface::bend_volume::BendVolume;
@@ -1380,7 +1698,7 @@ mod tests {
         .unwrap();
         assert_eq!(c.owner_flag(), 5);
         assert!(!c.owns_curve() && !c.owns_volume());
-        assert_eq!(c.copy().owner_flag(), 0);
+        assert_eq!(c.copy().unwrap().owner_flag(), 0);
         assert!(c.need_breaks());
         assert!(c.is_kind_of(CrvInVolume::TYPE) && c.is_kind_of(crate::curve::curve::p2::TYPE));
         assert_eq!(c.natural_interval().max(), 1.0);
@@ -1443,5 +1761,224 @@ mod tests {
         let text = "1 Has knots flag\n Begin\nObject Type 14033\nCurve Dim 3\n";
         let mut db = DatabaseReader::with_stream(FileType::Ascii, InputStream::new(text.into()));
         assert!(CrvInVolume::read_from_db(&Kernel::default(), &mut db, 0).is_err());
+    }
+
+    /// A clamped cubic on `[0, 1]` with simple interior knots at `0.25`, `0.75` and a
+    /// triple (`C0`) interior knot at `0.5`, mapped by the identity `Transform` volume.
+    fn mixed_cubic_in_identity_volume() -> CrvInVolume {
+        let mut cur = allocate_nurb_curve(8, 3, 12).unwrap();
+        for (i, p) in cur.cpts_mut().iter_mut().enumerate() {
+            p.x = i as f64;
+            p.y = ((i * i) % 5) as f64 * 0.2;
+            p.z = (i % 3) as f64 * 0.1;
+            p.w = -f64::MAX;
+        }
+        let ks = cur.knots_mut();
+        ks[0..4].fill(0.0);
+        ks[4] = 0.25;
+        ks[5..8].fill(0.5);
+        ks[8] = 0.75;
+        ks[9..13].fill(1.0);
+        let curve = Curve::from(BSplineCurve::from_nurb(cur, 3, false));
+        let vol = Volume::new(VolumeKind::Transform(Transform::IDENTITY));
+        CrvInVolume::new(curve, true, vol, 3, 0).unwrap()
+    }
+
+    #[test]
+    fn wr33_cached_sub_interval_knots_and_curve_dispatch() {
+        let k_def = Kernel::default();
+        let mut k_fix = Kernel::default();
+        k_fix.fixes.crv_in_volume_mults_by_break_index = true;
+
+        let mut c = mixed_cubic_in_identity_volume();
+        let (all_kn, uncached_m) = c.knots(&k_def, None).unwrap();
+        assert_eq!(all_kn, vec![0.0, 0.25, 0.5, 0.75, 1.0]);
+        assert_eq!(uncached_m, vec![4, 1, 3, 1, 4]);
+        let expected_conts = [
+            ContinuityType::Discontinuous,
+            ContinuityType::C1C2,
+            ContinuityType::C0,
+            ContinuityType::C1C2,
+            ContinuityType::Discontinuous,
+        ];
+        assert_eq!(c.conts(), expected_conts.as_slice());
+
+        // Full cached query: `bi == ii`, so default and opt-in agree (`3` at ends).
+        let (_, cached_def) = c.knots(&k_def, None).unwrap();
+        let (_, cached_fix) = c.knots(&k_fix, None).unwrap();
+        assert_eq!(cached_def, vec![3, 1, 2, 1, 3]);
+        assert_eq!(cached_fix, vec![3, 1, 2, 1, 3]);
+
+        // Sub-interval `[0.2, 0.6]` selects `0.25` (`bi = 1`) and `0.5` (`bi = 2`).
+        let sub_a = Extent1d::from_min_max(0.2, 0.6);
+        let (kn, m_def) = c.knots(&k_def, Some(&sub_a)).unwrap();
+        assert_eq!(kn, vec![0.25, 0.5]);
+        assert_eq!(m_def, vec![3, 1]);
+        let (_, m_ref_def) = c.knots_ref(&k_def, Some(&sub_a)).unwrap();
+        assert_eq!(m_ref_def, vec![3, 1]);
+
+        let (kn_fix, m_fix) = c.knots(&k_fix, Some(&sub_a)).unwrap();
+        assert_eq!(kn_fix, vec![0.25, 0.5]);
+        assert_eq!(m_fix, vec![1, 2]);
+        let (_, m_ref_fix) = c.knots_ref(&k_fix, Some(&sub_a)).unwrap();
+        assert_eq!(m_ref_fix, vec![1, 2]);
+
+        // Sub-interval `[0.4, 0.8]` selects `0.5` (`bi = 2`) and `0.75` (`bi = 3`).
+        let sub_b = Extent1d::from_min_max(0.4, 0.8);
+        let (_, mb_def) = c.knots(&k_def, Some(&sub_b)).unwrap();
+        let (kb_fix, mb_fix) = c.knots(&k_fix, Some(&sub_b)).unwrap();
+        assert_eq!(kb_fix, vec![0.5, 0.75]);
+        assert_eq!(mb_def, vec![3, 1]);
+        assert_eq!(mb_fix, vec![2, 1]);
+
+        // `Curve::knots` and `Curve::knots_with_status` forward `k` to `knots_ref`.
+        let wrapped = Curve::from(c);
+        let (_, mw_def) = wrapped.knots(&k_def, Some(&sub_a)).unwrap();
+        let (_, mw_fix) = wrapped.knots(&k_fix, Some(&sub_a)).unwrap();
+        assert_eq!(mw_def, vec![3, 1]);
+        assert_eq!(mw_fix, vec![1, 2]);
+        let ws = wrapped.knots_with_status(&k_fix, Some(&sub_b)).unwrap();
+        assert!(ws.status.is_ok());
+        assert_eq!(ws.knots, vec![0.5, 0.75]);
+        assert_eq!(ws.mults, vec![2, 1]);
+    }
+
+    #[test]
+    fn wr33_generate_mults_subsets_and_non_break_queries() {
+        let k_def = Kernel::default();
+        let mut k_fix = Kernel::default();
+        k_fix.fixes.crv_in_volume_mults_by_break_index = true;
+
+        let mut c = civ(3);
+        let breaks = vec![0.0, 0.2, 0.5, 0.8, 1.0];
+        let conts = vec![
+            ContinuityType::Discontinuous,
+            ContinuityType::CInfinity,
+            ContinuityType::C1,
+            ContinuityType::G1,
+            ContinuityType::Discontinuous,
+        ];
+        c.set_breaks_cache(false, breaks.clone(), conts);
+
+        // Full break list: all 4 multiplicity tiers (`3, 0, 1, 2, 3`) agree.
+        let full = vec![3, 0, 1, 2, 3];
+        assert_eq!(c.generate_mults(&breaks).unwrap(), full);
+        let opt_off = c.generate_mults_opt_in(&breaks, false).unwrap();
+        let opt_on = c.generate_mults_opt_in(&breaks, true).unwrap();
+        let ker_off = c.generate_mults_with_kernel(&k_def, &breaks).unwrap();
+        let ker_on = c.generate_mults_with_kernel(&k_fix, &breaks).unwrap();
+        assert_eq!(opt_off, full);
+        assert_eq!(opt_on, full);
+        assert_eq!(ker_off, full);
+        assert_eq!(ker_on, full);
+
+        // Trailing subset `[0.5, 0.8, 1.0]` (`bi = 2, 3, 4`).
+        let tail = [0.5, 0.8, 1.0];
+        assert_eq!(c.generate_mults(&tail).unwrap(), vec![3, 0, 1]);
+        let tail_def = c.generate_mults_with_kernel(&k_def, &tail).unwrap();
+        let tail_fix = c.generate_mults_with_kernel(&k_fix, &tail).unwrap();
+        let tail_opt = c.generate_mults_opt_in(&tail, true).unwrap();
+        assert_eq!(tail_def, vec![3, 0, 1]);
+        assert_eq!(tail_fix, vec![1, 2, 3]);
+        assert_eq!(tail_opt, vec![1, 2, 3]);
+
+        // Interleaved non-break parameters (`0.1`, `0.35`) get `0` and shift `ii`.
+        let mixed = [0.1, 0.2, 0.35, 0.5, 0.8];
+        let mix_def = c.generate_mults_with_kernel(&k_def, &mixed).unwrap();
+        let mix_fix = c.generate_mults_with_kernel(&k_fix, &mixed).unwrap();
+        assert_eq!(mix_def, vec![0, 0, 0, 2, 3]);
+        assert_eq!(mix_fix, vec![0, 0, 0, 1, 2]);
+
+        // More query points than cached breaks (`ii = 5 >= conts.len()`, `bi = 3`).
+        let many = [0.05, 0.1, 0.15, 0.3, 0.4, 0.8];
+        let err = c.generate_mults_with_kernel(&k_def, &many).unwrap_err();
+        assert!(matches!(err, SolidError::InvalidInput { .. }));
+        let many_fix = c.generate_mults_with_kernel(&k_fix, &many).unwrap();
+        assert_eq!(many_fix, vec![0, 0, 0, 0, 0, 2]);
+    }
+
+    #[test]
+    fn wr33_near_break_tolerance_and_repeated_queries() {
+        let k_def = Kernel::default();
+        let mut k_fix = Kernel::default();
+        k_fix.fixes.crv_in_volume_mults_by_break_index = true;
+
+        let c = cached(3);
+        let near = [0.25 - 0.5 * EFF_ZERO, 0.5 + 0.5 * EFF_ZERO];
+        let near_def = c.generate_mults_with_kernel(&k_def, &near).unwrap();
+        let near_fix = c.generate_mults_with_kernel(&k_fix, &near).unwrap();
+        assert_eq!(near_def, vec![3, 1]);
+        assert_eq!(near_fix, vec![1, 2]);
+
+        // Repeated query parameters keep matching `bi` without advancing past the end.
+        let q_mid = [0.5, 0.5];
+        let q_end = [1.0, 1.0];
+        let rep_mid = c.generate_mults_with_kernel(&k_fix, &q_mid).unwrap();
+        let rep_end = c.generate_mults_with_kernel(&k_fix, &q_end).unwrap();
+        assert_eq!(rep_mid, vec![2, 2]);
+        assert_eq!(rep_end, vec![3, 3]);
+
+        let empty_def = c.generate_mults_with_kernel(&k_def, &[]).unwrap();
+        let empty_fix = c.generate_mults_with_kernel(&k_fix, &[]).unwrap();
+        assert!(empty_def.is_empty());
+        assert!(empty_fix.is_empty());
+    }
+
+    #[test]
+    fn wr33_flag_registration_and_error_conditions() {
+        let name = "crv_in_volume_mults_by_break_index";
+        assert!(UpstreamFixes::NAMES.contains(&name));
+        let mut k = Kernel::default();
+        assert!(!k.fixes.crv_in_volume_mults_by_break_index);
+        *k.fixes.flag_mut(name).unwrap() = true;
+        assert!(k.fixes.crv_in_volume_mults_by_break_index);
+        assert!(k.fixes.flags().any(|(n, on)| n == name && on));
+
+        let k_def = Kernel::default();
+
+        // Uncached curve (`need_breaks == true`) -> `SM_ERR`.
+        let uncached = civ(3);
+        let unc_def = uncached.generate_mults_with_kernel(&k_def, &[0.0]);
+        let unc_fix = uncached.generate_mults_with_kernel(&k, &[0.0]);
+        assert!(unc_def.is_err());
+        assert!(unc_fix.is_err());
+
+        // Mismatched cache lengths -> `SM_ERR`, and empty `mults` on `knots_ref`.
+        let mut mismatch = civ(3);
+        mismatch.set_breaks_cache(false, vec![0.0, 1.0], vec![ContinuityType::C1]);
+        let mis_res = mismatch.generate_mults_with_kernel(&k, &[0.0]);
+        assert!(mis_res.is_err());
+        let (m_kn, m_mu) = mismatch.knots_ref(&k, None).unwrap();
+        assert_eq!(m_kn, vec![0.0, 1.0]);
+        assert!(m_mu.is_empty());
+
+        // Parameter past the last break -> `SM_ERR`.
+        let ok_cached = cached(3);
+        let past_def = ok_cached.generate_mults_with_kernel(&k_def, &[0.5, 1.5]);
+        let past_fix = ok_cached.generate_mults_with_kernel(&k, &[0.5, 1.5]);
+        assert!(past_def.is_err());
+        assert!(past_fix.is_err());
+
+        // `Undefined` continuity at `bi = 2`: default misses it on `[0.25, 0.5]`,
+        // while opt-in checks `conts[2]` and fails (`knots_ref` keeps partial mults).
+        let mut undef = civ(3);
+        let u_conts = vec![
+            ContinuityType::Discontinuous,
+            ContinuityType::C1,
+            ContinuityType::Undefined,
+            ContinuityType::Discontinuous,
+        ];
+        undef.set_breaks_cache(false, vec![0.0, 0.25, 0.5, 1.0], u_conts);
+        let sub_q = [0.25, 0.5];
+        let u_def = undef.generate_mults_with_kernel(&k_def, &sub_q).unwrap();
+        assert_eq!(u_def, vec![3, 1]);
+        let u_err = undef.generate_mults_with_kernel(&k, &sub_q);
+        assert!(u_err.is_err());
+        let u_one = undef.generate_mults_with_kernel(&k, &[0.25]).unwrap();
+        assert_eq!(u_one, vec![1]);
+        let sub_ivl = Extent1d::from_min_max(0.2, 0.6);
+        let (u_kn, u_mu) = undef.knots_ref(&k, Some(&sub_ivl)).unwrap();
+        assert_eq!(u_kn, vec![0.25, 0.5]);
+        assert_eq!(u_mu, vec![1, 0]);
     }
 }

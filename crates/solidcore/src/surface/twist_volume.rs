@@ -30,6 +30,9 @@
 //! | [`TwistVolume::is_line_in_param_domain_simple`]   | `IsLineInParamDomainSimple`                    |
 //! | [`TwistVolume::is_curve_in_param_domain_simple`]  | `IsCurveInParamDomainSimple`                   |
 //! | [`TwistVolume::read_from_db`]                     | `ReadFromDB`                                   |
+//! | [`TwistVolume::write_to_db`]                      | `WriteToDB` (the members, before the base data) |
+//! | [`TwistVolume::make_exact_b_spline_1st_out_surface`] | `MakeExactBSpline1stOutSurface` (in no unit in units.json; called by `SrfInVolume::make_exact_b_spline_if_possible_with`) |
+//! | [`TwistVolume::make_exact_b_spline_1st_out_curve`] | `MakeExactBSpline1stOutCurve` (in no unit in units.json; called by `CrvInVolume::make_exact_b_spline_if_possible_with`) |
 //! | [`TWIST_VOLUME_TYPE`], [`is_kind_of`], [`Volume::type_code`] and friends | `GetType`, `GetTypeString`, `GetClassString` (`SM_COMMON`), `IsKindOf` |
 //!
 //! Deviations:
@@ -52,7 +55,8 @@
 //!   [`TwistVolume::members_eq`]).
 //! - **`EvaluateSimple`'s `Duw`** is `(-per sin a, -per cos a, 0)` where the header
 //!   documents `(-per sin a, per cos a, 0)`; `Evaluate` uses the documented form.
-//!   Both are kept as written.
+//!   Both are kept as written by default; [`Volume::evaluate_simple`]
+//!   corrects the simple form when `Kernel::fixes.twist_simple_duw_sign` is set.
 //! - **Bounding boxes.** `EvaluateBoundingBoxSimple` keeps upstream's optional
 //!   outputs as `Option<&mut _>`; the unbounded branch writes the axis-aligned box
 //!   unconditionally, so a request for the pseudo box alone is
@@ -73,21 +77,50 @@
 //!   `IsCurveInParamDomainSimple`, the line ends of `IsLineInParamDomainSimple`, the
 //!   point of `IsPointInParamDomainSimple`) are dropped where the call is local to
 //!   this module.
+//! - **`MakeExactBSpline1stOutCurve`** takes the input space as a flag, as the surface
+//!   variant, and returns the new curve. A failed sample `EvaluatePoint` (status
+//!   ignored) leaves the previous point ([`Vec3::UNDEF`] at first); the copy's
+//!   `Transform` status is ignored; a failed `Copy` (upstream then dereferences `NULL`)
+//!   is returned; the copy is the input's own kind (upstream casts it to
+//!   `SmBSplineCurve*`). The unused plane-distance sum and the debug drawing are
+//!   dropped.
+//! - **`MakeExactBSpline1stOutSurface`** takes the input space as a flag
+//!   (`in_space`: `SM_VS_IN_SPACE`; otherwise `SM_VS_PARAM_SPACE`, so the invalid-space
+//!   `SM_ERR` has no counterpart) and returns the new surface (`None` for upstream's
+//!   `NULL`). A failed sample `EvaluatePoint` (status ignored) leaves the previous
+//!   point ([`Vec3::UNDEF`] at first), as upstream's out-param; the copy's
+//!   `Transform` status is ignored; a failed `Copy` (upstream then dereferences
+//!   `NULL`) is returned; [`SolidError::Unported`] propagates. The copy is the input's
+//!   own kind (upstream casts it to `SmBSplineSurface*` whatever it is).
 
-use crate::error::{Result, SolidError};
+use crate::curve::curve::p2::Curve;
+use crate::error::{ignored, Result, SolidError};
+use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent3d::Extent3d;
 use crate::geom::pseudo_box::PseudoBox;
 use crate::geom::solution_array::{Solution, SolutionArray, SolutionObject, SolutionType};
+use crate::geom::tol::{approx_tol_3d, SmallTopoType};
 use crate::geom::tol::{is_zero, ZONE_TOL_3D};
 use crate::geom::transform::Transform;
+use crate::geom::vector2d::Point2;
 use crate::geom::vector3d::{Point3, Vec3};
+use crate::kernel::Kernel;
 use crate::math::{max4, EFF_ZERO_DEG, INFINITE_PARAMETER, PI, UNDEF_DOUBLE};
+use crate::surface::surface::p2::Surface;
 use crate::surface::volume::p1::{
-    concat_evals, is_kind_of as volume_is_kind_of, EvalOptions, Volume, VolumeKind,
+    concat_evals_opt_in, is_kind_of as volume_is_kind_of, EvalOptions, Volume, VolumeKind,
 };
 use crate::surface::volume::p2::ignore_read;
-use crate::topology::database_io::{DatabaseReader, FileType};
+use crate::topology::database_io::{DatabaseReader, DatabaseWriter, FileType};
+
+/// `lSmpSize` of `MakeExactBSpline1stOutSurface`: the sample grid is
+/// `(SMP_SIZE + 1) x (SMP_SIZE + 1)`.
+const SMP_SIZE: u32 = 5;
+
+/// `lSmpSize` of `MakeExactBSpline1stOutCurve`: the curve is sampled at
+/// `CRV_SMP_SIZE + 1` points.
+const CRV_SMP_SIZE: u32 = 11;
 
 pub use crate::surface::volume::p1::TWIST_VOLUME_TYPE;
 
@@ -380,7 +413,12 @@ impl TwistVolume {
                 };
                 let next_derivs = next.map(position, n, &map_opts)?;
                 // Concatenate Evaluate(ParamPoint) = Next(Mid(ParamPoint))
-                concat_evals(n, &d, &next_derivs)
+                concat_evals_opt_in(
+                    n,
+                    &d,
+                    &next_derivs,
+                    opts.fixes.volume_lift_third_derivative_terms,
+                )
             }
             _ => Ok(d),
         }
@@ -394,6 +432,15 @@ impl TwistVolume {
     ///
     /// [`SolidError::InvalidInput`] (`SM_ERR_INVALID_INPUT`) for `n > 3`.
     pub fn evaluate_simple(&self, param_point: Point3, n: usize) -> Result<Vec<Vec3>> {
+        self.evaluate_simple_impl(param_point, n, false)
+    }
+
+    pub(crate) fn evaluate_simple_impl(
+        &self,
+        param_point: Point3,
+        n: usize,
+        fix_duw_sign: bool,
+    ) -> Result<Vec<Vec3>> {
         // check input - limit the number of derivatives
         if n > MAX_DERIV {
             return Err(SolidError::invalid_input(
@@ -441,7 +488,8 @@ impl TwistVolume {
             // 2nd derivs (Duu, Duv, Dvv are zero)
             if n >= 2 {
                 let per2 = per * per;
-                put(sv(1, 0, 1), Vec3::new(per * -sin, per * -cos, 0.0));
+                let duw_y = if fix_duw_sign { per * cos } else { per * -cos };
+                put(sv(1, 0, 1), Vec3::new(per * -sin, duw_y, 0.0));
                 put(sv(0, 1, 1), Vec3::new(per * -cos, -per * sin, 0.0));
                 put(
                     sv(0, 0, 2),
@@ -746,6 +794,197 @@ impl TwistVolume {
         true
     }
 
+    /// `MakeExactBSpline1stOutSurface`: the exact first out-space image of `input`
+    /// (from in-space when `in_space`, else from parameter space) through the twist
+    /// `volume` (whose kind is `self`), or `None` when it is not one of the analytic
+    /// cases: a surface in a plane normal to the twist axis maps to a copy rotated
+    /// about the axis by the twist angle of its height. The test samples a 6 x 6 grid
+    /// of the natural domain; any sample outside the twist's domain gives `None`.
+    ///
+    /// # Errors
+    ///
+    /// Those of the surface copy; [`SolidError::Unported`] from the surface or volume
+    /// services.
+    pub fn make_exact_b_spline_1st_out_surface(
+        &self,
+        k: &Kernel,
+        volume: &Volume,
+        in_space: bool,
+        input: &Surface,
+    ) -> Result<Option<Surface>> {
+        // locals: ParamSpace and InSpace Twist orientations
+        let (param_origin, twist_origin) = (Vec3::ZERO, volume.twist_origin());
+        let (param_axis, twist_axis) = (Vec3::Z, volume.twist_axis());
+
+        // locals: making InputSpace either ParamSpace or InSpace
+        let (input_origin, input_axis) = if in_space {
+            (twist_origin, twist_axis)
+        } else {
+            (param_origin, param_axis)
+        };
+
+        // locals
+        let mut input_pt = Vec3::UNDEF;
+
+        let approx_tol = approx_tol_3d(k, SmallTopoType::NormalSize);
+        let domain = input.natural_uv_domain_with_nurb(k)?;
+        let ivl_u = domain.u_interval();
+        let ivl_v = domain.v_interval();
+
+        // note: for Twist mapping Twist principle axes happen to be the same in InSpace
+        // and OutSpace
+        let mut axis_plane_sum = 0.0;
+        let mut axis_plane_range = Extent1d::new();
+
+        // See if the InputSurface is perpendicular to the Twist axis
+        for ii in 0..=SMP_SIZE {
+            let u = ivl_u.evaluate(f64::from(ii) / f64::from(SMP_SIZE));
+            for jj in 0..=SMP_SIZE {
+                let uv = Point2::new(u, ivl_v.evaluate(f64::from(jj) / f64::from(SMP_SIZE)));
+
+                // Surface sample (status ignored)
+                if let Some(p) = ignored(input.evaluate_point(k, uv))? {
+                    input_pt = p;
+                }
+                let input_vec = input_pt - input_origin;
+
+                // no work - sample point not within twist domain
+                let is_in = if in_space {
+                    volume.is_point_in_in_space_domain(input_pt, true)?.0
+                } else {
+                    volume.is_point_in_param_domain(input_pt, true)?
+                };
+                if !is_in {
+                    return Ok(None);
+                }
+
+                // distance to the plane through the origin perpendicular to the axis
+                let axis_plane = twist_axis.dot(input_vec);
+                axis_plane_range.add_value(axis_plane);
+                axis_plane_sum += axis_plane;
+
+                // remember when the surface is a constant distance from the twist plane
+                let const_axis_plane = axis_plane_range.length() < approx_tol;
+
+                // no work - Surface not const distance from the twist plane
+                if !const_axis_plane {
+                    return Ok(None);
+                }
+            }
+        }
+
+        // compute the rotation
+        let samples = f64::from(SMP_SIZE) + 1.0;
+        let z = axis_plane_sum / samples / samples;
+        let ang_rad = z * 2.0 * PI / self.twist_period_dist();
+
+        let mut rotate = Axis2Placement::IDENTITY;
+        rotate.rotate_about_axis_at_point(ang_rad, input_origin + z * input_axis, input_axis);
+
+        // copy the input Surface and rotate it (status ignored)
+        let mut new_surface = input.copy(k)?;
+        ignored(new_surface.transform(k, &rotate, None))?;
+
+        // all done
+        Ok(Some(new_surface))
+    }
+
+    /// `MakeExactBSpline1stOutCurve`: the exact first out-space image of `input` (from
+    /// in-space when `in_space`, else from parameter space) through the twist `volume`
+    /// (whose kind is `self`), or `None` when it is not one of the analytic cases: a
+    /// curve in a plane normal to the twist axis maps to a copy rotated about the axis
+    /// by the twist angle of its height. The test samples 12 points of the natural
+    /// interval; any sample outside the twist's domain gives `None`.
+    ///
+    /// # Errors
+    ///
+    /// Those of the curve copy (upstream dereferences the `NULL` a failed `Copy`
+    /// leaves); [`SolidError::Unported`] from the curve or volume services.
+    pub fn make_exact_b_spline_1st_out_curve(
+        &self,
+        k: &Kernel,
+        volume: &Volume,
+        in_space: bool,
+        input: &Curve,
+    ) -> Result<Option<Curve>> {
+        // locals: ParamSpace and InSpace Twist orientations
+        let (param_origin, twist_origin) = (Vec3::ZERO, volume.twist_origin());
+        let (param_axis, twist_axis) = (Vec3::Z, volume.twist_axis());
+
+        // locals: making InputSpace either ParamSpace or InSpace
+        let (input_origin, input_axis) = if in_space {
+            (twist_origin, twist_axis)
+        } else {
+            (param_origin, param_axis)
+        };
+
+        // locals
+        let approx_tol = approx_tol_3d(k, SmallTopoType::NormalSize);
+        let ivl = input.natural_interval();
+        let mut input_pt = Vec3::UNDEF;
+        let mut on_axis_pt = Vec3::UNDEF;
+
+        let mut axis_plane_range = Extent1d::new();
+
+        // See if the InputCurve is in a plane perpendicular to the TwistAxis
+        for ii in 0..=CRV_SMP_SIZE {
+            let smp_u = ivl.evaluate(f64::from(ii) / f64::from(CRV_SMP_SIZE));
+
+            // Curve sample (status ignored)
+            if let Some(p) = ignored(input.evaluate_point(k, smp_u))? {
+                input_pt = p;
+            }
+
+            // no work - sample point not within twist domain
+            let is_in = if in_space {
+                volume.is_point_in_in_space_domain(input_pt, true)?.0
+            } else {
+                volume.is_point_in_param_domain(input_pt, true)?
+            };
+            if !is_in {
+                return Ok(None);
+            }
+
+            // pick a point on Axis near the curve to keep vector sizes small
+            if ii == 0 {
+                let to_orig_vec = input_pt - input_origin;
+                on_axis_pt = input_origin + input_axis.dot(to_orig_vec) * input_axis;
+            }
+
+            // Input vec from SamplePt to OnAxisPt
+            let on_axis_vec = input_pt - on_axis_pt;
+
+            // InputSpace distances to planes perp to Twist axes
+            let axis_plane = input_axis.dot(on_axis_vec);
+
+            // accumulate the range of Plane distances
+            axis_plane_range.add_value(axis_plane);
+
+            // remember when curve is const dist from twist plane
+            let const_axis_plane = axis_plane_range.length() < approx_tol;
+
+            // no work - curve not const distance plane perp to TwistAxis
+            if !const_axis_plane {
+                return Ok(None);
+            }
+        }
+
+        // compute the rotation
+        let to_orig_vec = on_axis_pt - input_origin;
+        let z = input_axis.dot(to_orig_vec);
+        let ang_rad = z * 2.0 * PI / self.twist_period_dist();
+
+        let mut rotate = Axis2Placement::IDENTITY;
+        rotate.rotate_about_axis_at_point(ang_rad, on_axis_pt, input_axis);
+
+        // copy the input curve and rotate it (status ignored)
+        let mut new_curve = input.copy(k)?;
+        ignored(new_curve.transform(k, &rotate, None))?;
+
+        // all done
+        Ok(Some(new_curve))
+    }
+
     /// Reads a twist volume from a database stream: the period and the minimum
     /// distance, then the volume base data (`ReadFromDB`), whose status upstream
     /// ignores.
@@ -774,6 +1013,23 @@ impl TwistVolume {
         // read base class data (status ignored)
         ignore_read(volume.read_base_from_db(db, version))?;
         Ok(volume)
+    }
+
+    /// The part of `WriteToDB` before the volume base data, the members
+    /// [`TwistVolume::read_from_db`] reads: `twist_period_dist` and `period_min_dist` (ASCII: each value
+    /// followed directly by its label, as upstream).
+    pub fn write_to_db(&self, db: &mut DatabaseWriter) {
+        if db.file_type() == FileType::Ascii {
+            db.out_f64(self.twist_period_dist);
+            db.out_str("TwistVolume Twist NeutralDistance \n");
+            db.out_f64(self.period_min_dist);
+            db.out_str(
+                "TwistVolume SingularityTol: min legal distance from singularity at U = 0\n",
+            );
+        } else {
+            db.write_double(self.twist_period_dist);
+            db.write_double(self.period_min_dist);
+        }
     }
 }
 

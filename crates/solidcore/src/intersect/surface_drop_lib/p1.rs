@@ -75,6 +75,7 @@ use crate::geom::tol::{are_same, are_same_to_tol};
 use crate::geom::vector2d::{Point2, Vec2};
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::intersect::surface_drop_curve::SurfaceDropCurve;
+use crate::intersect::surface_drop_lib::p3::DropSolveContext;
 use crate::intersect::surface_tracer::tracer_surface_cache;
 use crate::kernel::Kernel;
 use crate::math::{max2, rad_to_deg, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI, UNDEF_DOUBLE};
@@ -92,11 +93,11 @@ use crate::surface::surface_cache::p1::SurfaceCache;
 pub const BIG_ULONG: i32 = 99_999_999;
 
 /// `SM_SUCCESS` (`SmMessages.h`).
-pub const SM_SUCCESS: i32 = 1000;
+pub use crate::error::SM_SUCCESS;
 
 /// `SM_ERR_OUTSIDE_OF_DOMAIN` (`SmMessages.h`): `CheckSeamJump` cannot snap a seam
 /// jump within tolerance.
-pub const SM_ERR_OUTSIDE_OF_DOMAIN: i32 = 1020;
+pub use crate::error::SM_ERR_OUTSIDE_OF_DOMAIN;
 
 /// `IsMovingAlongBoundary`'s default angle limit (`dAngLimitDeg`, degrees).
 pub const DEFAULT_ALONG_ANGLE_DEG: f64 = 5.0;
@@ -526,7 +527,7 @@ impl DropPt {
                 approx_tol_3d,
             ) {
                 Ok(r) => (r.is_good, r.drop_to_surf, r.approx_dev),
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 // when smsurf_IsPointOnNormal fails - it's not a good point
                 Err(_) => (false, 0.0, 0.0),
             };
@@ -571,7 +572,7 @@ impl DropPt {
         }
 
         let start = self;
-        let uv_domain = surface.natural_uv_domain();
+        let uv_domain = surface.natural_uv_domain_with_nurb(k)?;
         let outside = || SolidError::Upstream {
             operation: OP_SEAM,
             code: SM_ERR_OUTSIDE_OF_DOMAIN,
@@ -970,6 +971,7 @@ fn drop_curve_trace<C: SolutionObject>(
     interval: &Extent1d,
     curve_is_on_surface: bool,
     approx_tol_3d: Option<f64>,
+    context: Option<DropSolveContext<'_, C>>,
 ) -> Result<Trace> {
     // prepare the SurfaceDropCurve operation object
     let mut drop = SurfaceDropCurve::new(k, surface, uv_domain, curve, interval)?;
@@ -977,10 +979,10 @@ fn drop_curve_trace<C: SolutionObject>(
 
     // get and checkout surface cache (NER)
     let out = if let Some(cache) = cache {
-        drop.drop_trace(k, cache, approx_tol_3d, None)?
+        drop.drop_trace(k, cache, approx_tol_3d, None, context)?
     } else {
         let mut cache = tracer_surface_cache::<TraceCacheObj>(k, &drop.base)?;
-        drop.drop_trace(k, &mut cache, approx_tol_3d, None)?
+        drop.drop_trace(k, &mut cache, approx_tol_3d, None, None)?
     };
     Ok(Trace {
         uv_curves: out.uv_curves,
@@ -1005,6 +1007,7 @@ const fn is_bspline_kind(curve: &Curve) -> bool {
         | CurveKind::Offset(_)
         | CurveKind::CrvInVolume(_)
         | CurveKind::CrvOnSurf(_)
+        | CurveKind::TangentField(_)
         | CurveKind::Composite(_) => false,
     }
 }
@@ -1088,7 +1091,42 @@ impl Surface {
         approx_tol_3d: f64,
         keep_all_drop_curves: bool,
         curve_is_on_surface: bool,
+        record: Option<DropFailRecord<'_, O>>,
+    ) -> Result<DropAndTrim> {
+        self.drop_and_trim_curve_in_context::<O, C>(
+            k,
+            cache,
+            uv_domain,
+            curve,
+            interval,
+            approx_tol_3d,
+            keep_all_drop_curves,
+            curve_is_on_surface,
+            record,
+            None,
+        )
+    }
+
+    /// [`Surface::drop_and_trim_curve_in`] whose trace drops under the caller's face
+    /// solve `context` (`smsurf_GetSurfaceCache` inside each `DropCurve` of the trace
+    /// hands back the face's cache of a face-owned surface); used with a held `cache`.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Surface::drop_and_trim_curve_in`] and the context.
+    #[allow(clippy::too_many_arguments)]
+    pub fn drop_and_trim_curve_in_context<O: SolutionObject, C: SolutionObject>(
+        &self,
+        k: &Kernel,
+        cache: Option<&mut SurfaceCache<C>>,
+        uv_domain: &Extent2d,
+        curve: &Curve,
+        interval: &Extent1d,
+        approx_tol_3d: f64,
+        keep_all_drop_curves: bool,
+        curve_is_on_surface: bool,
         mut record: Option<DropFailRecord<'_, O>>,
+        context: Option<DropSolveContext<'_, C>>,
     ) -> Result<DropAndTrim> {
         // init outputs
         let mut out = DropAndTrim {
@@ -1114,6 +1152,7 @@ impl Surface {
             } else {
                 Some(approx_tol_3d)
             },
+            context,
         )?;
 
         for ((uv, &max_drop), &dev) in trace
@@ -1143,7 +1182,7 @@ impl Surface {
                 from_call: 2,
                 create_path_type: path,
                 has_context: true,
-                uv_domain: self.natural_uv_domain(),
+                uv_domain: self.natural_uv_domain_with_nurb(k)?,
                 surface: r.surface,
                 curve: r.curve,
                 interval: *interval,

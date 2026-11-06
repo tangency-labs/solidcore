@@ -9,6 +9,7 @@
 //! |---------------------------------------------------|----------------------------------------|
 //! | [`BSplineCurve::is_intersector_approx`]           | `IsIntersectorApprox`                  |
 //! | [`BSplineCurve::calculate_bounding_box`], [`BoundingBoxRequest`], [`BoundingBoxes`] | `CalculateBoundingBox` |
+//! | [`BSplineCurve::is_planar`], [`Planar`]     | `SmCurve::IsPlanar`                    |
 //! | [`BSplineCurve::create_analytic_curve`], [`AnalyticCurve`] | `CreateAnalyticCurve`         |
 //! | [`BSplineCurve::create_by_joining`]               | `CreateByJoining`                      |
 //! | [`BSplineCurve::create_point_curve`]              | `CreatePointCurve`                     |
@@ -29,6 +30,7 @@
 //! | [`BSplineCurve::set_control_point`]               | `SetControlPoint`                      |
 //! | [`BSplineCurve::adjust_step_interval`]            | `AdjustSTEPInterval`                   |
 //! | [`BSplineCurve::read_from_db`]                    | `ReadFromDB`                           |
+//! | [`BSplineCurve::write_to_db`]                     | `WriteToDB`                            |
 //!
 //! The other members of the file belong to `nurbs.b_spline_curve_p1`, `_p3`, ... and
 //! `nurbs.b_spline_curve_n_lib`.
@@ -58,9 +60,10 @@
 //!   returns `InvalidInput`: `CreateByJoining` with no segments or fewer senses than
 //!   segments, `GetControlPointsExpert` for a dimension below 2 (it writes two values
 //!   per point whatever the stride), knot or span indices outside the curve. A
-//!   `ReadFromDB` header that cannot be read, a negative size or a knot type / form
-//!   outside its enum is `InvalidInput` (upstream: undefined values); counts are bounded
-//!   by the bytes left (see `plan/findings.md`, "Header-declared sizes").
+//!   `ReadFromDB` knot type / form outside its enum is `InvalidInput` (upstream:
+//!   undefined values); counts are bounded by the bytes left (see `plan/findings.md`,
+//!   "Header-declared sizes"). An unreadable header, degree or size upstream rejects
+//!   itself (`SM_ERR_INVALID_INPUT`), as the port does.
 //! - **`GetControlPointsExpert`** writes into the caller's array and leaves the slots it
 //!   does not write alone; the port returns a vector of `stride * count` values whose
 //!   unwritten slots are `0`; that vector is allocated fallibly (`InvalidInput`
@@ -82,20 +85,27 @@
 //!   calls `SmCurve::IsArc` too. It approximates an [`OffsetCurve`] with
 //!   `SmCurve::ApproximateCurve` ([`Curve::approximate_curve`]), passing the
 //!   caller's `bOptMatchParameterization` as `bOptCreateAnalytics` and `FALSE` for
-//!   matching, as upstream.
+//!   matching, as upstream (WR-37; with
+//!   [`crate::kernel::UpstreamFixes::bspline_simple_offset_matches_parameterization`],
+//!   `bOptCreateAnalytics` is `false` and `bOptMatchParameterization` is forwarded in
+//!   its own slot).
+//! - **Statuses passed on (WR-663).** With the opt-in
+//!   `Kernel::fixes.query_statuses_pass_on`, `CreateAnalyticCurve`'s knot insertion and
+//!   `CreateSimpleOffset`'s frame are passed on, and `IsDegenerate` is `false` without a
+//!   NURB, as the fork (tangency-labs/smlib 8843967).
 
 use crate::curve::curve::{Curve, CurveKind};
 use crate::curve::ellipse::{Ellipse, EllipseOptions};
 use crate::curve::line::{BoundedLineOptions, Line};
 use crate::curve::offset_curve::OffsetCurve;
-use crate::error::{Result, SolidError};
+use crate::error::{ignored, Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent3d::Extent3d;
 use crate::geom::geom_utility::p1::triangle_area_squared;
 use crate::geom::geom_utility::p2::ContinuityType;
 use crate::geom::polar_box::PolarBox;
-use crate::geom::pseudo_box::PseudoBox;
+use crate::geom::pseudo_box::{Planar, PseudoBox};
 use crate::geom::tol::{are_same, is_zero, is_zero_to_tol, ANG_TOL_DEG, ZONE_TOL_3D};
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
@@ -106,10 +116,10 @@ use crate::nurbs::b_spline_curve::p1::{
 };
 use crate::nurbs::b_spline_curve_n_lib::TrimMode;
 use crate::nurbs::geom::dist_cpt_cpt;
-use crate::nurbs::knots::Side;
+use crate::nurbs::knots::{Side, MAX_DEGREE};
 use crate::nurbs::math::{CPoint, NOW, NOZ};
 use crate::nurbs::nurbs_crv::{allocate_nurb_curve, is_ncrv_degenerate, to_euclid};
-use crate::topology::database_io::{DatabaseReader, FileType, InputStream};
+use crate::topology::database_io::{DatabaseReader, DatabaseWriter, FileType, InputStream};
 
 /// `SmCrvOnSurf_TYPE` (`CURV_BASE_TYPE + 48`).
 const CRV_ON_SURF_TYPE: i64 = BSplineCurve::TYPE - 33 + 48;
@@ -130,6 +140,8 @@ const OP_ELEVATE: &str = "nurbs::b_spline_curve::p2::BSplineCurve::degree_elevat
 const OP_REVERSE: &str = "nurbs::b_spline_curve::p2::BSplineCurve::reverse_parameterization";
 const OP_SET_CP: &str = "nurbs::b_spline_curve::p2::BSplineCurve::set_control_point";
 const OP_READ: &str = "nurbs::b_spline_curve::p2::BSplineCurve::read_from_db";
+/// `ReadFromDB`'s message when the stream fails part way (`ReadFailed`).
+const READ_FAILED: &str = "NURBS curve data ends early or holds text that is not a number";
 
 /// `SmControlPointFormType`: how control points are passed in or out; discriminants
 /// are the upstream values.
@@ -246,7 +258,7 @@ fn curve_is_arc(
 }
 
 /// `SmOffsetCurve(3, curve, ivl, normal, dist)` approximated with
-/// `ApproximateCurve(ctx, {ivl.min, ivl.max}, tol, gap, approx, bMatch, FALSE)`: the
+/// `ApproximateCurve(ctx, {ivl.min, ivl.max}, tol, gap, approx, ...)`: the
 /// approximation and its maximum gap.
 fn offset_curve_approximation(
     k: &Kernel,
@@ -275,10 +287,12 @@ fn offset_curve_approximation(
     )
 }
 
-/// `SmCurve::ApproximateCurve(ctx, breaks, tol, gap, approx, bMatch, FALSE)` of
-/// `curve`: the approximation and its maximum gap. Upstream passes the caller's
+/// `SmCurve::ApproximateCurve(ctx, breaks, tol, gap, approx, ...)` of `curve`: the
+/// approximation and its maximum gap. Upstream passes the caller's
 /// `bOptMatchParameterization` in the `bOptCreateAnalytics` slot and `FALSE` for
-/// matching the parameterization; kept.
+/// matching the parameterization (WR-37); kept by default, or fixed to
+/// `(false, match_parameterization)` with
+/// [`crate::kernel::UpstreamFixes::bspline_simple_offset_matches_parameterization`].
 fn approximate_curve(
     k: &Kernel,
     curve: &Curve,
@@ -287,9 +301,10 @@ fn approximate_curve(
     match_parameterization: bool,
 ) -> Result<(BSplineCurve, f64)> {
     const OP: &str = "nurbs::b_spline_curve::p2::approximate_curve";
+    let fix = k.fixes.bspline_simple_offset_matches_parameterization;
     let opts = crate::curve::curve::p1::ApproximateCurveOptions {
-        create_analytics: match_parameterization,
-        match_parameterization: false,
+        create_analytics: !fix && match_parameterization,
+        match_parameterization: fix && match_parameterization,
         just_copy_bsplines: false,
     };
     let r = curve.approximate_curve(k, breaks, approx_tol_3d, &opts)?;
@@ -439,6 +454,27 @@ impl BSplineCurve {
         req: BoundingBoxRequest,
     ) -> Result<BoundingBoxes> {
         self.calculate_bounding_box_onto(interval, req, PseudoBox::new())
+    }
+
+    /// `IsPlanar` (`SmCurve::IsPlanar` on a B-spline curve): [`PseudoBox::is_planar`] of
+    /// the curve's pseudo box over its natural interval, with the plane point, the
+    /// (not unitised) plane normal and the deviation (`tol == EFF_ZERO` lets the box pick
+    /// its scaled zero).
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::Unported`] from [`BSplineCurve::calculate_bounding_box`] (whose
+    /// other failures leave the default box, as upstream ignores the status).
+    pub fn is_planar(&self, tol: f64) -> Result<Planar> {
+        let req = BoundingBoxRequest {
+            normal: false,
+            pseudo: true,
+            polar: false,
+        };
+        let pseudo = ignored(self.calculate_bounding_box(&self.natural_interval(), req))?
+            .and_then(|b| b.pseudo)
+            .unwrap_or_else(PseudoBox::new);
+        Ok(pseudo.is_planar(tol))
     }
 
     /// [`BSplineCurve::calculate_bounding_box`] onto the caller's pseudo box (upstream's
@@ -765,8 +801,12 @@ impl BSplineCurve {
                             .get(i)
                             .copied()
                             .ok_or_else(|| invalid(OP_ANALYTIC, "knot index out of range"))?;
-                        // (status ignored upstream)
-                        let _ = c.insert_one_knot(knot, 1);
+                        // (status ignored upstream; passed on with the opt-in
+                        // `query_statuses_pass_on`, tangency-labs/smlib 8843967)
+                        let r = c.insert_one_knot(knot, 1);
+                        if k.fixes.query_statuses_pass_on {
+                            r?;
+                        }
                     }
                 }
 
@@ -1076,6 +1116,12 @@ impl BSplineCurve {
     /// (`CreateSimpleOffset`). Arcs in the offset plane are offset exactly (a radius
     /// below the tolerance gives a point curve).
     ///
+    /// Upstream passes `match_parameterization` in `ApproximateCurve`'s
+    /// `bOptCreateAnalytics` slot and `FALSE` for parameterisation matching (WR-37);
+    /// set [`crate::kernel::UpstreamFixes::bspline_simple_offset_matches_parameterization`]
+    /// on `k.fixes` to pass `false` for analytic arc creation there and forward
+    /// `match_parameterization` in its own slot.
+    ///
     /// # Errors
     ///
     /// `InvalidInput` for a zero normal or a curve with a knot of continuity C0 or
@@ -1143,8 +1189,12 @@ impl BSplineCurve {
                 if radius < 0.0 {
                     radius *= -1.0;
                     let (origin, x_axis, y_axis) = frame.canonical();
-                    // (status ignored upstream)
-                    let _ = frame.set_canonical(origin, -x_axis, -y_axis);
+                    // (status ignored upstream; passed on with the opt-in
+                    // `query_statuses_pass_on`, tangency-labs/smlib 8843967)
+                    let r = frame.set_canonical(origin, -x_axis, -y_axis);
+                    if k.fixes.query_statuses_pass_on {
+                        r?;
+                    }
                 }
                 if radius < approx_tol_3d {
                     // Offset is a degenerate curve.
@@ -1334,11 +1384,15 @@ impl BSplineCurve {
                 .ok_or_else(|| invalid(OP_C0, "no knots"))
         };
 
+        let Some(degree_plus) = degree.checked_add(1) else {
+            return Ok(false);
+        };
+
         // when every knot is of multiplicity degree (+1 on the ends)
         // and the curve is non-rational
         let mut is_piecewise_c0 = !self.is_rational()?
-            && mult(0)? == degree + 1
-            && mult(unique_knot_count.wrapping_sub(1))? == degree + 1;
+            && mult(0)? == degree_plus
+            && mult(unique_knot_count.wrapping_sub(1))? == degree_plus;
 
         // Check all internal knot multiplicities equal lDegree
         if is_piecewise_c0 {
@@ -1372,8 +1426,15 @@ impl BSplineCurve {
             return curve_is_degenerate(k, self, tol3d, interval);
         }
 
-        // ensure existence of m_pNurb (a plain B-spline cannot make one)
-        let cur = self.nurb_ref()?;
+        // ensure existence of m_pNurb (a plain B-spline cannot make one; with the opt-in
+        // `query_statuses_pass_on` a curve without one is not shown degenerate,
+        // tangency-labs/smlib 8843967)
+        let cur = match self.nurb_ref() {
+            Err(e) if k.fixes.query_statuses_pass_on && !e.is_unported_or_cancelled() => {
+                return Ok(false)
+            }
+            r => r?,
+        };
 
         // pass the call along
         is_ncrv_degenerate(cur, tol3d)
@@ -1388,8 +1449,9 @@ impl BSplineCurve {
     ///
     /// # Errors
     ///
-    /// `InvalidInput` for `start > end`, `end > n`, a stride below the point size or a
-    /// dimension below 2; `SM_ERR` without a NURB.
+    /// `InvalidInput` for `start > end`, `end > n`, a stride below the point size, a
+    /// dimension below 2 or an output (`stride` values per point) above
+    /// [`crate::limits::MAX_ALLOC_BYTES`]; `SM_ERR` without a NURB.
     pub fn control_points_expert(
         &self,
         form: ControlPointForm,
@@ -1416,11 +1478,10 @@ impl BSplineCurve {
         let len = stride
             .checked_mul(count)
             .ok_or_else(|| invalid(OP_EXPERT, "output too large"))?;
-        // the caller's output array upstream: allocated fallibly here
-        let mut out = Vec::new();
-        out.try_reserve_exact(len)
-            .map_err(|_| invalid(OP_EXPERT, "output too large"))?;
-        out.resize(len, 0.0);
+        // the caller's output array upstream: allocated within limits::MAX_ALLOC_BYTES
+        // here, so a huge stride fails at once instead of zero-filling it
+        let mut out = crate::limits::try_filled(len, 0.0)
+            .ok_or_else(|| invalid(OP_EXPERT, "output too large"))?;
         let mut address = 0usize;
         let three_d = dim > 2;
 
@@ -1747,7 +1808,9 @@ impl BSplineCurve {
                 if !ivl.contains_value(param, tol) {
                     match self.create_extended_curve(param, ContinuityType::CInfinity, true) {
                         Ok(Some(ext)) if ext.nurb.is_some() => self.nurb = ext.nurb,
-                        Err(e @ SolidError::Unported { .. }) => return Err(e),
+                        Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => {
+                            return Err(e)
+                        }
                         _ => {}
                     }
                 }
@@ -1768,9 +1831,11 @@ impl BSplineCurve {
     ///
     /// # Errors
     ///
-    /// `InvalidInput` for an unreadable or negative header, a knot type or form
-    /// outside its enum, or a stream shorter than the header declares (upstream:
-    /// undefined values); `SM_ERR` from the 2D conversion.
+    /// `InvalidInput` (`SM_ERR_INVALID_INPUT`) when a read fails part way (data ends
+    /// early or is not a number), for a degree outside `1..=NL_MAXDEG`, fewer control
+    /// points than degree + 1 or too many to size, a rational flag other than 0 or 1,
+    /// a knot type or form outside its enum, or a stream shorter than the header
+    /// declares; `SM_ERR` from the 2D conversion.
     pub fn read_from_db(db: &mut DatabaseReader, dim: u64, version: u64) -> Result<Self> {
         let bad = |reason: &'static str| invalid(OP_READ, reason);
 
@@ -1800,7 +1865,7 @@ impl BSplineCurve {
             }
             match (n, p, rat, read_dim) {
                 (Some(n), Some(p), Some(rat), Some(d)) => (n, p, rat, d),
-                _ => return Err(bad("unreadable header (uninitialised upstream)")),
+                _ => return Err(bad(READ_FAILED)),
             }
         } else {
             let n = db.read_long()?;
@@ -1813,6 +1878,36 @@ impl BSplineCurve {
             }
             (n, p, rat, read_dim)
         };
+        if db.read_failed() {
+            return Err(bad(READ_FAILED));
+        }
+
+        // A curve above NL_MAXDEG evaluates, but a surface built from it (an extrusion or
+        // a sweep) has that degree and overflows NLib's surface evaluators, which size
+        // their stack arrays by NL_MAXDEG. A degree-0 curve has a zero tangent. NLib's own
+        // curve checks also cap curves at NL_MAXDEG, so reject anything outside
+        // [1, NL_MAXDEG].
+        if p < 1 || i64::from(p) > MAX_DEGREE as i64 {
+            return Err(bad(
+                "NURBS curve degree is outside the supported range 1 to NL_MAXDEG",
+            ));
+        }
+
+        // The count comes straight from the file too, as the highest index. A curve needs
+        // at least degree + 1 control points, and the NURB is one block whose byte size is
+        // a ULONG, so reject a count that would overflow it before it sizes anything.
+        if n < i64::from(p) {
+            return Err(bad(
+                "NURBS curve control point count is fewer than degree + 1",
+            ));
+        }
+        if n as u64 >= u64::MAX / (4 * 32) {
+            return Err(bad("NURBS curve control point count is too large"));
+        }
+        // Any nonzero flag would otherwise select the rational read below.
+        if rat != 0 && rat != 1 {
+            return Err(bad("NURBS curve rational flag is neither NL_NO nor NL_YES"));
+        }
 
         // knot count
         let n = usize::try_from(n).map_err(|_| bad("negative size"))?;
@@ -1841,24 +1936,22 @@ impl BSplineCurve {
 
         // Read in data
         let mut vals = [f64::NAN; 4];
-        for (i, slot) in cur.cpts_mut().iter_mut().enumerate() {
+        for slot in cur.cpts_mut().iter_mut() {
             if ascii {
                 let s = db.in_stream_mut().ok_or_else(|| bad("no input stream"))?;
-                let mut all = true;
                 for v in vals.iter_mut().take(per) {
-                    match s.extract_double() {
-                        Some(x) => *v = x,
-                        None => all = false,
+                    if let Some(x) = s.extract_double() {
+                        *v = x;
                     }
-                }
-                if i == 0 && !all {
-                    return Err(bad("unreadable control point (uninitialised upstream)"));
                 }
                 db.go_to_next_line();
             } else {
                 for v in vals.iter_mut().take(per) {
                     *v = db.read_double()?;
                 }
+            }
+            if db.read_failed() {
+                return Err(bad(READ_FAILED));
             }
             let [wx, wy, a, b] = vals;
             *slot = match (two_d, rational) {
@@ -1884,6 +1977,9 @@ impl BSplineCurve {
             } else {
                 *slot = db.read_double()?;
             }
+            if db.read_failed() {
+                return Err(bad(READ_FAILED));
+            }
         }
 
         // Set output
@@ -1907,6 +2003,91 @@ impl BSplineCurve {
         }
         Ok(new_curve)
     }
+
+    /// `WriteToDB`: writes the NURB's header (last control point index, degree,
+    /// rational flag and dimension, then for `version > 32` the knot type and form),
+    /// its control points (`x y`, `x y z`, `wx wy w` or `wx wy wz w`: Euclidean for a
+    /// non-rational NURB, weighted for a rational one) and its knots.
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR` without NURB (`GetOrCreateGwNurbPointer` cannot make one for a
+    /// B-spline; the analytic kinds always hold theirs).
+    pub fn write_to_db(&self, db: &mut DatabaseWriter, version: u64) -> Result<()> {
+        let cur = self.nurb_ref()?;
+        let n = cur.n() as i64;
+        let p = cur.degree() as i16;
+        let knot_type = self.knot_type as u64;
+        let form = self.form as u64;
+
+        // set type flag for different types of output
+        let rat: i16 = i16::from(cur.is_rational());
+        let dim: i16 = if cur.is_3d() { 3 } else { 2 };
+
+        // output header, n, p, rat, and dim
+        let ascii = db.file_type() == FileType::Ascii;
+        if ascii {
+            db.out_i64(n).out_str(" Number of Control Points \n");
+            db.out_i64(p.into()).out_str(" Degree \n");
+            db.out_i64(rat.into()).out_str(" RationalFlag \n");
+            db.out_i64(dim.into()).out_str(" Dimension \n");
+            if version > 32 {
+                db.out_u64(knot_type);
+                db.out_str(
+                    " Knot Type Enum: 1=2d NonRational, 2=3d NonRational, 3=2d Rational, \
+                     4=3d Rational\n",
+                );
+                db.out_u64(form).out_str(" BSplineCurveForm Enum\n");
+            }
+        } else {
+            db.write_long(n);
+            db.write_short(p);
+            db.write_short(rat);
+            db.write_short(dim);
+            if version > 32 {
+                db.write_long(knot_type as i64);
+                db.write_long(form as i64);
+            }
+        }
+
+        // for every control point, by curve type
+        for pw in cur.cpts() {
+            let [x, y, z] = cpt_to_xyz(*pw);
+            let values = match (rat == 1, dim == 3) {
+                // 2-D non-rational
+                (false, false) => [x, y, 0.0, 0.0],
+                // 3-D non-rational
+                (false, true) => [x, y, z, 0.0],
+                // 2-D rational
+                (true, false) => [pw.x, pw.y, pw.w, 0.0],
+                // 3-D rational
+                (true, true) => [pw.x, pw.y, pw.z, pw.w],
+            };
+            let count = 2 + usize::from(dim == 3) + usize::from(rat == 1);
+            db.reals(values.get(..count).unwrap_or_default());
+        }
+
+        // for every knot
+        for &u in cur.knots() {
+            db.reals(&[u]);
+        }
+        Ok(())
+    }
+}
+
+/// `N_CPtToXYZ`: the Euclidean coordinates of a control point (`z` of a 2D point is
+/// `0`; a weighted point is divided by its weight).
+fn cpt_to_xyz(pw: CPoint) -> [f64; 3] {
+    let mut x = pw.x;
+    let mut y = pw.y;
+    let mut z = if pw.z == NOZ { 0.0 } else { pw.z };
+    if pw.w != NOW {
+        let w = pw.w;
+        x /= w;
+        y /= w;
+        z /= w;
+    }
+    [x, y, z]
 }
 
 #[cfg(test)]
@@ -1931,6 +2112,18 @@ mod tests {
     }
 
     #[test]
+    fn issue_2009_curve_without_nurb_is_not_shown_degenerate() {
+        // tangency-labs/smlib 8843967 (SmBSplineCurve::IsDegenerate): no NURB form, no
+        // degeneracy shown (FALSE); the port without the fix fails, where upstream
+        // reads a NULL NURB. Discriminating.
+        let c = BSplineCurve::new(3);
+        let mut on = Kernel::default();
+        on.fixes.query_statuses_pass_on = true;
+        assert!(c.is_degenerate(&Kernel::default(), 1e-6, None).is_err());
+        assert!(!c.is_degenerate(&on, 1e-6, None).unwrap());
+    }
+
+    #[test]
     fn line_is_line() {
         let c = line(Point3::new(0.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0));
         let (p, v) = c.is_line(3, 1e-9).unwrap().unwrap();
@@ -1952,6 +2145,14 @@ mod tests {
         assert_eq!(c.number_of_unique_knots().unwrap(), 3);
         assert!(!c.is_piecewise_c0().unwrap());
         assert!(!c.is_intersector_approx().unwrap());
+    }
+
+    #[test]
+    fn piecewise_c0_rejects_unrepresentable_endpoint_multiplicity() {
+        let nurb =
+            Curve::new(vec![CPoint::new(0.0, 0.0, 0.0, NOW)], usize::MAX, vec![0.0]).unwrap();
+        let c = BSplineCurve::from_nurb(nurb, 3, false);
+        assert_eq!(c.is_piecewise_c0(), Ok(false));
     }
 
     #[test]
@@ -2090,10 +2291,22 @@ mod tests {
     #[test]
     fn control_points_expert_absurd_stride_is_an_error() {
         // fuzz regression (nurbs.b_spline_curve_p2 fuzz00841): a 2^32 stride aborted
-        // the output allocation
+        // the output allocation, and a 2^31 stride over two points (32 GiB, which an
+        // overcommitting reservation grants) was zero-filled for 30 s
         let c = cubic();
         let r = c.control_points_expert(ControlPointForm::NonRational, 0, 4, 1 << 62);
         assert!(r.is_err());
+        let r = c.control_points_expert(ControlPointForm::NonRational, 0, 1, 1 << 31);
+        assert!(
+            matches!(
+                r,
+                Err(SolidError::InvalidInput {
+                    reason: "output too large",
+                    ..
+                })
+            ),
+            "{r:?}"
+        );
         assert!(c
             .control_points_expert(ControlPointForm::NonRational, 0, 4, usize::MAX)
             .is_err());
@@ -2103,5 +2316,130 @@ mod tests {
                 .len(),
             15
         );
+    }
+
+    fn wr37_nonuniform_planar_cubic() -> BSplineCurve {
+        let cpts = vec![
+            CPoint::new(0.0, 0.0, 0.0, NOW),
+            CPoint::new(1.2, 0.0, 0.0, NOW),
+            CPoint::new(6.5, 0.0, 0.0, NOW),
+            CPoint::new(7.2, 0.0, 0.0, NOW),
+            CPoint::new(8.0, 0.0, 0.0, NOW),
+            CPoint::new(10.0, 2.0, 0.0, NOW),
+        ];
+        let u = vec![0.0, 0.0, 0.0, 0.0, 0.1, 0.6, 1.0, 1.0, 1.0, 1.0];
+        BSplineCurve::from_nurb(Curve::new(cpts, 3, u).unwrap(), 3, false)
+    }
+
+    fn wr37_exact_offset_point(c: &BSplineCurve, t: f64, normal: Vec3, dist: f64) -> Point3 {
+        let pv = c.evaluate(t, 1, true, true).unwrap();
+        let binorm = pv[1].cross(normal).unitize().unwrap();
+        pv[0] + dist * binorm
+    }
+
+    #[test]
+    fn wr37_bspline_simple_offset_matches_parameterization_when_opted_in() {
+        let c = wr37_nonuniform_planar_cubic();
+        let k_def = Kernel::default();
+        let mut k_fix = Kernel::default();
+        k_fix.fixes.bspline_simple_offset_matches_parameterization = true;
+
+        let tol = 1e-4;
+        let normal = Vec3::Z;
+        let dist = 0.5;
+
+        let (min_cont, _) = c.calculate_continuities(&k_def, ANG_TOL_DEG).unwrap();
+        assert!((min_cont as i32) > (ContinuityType::C0 as i32));
+        assert!(curve_is_arc(&k_def, &c, 11, tol / 100.0).unwrap().is_none());
+
+        let r_def = c.create_simple_offset(&k_def, tol, normal, dist, true);
+        let r_fix = c.create_simple_offset(&k_fix, tol, normal, dist, true);
+        let (off_def, gap_def) = r_def.unwrap();
+        let (off_fix, gap_fix) = r_fix.unwrap();
+        assert!(gap_def <= tol);
+        assert!(gap_fix <= tol);
+
+        // Default (WR-37): match_parameterization is dropped, so [0, 0.5] passes as one
+        // Hermite span on the straight y = -dist locus despite > 0.2 parametric drift.
+        let p_def = off_def.evaluate_point(0.25).unwrap();
+        let p_exact = wr37_exact_offset_point(&c, 0.25, normal, dist);
+        assert!((p_def.y + dist).abs() < 1e-12 && p_def.z.abs() < 1e-12);
+        assert!(p_def.distance(p_exact) > 0.1);
+
+        // Opt-in: parameterization is matched across the natural interval [0, 1].
+        assert_eq!(off_fix.form(), BSplineCurveForm::Unspecified);
+        let n_def = off_def.number_control_points().unwrap();
+        let n_fix = off_fix.number_control_points().unwrap();
+        assert!(n_fix > n_def);
+        let p_fix_quarter = off_fix.evaluate_point(0.25).unwrap();
+        assert!(p_fix_quarter.distance(p_exact) <= tol);
+        for i in 0_u32..=100 {
+            let t = f64::from(i) / 100.0;
+            let p_fix = off_fix.evaluate_point(t).unwrap();
+            let p_ref = wr37_exact_offset_point(&c, t, normal, dist);
+            assert!(p_fix.distance(p_ref) <= 1.5 * tol);
+        }
+    }
+
+    #[test]
+    fn wr37_bspline_simple_offset_unmatched_mode_unchanged_by_opt_in() {
+        let c = wr37_nonuniform_planar_cubic();
+        let k_def = Kernel::default();
+        let mut k_fix = Kernel::default();
+        k_fix.fixes.bspline_simple_offset_matches_parameterization = true;
+
+        let tol = 1e-4;
+        let r_def = c.create_simple_offset(&k_def, tol, Vec3::Z, 0.5, false);
+        let r_fix = c.create_simple_offset(&k_fix, tol, Vec3::Z, 0.5, false);
+        let (off_def, gap_def) = r_def.unwrap();
+        let (off_fix, gap_fix) = r_fix.unwrap();
+        assert_eq!(gap_def.to_bits(), gap_fix.to_bits());
+        assert!(off_def.approx_eq(&off_fix));
+        assert_eq!(off_def.canonical().unwrap(), off_fix.canonical().unwrap());
+    }
+
+    #[test]
+    fn wr37_linear_bspline_and_ellipse_simple_offset_with_match_parameterization() {
+        let k_def = Kernel::default();
+        let mut k_fix = Kernel::default();
+        k_fix.fixes.bspline_simple_offset_matches_parameterization = true;
+        let tol = 1e-4;
+
+        // A linear B-spline produces a single-span cubic Hermite B-spline (not an arc)
+        // under both default (bOptCreateAnalytics = true) and opt-in (false).
+        let l = line(Point3::new(0.0, 0.0, 0.0), Point3::new(4.0, 0.0, 0.0));
+        assert_eq!(l.form(), BSplineCurveForm::PolylineForm);
+        let rl_def = l.create_simple_offset(&k_def, tol, Vec3::Z, 1.0, true);
+        let rl_fix = l.create_simple_offset(&k_fix, tol, Vec3::Z, 1.0, true);
+        let (l_def, l_gap_def) = rl_def.unwrap();
+        let (l_fix, l_gap_fix) = rl_fix.unwrap();
+        assert_eq!(l_gap_def, 0.0);
+        assert_eq!(l_gap_fix, 0.0);
+        assert_eq!(l_def.form(), BSplineCurveForm::Unspecified);
+        assert_eq!(l_fix.form(), BSplineCurveForm::Unspecified);
+        assert_eq!(l_fix.degree().unwrap(), 3);
+        assert_eq!(l_fix.number_control_points().unwrap(), 4);
+        assert!(l_def.approx_eq(&l_fix));
+        for i in 0_u32..=4 {
+            let t = f64::from(i) / 4.0;
+            let expected = Point3::new(4.0 * t, -1.0, 0.0);
+            assert!(l_fix.evaluate_point(t).unwrap().distance(expected) < 1e-12);
+        }
+
+        // Non-circular Ellipse::create_simple_offset delegates to BSplineCurve.
+        let frame = Axis2Placement::IDENTITY;
+        let deg_ivl = Extent1d::from_min_max(0.0, 180.0);
+        let ell = Ellipse::create_canonical(&k_fix, &frame, 6.0, 1.0, Some(&deg_ivl), None);
+        let ell = ell.unwrap();
+        let r_ell = ell.create_simple_offset(&k_fix, tol, Vec3::Z, 0.25, true);
+        let (ell_off, ell_gap) = r_ell.unwrap();
+        assert!(ell_gap <= tol);
+        let ivl = ell.base().natural_interval();
+        for i in 0_u32..=40 {
+            let t = ivl.evaluate(f64::from(i) / 40.0);
+            let p_off = ell_off.evaluate_point(&k_fix, t).unwrap();
+            let p_ref = wr37_exact_offset_point(ell.base(), t, Vec3::Z, 0.25);
+            assert!(p_off.distance(p_ref) <= 2.0 * tol);
+        }
     }
 }

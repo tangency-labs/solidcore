@@ -47,20 +47,30 @@
 //!   initialised (empty) box: every `CalculateBoundingBox` override (`SmCurve`,
 //!   `SmBSplineCurve`, `SmLine`, `SmHermiteCurve`, `SmCrvOnSurf`, `SmCompositeCurve`)
 //!   fails only before it writes the caller's box. [`SolidError::Unported`] still
-//!   propagates.
+//!   propagates. With `UpstreamFixes::brep_edit_statuses_pass_on` (fork 60a8a51) the
+//!   four statuses are passed on.
 //! - **Point classification.** [`BrepQuery::point_3d_classify`] returns the
 //!   classification instead of filling the caller's (every upstream caller constructs a
 //!   fresh one just before and drops it on failure), with [`EntityRef`] objects. Its
 //!   boundary solve and ray fires need the B-rep's cache and object identities, which
 //!   upstream reaches through the B-rep (`CacheMakeOrValidate`): a [`BrepQuery`] holds
-//!   the identities and builds the cache lazily, on the first solve that needs it (so a
-//!   single-region B-rep never builds one, as upstream). A caller keeps one query while
+//!   the identities and builds the cache lazily, on the first solve that needs it (so
+//!   single-region classification without boundary intersections skips it, as upstream).
+//!   A caller keeps one query while
 //!   the B-rep is not edited and makes a fresh one after an edit (upstream revalidates).
-//!   [`BrepIdentity::default`] is the identity of a lone B-rep (`BrepId` 0, geometry
-//!   owned by its arena records). The ray fires may add missing UV trim curves, which
-//!   upstream's `const` method does to the B-rep itself; [`BrepClassifier`] serves
-//!   callers that hold the B-rep shared and makes a private copy on the first ray fire
-//!   only. A ray fire that fails with an ordinary error moves on to the next direction,
+//!   The query also keeps the face surface caches its boundary solves and ray fires
+//!   make, for its next solve, as upstream keeps each on its surface: each face's
+//!   cache is built once per query, not once per solve. They serve a solve only in the
+//!   kernel and editing state they were made in.
+//!   [`BrepQuery::of_brep`] and [`BrepClassifier::of_brep`] resolve a lone B-rep's
+//!   identities from its [`Brep::naming`] scheme and proven owner keys
+//!   ([`BrepIdentity::default`] assumes [`arena_identity`]). Face boundary solves prepare
+//!   face caches, and ray fires may add missing UV trim curves, which upstream's `const`
+//!   method does to the B-rep itself. [`BrepClassifier`] serves callers that hold the
+//!   B-rep shared and makes a private copy on the first face boundary solve or ray fire
+//!   ([`Brep::clone_standing_for_self`]: its geometry keeps its owners, which the copy
+//!   constructor resets, so the copy's caches still hold its curves and surfaces).
+//!   A ray fire that fails with an ordinary error moves on to the next direction,
 //!   as a failing status does upstream; [`SolidError::Unported`] propagates.
 //! - **Out-params.** The evaluated point, normal or point and derivatives are the
 //!   return value; on failure there is none (upstream evaluates into locals and leaves
@@ -80,15 +90,17 @@
 mod ray;
 
 pub(crate) use ray::solve_mutable_brep_point;
-#[cfg(test)]
 pub(crate) use ray::PreparationRequest;
 pub use ray::RayPreparation;
 pub(crate) use ray::RaySurfaceContext;
-pub use ray::{BrepFaceServices, LiveBrepObjects, SideObject, SidedFaceServices};
+pub use ray::{
+    BrepFaceServices, CurveFaceObject, CurveFaceServices, FaceCaches, LiveBrepObjects, SideObject,
+    SidedFaceServices,
+};
 
 use core::cell::OnceCell;
 
-use crate::error::{ignore_status, ignored, EntityRef, Result, SolidError};
+use crate::error::{ignore_status, ignored, native_failure, EntityRef, Result, SolidError};
 use crate::geom::attribute::{Attribute, AttributeValue, Behavior};
 use crate::geom::extent3d::Extent3d;
 use crate::geom::global_solver::{SolutionRequested, SolverOperation};
@@ -107,7 +119,7 @@ use crate::topology::brep::{p1 as bp1, p2 as bp2};
 use crate::topology::brep_cache::{
     arena_identity, make_brep_cache, BrepCache, BrepObjects, CacheObject, CacheSource,
 };
-use crate::topology::{edge, face, vertex, Brep, BrepId, RegionId};
+use crate::topology::{edge, face, vertex, Brep, BrepId, NamingScheme, RegionId};
 
 const OP_CLASSIFY: &str = "query::brep::BrepQuery::point_3d_classify";
 const OP_EVAL_POINT: &str = "query::brep::evaluate_surface_point";
@@ -259,14 +271,20 @@ pub fn calculate_tight_bounding_box<'a>(
     // Union all of the Tight Edge bounding boxes.
     for e in bp1::edges(b, None)? {
         // (CalculateBoundingBox initialises the box first)
-        let mut edge_bbox = ignored(qe::calculate_bounding_box(k, b, e, NORMAL_BOX, false))?
-            .and_then(|boxes| boxes.normal)
-            .unwrap_or_default();
+        let mut edge_bbox = ignored(crate::error::passed_on(
+            qe::calculate_bounding_box(k, b, e, NORMAL_BOX, false),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?
+        .and_then(|boxes| boxes.normal)
+        .unwrap_or_default();
         if edge_bbox.is_contained_by(&brep_bbox, 0.0) {
             continue;
         }
         // (an edge without curve, or a failure, leaves the loose box)
-        if let Some(Some(tight)) = ignored(qe::calculate_tight_bounding_box(k, b, e))? {
+        if let Some(Some(tight)) = ignored(crate::error::passed_on(
+            qe::calculate_tight_bounding_box(k, b, e),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)? {
             edge_bbox = tight;
         }
         brep_bbox = brep_bbox.union(&edge_bbox);
@@ -276,18 +294,19 @@ pub fn calculate_tight_bounding_box<'a>(
     // face).
     let mut face_bbox = Extent3d::new();
     for f in bp1::faces(b, None)? {
-        if let Some(loose) = ignored(qf1::calculate_bounding_box(k, lb.get(), f, false))? {
+        if let Some(loose) = ignored(crate::error::passed_on(
+            qf1::calculate_bounding_box(k, lb.get(), f, false),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)? {
             face_bbox = loose;
         }
         if face_bbox.is_contained_by(&brep_bbox, 0.0) {
             continue;
         }
-        ignore_status(qf3::calculate_tight_bounding_box_into(
-            k,
-            &mut lb,
-            f,
-            &mut face_bbox,
-        ))?;
+        ignore_status(crate::error::passed_on(
+            qf3::calculate_tight_bounding_box_into(k, &mut lb, f, &mut face_bbox),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         brep_bbox = brep_bbox.union(&face_bbox);
     }
 
@@ -353,8 +372,8 @@ fn no_owner(_: ObjectRef) -> Option<ObjectRef> {
 
 impl BrepIdentity<'static> {
     /// The identities of a B-rep whose geometry is owned by its records'
-    /// [`arena_identity`] (as the B-reps this crate builds and imports), without
-    /// intermediate owners.
+    /// [`arena_identity`] (such as imported B-reps), without intermediate owners. For a
+    /// B-rep whose naming scheme may be [`NamingScheme::Notify`], use [`Self::of_brep`].
     #[must_use]
     pub fn arena(brep_id: BrepId) -> Self {
         Self {
@@ -363,6 +382,144 @@ impl BrepIdentity<'static> {
             owner_of: &no_owner,
         }
     }
+}
+
+impl BrepIdentity<'static> {
+    /// The base identities of `b` at `brep_id` by its recorded naming scheme alone
+    /// ([`Brep::naming`]): the Euler operators' notification identities for a
+    /// [`NamingScheme::Notify`] B-rep (one built through `new_brep` and the face
+    /// builders), else [`BrepIdentity::arena`]. It ignores the proven owner keys `b`
+    /// records (`Brep::geometry_owner_keys`), so it misses the geometry of a copy whose
+    /// owners are the caller's keys ([`crate::topology::brep::p3::api_brep_copy`] under
+    /// a caller `key_of`): prefer [`Self::of_brep_with_id`].
+    #[must_use]
+    pub fn of_naming_with_id(brep_id: BrepId, b: &Brep) -> Self {
+        match b.naming() {
+            NamingScheme::Notify => Self {
+                brep_id,
+                keys: &notify_identity,
+                owner_of: &no_owner,
+            },
+            _ => Self::arena(brep_id),
+        }
+    }
+
+    /// The identities `b`'s geometry owners use, at `brep_id`: its naming scheme
+    /// ([`Self::of_naming_with_id`]) overridden by the proven producer owner keys it
+    /// records (`Brep::geometry_owner_keys`), as [`ProvenBrepIdentity::new`]. The
+    /// overrides are owned, so the result is a [`ProvenBrepIdentity`]; pass
+    /// [`ProvenBrepIdentity::identity`] where a [`BrepIdentity`] is taken. A query
+    /// under the wrong identities resolves no geometry owner and finds nothing
+    /// (`plan/findings.md`, "two owner-naming schemes"; #1440).
+    #[must_use]
+    pub fn of_brep_with_id(brep_id: BrepId, b: &Brep) -> ProvenBrepIdentity<'static> {
+        ProvenBrepIdentity::new(Self::of_naming_with_id(brep_id, b), b)
+    }
+
+    /// [`Self::of_brep_with_id`] at [`BrepId`] `0`.
+    #[must_use]
+    pub fn of_brep(b: &Brep) -> ProvenBrepIdentity<'static> {
+        Self::of_brep_with_id(BrepId::from_index(0), b)
+    }
+}
+
+type ProvenKeyFn<'a> = Box<dyn Fn(CacheObject) -> ObjectRef + 'a>;
+
+/// A [`BrepIdentity`] with the proven producer owner keys of its B-rep
+/// (`Brep::geometry_owner_keys`) overriding the base keys where they differ: what
+/// [`BrepIdentity::of_brep`] and [`BrepQuery::of_brep`] resolve a B-rep's records by.
+/// It owns its overrides and does not borrow the B-rep.
+pub struct ProvenBrepIdentity<'a> {
+    base: BrepIdentity<'a>,
+    proven_keys: Option<ProvenKeyFn<'a>>,
+}
+
+impl core::fmt::Debug for ProvenBrepIdentity<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ProvenBrepIdentity")
+            .field("base", &self.base)
+            .field("overridden", &self.proven_keys.is_some())
+            .finish()
+    }
+}
+
+impl<'a> ProvenBrepIdentity<'a> {
+    /// `base` without overrides.
+    #[must_use]
+    pub const fn plain(base: BrepIdentity<'a>) -> Self {
+        Self {
+            base,
+            proven_keys: None,
+        }
+    }
+
+    /// `base`, overriding edge/face keys where `b` records a proven producer
+    /// geometry-owner key (`Brep::geometry_owner_keys`) that differs from `base.keys`
+    /// for geometry actually owned by it. Unowned (`None`) and foreign-owned geometry
+    /// not recorded in `b.geometry_owner_keys()` is still excluded.
+    #[must_use]
+    pub fn new(base: BrepIdentity<'a>, b: &Brep) -> Self {
+        let base_keys = base.keys;
+        let mut overrides = std::collections::BTreeMap::new();
+        for (&entity, &proven) in b.geometry_owner_keys() {
+            let matches_base = match entity {
+                EntityRef::Edge(e) => b
+                    .edges()
+                    .get(e)
+                    .and_then(|edge| edge.curve.as_ref())
+                    .and_then(crate::curve::curve::p2::Curve::owner)
+                    .is_some_and(|actual| actual == base_keys(CacheObject::Edge(e))),
+                EntityRef::Face(f) => b
+                    .faces()
+                    .get(f)
+                    .and_then(|face| face.surface.as_ref())
+                    .and_then(Surface::owner)
+                    .is_some_and(|actual| actual == base_keys(CacheObject::Face(f))),
+                _ => true,
+            };
+            if !matches_base {
+                overrides.insert(entity, proven);
+            }
+        }
+        let proven_keys: Option<ProvenKeyFn<'a>> = (!overrides.is_empty()).then(|| {
+            Box::new(move |object| {
+                let entity = match object {
+                    CacheObject::Edge(e) | CacheObject::Curve(e) => Some(EntityRef::Edge(e)),
+                    CacheObject::Face(f) | CacheObject::Surface(f) => Some(EntityRef::Face(f)),
+                    _ => None,
+                };
+                entity
+                    .and_then(|e| overrides.get(&e).copied())
+                    .unwrap_or_else(|| base_keys(object))
+            }) as ProvenKeyFn<'a>
+        });
+        Self { base, proven_keys }
+    }
+
+    /// The base identities, without the overrides.
+    #[must_use]
+    pub const fn base(&self) -> BrepIdentity<'a> {
+        self.base
+    }
+
+    /// The effective identities: the base with the proven overrides applied.
+    #[must_use]
+    pub fn identity(&self) -> BrepIdentity<'_> {
+        BrepIdentity {
+            brep_id: self.base.brep_id,
+            keys: match &self.proven_keys {
+                Some(keys) => keys.as_ref(),
+                None => self.base.keys,
+            },
+            owner_of: self.base.owner_of,
+        }
+    }
+}
+
+/// The cache-object identities of a [`NamingScheme::Notify`] B-rep
+/// ([`crate::topology::loopuse::notify_ref`] for its edges, faces and vertices).
+fn notify_identity(object: CacheObject) -> ObjectRef {
+    crate::topology::brep::p2::caller_cache_key(&crate::topology::loopuse::notify_ref, object)
 }
 
 impl Default for BrepIdentity<'_> {
@@ -385,10 +542,22 @@ const CLASSIFY_RAYS: [(Vec3, Vec3); 3] = [
 /// upstream builds when a query first needs it and keeps on the B-rep
 /// (`SmSAGObject::CacheMakeOrValidate`). Keep one per B-rep state and reuse it across
 /// queries; edits to the B-rep invalidate it.
-#[derive(Debug)]
 pub struct BrepQuery<'a> {
-    identity: BrepIdentity<'a>,
+    identity: ProvenBrepIdentity<'a>,
     cache: OnceCell<BrepCache>,
+    /// The face surface caches the classification solves made, kept for the next solve
+    /// as upstream keeps them on the surfaces (`smsurf_GetSurfaceCache`).
+    face_caches: ray::KeptFaceCaches,
+    bbox: OnceCell<Extent3d>,
+}
+
+impl core::fmt::Debug for BrepQuery<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("BrepQuery")
+            .field("identity", &self.identity)
+            .field("cache", &self.cache)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for BrepQuery<'static> {
@@ -398,29 +567,91 @@ impl Default for BrepQuery<'static> {
     }
 }
 
+impl BrepQuery<'static> {
+    /// Queries of `b` at [`BrepId`] `0`, resolving records by `b`'s naming scheme and
+    /// proven producer geometry-owner identities (`Brep::geometry_owner_keys`).
+    #[must_use]
+    pub fn of_brep(b: &Brep) -> Self {
+        Self::of_brep_with_id(BrepId::from_index(0), b)
+    }
+
+    /// Queries of `b` at `brep_id`, resolving records by `b`'s naming scheme and proven
+    /// producer geometry-owner identities (`Brep::geometry_owner_keys`).
+    #[must_use]
+    pub fn of_brep_with_id(brep_id: BrepId, b: &Brep) -> Self {
+        Self::from_proven(BrepIdentity::of_brep_with_id(brep_id, b))
+    }
+}
+
 impl<'a> BrepQuery<'a> {
     /// The queries of the B-rep with `identity`; its cache is built on first use.
     #[must_use]
     pub const fn new(identity: BrepIdentity<'a>) -> Self {
+        Self::from_proven(ProvenBrepIdentity::plain(identity))
+    }
+
+    /// The queries of the B-rep with `identity` (proven overrides included).
+    #[must_use]
+    pub const fn from_proven(identity: ProvenBrepIdentity<'a>) -> Self {
         Self {
             identity,
             cache: OnceCell::new(),
+            face_caches: ray::KeptFaceCaches::new(),
+            bbox: OnceCell::new(),
         }
+    }
+
+    /// Queries of `b` with `identity` as the base naming, overriding edge/face keys where
+    /// `b` records a proven producer geometry-owner key (`Brep::geometry_owner_keys`)
+    /// ([`ProvenBrepIdentity::new`]).
+    #[must_use]
+    pub fn with_proven_owners(identity: BrepIdentity<'a>, b: &Brep) -> Self {
+        Self::from_proven(ProvenBrepIdentity::new(identity, b))
     }
 
     /// The queries over a cache the caller already holds for the B-rep.
     #[must_use]
     pub fn with_cache(identity: BrepIdentity<'a>, cache: BrepCache) -> Self {
         Self {
-            identity,
+            identity: ProvenBrepIdentity::plain(identity),
             cache: OnceCell::from(cache),
+            face_caches: ray::KeptFaceCaches::new(),
+            bbox: OnceCell::new(),
         }
     }
 
-    /// The identities.
+    /// The kept face caches of this query.
+    #[must_use]
+    pub(crate) const fn face_caches(&self) -> &ray::KeptFaceCaches {
+        &self.face_caches
+    }
+
+    /// Cached 3D bounding box of `b` with default options.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`calculate_bounding_box`].
+    pub fn bounding_box(&self, k: &Kernel, b: &mut Brep) -> Result<Extent3d> {
+        if let Some(&bbox) = self.bbox.get() {
+            return Ok(bbox);
+        }
+        let bbox = calculate_bounding_box(k, b, BoundingBoxOptions::default())?;
+        Ok(*self.bbox.get_or_init(|| bbox))
+    }
+
+    /// The base identities (without proven overrides).
     #[must_use]
     pub const fn identity(&self) -> BrepIdentity<'a> {
-        self.identity
+        self.identity.base()
+    }
+
+    /// The effective [`BrepIdentity`], including any proven geometry-owner overrides
+    /// recorded on the B-rep when built with [`Self::of_brep`] or
+    /// [`Self::with_proven_owners`] (the same as [`BrepIdentity::of_brep`]'s
+    /// [`ProvenBrepIdentity::identity`]).
+    #[must_use]
+    pub fn effective_identity(&self) -> BrepIdentity<'_> {
+        self.identity.identity()
     }
 
     /// The cache of `b`, built keyed by the identities when first asked for.
@@ -432,7 +663,8 @@ impl<'a> BrepQuery<'a> {
         if let Some(cache) = self.cache.get() {
             return Ok(cache);
         }
-        let cache = make_brep_cache(k, CacheSource::Brep(b), self.identity.keys)?;
+        let identity = self.effective_identity();
+        let cache = make_brep_cache(k, CacheSource::Brep(b), identity.keys)?;
         Ok(self.cache.get_or_init(|| cache))
     }
 
@@ -446,16 +678,27 @@ impl<'a> BrepQuery<'a> {
         direction: Vec3,
         tolerance: f64,
     ) -> Result<crate::topology::brep::p2::RayFireResult> {
+        let identity = self.effective_identity();
         let cache = self.cache(k, b)?;
-        crate::topology::brep::p2::ray_fire_with_solver(
+        let bbox = self.bounding_box(k, b)?;
+        crate::topology::brep::p2::ray_fire_with_bbox_and_solver(
             k,
             b,
+            bbox,
             start,
             direction,
             tolerance,
             None,
             |b, point, options| {
-                solve_mutable_brep_point(k, b, &self.identity, cache, point, options)
+                ray::solve_mutable_brep_point_kept(
+                    k,
+                    b,
+                    &identity,
+                    cache,
+                    &self.face_caches,
+                    point,
+                    options,
+                )
             },
         )
     }
@@ -473,7 +716,9 @@ impl<'a> BrepQuery<'a> {
     /// # Errors
     ///
     /// `SM_ERR` when no ray finds a region; those of the boundary solve, the region list
-    /// and the classification load; [`SolidError::Unported`] from the ray fires.
+    /// and the classification load; errors of the ray fires that have no upstream
+    /// status ([`SolidError::Unported`], a port invariant, a stale id), which are not
+    /// treated as a missed ray.
     pub fn point_3d_classify(
         &self,
         k: &Kernel,
@@ -500,11 +745,12 @@ impl<'a> BrepQuery<'a> {
         point_zone_tol_3d: f64,
         do_boundary_intersections: bool,
     ) -> Result<PointClassification<EntityRef>> {
+        let identity = self.effective_identity();
         let BrepIdentity {
             brep_id,
             keys,
             owner_of,
-        } = self.identity;
+        } = identity;
 
         // init output
         let mut pc = PointClassification::new(point_zone_tol_3d);
@@ -522,29 +768,40 @@ impl<'a> BrepQuery<'a> {
             };
             // XSects point with the Brep verts, edges, and faces returning lowest dim
             // topology intersection found.
-            let solutions = match &mut target {
-                Target::Own(b) => {
-                    let cache = self.cache(k, b)?;
-                    solve_mutable_brep_point(k, b, &self.identity, cache, point, options)?
-                }
-                Target::Shared { .. } => {
-                    let b = target.shared();
-                    let objects = BrepObjects {
-                        preparation: None,
-                        brep: b,
-                        brep_id,
-                        cache: Some(self.cache(k, b)?),
-                        keys,
-                        owner_of,
-                    };
-                    TopologySolver::brep_point_solve(
-                        k,
-                        &objects,
-                        Some(CacheObject::Brep),
-                        point,
-                        options,
-                    )?
-                }
+            // A face-owned surface cache needs mutable access to its actual face.
+            // A shared target without faces cannot reach that lookup and can use
+            // the read-only solver without copying the B-rep.
+            let solutions = if matches!(&target, Target::Shared { .. })
+                && target.shared().faces().ids().next().is_none()
+            {
+                let b = target.shared();
+                let objects = BrepObjects {
+                    preparation: None,
+                    brep: b,
+                    brep_id,
+                    cache: Some(self.cache(k, b)?),
+                    keys,
+                    owner_of,
+                };
+                TopologySolver::brep_point_solve(
+                    k,
+                    &objects,
+                    Some(CacheObject::Brep),
+                    point,
+                    options,
+                )?
+            } else {
+                let b = target.mutable()?;
+                let cache = self.cache(k, b)?;
+                ray::solve_mutable_brep_point_kept(
+                    k,
+                    b,
+                    &identity,
+                    cache,
+                    &self.face_caches,
+                    point,
+                    options,
+                )?
             };
 
             // when the point is on a Brep Face
@@ -577,24 +834,34 @@ impl<'a> BrepQuery<'a> {
         // Now do a ray fire to determine which region this lies in. Fire extra rays
         // only if the first rays fail: `Some(region)` on success (the region may be
         // none), `None` on failure.
-        // (the solve of each ray fire builds the cache when needed)
+        // (the solve of each ray fire builds the cache when needed; the face caches its
+        // solves make are kept for the next, `bp2::ray_fire` on them)
         let mut fire = |direction: Vec3| -> Result<Option<Option<RegionId>>> {
-            let b = target.mutable();
+            let b = target.mutable()?;
             let fired = self.cache(k, b).and_then(|cache| {
-                bp2::ray_fire(
+                let bbox = self.bounding_box(k, b)?;
+                bp2::ray_fire_with_bbox_and_solver(
                     k,
                     b,
-                    brep_id,
-                    cache,
-                    keys,
-                    owner_of,
+                    bbox,
                     point,
                     direction,
                     point_zone_tol_3d,
                     None,
+                    |b, point, options| {
+                        ray::solve_mutable_brep_point_kept(
+                            k,
+                            b,
+                            &identity,
+                            cache,
+                            &self.face_caches,
+                            point,
+                            options,
+                        )
+                    },
                 )
             });
-            Ok(ignored(fired)?.map(|r| r.region))
+            Ok(native_failure(fired)?.map(|r| r.region))
         };
         let mut region = None;
         for (forward, backward) in CLASSIFY_RAYS {
@@ -628,7 +895,8 @@ impl crate::topology::shell::ShellRayWorld<CacheObject> for BrepQuery<'_> {
 
     fn objects<'a>(&'a self, brep: (BrepId, &'a Brep)) -> Result<BrepObjects<'a>> {
         let (brep_id, brep) = brep;
-        if brep_id != self.identity.brep_id {
+        let identity = self.effective_identity();
+        if brep_id != identity.brep_id {
             return Err(SolidError::invalid_input(
                 "query::brep::BrepQuery::objects",
                 "ray fire on another B-rep than the query's",
@@ -639,8 +907,8 @@ impl crate::topology::shell::ShellRayWorld<CacheObject> for BrepQuery<'_> {
             brep,
             brep_id,
             cache: None,
-            keys: self.identity.keys,
-            owner_of: self.identity.owner_of,
+            keys: identity.keys,
+            owner_of: identity.owner_of,
         })
     }
 
@@ -663,13 +931,14 @@ impl crate::topology::shell::ShellRayWorld<CacheObject> for BrepQuery<'_> {
         point: Point3,
         options: TopologySolveOptions<'_>,
     ) -> Result<crate::geom::solution_array::SolutionArray<CacheObject>> {
-        if brep_id != self.identity.brep_id {
+        let identity = self.effective_identity();
+        if brep_id != identity.brep_id {
             return Err(SolidError::invalid_input(
                 "query::brep::BrepQuery::solve_shape_ray",
                 "ray fire on another B-rep",
             ));
         }
-        ray::solve_mutable_ray(k, brep, &self.identity, shape, point, options)
+        ray::solve_mutable_ray(k, brep, &identity, shape, point, options)
     }
 
     fn class_entity(&self, object: CacheObject) -> Option<EntityRef> {
@@ -717,19 +986,25 @@ impl LazyBrep<'_> {
         }
     }
 
-    /// The B-rep to edit, copying a shared one first.
-    pub fn get_mut(&mut self) -> &mut Brep {
+    /// The B-rep to edit, copying a shared one first: a copy that stands for it
+    /// ([`Brep::clone_standing_for_self`]: the same ids, its geometry's owners kept).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Brep::clone_standing_for_self`], at the first edit of a shared B-rep.
+    pub fn get_mut(&mut self) -> Result<&mut Brep> {
         match self {
-            Self::Own(b) => b,
-            Self::Shared { source, copy } => {
-                copy.get_or_insert_with(|| Box::new((*source).clone()))
-            }
+            Self::Own(b) => Ok(b),
+            Self::Shared { source, copy } => match copy {
+                Some(c) => Ok(c),
+                slot @ None => Ok(slot.insert(Box::new(source.clone_standing_for_self()?))),
+            },
         }
     }
 }
 
 /// The B-rep a classification runs on: the caller's, lent mutably, or one it holds
-/// shared, copied when a ray fire first needs it mutably.
+/// shared, copied when a face boundary solve or ray fire needs it mutably.
 enum Target<'t> {
     Own(&'t mut Brep),
     Shared {
@@ -747,26 +1022,51 @@ impl Target<'_> {
         }
     }
 
-    /// The B-rep to edit, copying a shared one first.
-    fn mutable(&mut self) -> &mut Brep {
+    /// The B-rep to edit, copying a shared one first: the copy stands for the B-rep
+    /// ([`Brep::clone_standing_for_self`]), so its geometry keeps naming its edges and
+    /// faces and the face boundary solves' and ray fires' caches hold them.
+    fn mutable(&mut self) -> Result<&mut Brep> {
         match self {
-            Self::Own(b) => b,
-            Self::Shared { source, copy } => copy.get_or_insert_with(|| (*source).clone()),
+            Self::Own(b) => Ok(b),
+            Self::Shared { source, copy } => match copy {
+                Some(b) => Ok(b),
+                None => Ok(copy.insert(source.clone_standing_for_self()?)),
+            },
         }
     }
 }
 
 /// Point classification against a B-rep the caller holds shared: its [`BrepQuery`], and
-/// a private copy for the ray fires, which may add missing UV trim curves (upstream's
-/// `const` `Point3DClassify` adds them to the B-rep itself). The copy is made when a ray
-/// is first fired, so boundary hits and single-region B-reps copy nothing. Keep one per
-/// B-rep state and classify every point through it: the copy and the cache are made
-/// once.
+/// a private copy for face boundary solves and ray fires, which may add missing UV trim
+/// curves (upstream's `const` `Point3DClassify` adds them to the B-rep itself). The
+/// copy is made when either solve first needs it. Keep one per B-rep state and classify
+/// every point through it: the copy and the cache are made once.
 #[derive(Debug)]
 pub struct BrepClassifier<'a, 'b> {
     query: BrepQuery<'a>,
     source: &'b Brep,
     copy: Option<Brep>,
+}
+
+impl<'b> BrepClassifier<'static, 'b> {
+    /// The classifier of `brep` at [`BrepId`] `0`, resolving records by `brep`'s naming
+    /// scheme and proven producer geometry-owner identities ([`BrepQuery::of_brep`]).
+    #[must_use]
+    pub fn of_brep(brep: &'b Brep) -> Self {
+        Self::of_brep_with_id(BrepId::from_index(0), brep)
+    }
+
+    /// The classifier of `brep` at `brep_id`, resolving records by `brep`'s naming
+    /// scheme and proven producer geometry-owner identities
+    /// ([`BrepQuery::of_brep_with_id`]).
+    #[must_use]
+    pub fn of_brep_with_id(brep_id: BrepId, brep: &'b Brep) -> Self {
+        Self {
+            query: BrepQuery::of_brep_with_id(brep_id, brep),
+            source: brep,
+            copy: None,
+        }
+    }
 }
 
 impl<'a, 'b> BrepClassifier<'a, 'b> {
@@ -793,8 +1093,8 @@ impl<'a, 'b> BrepClassifier<'a, 'b> {
         self.copy.is_some()
     }
 
-    /// [`BrepQuery::point_3d_classify`] on the B-rep, copied when a ray fire first
-    /// needs it.
+    /// [`BrepQuery::point_3d_classify`] on the B-rep, copied when a face boundary solve
+    /// or ray fire first needs it.
     ///
     /// # Errors
     ///
@@ -823,8 +1123,10 @@ impl<'a, 'b> BrepClassifier<'a, 'b> {
 // ---- SM_API surface evaluation ------------------------------------------------------
 
 /// The input checks the three evaluation entry points share: a surface, and a
-/// parameter inside its natural domain (bounds included).
+/// parameter inside its natural domain (bounds included; `GetNaturalUVDomain`, which
+/// makes a lazy analytic's missing NURB).
 fn checked_surface<'s>(
+    k: &Kernel,
     surface: Option<&'s Surface>,
     uv: Point2,
     op: &'static str,
@@ -834,7 +1136,7 @@ fn checked_surface<'s>(
     };
 
     // Negated in-range test so a NaN parameter is rejected too.
-    let domain = surface.natural_uv_domain();
+    let domain = surface.natural_uv_domain_with_nurb(k)?;
     let (lo, hi) = (domain.min(), domain.max());
     if !(uv.x >= lo.x && uv.x <= hi.x && uv.y >= lo.y && uv.y <= hi.y) {
         return Err(SolidError::invalid_input(
@@ -852,7 +1154,7 @@ fn checked_surface<'s>(
 /// [`SolidError::InvalidInput`] without a surface or for a parameter outside (or NaN
 /// against) the surface's natural domain; those of [`Surface::evaluate_point`].
 pub fn evaluate_surface_point(k: &Kernel, surface: Option<&Surface>, uv: Point2) -> Result<Point3> {
-    checked_surface(surface, uv, OP_EVAL_POINT)?.evaluate_point(k, uv)
+    checked_surface(k, surface, uv, OP_EVAL_POINT)?.evaluate_point(k, uv)
 }
 
 /// `SmApiEvaluateSurfaceNormal`: the unit normal of `surface` at `uv`, from the upper
@@ -863,7 +1165,7 @@ pub fn evaluate_surface_point(k: &Kernel, surface: Option<&Surface>, uv: Point2)
 /// Those of [`evaluate_surface_point`]'s input checks; those of
 /// [`Surface::evaluate_normal`].
 pub fn evaluate_surface_normal(k: &Kernel, surface: Option<&Surface>, uv: Point2) -> Result<Vec3> {
-    checked_surface(surface, uv, OP_EVAL_NORMAL)?.evaluate_normal(k, uv, Side::Left, Side::Left)
+    checked_surface(k, surface, uv, OP_EVAL_NORMAL)?.evaluate_normal(k, uv, Side::Left, Side::Left)
 }
 
 /// `SmApiEvaluateSurfaceDerivatives`: the point and first derivatives `(P, Du, Dv)` of
@@ -879,7 +1181,7 @@ pub fn evaluate_surface_derivatives(
     surface: Option<&Surface>,
     uv: Point2,
 ) -> Result<(Point3, Vec3, Vec3)> {
-    checked_surface(surface, uv, OP_EVAL_DERIVS)?.evaluate_1st_derivatives(k, uv, true, true)
+    checked_surface(k, surface, uv, OP_EVAL_DERIVS)?.evaluate_1st_derivatives(k, uv, true, true)
 }
 
 // ---- polygon decimation attributes ---------------------------------------------------
@@ -1114,7 +1416,6 @@ mod tests {
         let mut classifier = BrepClassifier::new(&b, BrepIdentity::arena(BrepId::from_index(0)));
         let pc = classifier.point_3d_classify(&k, p, 1e-6, true).unwrap();
         assert_eq!(pc.object(), b.infinite_region().map(EntityRef::Region));
-        assert!(!classifier.has_copied());
     }
 
     #[test]
@@ -1192,32 +1493,106 @@ mod tests {
         assert!(trim_count(&b) > 0, "the trims are made on the box itself");
     }
 
+    /// A query keeps the face caches its ray solves build (upstream keeps them on the
+    /// surfaces): a face's cache is built once however many points it classifies, and
+    /// the classifications equal those of a fresh query per point (#2494).
+    #[test]
+    fn classifications_build_each_face_cache_once() {
+        let mut k = Kernel::default();
+        let mut cylinder = || {
+            crate::primitive::api_primitives::create_cylinder(&mut k, Point3::ZERO, 5.0, 20.0)
+                .unwrap()
+        };
+        let (mut kept_brep, mut fresh_brep) = (cylinder(), cylinder());
+        let points = [
+            Point3::new(1.0, 1.0, 5.0),
+            Point3::new(-2.0, 1.0, 15.0),
+            Point3::new(0.5, -3.0, 10.0),
+            Point3::new(10.0, 0.0, 10.0),
+            Point3::new(0.0, 0.0, 30.0),
+        ];
+        let faces = kept_brep.faces().ids().count();
+
+        let query = BrepQuery::of_brep(&kept_brep);
+        let mut kept = Vec::new();
+        for p in points {
+            for boundary in [false, true] {
+                let pc = query.point_3d_classify(&k, &mut kept_brep, p, 1e-6, boundary);
+                kept.push(format!("{pc:?}"));
+            }
+        }
+        let builds = query.face_caches.builds();
+        assert!(builds > 0, "the ray fires reach a face cache");
+        assert!(builds <= faces, "{builds} builds for {faces} faces");
+
+        let mut fresh = Vec::new();
+        let mut fresh_builds = 0;
+        for p in points {
+            for boundary in [false, true] {
+                let query = BrepQuery::of_brep(&fresh_brep);
+                let pc = query.point_3d_classify(&k, &mut fresh_brep, p, 1e-6, boundary);
+                fresh.push(format!("{pc:?}"));
+                fresh_builds += query.face_caches.builds();
+            }
+        }
+        assert_eq!(kept, fresh);
+        assert!(
+            fresh_builds > builds,
+            "{fresh_builds} fresh vs {builds} kept"
+        );
+        // what the solves may make on the B-rep: tolerances and UV trim curves
+        let made = |b: &Brep| {
+            let tolerances: Vec<_> = b
+                .edges()
+                .iter()
+                .map(|(_, e)| e.tolerance.to_bits())
+                .chain(b.vertices().iter().map(|(_, v)| v.tolerance.to_bits()))
+                .collect();
+            (tolerances, trim_count(b))
+        };
+        assert_eq!(made(&kept_brep), made(&fresh_brep));
+
+        // the same points again: every cache is kept
+        for p in points {
+            let _ = query.point_3d_classify(&k, &mut kept_brep, p, 1e-6, false);
+        }
+        assert_eq!(query.face_caches.builds(), builds);
+
+        // another kernel state (a tolerance) builds them again
+        k.tolerances.approx_tol_3d *= 2.0;
+        let _ = query.point_3d_classify(&k, &mut kept_brep, points[0], 1e-6, false);
+        assert!(query.face_caches.builds() > builds);
+    }
+
     #[test]
     fn lazy_brep_edits_the_callers_brep_or_a_copy() {
         let mut b = Brep::new();
         let v = b.add_vertex(Point3::new(1.0, 2.0, 3.0)).unwrap();
 
         let mut shared = LazyBrep::from(&b);
-        shared.get_mut().vertex_mut(v).unwrap().tolerance = 0.5;
+        shared.get_mut().unwrap().vertex_mut(v).unwrap().tolerance = 0.5;
         assert_eq!(shared.get().vertex(v).unwrap().tolerance, 0.5);
         drop(shared);
         assert_ne!(b.vertex(v).unwrap().tolerance, 0.5);
 
         let mut own = LazyBrep::from(&mut b);
-        own.get_mut().vertex_mut(v).unwrap().tolerance = 0.5;
+        own.get_mut().unwrap().vertex_mut(v).unwrap().tolerance = 0.5;
         drop(own);
         assert_eq!(b.vertex(v).unwrap().tolerance, 0.5);
     }
 
     #[test]
-    fn a_clone_keeps_the_locked_box() {
+    fn a_standing_copy_keeps_the_locked_box() {
         let k = Kernel::default();
         let mut b = Brep::new();
         b.add_vertex(Point3::new(1.0, 2.0, 3.0)).unwrap();
         lock_bounding_box(&k, &mut b, false).unwrap();
         let locked = b.locked_bounding_box();
         assert!(locked.is_some());
-        assert_eq!(b.clone().locked_bounding_box(), locked);
+        assert_eq!(
+            b.clone_standing_for_self().unwrap().locked_bounding_box(),
+            locked
+        );
     }
 
     #[test]
@@ -1262,5 +1637,38 @@ mod tests {
             (du.x, du.y, du.z, dv.x, dv.y, dv.z),
             (1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
         );
+    }
+
+    #[test]
+    fn notify_named_primitive_box_builds_nonempty_trees_and_classifies_interior() {
+        let mut k = Kernel::default();
+        let box_brep =
+            crate::primitive::api_primitives::create_box(&mut k, Point3::ZERO, 1.0, 1.0, 1.0)
+                .unwrap();
+        assert_eq!(box_brep.naming(), NamingScheme::Notify);
+
+        let query = BrepQuery::of_brep(&box_brep);
+        let cache = query.cache(&k, &box_brep).unwrap();
+        assert!(cache.vertex_tree().is_some());
+        assert!(cache.curve_tree().is_some());
+        assert!(cache.surface_tree().is_some());
+
+        let inf = box_brep.infinite_region().unwrap();
+        let mut classifier = BrepClassifier::of_brep(&box_brep);
+        let inside = classifier
+            .point_3d_classify(&k, Point3::new(0.5, 0.5, 0.5), 1e-5, false)
+            .unwrap();
+        assert_eq!(inside.point_class(), PointClassType::Region);
+        let Some(EntityRef::Region(r_in)) = inside.object() else {
+            panic!("expected region classification, got {inside:?}");
+        };
+        assert_ne!(r_in, inf);
+        assert_eq!(classifier.brep().region(r_in).unwrap().is_void(), 0);
+
+        let outside = classifier
+            .point_3d_classify(&k, Point3::new(2.0, 2.0, 2.0), 1e-5, false)
+            .unwrap();
+        assert_eq!(outside.point_class(), PointClassType::Region);
+        assert_eq!(outside.object(), Some(EntityRef::Region(inf)));
     }
 }

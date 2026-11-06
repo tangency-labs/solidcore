@@ -53,6 +53,8 @@
 //! | [`AttributeStore::clear_attributes`]              | `SmAObject::ClearAttributes` (co-ported)         |
 //! | [`AttributeStore::attributes`]                    | `SmAObject::GetAttributes` (co-ported)           |
 //! | [`AttributeStore::find_attribute`]                | `SmAObject::FindAttribute` (co-ported)           |
+//! | [`AttributeHandlers`], [`AttributeValue::Application`], [`Attribute::application`] | an application's `SmAttribute` subclass and its `MakeCopy` / `Split` / `Merge` / `Coincident` / `Copy` / `Edit` / `Destruction` overrides |
+//! | [`Placement`], [`AttributeView`]                  | (not upstream) what an application handler does to the store, and the store it reads |
 //!
 //! Deviations:
 //! - **Ownership.** Upstream attributes are heap objects linked to `SmAObject`s by
@@ -91,10 +93,21 @@
 //!   uninitialised variable), a count or index above [`MAX_INDEXED_ATTRIBUTES`]
 //!   (upstream allocates the size asked for, or wraps for `ULONG_MAX`), and a reader
 //!   without a stream are [`SolidError::InvalidInput`], before anything is created.
+//!   For safety, ASCII counts must fit the remaining input and indices grow only
+//!   after successful extraction; truncated or malformed index lists are rejected
+//!   with [`SolidError::InvalidInput`] instead of leaving invented zero entries.
+//! - **Application attribute classes.** Upstream's virtual handlers mutate the
+//!   attributed objects directly. An [`AttributeHandlers`] implementation instead
+//!   reads an [`AttributeView`] and returns [`Placement`]s that the store applies in
+//!   the order returned ([`Placement::Propagate`] is the base-class body, evaluated
+//!   when applied). Its `IsPropagatedThroughBooleans` is the base's `FALSE`, its
+//!   `PropagateRegionsThroughBooleans` the base `SmAttribute::Merge`, its type the
+//!   base `SmAttribute_TYPE`, and it has no persistence getters.
 //! - `Mark` (`m_lMark`), `Dump`, `AssertValid`, `GetMemoryUsed` and the persistence
 //!   getters (`GetNumLongElements`, ...) belong to other units or are unused; the
 //!   attribute's data is exposed through [`Attribute::value`].
 
+use core::any::Any;
 use std::collections::BTreeMap;
 
 use crate::error::{Result, SolidError};
@@ -146,6 +159,24 @@ pub mod ids {
     pub const TESSELLATING: u64 = 124;
     /// `SM_AI_REPLACE_COMPOSITES`.
     pub const REPLACE_COMPOSITES: u64 = 126;
+    /// `SM_AI_FOLLOWED_BLEND` (the fork's, tangency-labs/smlib `a96ce9f`): the marks of
+    /// one face move whose tangent blends follow (`SmOffsetFacesExecutive`,
+    /// [`crate::offset::offset_faces::FollowedBlendMark`]).
+    pub const FOLLOWED_BLEND: u64 = 130;
+    /// `SM_AI_FILLET_CORNER_FACE` (the fork's, tangency-labs/smlib `60af574`): a face of
+    /// a set-back fillet corner's patch (`SmFilletExecutive::SetMarkCornerPatches`).
+    pub const FILLET_CORNER_FACE: u64 = 132;
+    /// Not upstream (tangency-labs/solidcore#2489): a face a fillet session made, its
+    /// tag's primary id the kind that made it
+    /// ([`crate::blend::definition_check::BlendFaceKind`]); set and removed by the session
+    /// only while [`crate::kernel::Kernel::blend_face_log`] is on.
+    pub const FILLET_BLEND_FACE: u64 = 134;
+    /// Not upstream: a face a draft moves ([`crate::offset::draft`]), marked on the picked
+    /// faces before the local operation that moves them and read and removed after it, within
+    /// one draft call, so that a draft that moved no face is told from one that did. Its own
+    /// id: the attribute carried to a replacement face is an entity's first of its id, so a
+    /// mark sharing an id with one the face already carries would not travel.
+    pub const DRAFT_MOVED: u64 = 136;
     /// `SM_AI_METRIC_BASE`: first of the ids used by metric attributes (150-199).
     pub const METRIC_BASE: u64 = 150;
     /// `SM_AI_MASS_PROPERTIES`.
@@ -239,8 +270,8 @@ pub mod region_type {
 /// `SM_UNDEF_ULONG`: the id a destroyed attribute is left with.
 pub const UNDEF_ULONG: u64 = 123_456_789;
 
-/// `SM_ERR`.
-const SM_ERR: i32 = 1001;
+// `SM_ERR`.
+use crate::error::SM_ERR;
 
 /// Largest attribute count or index [`AttributeStore::read_indexed_attributes_from_db`]
 /// accepts (a guard against corrupt input; upstream allocates whatever it reads).
@@ -547,6 +578,290 @@ pub enum AttributeValue {
     QuadricVertex(crate::query::brep::QuadricVertexData),
     /// `SmQuadricEdgeAttr` (unit `query.brep`, [`crate::query::brep`]).
     QuadricEdge(crate::query::brep::QuadricEdgeData),
+    /// An application-defined class (an application's `SmAttribute` subclass): its
+    /// data and its overrides of the propagation handlers ([`AttributeHandlers`]).
+    Application(ApplicationValue),
+}
+
+/// The overridable handlers of an application-defined attribute class (upstream: an
+/// application's `SmAttribute` subclass overriding `MakeCopy`, `Split`, `Merge`,
+/// `Coincident`, `Copy`, `Edit` and `Destruction`). Every method defaults to SMLib's
+/// base-class behaviour, so a type that overrides nothing propagates exactly like a
+/// data-less attribute.
+///
+/// The propagation handlers do not mutate the store: each gets a read-only
+/// [`AttributeView`] of the store and of the attribute being notified, and returns
+/// the [`Placement`]s the store then applies in the order returned. The dispatch
+/// pattern is SMLib's `SmAObject::Notify` ([`crate::geom::a_object::notify`]): one
+/// `split` per attribute of the split object, one `merge` per attribute id over both
+/// sources (an attribute of the second source whose id the first source also carries
+/// is not called), and so on.
+///
+/// Implementors derive `Clone`, `PartialEq` and `Debug`; [`AttributeHandlersBase`] is
+/// then implemented for them.
+pub trait AttributeHandlers: AttributeHandlersBase {
+    /// `MakeCopy`: the data of a copy of this attribute (the copy keeps the
+    /// attribute's id and behaviour and has no users). Default: a clone.
+    fn make_copy(&self) -> Box<dyn AttributeHandlers> {
+        self.clone_box()
+    }
+
+    /// `Split(pSplitObject, pChild1, pChild2)`. Default: [`Placement::Propagate`] to
+    /// each child other than the split object.
+    ///
+    /// # Errors
+    /// The application's own failures.
+    fn split(
+        &self,
+        view: &AttributeView<'_>,
+        split_object: ObjectKey,
+        child1: ObjectKey,
+        child2: ObjectKey,
+    ) -> Result<Vec<Placement>> {
+        let _ = view;
+        let mut out = Vec::new();
+        if child1 != split_object {
+            out.push(Placement::Propagate { on: child1 });
+        }
+        if child2 != split_object {
+            out.push(Placement::Propagate { on: child2 });
+        }
+        Ok(out)
+    }
+
+    /// `Merge(pOrigObject1, pOrigObject2, pMergedResult)`. Default:
+    /// [`Placement::Propagate`] to the merged object.
+    ///
+    /// # Errors
+    /// The application's own failures.
+    fn merge(
+        &self,
+        view: &AttributeView<'_>,
+        orig1: ObjectKey,
+        orig2: ObjectKey,
+        merged: ObjectKey,
+    ) -> Result<Vec<Placement>> {
+        let _ = (view, orig1, orig2);
+        Ok(vec![Placement::Propagate { on: merged }])
+    }
+
+    /// `Coincident(pFromObj, pToObj, ...)`. Default: [`Placement::Propagate`] to `to`.
+    ///
+    /// # Errors
+    /// The application's own failures.
+    fn coincident(
+        &self,
+        view: &AttributeView<'_>,
+        from: ObjectKey,
+        to: ObjectKey,
+    ) -> Result<Vec<Placement>> {
+        let _ = (view, from);
+        Ok(vec![Placement::Propagate { on: to }])
+    }
+
+    /// `Copy(pFromObj, pToObj)`. Default: [`Placement::Propagate`] to `to`.
+    ///
+    /// # Errors
+    /// The application's own failures.
+    fn copy(
+        &self,
+        view: &AttributeView<'_>,
+        from: ObjectKey,
+        to: ObjectKey,
+    ) -> Result<Vec<Placement>> {
+        let _ = (view, from);
+        Ok(vec![Placement::Propagate { on: to }])
+    }
+
+    /// `Edit(pEditedObject)`. Default: nothing.
+    ///
+    /// # Errors
+    /// The application's own failures.
+    fn edit(&self, view: &AttributeView<'_>, edited: ObjectKey) -> Result<Vec<Placement>> {
+        let _ = (view, edited);
+        Ok(Vec::new())
+    }
+
+    /// `Destruction(pToBeDeleted)`. Default: nothing.
+    ///
+    /// # Errors
+    /// The application's own failures.
+    fn destruction(&self, view: &AttributeView<'_>, deleted: ObjectKey) -> Result<Vec<Placement>> {
+        let _ = (view, deleted);
+        Ok(Vec::new())
+    }
+}
+
+/// The object-safe clone, comparison and downcast plumbing of [`AttributeHandlers`],
+/// implemented for every `Clone + PartialEq` handler type.
+pub trait AttributeHandlersBase: Any + core::fmt::Debug + Send + Sync {
+    /// A boxed clone (`Clone` of [`ApplicationValue`]).
+    fn clone_box(&self) -> Box<dyn AttributeHandlers>;
+    /// `self` as [`Any`], for downcasting to the concrete type.
+    fn as_any(&self) -> &dyn Any;
+    /// Whether `other` is of the same concrete type and equal to `self`.
+    fn eq_dyn(&self, other: &dyn AttributeHandlers) -> bool;
+}
+
+impl<T: AttributeHandlers + Clone + PartialEq> AttributeHandlersBase for T {
+    fn clone_box(&self) -> Box<dyn AttributeHandlers> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn eq_dyn(&self, other: &dyn AttributeHandlers) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<T>()
+            .is_some_and(|o| o == self)
+    }
+}
+
+/// The data and handlers of an application-defined attribute
+/// ([`AttributeValue::Application`]). `Clone` goes through
+/// [`AttributeHandlersBase::clone_box`] and `PartialEq` through
+/// [`AttributeHandlersBase::eq_dyn`].
+#[derive(Debug)]
+pub struct ApplicationValue(pub Box<dyn AttributeHandlers>);
+
+impl ApplicationValue {
+    /// Boxes an application handler.
+    #[must_use]
+    pub fn new(handlers: impl AttributeHandlers) -> Self {
+        Self(Box::new(handlers))
+    }
+
+    /// The handlers.
+    #[must_use]
+    pub fn handlers(&self) -> &dyn AttributeHandlers {
+        self.0.as_ref()
+    }
+
+    /// The concrete application type, if it is a `T`.
+    #[must_use]
+    pub fn downcast_ref<T: AttributeHandlers>(&self) -> Option<&T> {
+        self.0.as_any().downcast_ref::<T>()
+    }
+}
+
+impl Clone for ApplicationValue {
+    fn clone(&self) -> Self {
+        Self(self.0.clone_box())
+    }
+}
+
+impl PartialEq for ApplicationValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq_dyn(other.0.as_ref())
+    }
+}
+
+/// What an application handler asks the store to do, applied in the order returned.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Placement {
+    /// SMLib's default body of `Split`, `Copy`, `Merge` and `Coincident` for the
+    /// notified attribute and object `on`: unless `on` already has an attribute of
+    /// its id, a copy (`MakeCopy`, copy behaviours) or the attribute itself
+    /// (reference behaviours) is added to `on`; temporary attributes are not placed.
+    /// Evaluated when applied, so earlier placements are seen.
+    Propagate {
+        /// The target object.
+        on: ObjectKey,
+    },
+    /// Inserts a new attribute and adds it to `on` (`new ...; pObj->AddAttribute`).
+    Add {
+        /// The target object.
+        on: ObjectKey,
+        /// The new attribute (its users are ignored).
+        attribute: Attribute,
+    },
+    /// Adds an existing attribute to `on` (`pObj->AddAttribute(pAttr)`), as a
+    /// reference.
+    Reference {
+        /// The target object.
+        on: ObjectKey,
+        /// The attribute.
+        handle: AttributeHandle,
+    },
+    /// Replaces an existing attribute's data (its id, behaviour and users are kept).
+    Edit {
+        /// The attribute.
+        handle: AttributeHandle,
+        /// Its new data.
+        value: AttributeValue,
+    },
+    /// Removes the attribute from `on`'s list (`pObj->RemoveAttribute(pAttr)`): a
+    /// dependent attribute is deleted with its last user.
+    Remove {
+        /// The object.
+        on: ObjectKey,
+        /// The attribute.
+        handle: AttributeHandle,
+    },
+}
+
+/// The read-only view an application handler gets: the store (every object's
+/// attributes) and the attribute being notified.
+#[derive(Debug, Clone, Copy)]
+pub struct AttributeView<'a> {
+    store: &'a AttributeStore,
+    handle: AttributeHandle,
+    attribute: &'a Attribute,
+}
+
+impl<'a> AttributeView<'a> {
+    /// The whole store, read-only.
+    #[must_use]
+    pub const fn store(&self) -> &'a AttributeStore {
+        self.store
+    }
+
+    /// The handle of the attribute being notified (`this`).
+    #[must_use]
+    pub const fn handle(&self) -> AttributeHandle {
+        self.handle
+    }
+
+    /// The attribute being notified (`this`).
+    #[must_use]
+    pub const fn attribute(&self) -> &'a Attribute {
+        self.attribute
+    }
+
+    /// `pObj->GetAttributes()`: the object's attributes, in list order.
+    #[must_use]
+    pub fn attributes(&self, obj: ObjectKey) -> Vec<(AttributeHandle, &'a Attribute)> {
+        self.store
+            .attributes(obj)
+            .into_iter()
+            .filter_map(|h| self.store.get(h).map(|a| (h, a)))
+            .collect()
+    }
+
+    /// `pObj->FindAttribute(lAttributeID)`.
+    #[must_use]
+    pub fn find_attribute(
+        &self,
+        obj: ObjectKey,
+        attribute_id: u64,
+    ) -> Option<(AttributeHandle, &'a Attribute)> {
+        let h = self.store.find_attribute(obj, attribute_id)?;
+        self.store.get(h).map(|a| (h, a))
+    }
+}
+
+/// Which application handler to run.
+#[derive(Debug, Clone, Copy)]
+enum AppHandler {
+    Split(ObjectKey, ObjectKey, ObjectKey),
+    Merge(ObjectKey, ObjectKey, ObjectKey),
+    Coincident(ObjectKey, ObjectKey),
+    Copy(ObjectKey, ObjectKey),
+    Edit(ObjectKey),
+    Destruction(ObjectKey),
 }
 
 /// An attribute: an id naming its purpose, a [`Behavior`], the list of objects
@@ -683,7 +998,37 @@ impl Attribute {
                 self.behavior,
                 AttributeValue::QuadricEdge(d.make_copy()),
             ),
+            AttributeValue::Application(v) => Self::with_value(
+                id,
+                self.behavior,
+                AttributeValue::Application(ApplicationValue(v.0.make_copy())),
+            ),
             other => Self::with_value(id, self.behavior, other.clone()),
+        }
+    }
+
+    /// An application-defined attribute (`new (crContext) MyAttribute(...)`): its
+    /// propagation runs `handlers`' overrides ([`AttributeHandlers`]).
+    #[must_use]
+    pub fn application(
+        attribute_id: u64,
+        behavior: Behavior,
+        handlers: impl AttributeHandlers,
+    ) -> Self {
+        Self::with_value(
+            attribute_id,
+            behavior,
+            AttributeValue::Application(ApplicationValue::new(handlers)),
+        )
+    }
+
+    /// The application data as a `T`, if this is an application attribute of that
+    /// type.
+    #[must_use]
+    pub fn application_value<T: AttributeHandlers>(&self) -> Option<&T> {
+        match &self.value {
+            AttributeValue::Application(v) => v.downcast_ref::<T>(),
+            _ => None,
         }
     }
 
@@ -727,7 +1072,8 @@ impl Attribute {
             | AttributeValue::PolyEdgeToVertexUse { .. }
             | AttributeValue::DecimateVertex(_)
             | AttributeValue::QuadricVertex(_)
-            | AttributeValue::QuadricEdge(_) => type_code::ATTRIBUTE,
+            | AttributeValue::QuadricEdge(_)
+            | AttributeValue::Application(_) => type_code::ATTRIBUTE,
             AttributeValue::Generic { .. } => type_code::GENERIC,
             AttributeValue::Long(_) => type_code::LONG,
             AttributeValue::Pointer(_) | AttributeValue::MergeRegion(_) => type_code::POINTER,
@@ -746,7 +1092,8 @@ impl Attribute {
             | AttributeValue::PolyEdgeToVertexUse { .. }
             | AttributeValue::DecimateVertex(_)
             | AttributeValue::QuadricVertex(_)
-            | AttributeValue::QuadricEdge(_) => "SmAttribute_TYPE",
+            | AttributeValue::QuadricEdge(_)
+            | AttributeValue::Application(_) => "SmAttribute_TYPE",
             AttributeValue::Generic { .. } => "SmGenericAttribute_TYPE",
             AttributeValue::Long(_) => "SmLongAttribute_TYPE",
             AttributeValue::Pointer(_) | AttributeValue::MergeRegion(_) => {
@@ -770,7 +1117,8 @@ impl Attribute {
             | AttributeValue::PolyEdgeToVertexUse { .. }
             | AttributeValue::DecimateVertex(_)
             | AttributeValue::QuadricVertex(_)
-            | AttributeValue::QuadricEdge(_) => &[],
+            | AttributeValue::QuadricEdge(_)
+            | AttributeValue::Application(_) => &[],
             AttributeValue::Generic { .. } => &[type_code::GENERIC],
             AttributeValue::Long(_) => &[type_code::LONG],
             AttributeValue::Pointer(_) => &[type_code::POINTER],
@@ -1067,6 +1415,112 @@ impl AttributeStore {
         Ok(())
     }
 
+    // ---- moving attributes between stores (not upstream) ---------------------------
+
+    /// Every object with a non-empty attribute list, in key order.
+    #[must_use]
+    pub fn attributed_objects(&self) -> Vec<ObjectKey> {
+        self.lists
+            .iter()
+            .filter(|(_, list)| !list.is_empty())
+            .map(|(&key, _)| key)
+            .collect()
+    }
+
+    /// (not upstream: upstream attributes live on the objects, so handing an object to
+    /// an operation hands its attributes with it.) Moves every live attribute of
+    /// `source` into this store under new handles, renaming each object key through
+    /// `rekey`, in `source`'s slot and key order. Attributes keep their sharing (a
+    /// reference attribute listed by several objects of `source` is one attribute here
+    /// too) and their user order.
+    ///
+    /// # Errors
+    /// `rekey`'s error (an object key with no name here), or a store that cannot grow.
+    pub(crate) fn absorb(
+        &mut self,
+        source: AttributeStore,
+        rekey: &dyn Fn(ObjectKey) -> Result<ObjectKey>,
+    ) -> Result<()> {
+        let mut handles = Vec::new();
+        for slot in source.slots {
+            let new = match slot {
+                Some(mut attribute) => {
+                    attribute.users = attribute
+                        .users
+                        .iter()
+                        .map(|&user| rekey(user))
+                        .collect::<Result<_>>()?;
+                    Some(self.insert(attribute)?)
+                }
+                None => None,
+            };
+            handles.push(new);
+        }
+        for (key, list) in source.lists {
+            let renamed: Vec<AttributeHandle> = list
+                .iter()
+                .filter_map(|h| handles.get(h.index()).copied().flatten())
+                .collect();
+            if renamed.is_empty() {
+                continue;
+            }
+            self.lists.entry(rekey(key)?).or_default().extend(renamed);
+        }
+        Ok(())
+    }
+
+    /// (not upstream) Ends an operation's naming: each attributed object `keep` does
+    /// not name is no longer an object of the result, so its list is cleared as
+    /// upstream's object destructor does (`~SmAObject` → [`Self::clear_attributes`]:
+    /// dependent attributes die with their last user, standalone ones survive without
+    /// users), in key order; the remaining lists and user lists are then renamed
+    /// through `keep`.
+    ///
+    /// # Errors
+    /// None in practice (every listed handle is live).
+    pub(crate) fn retain_rekeyed(
+        &mut self,
+        keep: &dyn Fn(ObjectKey) -> Option<ObjectKey>,
+    ) -> Result<()> {
+        let gone: Vec<ObjectKey> = self
+            .lists
+            .keys()
+            .copied()
+            .filter(|&key| keep(key).is_none())
+            .collect();
+        for key in gone {
+            self.clear_attributes(key)?;
+        }
+        let lists = core::mem::take(&mut self.lists);
+        for (key, list) in lists {
+            if let Some(renamed) = keep(key) {
+                self.lists.entry(renamed).or_default().extend(list);
+            }
+        }
+        for attribute in self.slots.iter_mut().flatten() {
+            attribute.users = attribute.users.iter().filter_map(|&u| keep(u)).collect();
+        }
+        Ok(())
+    }
+
+    /// (not upstream) Deletes every attribute no object's list names (a standalone one
+    /// that outlived its users, or one only another store's objects held), so a store
+    /// handed to one body carries that body's attributes alone. Handles stay valid: a
+    /// deleted slot is never reused.
+    pub(crate) fn retain_listed(&mut self) {
+        let mut listed = vec![false; self.slots.len()];
+        for h in self.lists.values().flatten() {
+            if let Some(flag) = listed.get_mut(h.index()) {
+                *flag = true;
+            }
+        }
+        for (slot, listed) in self.slots.iter_mut().zip(listed) {
+            if !listed {
+                *slot = None;
+            }
+        }
+    }
+
     // ---- propagation handlers -----------------------------------------------------
 
     /// Places this attribute on `target` with its behaviour when `target` has no
@@ -1111,6 +1565,9 @@ impl AttributeStore {
         child2: ObjectKey,
     ) -> Result<()> {
         const OP: &str = "geom::attribute::AttributeStore::split";
+        if self.run_application(h, AppHandler::Split(split_object, child1, child2), OP)? {
+            return Ok(());
+        }
         if child1 != split_object {
             self.propagate_to(h, child1, OP)?;
         }
@@ -1122,8 +1579,12 @@ impl AttributeStore {
 
     /// `Copy(pFromObj, pToObj)`: `to` gets a copy of (or a reference to) this
     /// attribute unless it already has one of its id (`from` is not used).
-    pub fn copy(&mut self, h: AttributeHandle, _from: ObjectKey, to: ObjectKey) -> Result<()> {
-        self.propagate_to(h, to, "geom::attribute::AttributeStore::copy")
+    pub fn copy(&mut self, h: AttributeHandle, from: ObjectKey, to: ObjectKey) -> Result<()> {
+        const OP: &str = "geom::attribute::AttributeStore::copy";
+        if self.run_application(h, AppHandler::Copy(from, to), OP)? {
+            return Ok(());
+        }
+        self.propagate_to(h, to, OP)
     }
 
     /// `Merge(pOrigObject1, pOrigObject2, pMergedResult)` (virtual): the merge-region
@@ -1170,31 +1631,95 @@ impl AttributeStore {
         if matches!(self.attr(h, OP)?.value, AttributeValue::MergeRegion(_)) {
             return self.merge_region_merge(h, orig1, orig2, merged, regions);
         }
+        if self.run_application(h, AppHandler::Merge(orig1, orig2, merged), OP)? {
+            return Ok(());
+        }
         self.propagate_to(h, merged, OP)
     }
 
     /// `Coincident(pFromObj, pToObj, pFromBrep, pToBrep)`: `to` gets a copy of (or
     /// a reference to) this attribute unless it has one of its id (the B-reps are
     /// not used and dropped from the signature).
-    pub fn coincident(
+    pub fn coincident(&mut self, h: AttributeHandle, from: ObjectKey, to: ObjectKey) -> Result<()> {
+        const OP: &str = "geom::attribute::AttributeStore::coincident";
+        if self.run_application(h, AppHandler::Coincident(from, to), OP)? {
+            return Ok(());
+        }
+        self.propagate_to(h, to, OP)
+    }
+
+    /// `Edit(pEditedObject)`: the default handler does nothing (an application
+    /// attribute runs [`AttributeHandlers::edit`]).
+    pub fn edit(&mut self, h: AttributeHandle, edited: ObjectKey) -> Result<()> {
+        const OP: &str = "geom::attribute::AttributeStore::edit";
+        self.run_application(h, AppHandler::Edit(edited), OP)
+            .map(|_| ())
+    }
+
+    /// `Destruction(pToBeDeleted)`: the default handler does nothing (an application
+    /// attribute runs [`AttributeHandlers::destruction`]).
+    pub fn destruction(&mut self, h: AttributeHandle, deleted: ObjectKey) -> Result<()> {
+        const OP: &str = "geom::attribute::AttributeStore::destruction";
+        self.run_application(h, AppHandler::Destruction(deleted), OP)
+            .map(|_| ())
+    }
+
+    /// The virtual dispatch of an application attribute's handler: runs it with a
+    /// read-only view and applies the placements it returns, in order. Returns
+    /// whether `h` is an application attribute (`false`: the caller runs the base
+    /// handler; nothing was done).
+    fn run_application(
         &mut self,
         h: AttributeHandle,
-        _from: ObjectKey,
-        to: ObjectKey,
+        handler: AppHandler,
+        op: &'static str,
+    ) -> Result<bool> {
+        let attribute = self.attr(h, op)?;
+        let AttributeValue::Application(app) = &attribute.value else {
+            return Ok(false);
+        };
+        let view = AttributeView {
+            store: self,
+            handle: h,
+            attribute,
+        };
+        let handlers = app.handlers();
+        let placements = match handler {
+            AppHandler::Split(s, c1, c2) => handlers.split(&view, s, c1, c2)?,
+            AppHandler::Merge(o1, o2, m) => handlers.merge(&view, o1, o2, m)?,
+            AppHandler::Coincident(from, to) => handlers.coincident(&view, from, to)?,
+            AppHandler::Copy(from, to) => handlers.copy(&view, from, to)?,
+            AppHandler::Edit(edited) => handlers.edit(&view, edited)?,
+            AppHandler::Destruction(deleted) => handlers.destruction(&view, deleted)?,
+        };
+        self.apply_placements(h, placements, op)?;
+        Ok(true)
+    }
+
+    /// Applies an application handler's placements for attribute `h`, in order.
+    fn apply_placements(
+        &mut self,
+        h: AttributeHandle,
+        placements: Vec<Placement>,
+        op: &'static str,
     ) -> Result<()> {
-        self.propagate_to(h, to, "geom::attribute::AttributeStore::coincident")
-    }
-
-    /// `Edit(pEditedObject)`: the default handler does nothing.
-    pub fn edit(&mut self, h: AttributeHandle, _edited: ObjectKey) -> Result<()> {
-        self.attr(h, "geom::attribute::AttributeStore::edit")
-            .map(|_| ())
-    }
-
-    /// `Destruction(pToBeDeleted)`: the default handler does nothing.
-    pub fn destruction(&mut self, h: AttributeHandle, _deleted: ObjectKey) -> Result<()> {
-        self.attr(h, "geom::attribute::AttributeStore::destruction")
-            .map(|_| ())
+        for placement in placements {
+            match placement {
+                Placement::Propagate { on } => self.propagate_to(h, on, op)?,
+                Placement::Add { on, mut attribute } => {
+                    attribute.users.clear();
+                    let new = self.insert(attribute)?;
+                    self.add_attribute(on, new)?;
+                }
+                Placement::Reference { on, handle } => self.add_attribute(on, handle)?,
+                Placement::Edit { handle, value } => self.attr_mut(handle, op)?.value = value,
+                Placement::Remove { on, handle } => {
+                    self.attr(handle, op)?;
+                    self.remove_attribute(on, handle, false)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// `PropagateRegionsThroughBooleans(pOrigObject1, pOrigObject2, pMergedResult)`
@@ -1435,12 +1960,18 @@ impl AttributeStore {
         }
         let n = count as usize;
         let indices = if ascii {
+            db.ensure_available(n, 1, OP)?;
             let s = db.in_stream_mut().ok_or_else(no_stream)?;
-            let mut v = vec![0u64; n];
-            for x in &mut v {
-                if let Some(value) = s.extract_ulong() {
-                    *x = value;
-                }
+            let mut v = Vec::new();
+            for _ in 0..n {
+                let value =
+                    s.extract_ulong()
+                        .filter(|_| !s.fail())
+                        .ok_or(SolidError::InvalidInput {
+                            operation: OP,
+                            reason: "attribute index could not be extracted",
+                        })?;
+                v.push(value);
             }
             if let Err(e) = goto_next_attline(s) {
                 return Ok(IndexedAttributes {
@@ -1538,7 +2069,11 @@ fn resolve_region<'a>(
     regions: Option<&'a dyn crate::topology::shell::RegionLookup>,
     symbol: &'static str,
 ) -> Result<crate::topology::shell::RegionRef<'a>> {
-    // UNPORTED(topology.shell): SmRegion::GetBrep / IsInfiniteRegion / IsVoid (justified: plan/findings.md "topology.shell: borrowed region context for attribute backedges")
+    // UNPORTED(topology.shell): SmRegion::GetBrep / IsInfiniteRegion / IsVoid need a caller-supplied
+    // `RegionLookup`; see plan/findings/topology.shell--borrowed-region-context-for-attribute-backedges-pr-80-issue.md.
+    // Callers that pass no lookup (`a_object::notify` from change-owner / geometry edits in
+    // brep p6/p9/p10, edge, face, fillet) never send a region Merge or RegPropagation
+    // notification, so no region handler runs without one; the `None` deferral is covered by the unit tests of this file.
     // REGION-LOOKUP(#86): no library `RegionLookup` exists yet, so a region handler
     // reached without a caller-supplied context defers here instead of inferring
     // region state. The owner of issue #86 replaces this with the real lookup
@@ -1872,14 +2407,77 @@ mod tests {
         assert_eq!(all.len(), 4);
         assert!(all[0].is_none() && all[1].is_some() && all[3].is_some());
         assert_eq!(s.get(all[1].unwrap()).unwrap().attribute_id(), ids::UNKNOWN);
+        let before_store = s.clone();
+        let before_all = all.clone();
         assert!(s
             .read_indexed_attributes_from_db(&mut all, &mut db)
             .unwrap()
             .is_empty());
+        assert_eq!(s, before_store);
+        assert_eq!(all, before_all);
         assert!(matches!(
             s.read_indexed_attributes_from_db(&mut all, &mut db),
             Err(SolidError::Upstream { code: 1001, .. })
         ));
+    }
+
+    #[test]
+    fn read_indexed_ascii_max_count_without_payload() {
+        let mut s = AttributeStore::new();
+        let h = s.insert(Attribute::long(7, 42, Behavior::Copy)).unwrap();
+        let mut all = vec![Some(h), None];
+        let before_store = s.clone();
+        let before_all = all.clone();
+        let mut db = DatabaseReader::with_stream(
+            FileType::Ascii,
+            InputStream::new(format!("{MAX_INDEXED_ATTRIBUTES}\n").into_bytes()),
+        );
+        assert!(matches!(
+            s.read_indexed_attributes_from_db_partial(&mut all, &mut db),
+            Err(SolidError::InvalidInput { .. })
+        ));
+        assert_eq!(s, before_store);
+        assert_eq!(all, before_all);
+    }
+
+    #[test]
+    fn read_indexed_ascii_rejects_incomplete_extraction() {
+        for data in ["3 1  \n", "3 1 2", "2 1 tail\n"] {
+            let mut s = AttributeStore::new();
+            let mut all = vec![None];
+            let before_store = s.clone();
+            let before_all = all.clone();
+            let mut db = DatabaseReader::with_stream(
+                FileType::Ascii,
+                InputStream::new(data.as_bytes().to_vec()),
+            );
+            assert!(matches!(
+                s.read_indexed_attributes_from_db_partial(&mut all, &mut db),
+                Err(SolidError::InvalidInput { .. })
+            ));
+            assert_eq!(s, before_store);
+            assert_eq!(all, before_all);
+        }
+    }
+
+    #[test]
+    fn read_indexed_ascii_preserves_indices_on_failed_line_skip() {
+        let mut s = AttributeStore::new();
+        let mut all = vec![None];
+        let before_store = s.clone();
+        let before_all = all.clone();
+        let mut db =
+            DatabaseReader::with_stream(FileType::Ascii, InputStream::new(b"2 3 1".to_vec()));
+        let read = s
+            .read_indexed_attributes_from_db_partial(&mut all, &mut db)
+            .unwrap();
+        assert_eq!(read.indices, vec![3, 1]);
+        assert!(matches!(
+            read.status,
+            Some(SolidError::Upstream { code: 1001, .. })
+        ));
+        assert_eq!(s, before_store);
+        assert_eq!(all, before_all);
     }
 
     #[test]
@@ -1898,5 +2496,29 @@ mod tests {
         );
         assert_eq!(all.len(), 3);
         assert!(all[1].is_none());
+    }
+
+    #[test]
+    fn retain_listed_drops_unlisted_attributes_and_keeps_handles() {
+        let mut s = AttributeStore::new();
+        let listed = s
+            .insert(Attribute::long(10_007, 1, Behavior::Reference))
+            .unwrap();
+        let orphan = s
+            .insert(Attribute::long(10_008, 2, Behavior::StandaloneCopy))
+            .unwrap();
+        let shared = s
+            .insert(Attribute::long(10_009, 3, Behavior::Reference))
+            .unwrap();
+        s.add_attribute(O1, listed).unwrap();
+        s.add_attribute(O1, shared).unwrap();
+        s.add_attribute(O2, shared).unwrap();
+        s.retain_listed();
+        assert!(s.is_live(listed));
+        assert!(!s.is_live(orphan));
+        // a reference shared by two objects of the store stays one attribute
+        assert!(s.is_live(shared));
+        assert_eq!(s.attributes(O2), vec![shared]);
+        assert_eq!(s.users(shared).unwrap(), vec![O1, O2]);
     }
 }

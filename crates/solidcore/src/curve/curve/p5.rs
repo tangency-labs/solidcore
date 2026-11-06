@@ -16,6 +16,7 @@
 //! | [`is_point_solution_across_closed_seam_boundary`] | `sm_IsPointSolutionAcrossClosedSeamBoundary` (static) |
 //! | [`find_additional_cc_tangent_guess`]         | `sm_FindAdditionalCcTangentGuess` (static)     |
 //! | [`make_curve_cache`], [`validate_curve_cache`] | `SmCurve::CacheMakeOrValidate`               |
+//! | [`make_curve_cache_with_zone_tol`]          | `SmCurve::CacheMakeOrValidate` (edge curve) |
 //! | [`find_additional_cp_guess`]                 | `sm_FindAdditionalCpGuess` (static)            |
 //! | [`is_arc_base`], [`Curve::is_arc`]           | `SmCurve::IsArc` (virtual: base, circle, line, parabola, hyperbola) |
 //! | [`is_line_base`], [`Curve::is_line`]         | `SmCurve::IsLine` (virtual: base, B-spline, line) |
@@ -24,6 +25,7 @@
 //! | [`Curve::is_domain_boundary`]                | `SmCurve::IsDomainBoundary` (virtual: base, ellipse, line) |
 //! | [`is_periodic`], [`Curve::is_periodic`]      | `SmCurve::IsPeriodic`                          |
 //! | [`Curve::length`], [`Curve::length_base`]    | `SmCurve::Length` (virtual: base, line)        |
+//! | `Curve::length_with_zone_tol` (crate helper) | `SmCurve::Length` (edge-owned curve)          |
 //! | [`local_property_analysis`]                  | `SmCurve::LocalPropertyAnalysis`               |
 //! | [`CcTangentIntEnfo`] (`EvalNFunctions`)      | `SmCCTangentIntENFO::Evaluate` (in `p3`)       |
 //! | [`CcIntersectEnfo::evaluate_equations`]      | `SmCCIntersectENFO::Evaluate`                  |
@@ -41,13 +43,23 @@
 //!   copies the geometry and resets the owner (the `Notify` calls are the object
 //!   layer's).
 //! - **Caches.** Upstream keeps the cache on the curve and reuses it until the curve
-//!   changes; [`make_curve_cache`] builds a fresh one for the caller (the build is
-//!   deterministic, so it holds the same spans and tree). A caller that solves on one
-//!   unchanged curve repeatedly can keep the result (`Curve::global_point_solve_cached`,
+//!   changes (`SmCacheMgr`, deleted on `SM_NO_PRE_EDIT`). [`make_curve_cache`] keeps a
+//!   memo of its result in the curve value instead (`CurveMemo`): the build is a
+//!   deterministic function of the curve's geometry and the kernel's tolerance state
+//!   (`CurveMemoKey`), so a hit gives the cache a fresh build gives (the same spans and
+//!   tree, in the caller's handle space). An edit of the geometry through `&mut Curve`
+//!   starts an empty memo, clones share it, and [`Kernel::memoize_curve_caches`] turns
+//!   it off. No result depends on the memo. A caller that solves on one unchanged
+//!   curve repeatedly can also keep the result (`Curve::global_point_solve_cached`,
 //!   used by `GlobalCoincidenceChecker`). [`validate_curve_cache`] is the rest of
 //!   `CacheMakeOrValidate`: the `SM_OC_CURVE` type check and the reuse of an existing
 //!   cache; the context check has no counterpart (a [`Curve`] always
 //!   has the kernel's context).
+//! - **Owner tolerance.** Upstream builds the cache on the curve object itself, so a
+//!   curve that defines an edge's shape tessellates with half the edge's tolerance
+//!   (`SmTol::GetApproxTol3d(&m_crCurve)`). The caches hold no `Brep`, so a caller
+//!   holding the B-rep passes the edge's tolerance (`make_curve_cache_with_zone_tol`
+//!   or `Curve::length_with_zone_tol`); it is part of the memo key where cached.
 //! - **Curve lists.** `CrvsCleanup` and `RemoveDuplicateCurves` take owned lists;
 //!   removed curves are dropped (`bDelCrv` is always true; `NULL` entries are
 //!   `None`). `CrvsCleanup` casts the curves around a removed one to
@@ -67,7 +79,8 @@
 //!   matrix, an upstream assert, could tell). Option vectors that upstream reads
 //!   without a `NULL` check are `InvalidInput` when missing.
 //! - **Length.** Spans of degree above 1 use the ported `SmIntegrator` (unit
-//!   `mass.integrator`). `Length` needs the
+//!   `mass.integrator`; with `Kernel::fixes.integrator_propagates_failure`, WR-94,
+//!   failed span integrals propagate instead of contributing zero). `Length` needs the
 //!   kernel (the cache tessellation reads its tolerances).
 //! - **Out-params.** Flags with outputs are `Option`s (`IsLine`: point and vector;
 //!   `IsArc`: frame, radius, start and end angle; the guesses); `IsLinear`'s
@@ -78,17 +91,25 @@
 //!   `EvaluateSurface1stDerivDerivs`) the error is ignored and the previous value
 //!   (initially [`Vec3::UNDEF`]) kept, except [`SolidError::Unported`], which is
 //!   propagated.
+//! - **Statuses passed on (WR-663).** With the opt-in
+//!   `Kernel::fixes.query_statuses_pass_on` the statuses SMLib drops are passed on, as the
+//!   fork (tangency-labs/smlib 8311f8e): `Length`'s end points, `LocalPropertyAnalysis`,
+//!   the normal evaluator's surface derivatives and unitizations; `IsLine`, `IsLinear`,
+//!   `IsArc`, `IsPeriodic` and the seam test are `FALSE`, `IsDomainBoundary`
+//!   `SM_SP_NEITHER`, and `CrvsCleanup` / `RemoveDuplicateCurves` keep a curve, when a
+//!   value cannot be evaluated (or framed).
 
 use crate::curve::curve::p2::{
-    convert_to_parameter_delta, evaluate_geometric, evaluate_step, unitize_tangent, Curve,
-    CurveEvaluate, CurveKind, CurvePropertyType, BSPLINE_CURVE_TYPE,
+    convert_to_parameter_delta, evaluate_geometric, evaluate_step, ignored_or_soft,
+    unitize_or_pass_on, unitize_tangent, Curve, CurveEvaluate, CurveKind, CurvePropertyType, Soft,
+    BSPLINE_CURVE_TYPE,
 };
 use crate::curve::curve::p3::eval_n;
 use crate::curve::curve::p4::{
     CcIntersectEnfo, CcTangentIntEnfo, CurvePropertyEfo, FindCcNormalEnfo,
 };
 use crate::curve::curve_cache::{CurveCache, CurveCacheOptions};
-use crate::error::{ignore_status, ignored, Result, SolidError};
+use crate::error::{ignore_status, ignored, ignored_or_pass_on, passed_on, Result, SolidError};
 use crate::geom::a_object::{CacheId, ObjectCacheType};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::Extent1d;
@@ -105,10 +126,13 @@ use crate::geom::solution_array::{Solution, SolutionType};
 use crate::geom::tol::are_same;
 use crate::geom::vector3d::{acos, sqrt, Point3, Vec3};
 use crate::kernel::Kernel;
-use crate::math::{max2, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI};
+use crate::math::{max2, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI};
 use crate::nurbs::b_spline_curve::p2::ArcData;
+use crate::nurbs::b_spline_curve::speed::SpanSpeed;
 use crate::nurbs::b_spline_curve::{BSplineCurve, GapFix};
 use crate::nurbs::b_spline_surface::SurfParamType;
+use crate::surface::surface::p2::MAX_GEOMETRY_NESTING;
+use std::sync::{Arc, Mutex, OnceLock};
 
 const OP_CLEANUP: &str = "curve::curve::p5::crvs_cleanup";
 const OP_CACHE: &str = "curve::curve::p5::validate_curve_cache";
@@ -174,7 +198,7 @@ pub fn is_line_base(
                     pt_vec[1] = d;
                 }
             }
-            Err(e @ SolidError::Unported { .. }) => return Err(e),
+            Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => return Err(e),
             Err(_) => {}
         }
         pt1 = pt_vec[0];
@@ -243,8 +267,16 @@ fn curve_is_line_base(
             domain.evaluate(ii as f64 / num_spans)
         };
 
-        // exact tangent values (status ignored)
-        if let Some(v) = ignored(curve.evaluate(k, t, 1, false, false))? {
+        // exact tangent values (status ignored; with the opt-in fix a curve that
+        // cannot be evaluated is not shown a line, tangency-labs/smlib 8311f8e)
+        let Soft::Kept(v) = ignored_or_soft(
+            curve.evaluate(k, t, 1, false, false),
+            k.fixes.query_statuses_pass_on,
+        )?
+        else {
+            return Ok(None);
+        };
+        if let Some(v) = v {
             for (d, s) in pt_vec.iter_mut().zip(v) {
                 *d = s;
             }
@@ -277,10 +309,209 @@ fn curve_is_line_base(
 ///
 /// Those of the length and knot count queries and of [`CurveCache::tessellate`]
 /// (upstream then has no cache).
+///
+/// The approximation tolerance is half the tolerance of the curve's edge when a caller
+/// recorded it on the curve ([`Curve::owner_zone_tol_3d`]), else half the system
+/// tolerance.
 pub fn make_curve_cache<O: Copy + PartialEq>(
     k: &Kernel,
     curve: &Curve,
     handle: Option<O>,
+) -> Result<CurveCache<O>> {
+    // SmTol::GetApproxTol3d(&m_crCurve): the edge's tolerance through the owner
+    make_curve_cache_with_zone_tol(k, curve, handle, curve.owner_zone_tol_3d())
+}
+
+/// [`make_curve_cache`] for a curve that defines an edge's shape: `zone_tol_3d` is that
+/// edge's tolerance (`SmTol::GetZoneTol3d(cpCurve)`, resolved by the caller, which holds
+/// the B-rep), whose half is the tessellation's approximation tolerance
+/// ([`CurveCache::set_owner_zone_tol_3d`]). `None` builds as [`make_curve_cache`]:
+/// the system tolerance.
+///
+/// # Errors
+///
+/// Those of [`make_curve_cache`].
+pub fn make_curve_cache_with_zone_tol<O: Copy + PartialEq>(
+    k: &Kernel,
+    curve: &Curve,
+    handle: Option<O>,
+    zone_tol_3d: Option<f64>,
+) -> Result<CurveCache<O>> {
+    // not upstream: the memo of this build in the curve value (see CurveMemo)
+    let key = CurveMemoKey::of(k, curve, zone_tol_3d);
+    if let Some(key) = &key {
+        if let Some(hit) = curve.memo().lookup(key, handle) {
+            return Ok(hit);
+        }
+    }
+    let cache = build_curve_cache(k, curve, handle, zone_tol_3d)?;
+    if let Some(key) = key {
+        if let Some(neutral) = cache.retag::<()>(None) {
+            curve.memo().store(&key, neutral);
+        }
+    }
+    Ok(cache)
+}
+
+/// The kernel and curve state [`make_curve_cache`]'s build reads besides the curve's
+/// geometry (not upstream): the tolerances, the context's scalar state and the upstream fixes. A memo
+/// entry is valid for a later build only when its key is equal (the context scalars
+/// bit for bit).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct CurveMemoKey {
+    tolerances: crate::kernel::Tolerances,
+    context_bits: [u64; 3],
+    context_flags: [bool; 1],
+    fixes: crate::kernel::UpstreamFixes,
+    /// The bits of the owner zone tolerance the build was given
+    /// ([`make_curve_cache_with_zone_tol`]).
+    owner_zone_tol_bits: Option<u64>,
+}
+
+impl CurveMemoKey {
+    /// The key of a build of `curve` under `k` with the owner zone tolerance
+    /// `zone_tol_3d`, or `None` when the build must not be memoised: the memo is off,
+    /// or the curve is not a pure value ([`memo_pure`]). The owner itself is not an
+    /// input: the build works on its own copy of the curve, which has none, and reads
+    /// the owner only through `zone_tol_3d`.
+    fn of(k: &Kernel, curve: &Curve, zone_tol_3d: Option<f64>) -> Option<Self> {
+        if !k.memoize_curve_caches || !memo_pure(curve) {
+            return None;
+        }
+        Self::of_kernel(k).map(|key| Self {
+            owner_zone_tol_bits: zone_tol_3d.map(f64::to_bits),
+            ..key
+        })
+    }
+
+    /// The kernel part of a memo key, for any memo of a build that reads `k` only
+    /// through its tolerances and context scalars; `None` when the memo is off.
+    pub(crate) fn of_kernel(k: &Kernel) -> Option<Self> {
+        if !k.memoize_curve_caches {
+            return None;
+        }
+        let c = &k.context;
+        Some(Self {
+            tolerances: k.tolerances,
+            context_bits: [
+                c.this_zone_tol_3d().to_bits(),
+                c.stored_model_size_estimate().to_bits(),
+                c.stored_large_small_size_ratio().to_bits(),
+            ],
+            context_flags: [c.doing_boolean()],
+            fixes: k.fixes,
+            owner_zone_tol_bits: None,
+        })
+    }
+}
+
+/// Whether `curve`'s cache build reads nothing but the curve's own value, so that a memo
+/// of it is valid for every clone: B-spline, line, ellipse, hyperbola, parabola, Hermite
+/// and conic curves, and offset, projected and composite curves made only of such
+/// curves. Curves on surfaces, iso curves and curves in volumes hold a surface or volume
+/// with cache state of its own (the shared surface cache slot, lazy break and offset
+/// caches), so they are never memoised. The walk uses an explicit stack and gives up
+/// (no memo) past [`MAX_GEOMETRY_NESTING`] levels.
+fn memo_pure(curve: &Curve) -> bool {
+    let mut stack: Vec<(&Curve, usize)> = vec![(curve, 0)];
+    while let Some((c, depth)) = stack.pop() {
+        if depth > MAX_GEOMETRY_NESTING {
+            return false;
+        }
+        match c.kind() {
+            CurveKind::BSpline(_)
+            | CurveKind::Line(_)
+            | CurveKind::Ellipse(_)
+            | CurveKind::Hyperbola(_)
+            | CurveKind::Parabola(_)
+            | CurveKind::Hermite(_)
+            | CurveKind::Conic(_) => {}
+            CurveKind::Offset(o) => stack.extend(o.base_curve().map(|b| (b, depth + 1))),
+            CurveKind::Projected(p) => stack.push((p.curve(), depth + 1)),
+            CurveKind::Composite(cc) => {
+                stack.extend(cc.segments().iter().map(|seg| (&seg.curve, depth + 1)));
+            }
+            CurveKind::Iso(_)
+            | CurveKind::CrvOnSurf(_)
+            | CurveKind::TangentField(_)
+            | CurveKind::CrvInVolume(_) => {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// One memoised build: its key and the cache, without a handle.
+#[derive(Debug)]
+struct CurveMemoEntry {
+    key: CurveMemoKey,
+    cache: CurveCache<()>,
+}
+
+/// The memo of a curve's [`CurveCache`] (not upstream; upstream keeps the cache in
+/// `SmCacheMgr`, keyed by the curve object). It lives in the [`Curve`] value: a clone
+/// shares it (same geometry, same cache), an edit through `&mut Curve` replaces it with
+/// an empty one, and it is freed with the last curve that shares it. So there is at
+/// most one cache per live curve value. A hit gives what a fresh build gives, so no
+/// result depends on the memo, its fill order or which clone filled it. It adds no
+/// auto-trait bound ([`Curve`] is `Send` and not `Sync`, as without it) and needs no
+/// `unsafe`.
+#[derive(Default)]
+pub(crate) struct CurveMemo(OnceLock<Arc<Mutex<Option<CurveMemoEntry>>>>);
+
+impl core::fmt::Debug for CurveMemo {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // the memo is not part of the curve's observable state
+        f.write_str("CurveMemo")
+    }
+}
+
+impl CurveMemo {
+    /// An empty memo of its own.
+    pub(crate) const fn new() -> Self {
+        Self(OnceLock::new())
+    }
+
+    /// A memo shared with this one (for a clone of the curve).
+    pub(crate) fn share(&self) -> Self {
+        let slot = Arc::clone(self.0.get_or_init(Arc::default));
+        let shared = OnceLock::new();
+        let _ = shared.set(slot);
+        Self(shared)
+    }
+
+    /// The memoised cache for `key`, as a copy naming `handle`.
+    fn lookup<O: Copy + PartialEq>(
+        &self,
+        key: &CurveMemoKey,
+        handle: Option<O>,
+    ) -> Option<CurveCache<O>> {
+        let slot = self.0.get()?;
+        let entry = slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        entry
+            .as_ref()
+            .filter(|e| e.key == *key)
+            .and_then(|e| e.cache.retag(handle))
+    }
+
+    fn store(&self, key: &CurveMemoKey, cache: CurveCache<()>) {
+        let slot = self.0.get_or_init(Arc::default);
+        let mut entry = slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *entry = Some(CurveMemoEntry { key: *key, cache });
+    }
+}
+
+/// [`make_curve_cache`]'s build, without the memo.
+fn build_curve_cache<O: Copy + PartialEq>(
+    k: &Kernel,
+    curve: &Curve,
+    handle: Option<O>,
+    zone_tol_3d: Option<f64>,
 ) -> Result<CurveCache<O>> {
     // cast Object to SmCurve and get its interval
     let ivl = curve.natural_interval();
@@ -301,7 +532,7 @@ pub fn make_curve_cache<O: Copy + PartialEq>(
 
     // construct new CurveCache Object
     let mut cache = CurveCache::new(
-        curve.clone(),
+        curve.clone_detached()?,
         ivl,
         CurveCacheOptions {
             make_full_tree: true,
@@ -315,6 +546,9 @@ pub fn make_curve_cache<O: Copy + PartialEq>(
         },
     );
     cache.set_curve_handle(handle);
+    // not upstream: the cached copy has no owner, so the builder gives its edge's
+    // tolerance (SmTol::GetApproxTol3d(&m_crCurve) in Tessellate)
+    cache.set_owner_zone_tol_3d(zone_tol_3d);
 
     // build the CruveCache's curve subdivision tree
     cache.tessellate(k)?;
@@ -350,6 +584,7 @@ impl Curve {
             | CurveKind::Offset(_)
             | CurveKind::CrvInVolume(_)
             | CurveKind::CrvOnSurf(_)
+            | CurveKind::TangentField(_)
             | CurveKind::Composite(_) => curve_is_line_base(k, self, num_samples, tol),
         }
     }
@@ -406,10 +641,18 @@ impl Curve {
             // don't force building Nurb
             if has_nurb && self.number_control_points()? == 2 {
                 let mut pv = [Vec3::UNDEF; 2];
-                // exact Tangent values (status ignored)
-                if let Some(v) =
-                    ignored(self.evaluate(k, self.natural_interval().min(), 1, false, false))?
-                {
+                // exact Tangent values (status ignored; with the opt-in fix a curve
+                // that cannot be evaluated is not shown linear, tangency-labs/smlib
+                // 8311f8e)
+                let start = self.natural_interval().min();
+                let Soft::Kept(v) = ignored_or_soft(
+                    self.evaluate(k, start, 1, false, false),
+                    k.fixes.query_statuses_pass_on,
+                )?
+                else {
+                    return Ok(out);
+                };
+                if let Some(v) = v {
                     for (d, s) in pv.iter_mut().zip(v) {
                         *d = s;
                     }
@@ -457,13 +700,26 @@ impl Curve {
         };
         let mut pt = Vec3::UNDEF;
         let mut base_vec = end_pt - start_pt;
+        // (with the opt-in fix a point that cannot be evaluated does not show it linear,
+        // tangency-labs/smlib 8311f8e)
+        let soft = k.fixes.query_statuses_pass_on;
         if base_vec.length_squared() < tol * tol {
-            if let Some(p) = ignored(self.evaluate_point(k, domain.evaluate(0.38)))? {
+            let Soft::Kept(p) =
+                ignored_or_soft(self.evaluate_point(k, domain.evaluate(0.38)), soft)?
+            else {
+                return Ok(out);
+            };
+            if let Some(p) = p {
                 pt = p;
             }
             base_vec = pt - start_pt;
             if base_vec.length_squared() < tol * tol {
-                if let Some(p) = ignored(self.evaluate_point(k, domain.evaluate(0.62)))? {
+                let Soft::Kept(p) =
+                    ignored_or_soft(self.evaluate_point(k, domain.evaluate(0.62)), soft)?
+                else {
+                    return Ok(out);
+                };
+                if let Some(p) = p {
                     pt = p;
                 }
                 base_vec = pt - start_pt;
@@ -490,7 +746,10 @@ impl Curve {
             let frac = ii as f64 / num_spans;
             let t = domain.evaluate(frac);
             // nonZeroTangent values (status ignored)
-            if let Some(v) = ignored(self.evaluate(k, t, 1, false, true))? {
+            let Soft::Kept(v) = ignored_or_soft(self.evaluate(k, t, 1, false, true), soft)? else {
+                return Ok(out);
+            };
+            if let Some(v) = v {
                 for (d, s) in pt_vec.iter_mut().zip(v) {
                     *d = s;
                 }
@@ -748,18 +1007,37 @@ pub fn crvs_cleanup(k: &Kernel, curves: &mut Vec<Curve>, tol: f64) -> Result<Cle
             .ok_or(SolidError::invalid_input(OP_CLEANUP, "curve index"))?;
         let domain1 = crv1.natural_interval();
 
-        // Curve Start and End Points (statuses ignored)
-        if let Some(p) = ignored(crv1.evaluate_point(k, domain1.evaluate(0.0)))? {
+        // Curve Start and End Points (statuses ignored; with the opt-in fix a curve
+        // that cannot be evaluated is not shown tiny, it is kept, tangency-labs/smlib
+        // 8311f8e)
+        let soft = k.fixes.query_statuses_pass_on;
+        let Soft::Kept(p) = ignored_or_soft(crv1.evaluate_point(k, domain1.evaluate(0.0)), soft)?
+        else {
+            ii += 1;
+            continue;
+        };
+        if let Some(p) = p {
             start_point1 = p;
         }
-        if let Some(p) = ignored(crv1.evaluate_point(k, domain1.evaluate(1.0)))? {
+        let Soft::Kept(p) = ignored_or_soft(crv1.evaluate_point(k, domain1.evaluate(1.0)), soft)?
+        else {
+            ii += 1;
+            continue;
+        };
+        if let Some(p) = p {
             end_point1 = p;
         }
 
         // If this is a tiny curve, check midpoint
         if (end_point1 - start_point1).length_squared() < tol_sq {
             // Test for closed curve by examining near midpoint
-            if let Some(p) = ignored(crv1.evaluate_point(k, domain1.evaluate(0.4567)))? {
+            let Soft::Kept(p) =
+                ignored_or_soft(crv1.evaluate_point(k, domain1.evaluate(0.4567)), soft)?
+            else {
+                ii += 1;
+                continue;
+            };
+            if let Some(p) = p {
                 mid_point = p;
             }
 
@@ -854,10 +1132,25 @@ pub fn remove_duplicate_curves(k: &Kernel, curves: &mut Vec<Option<Curve>>) -> R
 
             let mut duplicate = true;
             for &t in &params {
-                if let Some(p) = ignored(crv1.evaluate_point(k, ivl1.evaluate(t)))? {
+                // (with the opt-in fix points that cannot be evaluated do not show a
+                // duplicate, tangency-labs/smlib 8311f8e)
+                let soft = k.fixes.query_statuses_pass_on;
+                let Soft::Kept(p) =
+                    ignored_or_soft(crv1.evaluate_point(k, ivl1.evaluate(t)), soft)?
+                else {
+                    duplicate = false;
+                    break;
+                };
+                if let Some(p) = p {
                     p1 = p;
                 }
-                if let Some(p) = ignored(crv2.evaluate_point(k, ivl2.evaluate(t)))? {
+                let Soft::Kept(p) =
+                    ignored_or_soft(crv2.evaluate_point(k, ivl2.evaluate(t)), soft)?
+                else {
+                    duplicate = false;
+                    break;
+                };
+                if let Some(p) = p {
                     p2 = p;
                 }
                 if p1.distance_squared(p2) > EFF_ZERO_SQ {
@@ -993,8 +1286,17 @@ impl Curve {
         let dom = self.natural_interval();
         for &frac in &params {
             let t = dom.evaluate(frac);
-            // (status ignored)
-            if let Some(v) = ignored(self.evaluate(k, t, 1, false, false))? {
+            // (status ignored; `SmCurve::Evaluate`'s default `bNonZeroTangents = TRUE`;
+            // with the opt-in fix a curve that cannot be evaluated is not shown on a
+            // boundary, tangency-labs/smlib 8311f8e)
+            let Soft::Kept(v) = ignored_or_soft(
+                self.evaluate(k, t, 1, false, true),
+                k.fixes.query_statuses_pass_on,
+            )?
+            else {
+                return Ok(SurfParamType::Neither);
+            };
+            if let Some(v) = v {
                 for (d, s) in pt_der.iter_mut().zip(v) {
                     *d = s;
                 }
@@ -1038,13 +1340,25 @@ pub fn is_periodic<C: CurveEvaluate + ?Sized>(
         // check to see if tangents are nearly aligned
         let mut pv1 = [Vec3::UNDEF; 2];
         let mut pv2 = [Vec3::UNDEF; 2];
-        // nonZeroTangent values (statuses ignored)
-        if let Some(v) = ignored(curve.evaluate(k, interval.min(), 1, true, true))? {
+        // nonZeroTangent values (statuses ignored; with the opt-in fix a curve that
+        // cannot be evaluated is not shown periodic, tangency-labs/smlib 8311f8e)
+        let soft = k.fixes.query_statuses_pass_on;
+        let Soft::Kept(v) =
+            ignored_or_soft(curve.evaluate(k, interval.min(), 1, true, true), soft)?
+        else {
+            return Ok(false);
+        };
+        if let Some(v) = v {
             for (d, s) in pv1.iter_mut().zip(v) {
                 *d = s;
             }
         }
-        if let Some(v) = ignored(curve.evaluate(k, interval.max(), 1, true, true))? {
+        let Soft::Kept(v) =
+            ignored_or_soft(curve.evaluate(k, interval.max(), 1, true, true), soft)?
+        else {
+            return Ok(false);
+        };
+        if let Some(v) = v {
             for (d, s) in pv2.iter_mut().zip(v) {
                 *d = s;
             }
@@ -1100,14 +1414,23 @@ pub fn is_point_solution_across_closed_seam_boundary<O: Copy>(
     {
         // get Curves' pos and vec at solution point (NonZeroTangent values;
         // statuses ignored)
+        // (with the opt-in fix a solution whose tangents cannot be evaluated is not
+        // shown across the seam, tangency-labs/smlib 8311f8e)
+        let soft = k.fixes.query_statuses_pass_on;
         let mut pv1 = [Vec3::UNDEF; 2];
         let mut pv2 = [Vec3::UNDEF; 2];
-        if let Some(v) = ignored(this.evaluate(k, start1, 1, true, true))? {
+        let Soft::Kept(v) = ignored_or_soft(this.evaluate(k, start1, 1, true, true), soft)? else {
+            return Ok(false);
+        };
+        if let Some(v) = v {
             for (d, s) in pv1.iter_mut().zip(v) {
                 *d = s;
             }
         }
-        if let Some(v) = ignored(other.evaluate(k, start2, 1, true, true))? {
+        let Soft::Kept(v) = ignored_or_soft(other.evaluate(k, start2, 1, true, true), soft)? else {
+            return Ok(false);
+        };
+        if let Some(v) = v {
             for (d, s) in pv2.iter_mut().zip(v) {
                 *d = s;
             }
@@ -1273,10 +1596,25 @@ where
 
     // get 3 samplePoints [.00, .45, .90] from the curve
     // Don't use [0, .5, 1] in case of closed curve.
+    // (with the opt-in fix a curve that cannot be evaluated or framed is not shown an
+    // arc, tangency-labs/smlib 8311f8e)
+    let soft = k.fixes.query_statuses_pass_on;
     let interval = curve.natural_interval();
-    let p1 = ignored(curve.evaluate_point(k, interval.evaluate(0.00)))?.unwrap_or(Vec3::UNDEF);
-    let p2 = ignored(curve.evaluate_point(k, interval.evaluate(0.45)))?.unwrap_or(Vec3::UNDEF);
-    let p3 = ignored(curve.evaluate_point(k, interval.evaluate(0.90)))?.unwrap_or(Vec3::UNDEF);
+    let point = |t: f64| -> Result<Option<Point3>> {
+        match ignored_or_soft(curve.evaluate_point(k, t), soft)? {
+            Soft::Failed => Ok(None),
+            Soft::Kept(p) => Ok(Some(p.unwrap_or(Vec3::UNDEF))),
+        }
+    };
+    let Some(p1) = point(interval.evaluate(0.00))? else {
+        return Ok(None);
+    };
+    let Some(p2) = point(interval.evaluate(0.45))? else {
+        return Ok(None);
+    };
+    let Some(p3) = point(interval.evaluate(0.90))? else {
+        return Ok(None);
+    };
 
     // get vectors between sample points
     let v1 = p2 - p1;
@@ -1296,7 +1634,9 @@ where
 
     // place coordinate system in SmAxis2Placement object (status ignored)
     let mut plane = Axis2Placement::default();
-    let _ = plane.set_canonical(p1, x, y);
+    if plane.set_canonical(p1, x, y).is_err() && soft {
+        return Ok(None);
+    }
 
     // drop 3 points to the plane (they should already be on the plane to tolerances)
     let uv_p1 = plane_drop_point(&plane, p1);
@@ -1371,15 +1711,22 @@ where
     };
 
     let mut frame = Axis2Placement::default();
-    let _ = frame.set_canonical(center, x, y);
+    if frame.set_canonical(center, x, y).is_err() && soft {
+        return Ok(None);
+    }
 
     // arc start is 0.0
     let start_ang_deg = 0.0;
 
     // get arc stop in degrees (statuses ignored)
-    let end = ignored(curve.evaluate_point(k, interval.max()))?.unwrap_or(Vec3::UNDEF);
+    let Some(end) = point(interval.max())? else {
+        return Ok(None);
+    };
     let v_to_end = end - center;
-    let mut end_ang_deg = z.ccw_angle_between(x, v_to_end).unwrap_or(0.0);
+    let mut end_ang_deg = match z.ccw_angle_between(x, v_to_end) {
+        Err(_) if soft => return Ok(None),
+        r => r.unwrap_or(0.0),
+    };
     end_ang_deg = end_ang_deg * 180.0 / PI;
 
     // snap near closed circles to closed circles and
@@ -1434,9 +1781,21 @@ impl Curve {
     ///
     /// Those of [`Curve::length_base`].
     pub fn length(&self, k: &Kernel, interval: &Extent1d, desired_accuracy: f64) -> Result<f64> {
+        self.length_with_zone_tol(k, interval, desired_accuracy, self.owner_zone_tol_3d())
+    }
+
+    /// Arc length with the owning edge's resolved zone tolerance, independent of
+    /// the desired integration accuracy. Retains the virtual line override.
+    pub(crate) fn length_with_zone_tol(
+        &self,
+        k: &Kernel,
+        interval: &Extent1d,
+        desired_accuracy: f64,
+        owner_zone_tol_3d: Option<f64>,
+    ) -> Result<f64> {
         match self.kind() {
             CurveKind::Line(l) => Ok(l.length(interval)),
-            _ => self.length_base(k, interval, desired_accuracy),
+            _ => self.length_base_with_zone_tol(k, interval, desired_accuracy, owner_zone_tol_3d),
         }
     }
 
@@ -1444,17 +1803,51 @@ impl Curve {
     /// (chord height `ApproximateLength(5) / 10`, 90 degrees) of the span chord for a
     /// degree 1 curve, else the Romberg integral of `|C'|`; the end point distance
     /// for an interval shorter than `SM_EFF_ZERO` or a curve that does not
-    /// tessellate (kinds not derived from `SmBSplineCurve`).
+    /// tessellate (kinds not derived from `SmBSplineCurve`). Not upstream: each span's
+    /// end is evaluated in its own knot span (upstream: the span above), and the
+    /// integral's steps are accepted on the quadrature estimate
+    /// ([`crate::mass::integrator::integrate_rounded_with_kernel`]). For the kinds with
+    /// control points the speed is evaluated in difference form on the span's knot span
+    /// ([`BSplineCurve::span_speed`]), so its rounding scales with the curve's size, not
+    /// with its distance from the origin, and a span whose control points are one point
+    /// has length 0 exactly.
+    ///
+    /// The contract: each span's integral is within its share of `desired_accuracy`
+    /// by the step control's estimates, the steps accepted at the rounding of the
+    /// computed speed included (their errors, together, within that share of the
+    /// span's length: [`crate::mass::integrator::OdeOptions::rounding`]), or the span is
+    /// refused (`SM_ERR`, operation `mass::integrator::step_control`): the accuracy asks
+    /// for less than the computed speed resolves. The refusal is returned with
+    /// [`crate::kernel::UpstreamFixes::integrator_propagates_failure`] and is a zero
+    /// length without it, as every failed span integration (WR-94).
     ///
     /// # Errors
     ///
-    /// Those of the length estimate and of the degree query;
-    /// [`SolidError::Unported`] from the tessellation or curve evaluator.
+    /// Those of the length estimate and of the degree query (and of the span
+    /// integration when [`crate::kernel::UpstreamFixes::integrator_propagates_failure`]
+    /// is enabled, WR-94); those of [`BSplineCurve::span_speed`];
+    /// [`SolidError::Unported`] from the tessellation or curve evaluator, and for an
+    /// edge's curve borrowed from its record (`SmTol::GetZoneTol3d`: the cache's
+    /// tolerance is the edge's, which the curve cannot reach; use
+    /// [`crate::topology::edge::evaluation_curve`]).
+    ///
+    /// The cache is built at the tolerance of the curve's edge when one is recorded on
+    /// the curve ([`Curve::owner_zone_tol_3d`]), as upstream reads it through the owner.
     pub fn length_base(
         &self,
         k: &Kernel,
         interval: &Extent1d,
         desired_accuracy: f64,
+    ) -> Result<f64> {
+        self.length_base_with_zone_tol(k, interval, desired_accuracy, self.owner_zone_tol_3d())
+    }
+
+    fn length_base_with_zone_tol(
+        &self,
+        k: &Kernel,
+        interval: &Extent1d,
+        desired_accuracy: f64,
+        owner_zone_tol_3d: Option<f64>,
     ) -> Result<f64> {
         // Now compute a reasonable a chord height tolerance based on
         // approximate total size of the curve.
@@ -1467,9 +1860,10 @@ impl Curve {
         // which values are optimal for the length function.
         let angular_tol = 90.0; // 90 degrees might be ok
 
-        // Create the cache
+        // Create the cache (over the curve itself upstream: an exact copy that keeps
+        // the owner, not the copy constructor's fixed-up knots)
         let mut cache: CurveCache<()> = CurveCache::new(
-            self.clone(),
+            self.clone_for_evaluation()?,
             *interval,
             CurveCacheOptions {
                 make_full_tree: true,
@@ -1482,15 +1876,20 @@ impl Curve {
                 min_parametric_ratio: 0.0001,
             },
         );
+        cache.set_owner_zone_tol_3d(owner_zone_tol_3d);
         let degenerate = interval.length() < EFF_ZERO;
         let tessellated = degenerate || ignored(cache.tessellate(k))?.is_some();
 
         // for degenerate intervals and for all curves that don't tessellate
         //  note: only curves derived from SmBSplineCurve tessellate
         if degenerate || !tessellated {
-            // let the length equal the end-point distance (statuses ignored)
-            let p1 = ignored(self.evaluate_point(k, interval.min()))?.unwrap_or(Vec3::UNDEF);
-            let p2 = ignored(self.evaluate_point(k, interval.max()))?.unwrap_or(Vec3::UNDEF);
+            // let the length equal the end-point distance (statuses ignored; passed on
+            // with the opt-in fix, tangency-labs/smlib 8311f8e)
+            let pass_on = k.fixes.query_statuses_pass_on;
+            let p1 = ignored_or_pass_on(self.evaluate_point(k, interval.min()), pass_on)?
+                .unwrap_or(Vec3::UNDEF);
+            let p2 = ignored_or_pass_on(self.evaluate_point(k, interval.max()), pass_on)?
+                .unwrap_or(Vec3::UNDEF);
             return Ok(p1.distance(p2));
         }
 
@@ -1500,6 +1899,9 @@ impl Curve {
         let span_accuracy = desired_accuracy / span_count as f64;
 
         let bsp = cache.curve();
+        // (a kind with control points; a Hermite curve tessellates without them, and its
+        // speed's rounding is not bounded here)
+        let nurb = bsp.b_spline_base();
         for i in 0..span_count {
             let bez_elem = cache.span(i)?;
             let (p1, p2, seg_ivl) = bez_elem.aux.ends_on(k, bsp)?;
@@ -1511,16 +1913,34 @@ impl Curve {
                 continue;
             }
 
+            // The speed in difference form on the span's knot span, with the bound on its
+            // rounding; a span whose control points are one point is that point: length
+            // 0, exactly.
+            let speed = match nurb.map(|n| n.span_speed(&seg_ivl)).transpose()? {
+                Some(None) => continue,
+                Some(Some(speed)) => Some(speed),
+                None => None,
+            };
+
             // Greater than degree 1 if make it to here
             // Do an integration to get the length of the
-            // first derivatives integrated over the entire curve.
-            total_length += crate::mass::integrator::integrate(
+            // first derivatives integrated over the entire curve, refused where the
+            // accuracy asks for less than the computed speed resolves.
+            total_length += crate::mass::integrator::integrate_rounded_with_kernel(
+                k,
                 seg_ivl.min(),
                 seg_ivl.max(),
-                crate::mass::integrator::IntegrationAlgorithm::Romberg,
                 span_accuracy,
+                speed.as_ref().map(SpanSpeed::rounding_bound),
                 |t| {
-                    let pv = bsp.evaluate(k, t, 1, true, false)?;
+                    if let Some(speed) = &speed {
+                        // the span's own piece, its end (a knot) included
+                        return speed.speed(t);
+                    }
+                    // The span's end, `x2` exactly as the integrator's last node, is
+                    // evaluated from below (`bFromLeft = FALSE`), every other t as
+                    // upstream (`TRUE`).
+                    let pv = bsp.evaluate(k, t, 1, t != seg_ivl.max(), false)?;
                     pv.get(1)
                         .map(|v| v.length())
                         .ok_or_else(|| SolidError::sm_err("curve::length"))
@@ -1601,21 +2021,32 @@ pub fn local_property_analysis<C: CurveEvaluate + ?Sized, O: Copy>(
     // solve with NewtonRaphson iteration
     let outcome = match ls.solve_it(&mut efo, guess, EFF_ZERO_SQRT) {
         Ok(o) => o,
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         // Something went wrong in 1d solver return error
         Err(_) => return Err(SolidError::sm_err(OP_LPA)),
     };
     let found_t = outcome.t;
+    let pass_on = k.fixes.query_statuses_pass_on;
 
-    // when no solution was found
+    // A search that found nothing has no solution to report, with one exception: the
+    // minimisations and maximisations stop at the extremum they reached, and their `found`
+    // is decided by `|F| < acceptable_accuracy`, a test their objectives are not built for
+    // (a radius of curvature or a derivative length is not near zero at an extremum). For
+    // them the stop point is the solution, but only when `F` there is a value the search
+    // really has: `BIG_DOUBLE` is what the objective answers where it has no finite value
+    // (an uncurved piece), and a failed evaluation leaves no value at all. Upstream reports
+    // the stop point whatever `ls.curr.f` holds, which on a straight trim is the zero a
+    // failed evaluation left behind (#2574).
     if !outcome.found {
-        // If we terminate for minimization or maximization problem
-        // for any normal reason then we don't need to fail.
-        if property != CurvePropertyType::MinimizeFirstDerivative
-            && property != CurvePropertyType::MaximizeFirstDerivative
-            && property != CurvePropertyType::MinimizeRadiusOfCurvature
-            && property != CurvePropertyType::MaximizeRadiusOfCurvature
-        {
+        let stops_at_its_extremum = matches!(
+            property,
+            CurvePropertyType::MinimizeFirstDerivative
+                | CurvePropertyType::MaximizeFirstDerivative
+                | CurvePropertyType::MinimizeRadiusOfCurvature
+                | CurvePropertyType::MaximizeRadiusOfCurvature
+        );
+        let value = ls.curr.f.abs();
+        if !stops_at_its_extremum || !value.is_finite() || value >= BIG_DOUBLE {
             return Ok(false);
         }
     } // end no solution check
@@ -1632,7 +2063,9 @@ pub fn local_property_analysis<C: CurveEvaluate + ?Sized, O: Copy>(
         || property == CurvePropertyType::MinimizeCcwAngle
     {
         // get the solution point and the vector between it and testPoint projected to the appropriate plane
-        let found_pnt = ignored(curve.evaluate_point(k, found_t))?.unwrap_or(Vec3::UNDEF);
+        // (status ignored; passed on with the opt-in fix, tangency-labs/smlib 8311f8e)
+        let found_pnt =
+            ignored_or_pass_on(curve.evaluate_point(k, found_t), pass_on)?.unwrap_or(Vec3::UNDEF);
         let mut v = found_pnt - vec(0)?;
         v = vec(1)?.cross(v).cross(vec(1)?);
 
@@ -1644,8 +2077,10 @@ pub fn local_property_analysis<C: CurveEvaluate + ?Sized, O: Copy>(
             let cos_theta = if property == CurvePropertyType::MinimizeAngleToPlane {
                 PI / 2.0 - acos(v.dot(vec(2)?).abs())
             } else {
-                // SM_CP_MINIMIZE_DIRECTED_ANGLE (status ignored)
-                let mut c = vec(1)?.ccw_angle_between(vec(2)?, v).unwrap_or(0.0);
+                // SM_CP_MINIMIZE_DIRECTED_ANGLE (status ignored; passed on with the
+                // opt-in fix)
+                let mut c =
+                    passed_on(vec(1)?.ccw_angle_between(vec(2)?, v), pass_on)?.unwrap_or(0.0);
                 if c > PI {
                     c = 2.0 * PI - c; // make range 0 to -180
                 }
@@ -1663,7 +2098,8 @@ pub fn local_property_analysis<C: CurveEvaluate + ?Sized, O: Copy>(
         || property == CurvePropertyType::ProjectedPointMaximize
     {
         // get the solution point and the vector between it and testPoint projected to the appropriate plane
-        let found_pnt = ignored(curve.evaluate_point(k, found_t))?.unwrap_or(Vec3::UNDEF);
+        let found_pnt =
+            ignored_or_pass_on(curve.evaluate_point(k, found_t), pass_on)?.unwrap_or(Vec3::UNDEF);
         let v = found_pnt - vec(0)?;
         let v_proj = vec(1)?.cross(v).cross(vec(1)?);
 
@@ -1732,15 +2168,12 @@ impl<C1: CurveEvaluate + ?Sized, C2: CurveEvaluate + ?Sized> CcIntersectEnfo<'_,
         // when near a tangent curve/curve intersection
         if is_tangent {
             // switch to the TangentIntersection Solver Objective Functions
-            // (status ignored)
-            if let Some(r) = ignored(CcTangentIntEnfo::static_evaluate(
-                k,
-                self.curve1,
-                self.curve2,
-                x,
-                f,
-                jacobian,
-            ))? {
+            // (status ignored; passed on with the opt-in fix, tangency-labs/smlib
+            // 8311f8e)
+            if let Some(r) = ignored_or_pass_on(
+                CcTangentIntEnfo::static_evaluate(k, self.curve1, self.curve2, x, f, jacobian),
+                k.fixes.query_statuses_pass_on,
+            )? {
                 found = r;
             }
         } else {
@@ -1865,13 +2298,16 @@ impl<C1: CurveEvaluate + ?Sized, C2: CurveEvaluate + ?Sized> FindCcNormalEnfo<'_
 
             // curve 1 curvature
             let pv = geom3(k, self.curve1, x0)?;
+            // (Unitize statuses ignored; passed on with the opt-in fix,
+            // tangency-labs/smlib 8311f8e)
+            let pass_on = k.fixes.query_statuses_pass_on;
             if pv[2].length_squared() > EFF_ZERO_SQ {
-                trans = pv[2].unitize_or_z();
+                trans = unitize_or_pass_on(pv[2], pass_on)?;
             } else {
                 // curve 2 curvature
                 let pv = geom3(k, self.curve2, x1)?;
                 if pv[2].length_squared() > EFF_ZERO_SQ {
-                    trans = pv[2].unitize_or_z();
+                    trans = unitize_or_pass_on(pv[2], pass_on)?;
                 }
             }
 
@@ -2067,9 +2503,10 @@ impl<C1: CurveEvaluate + ?Sized, C2: CurveEvaluate + ?Sized> FindCcNormalEnfo<'_
                 let fpp = n.cross(pvv1[2]).cross(n);
                 let gp = n.cross(pvv2[1]).cross(n);
                 let gpp = n.cross(pvv2[2]).cross(n);
-                // (statuses ignored)
-                let ufp = fp.unitize_or_z();
-                let ugp = gp.unitize_or_z();
+                // (statuses ignored; passed on with the opt-in fix, tangency-labs/smlib
+                // 8311f8e)
+                let ufp = unitize_or_pass_on(fp, k.fixes.query_statuses_pass_on)?;
+                let ugp = unitize_or_pass_on(gp, k.fixes.query_statuses_pass_on)?;
                 let piv_f = n.cross(pvv1[0] - pivot).cross(n);
                 let piv_g = n.cross(pvv2[0] - pivot).cross(n);
                 let mut sign = 1.0;
@@ -2106,17 +2543,21 @@ impl<C1: CurveEvaluate + ?Sized, C2: CurveEvaluate + ?Sized> FindCcNormalEnfo<'_
 
                 let gap = -vec_f_minus_g;
 
-                // Surface quantities (status ignored)
-                let (u_ders, v_ders) =
-                    ignored(crv_on_surf.evaluate_surface_1st_deriv_derivs(k, x1, false))?
-                        .unwrap_or(([Vec3::UNDEF; 2], [Vec3::UNDEF; 2]));
+                // Surface quantities (status ignored; this and the unitizations below
+                // are passed on with the opt-in fix, tangency-labs/smlib 8311f8e)
+                let pass_on = k.fixes.query_statuses_pass_on;
+                let (u_ders, v_ders) = ignored_or_pass_on(
+                    crv_on_surf.evaluate_surface_1st_deriv_derivs(k, x1, false),
+                    pass_on,
+                )?
+                .unwrap_or(([Vec3::UNDEF; 2], [Vec3::UNDEF; 2]));
                 let [su, sus] = u_ders;
                 let [sv, svs] = v_ders;
 
                 // Unitize derivatives (statuses ignored):
-                let su_unit = su.unitize_or_z();
+                let su_unit = unitize_or_pass_on(su, pass_on)?;
                 let su_unit_s = su.unitized_derivative(sus);
-                let sv_unit = sv.unitize_or_z();
+                let sv_unit = unitize_or_pass_on(sv, pass_on)?;
                 let sv_unit_s = sv.unitized_derivative(svs);
 
                 // Compute function values
@@ -2182,6 +2623,7 @@ impl<C1: CurveEvaluate + ?Sized, C2: CurveEvaluate + ?Sized> FindCcNormalEnfo<'_
 mod tests {
     use super::*;
     use crate::curve::hermite_curve::HermiteCurve;
+    use crate::geom::local_solve1d::{EvalFunction, FunctionValue};
     use crate::geom::local_solve_nd::EvalNFunctions;
     use crate::nurbs::b_spline_curve::NurbCircleParam;
     use crate::nurbs::nurbs_crv::allocate_nurb_curve;
@@ -2226,6 +2668,71 @@ mod tests {
             )
             .unwrap(),
         )
+    }
+
+    /// A curve that cannot be evaluated: a B-spline without its NURB.
+    fn unevaluable() -> Curve {
+        Curve::from(BSplineCurve::new(3))
+    }
+
+    fn kernels() -> (Kernel, Kernel) {
+        let mut on = Kernel::default();
+        on.fixes.query_statuses_pass_on = true;
+        (Kernel::default(), on)
+    }
+
+    #[test]
+    fn issue_2009_unevaluable_curve_is_kept_by_cleanup() {
+        // tangency-labs/smlib 8311f8e (SmCurve::CrvsCleanup): a curve that cannot be
+        // evaluated is not shown tiny, it is kept; upstream compares unset points,
+        // which coincide, and removes it. Discriminating.
+        let (off, on) = kernels();
+        let mut a = vec![unevaluable(), bseg([0.0; 3], [1.0, 0.0, 0.0])];
+        let r_off = crvs_cleanup(&off, &mut a, 1e-3).unwrap();
+        assert_eq!((r_off.removed, a.len()), (1, 1));
+        let mut b = vec![unevaluable(), bseg([0.0; 3], [1.0, 0.0, 0.0])];
+        let r_on = crvs_cleanup(&on, &mut b, 1e-3).unwrap();
+        assert_eq!((r_on.removed, b.len()), (0, 2));
+    }
+
+    #[test]
+    fn issue_2009_unevaluable_curves_are_not_duplicates() {
+        // tangency-labs/smlib 8311f8e (SmCurve::RemoveDuplicateCurves): points that
+        // cannot be evaluated do not show a duplicate; upstream compares unset points
+        // and drops the second curve. Discriminating.
+        let (off, on) = kernels();
+        let mut a = vec![Some(unevaluable()), Some(unevaluable())];
+        assert_eq!(remove_duplicate_curves(&off, &mut a).unwrap().len(), 1);
+        let mut b = vec![Some(unevaluable()), Some(unevaluable())];
+        assert_eq!(remove_duplicate_curves(&on, &mut b).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn issue_2009_unevaluable_curve_is_not_linear_arc_or_line() {
+        // tangency-labs/smlib 8311f8e (IsLinear, IsArc, IsLine): a curve that cannot
+        // be evaluated is shown none of these. Coverage only: upstream's unset points
+        // coincide, so it reaches the same answers.
+        let (off, on) = kernels();
+        let c = unevaluable();
+        for k in [&off, &on] {
+            assert!(!c.is_linear(k, 1e-6, false).unwrap().linear);
+            assert!(is_arc_base(k, &c, |_, _| Ok(false), 10, 1e-6)
+                .unwrap()
+                .is_none());
+            assert!(curve_is_line_base(k, &c, 5, 1e-6).unwrap().is_none());
+        }
+    }
+
+    #[test]
+    fn issue_2009_unevaluable_end_length_is_passed_on() {
+        // tangency-labs/smlib 8311f8e (SmCurve::Length): the end-point distance of a
+        // curve that does not tessellate passes on its evaluations. Discriminating:
+        // upstream measures between unset points.
+        let (off, on) = kernels();
+        let c = unevaluable();
+        let ivl = Extent1d::from_min_max(0.0, 1.0);
+        assert!(c.length(&off, &ivl, 1e-6).is_ok());
+        assert!(c.length(&on, &ivl, 1e-6).is_err());
     }
 
     #[test]
@@ -2418,5 +2925,262 @@ mod tests {
         );
         let pt = line.evaluate_step_point(k, 0.5).unwrap();
         assert!(pt.distance(Vec3::new(3.0, 2.0, 0.0)) < 1e-12);
+    }
+
+    /// A closed cubic through 8 points of an ellipse.
+    fn ellipse_spline() -> Curve {
+        let mut pts: Vec<Point3> = (0..8)
+            .map(|i| {
+                let t = core::f64::consts::PI * f64::from(i) / 4.0;
+                Point3::new(5.0 * t.cos(), 3.0 * t.sin(), 0.5 * t)
+            })
+            .collect();
+        pts.push(pts[0]);
+        let c = BSplineCurve::interpolate_points(
+            &pts,
+            None,
+            3,
+            None,
+            None,
+            true,
+            crate::nurbs::crv_fit::p1::ParamMethod::ChordLength,
+        )
+        .unwrap();
+        Curve::from(c)
+    }
+
+    #[test]
+    fn memo_hit_is_the_fresh_build() {
+        let k = Kernel {
+            memoize_curve_caches: true,
+            ..Kernel::default()
+        };
+        let off = Kernel {
+            memoize_curve_caches: false,
+            ..Kernel::default()
+        };
+        for c in [
+            bseg([0.0, 0.0, 0.0], [1.0, 2.0, 3.0]),
+            ellipse_spline(),
+            hermite([0.0; 3], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]),
+        ] {
+            let fresh = format!("{:?}", make_curve_cache(&off, &c, Some(7u32)).unwrap());
+            let key = CurveMemoKey::of(&k, &c, None).unwrap();
+            assert!(c.memo().lookup(&key, None::<u32>).is_none());
+            let miss = format!("{:?}", make_curve_cache(&k, &c, Some(7u32)).unwrap());
+            assert!(c.memo().lookup(&key, None::<u32>).is_some());
+            let hit = format!("{:?}", make_curve_cache(&k, &c, Some(7u32)).unwrap());
+            // another handle space and a clone: the same as their fresh builds
+            let copy = c.clone();
+            let hit_copy = format!("{:?}", make_curve_cache(&k, &copy, Some(-1i64)).unwrap());
+            let fresh_copy = format!("{:?}", make_curve_cache(&off, &copy, Some(-1i64)).unwrap());
+            assert_eq!(miss, fresh);
+            assert_eq!(hit, fresh);
+            assert_eq!(hit_copy, fresh_copy);
+            // the memo was off for `off`, so it stored nothing
+            assert!(CurveMemoKey::of(&off, &c, None).is_none());
+        }
+    }
+
+    #[test]
+    fn memo_hit_shares_completed_curve_tree_data() {
+        let k = Kernel {
+            memoize_curve_caches: true,
+            ..Kernel::default()
+        };
+        let curve = ellipse_spline();
+        let first = make_curve_cache(&k, &curve, Some(7u32)).unwrap();
+        let hit = make_curve_cache(&k, &curve, Some(-1i64)).unwrap();
+        assert!(!first.spans().is_empty());
+        assert!(!first.parents().is_empty());
+        assert_eq!(first.spans(), hit.spans());
+        assert_eq!(first.parents(), hit.parents());
+        assert!(
+            std::ptr::eq(first.spans().as_ptr(), hit.spans().as_ptr()),
+            "memo hit copied completed curve spans"
+        );
+        assert!(
+            std::ptr::eq(first.parents().as_ptr(), hit.parents().as_ptr()),
+            "memo hit copied completed curve parents"
+        );
+        assert_eq!(first.tree().unwrap().owner_object().unwrap(), Some(7));
+        assert_eq!(hit.tree().unwrap().owner_object().unwrap(), Some(-1));
+    }
+
+    #[test]
+    fn memo_follows_edits_and_kernel_state() {
+        let k = Kernel {
+            memoize_curve_caches: true,
+            ..Kernel::default()
+        };
+        let mut c = ellipse_spline();
+        let key = CurveMemoKey::of(&k, &c, None).unwrap();
+        let _ = make_curve_cache(&k, &c, None::<u32>).unwrap();
+        let copy = c.clone();
+        assert!(copy.memo().lookup(&key, None::<u32>).is_some());
+        // an edit of one copy empties its memo only
+        c.reverse_parameterization(&k, &c.natural_interval())
+            .unwrap();
+        assert!(c.memo().lookup(&key, None::<u32>).is_none());
+        assert!(copy.memo().lookup(&key, None::<u32>).is_some());
+        let off = Kernel {
+            memoize_curve_caches: false,
+            ..Kernel::default()
+        };
+        let edited = format!("{:?}", make_curve_cache(&k, &c, None::<u32>).unwrap());
+        let edited_fresh = format!("{:?}", make_curve_cache(&off, &c, None::<u32>).unwrap());
+        assert_eq!(edited, edited_fresh);
+        // other tolerances do not match the stored key
+        let mut loose = Kernel {
+            memoize_curve_caches: true,
+            ..Kernel::default()
+        };
+        loose.tolerances.zone_tol_3d *= 10.0;
+        let loose_key = CurveMemoKey::of(&loose, &copy, None).unwrap();
+        assert!(copy.memo().lookup(&loose_key, None::<u32>).is_none());
+        // a Hermite curve is a pure value and memoised
+        let h = hermite([0.0; 3], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]);
+        assert!(CurveMemoKey::of(&k, &h, None).is_some());
+    }
+
+    #[test]
+    fn owner_zone_tol_sets_the_approximation_tolerance_and_the_memo_key() {
+        let k = Kernel {
+            memoize_curve_caches: true,
+            ..Kernel::default()
+        };
+        // at 1e10 the Bezier spans' rounding (above half the system tolerance) splits
+        // spans, half an edge tolerance of 1 does not; a Hermite curve, since spans cut
+        // from a B-spline skip the distance check (v1.0.1)
+        let big = hermite(
+            [1.2e9, 0.0, 0.0],
+            [3e10, 6e10, 0.0],
+            [6.1e10, 0.0, 2e10],
+            [3e10, -6e10, 3e10],
+        );
+        let system = make_curve_cache(&k, &big, None::<u32>).unwrap();
+        let edge = make_curve_cache_with_zone_tol(&k, &big, None::<u32>, Some(1.0)).unwrap();
+        assert!(system.span_count() > edge.span_count());
+        // each tolerance has its own key: no hit across them
+        let again = make_curve_cache(&k, &big, None::<u32>).unwrap();
+        assert_eq!(again.span_count(), system.span_count());
+        let key = CurveMemoKey::of(&k, &big, Some(1.0)).unwrap();
+        assert!(big.memo().lookup(&key, None::<u32>).is_none());
+    }
+
+    /// A planar degree-4 B-spline `C(t) = (x(s(t)), s(t), 0)` over `[-1, 12]` with
+    /// `x(s) = (1-s)^3 - 2(1-s) + 2` integrated, so `C'(t) . (1, 0, 0) =
+    /// (1-s)^3 - 2(1-s) + 2` where `s(t) = t`: from 0, Newton on it cycles between
+    /// 0 and 1 (`F = 1, F' = -1` at 0; `F = 2, F' = 2` at 1; the mirror of the
+    /// `t^3 - 2t + 2` cycle) without a root nearby (`F > 0.9` on `[0, 1]`). `s` is
+    /// piecewise linear with C0 joints: it stalls (`C' = 0`, so the perpendicular
+    /// property cannot be evaluated) on `[stall, 0.992]`, catches up on
+    /// `[0.992, 0.996]`, and is `s = t` elsewhere. The pieces holding 0 and 1 do not
+    /// depend on `stall`, so neither do the Newton iterates.
+    fn stalled_quartic(stall: f64) -> Curve {
+        let (a, b, c) = (stall, 0.992, 0.996);
+        // (s0, s1) per Bezier piece; the knots are -1, 0.5, a, b, c, 12
+        let pieces = [(-1.0, 0.5), (0.5, a), (a, a), (a, c), (c, 12.0)];
+        // x(s) = -(1-s)^4/4 + (1-s)^2 + 2s and its derivatives
+        let x = |s: f64| {
+            (-((1.0 - s) * (1.0 - s) * (1.0 - s) * (1.0 - s)) / 4.0 + (1.0 - s) * (1.0 - s))
+                + 2.0 * s
+        };
+        let dx = |s: f64| ((1.0 - s) * (1.0 - s) * (1.0 - s) - 2.0 * (1.0 - s)) + 2.0;
+        let d2x = |s: f64| -3.0 * (1.0 - s) * (1.0 - s) + 2.0;
+        let d3x = |s: f64| 6.0 * (1.0 - s);
+        let binom = |n: usize, k: usize| -> f64 {
+            (0..k).fold(1.0, |acc, j| acc * (n - j) as f64 / (j + 1) as f64)
+        };
+        let mut cps = Vec::new();
+        for (i, &(s0, s1)) in pieces.iter().enumerate() {
+            // Bezier points of q(u) = P(s0 + d u) from its Taylor coefficients
+            let d = s1 - s0;
+            let cx = [
+                x(s0),
+                dx(s0) * d,
+                d2x(s0) / 2.0 * d * d,
+                d3x(s0) / 6.0 * d * d * d,
+                -(d * d * d * d) / 4.0,
+            ];
+            let cy = [s0, d, 0.0, 0.0, 0.0];
+            for j in usize::from(i > 0)..=4 {
+                let bx: f64 = (0..=j).map(|k| binom(j, k) / binom(4, k) * cx[k]).sum();
+                let by: f64 = (0..=j).map(|k| binom(j, k) / binom(4, k) * cy[k]).sum();
+                cps.push([bx, by]);
+            }
+        }
+        let mut cur = allocate_nurb_curve(20, 4, 25).unwrap();
+        for (dst, src) in cur.cpts_mut().iter_mut().zip(&cps) {
+            dst.x = src[0];
+            dst.y = src[1];
+            dst.z = 0.0;
+            dst.w = -f64::MAX;
+        }
+        let mut knots = vec![-1.0; 5];
+        for t in [0.5, a, b, c] {
+            knots.extend([t; 4]);
+        }
+        knots.extend([12.0; 5]);
+        cur.knots_mut().copy_from_slice(&knots);
+        Curve::from(BSplineCurve::from_nurb(cur, 3, false))
+    }
+
+    /// `PerpendicularToVector` to `(1, 0, 0)` on [`stalled_quartic`] from 0.
+    fn perpendicular_on_stalled_quartic(k: &Kernel, stall: f64) -> Result<(bool, f64, f64)> {
+        let curve = stalled_quartic(stall);
+        let mut sol: Solution<()> = Solution::new();
+        let found = local_property_analysis(
+            k,
+            &curve,
+            &Extent1d::from_min_max(-1.0, 12.0),
+            CurvePropertyType::PerpendicularToVector,
+            0.0,
+            None,
+            &[Vec3::new(1.0, 0.0, 0.0)],
+            &mut sol,
+        )?;
+        Ok((found, sol.start.param(0).unwrap(), sol.start.solution_value))
+    }
+
+    /// Where the Newton cycle of [`stalled_quartic`] puts `SolveOscillating`'s last
+    /// interior guess (0.99 of the way from 0 to 1, as the iterates round): the
+    /// stall starts exactly there, so that guess alone cannot be evaluated, and
+    /// every point the bisection tries below it can.
+    const STALL_AT_LAST_GUESS: f64 = 0.989_999_999_999_999_2;
+
+    /// WR-253 (tangency-labs/solidcore#481, #2574): the failed last guess is no sign
+    /// change, so the perpendicular solve on a curve whose `F` stays above 0.9 finds
+    /// nothing. Upstream reads the failed guess's zeroed `F` as a sign change, brackets
+    /// it, and reports a root exactly at the unevaluable point with value 0, although
+    /// `F` is near 1.98 on both sides of it.
+    #[test]
+    fn issue_481_the_failed_last_guess_is_no_root() {
+        let k = Kernel::default();
+        let (found, _, _) = perpendicular_on_stalled_quartic(&k, STALL_AT_LAST_GUESS).unwrap();
+        assert!(!found);
+
+        // the point really cannot be evaluated, and its neighbour below is far from 0
+        let curve = stalled_quartic(STALL_AT_LAST_GUESS);
+        let v = [Vec3::new(1.0, 0.0, 0.0)];
+        let mut efo = CurvePropertyEfo::new(
+            &k,
+            &curve,
+            CurvePropertyType::PerpendicularToVector,
+            None,
+            Some(&v),
+            EFF_ZERO_SQ,
+        );
+        let mut out = FunctionValue::default();
+        assert!(efo.evaluate(STALL_AT_LAST_GUESS, &mut out, true).is_err());
+        efo.evaluate(
+            f64::from_bits(STALL_AT_LAST_GUESS.to_bits() - 1),
+            &mut out,
+            true,
+        )
+        .unwrap();
+        assert!(out.f > 1.9, "{out:?}");
+        // a stall that misses the guess finds no root either
+        assert!(!perpendicular_on_stalled_quartic(&k, 0.991).unwrap().0);
     }
 }

@@ -27,8 +27,10 @@
 //! | [`is_shell_vertex`], [`is_loop_vertex`]     | `SmVertex::IsShellVertex`, `IsLoopVertex`        |
 //! | [`max_up_dim_gap_3d`], [`max_gap_3d`], [`VertexGap`], [`HeldGap`] | `SmVertex::GetMaxUpDimGap3d`, `GetMaxGap3d` (the `SmGap*` results) |
 //! | [`notify`]                                  | `SmVertex::Notify`                               |
+//! | [`check_pointers`]                          | `SmVertex::CheckPointers`                        |
 //! | [`edge_start_vertex`], [`edge_vertex_pair`], [`edge_vertices`], [`edge_end_tangent`] | `SmEdge::GetStartVertex`, `GetVertices(SmVertex*&, SmVertex*&)`, `GetVertices(SmTArray&)`, `GetEndTangent` (CO-PORTED, `topology.edge`) |
 //! | [`loopuse_vertices`], [`loop_vertices`]     | `SmLoopuse::GetVertices`, `SmLoop::GetVertices` (CO-PORTED, `topology.loopuse`) |
+//! | [`corner`]                                  | `SmVertex::IsWithinXSectTol3dOfFaces`, `HasParallelFaces`, `CalcCornerFromFaces`, `IsOnFaceCorner`, `sm_AssertTestVertex1` |
 //!
 //! Deviations:
 //! - **Object model.** A vertex is a record in the [`Brep`]'s arenas; the methods are
@@ -46,14 +48,24 @@
 //!   use without edge, a face use without face, a shell without region: a malformed
 //!   B-rep) the port returns [`SolidError::InvalidInput`]; [`faceuses`] keeps its null
 //!   entries (the edge vertex uses of a wire edge have no face use).
-//! - **Unset tangents.** `AreEdgesTangent` and `IsTopologicalVertex` ignore a failed
-//!   `GetEndTangent` (`SE`) and then read the tangent it did not write. That is the
-//!   `SmVector3d` default, `SM_UNDEF_DOUBLE` in every component ([`Vec3::UNDEF`]), or in
-//!   `IsTopologicalVertex` the line vector `IsLine` wrote for that edge. `AngleBetween`
-//!   then sees a zero-length vector and reports `0`, so both answer true; ported as
-//!   such (WR-256; UB-106 assumed the tangent uninitialised). `IsTopologicalVertex`
-//!   returns the failed status of `GetEndTangent` at an edge's start (`SER`) as its
-//!   `SmBoolean`, which is true; ported as such.
+//! - **Unset tangents and cusps.** `AreEdgesTangent` and `IsTopologicalVertex` ignore a
+//!   failed `GetEndTangent` (`SE`) and then read the tangent it did not write. That is
+//!   the `SmVector3d` default, `SM_UNDEF_DOUBLE` in every component ([`Vec3::UNDEF`]),
+//!   or in `IsTopologicalVertex` the line vector `IsLine` wrote for that edge.
+//!   `AngleBetween` then sees a zero-length vector and reports `0`, so both answer true
+//!   by default (WR-256; UB-106 assumed the tangent uninitialised; with
+//!   [`crate::kernel::UpstreamFixes::query_statuses_pass_on`], `IsTopologicalVertex`
+//!   returns `Ok(false)` when `AngleBetween` fails). `IsTopologicalVertex` also returns
+//!   the failed status of `GetEndTangent` at an edge's start (`SER`) as its `SmBoolean`,
+//!   which is true, and accepts `180°` cusps (`|angle_rad ± PI| <= ang_limit_rad`)
+//!   because it compares unoriented curve tangents; with
+//!   [`crate::kernel::UpstreamFixes::is_topological_vertex_rejects_cusps_and_tangent_errors`],
+//!   a failed start-tangent evaluation propagates `Err` and tangents are oriented
+//!   through the vertex so cusps return `Ok(false)` (WR-92).
+//! - **Other uses.** `IsTopologicalVertex` counts only the vertex's edges, so a vertex
+//!   that also is a vertex loop in another face (a point contact inside an edge) is
+//!   removable; with [`crate::kernel::UpstreamFixes::topological_vertex_has_only_edge_uses`]
+//!   a vertex with any use that is not an edge use is not (WR-727).
 //! - **Curve identity.** Each edge owns its curve, so `pCurve1 != pCurve2` in
 //!   `IsTopologicalVertex` is false only when neither edge has a curve (upstream two
 //!   edges may share one curve object; the difftest rejects such B-reps).
@@ -70,10 +82,6 @@
 //!   `SM_NO_GET_BREP(this)`, which is `NULL` in the reference build.
 //! - **Attributes.** `GetVertexuses(list, &id)` is [`vertexuses_with_attribute`], which
 //!   takes the attribute store and each use's identity from the caller.
-//! - **`GetVertexuseOfFace`** ignores its face (upstream's face test is commented out
-//!   with the composite face code): it returns the first vertex use of any face whose
-//!   face use is that face's upward face use, else the last vertex use with a face use
-//!   (`plan/upstream-issues.md`). Ported as written.
 //! - **Unported callees.** The gap evaluations reached through the vertex uses
 //!   (`heal.gap`, surface units) return [`SolidError::Unported`].
 //! - **Co-ports.** The small `SmEdge` and `SmLoopuse` accessors this unit reaches are
@@ -81,16 +89,17 @@
 //!   loop use walk stops with [`SolidError::InvalidInput`] after visiting more edge uses
 //!   than the B-rep holds (upstream loops forever on a CCW chain that does not return to
 //!   its start). They have no attribute filter (callers here pass none).
-//! - `CalcCornerFromFaces`, `IsZoneTol3dConsistent`, `GetLoopOfFace`,
+//! - `IsZoneTol3dConsistent`, `GetLoopOfFace`,
 //!   `GetVertexuseOfEdge`, `GetVertexNumberInBrep`, the `Has*` / `IsEdgeVertex` /
 //!   `IsOnSeam` / `IsConnectedToEdge` / `IsConnectedToFace` predicates,
-//!   `IsWithinXSectTol3dOf*`, `IsOnFaceCorner`, `HasParallelFaces`, `CheckPointers`,
+//!   `IsWithinXSectTol3dOfEdges`,
 //!   `IsComplexCornerMember`, `RefineGeometry`, `FindAndRemoveVertexuseByEdge`,
 //!   `GetMemoryUsed`, `AssertValid`, the graphics and the `Dump`s are not part of this
 //!   unit.
 
-use std::collections::BTreeMap;
+pub mod corner;
 
+use crate::curve::curve::CurveKind;
 use crate::error::{EntityRef, Result, SolidError};
 use crate::geom::attribute::{AttributeStore, ObjectKey};
 use crate::geom::context::Context;
@@ -103,7 +112,9 @@ use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::query::poly::PolyVertexId;
 use crate::topology::edgeuse::p1 as eu1;
 use crate::topology::proto_topology::p1::owning_topology;
-use crate::topology::topology::{self as topo, Topology};
+#[cfg(test)]
+use crate::topology::topology::Topology;
+use crate::topology::topology::{self as topo};
 use crate::topology::vertexuse;
 use crate::topology::{
     Brep, EdgeId, EdgeuseId, FaceId, FaceuseId, LoopId, LoopuseId, LoopuseStart, RegionId, ShellId,
@@ -461,9 +472,8 @@ pub fn loop_vertices(b: &Brep, l: LoopId) -> Result<Vec<Option<VertexId>>> {
 
 // ---- vertex uses of a face or edge -------------------------------------------------------
 
-/// `GetVertexuseOfFace`: `None` for no face; else, ignoring the face (see the module
-/// docs), the first vertex use whose face use is its face's upward face use, or the
-/// last vertex use with a face use.
+/// `GetVertexuseOfFace`: `None` for no face; else the first vertex use on `face`'s
+/// upward face use, or the last vertex use on `face`.
 ///
 /// # Errors
 ///
@@ -482,7 +492,7 @@ pub fn vertexuse_of_face(
         return Ok(ret);
     }
 
-    // for every Vertexuse - check for a face == pFace match (commented out upstream)
+    // for every Vertexuse - check for a face == pFace match
     for vu in vertexuses(b, v)? {
         // skip vertices not connected to a Face
         let Some(fu) = vertexuse::faceuse(b, vu)? else {
@@ -490,14 +500,14 @@ pub fn vertexuse_of_face(
         };
         let this_face = b.faceuse(fu)?.face;
 
-        // remember any found Vertexuses
-        ret = Some(vu);
+        if let Some(this_face) = this_face.filter(|&f| Some(f) == face) {
+            // remember any found Vertexuses
+            ret = Some(vu);
 
-        // Use the first Vertexuse found on an upward Faceuse.
-        let this_face =
-            this_face.ok_or_else(|| null("GetVertexuseOfFace: face use without face"))?;
-        if crate::topology::face::p2::upward_faceuse(b, this_face)? == Some(fu) {
-            break;
+            // Use the first Vertexuse found on an upward Faceuse.
+            if crate::topology::face::p2::upward_faceuse(b, this_face)? == Some(fu) {
+                break;
+            }
         }
     }
 
@@ -841,15 +851,28 @@ pub fn is_on_pole(k: &Kernel, b: &mut Brep, v: VertexId) -> Result<bool> {
 /// `IsTopologicalVertex`: whether the vertex could be removed without changing the
 /// B-rep's shape: it joins exactly two different edges, is not on a pole, the edges'
 /// curves meet at the same parameter (unless both are lines) and leave the vertex
-/// tangent (or cusped) within `SM_CONTINUITY_ANGLE`.
+/// tangent (or cusped by default) within `SM_CONTINUITY_ANGLE`.
+///
+/// With [`crate::kernel::UpstreamFixes::is_topological_vertex_rejects_cusps_and_tangent_errors`],
+/// edge tangents are oriented along traversal through `v` so `180°` cusps return
+/// `Ok(false)`, and a failed start-tangent evaluation (`GetEndTangent(true)`) propagates
+/// its [`SolidError`] instead of returning `Ok(true)` (WR-92). With
+/// [`crate::kernel::UpstreamFixes::topological_vertex_has_only_edge_uses`], a vertex
+/// with a use that is not an edge use (a vertex loop in another face) is not
+/// topological (WR-727).
 ///
 /// # Errors
 ///
 /// Those of [`edges`], [`is_on_pole`], `SmCurve::IsLine` and [`edge_start_vertex`];
-/// [`SolidError::InvalidInput`] for one edge without curve whose tangent is needed. A
-/// tangent neither `IsLine` nor `GetEndTangent` wrote is the `SmVector3d` default
+/// [`SolidError::InvalidInput`] for one edge without curve whose tangent is needed; and,
+/// when [`crate::kernel::UpstreamFixes::is_topological_vertex_rejects_cusps_and_tangent_errors`]
+/// is enabled, any curve evaluation error from [`edge_end_tangent`] at an edge's start.
+/// A tangent neither `IsLine` nor `GetEndTangent` wrote is the `SmVector3d` default
 /// ([`Vec3::UNDEF`]), as upstream.
 pub fn is_topological_vertex(k: &Kernel, b: &mut Brep, v: VertexId) -> Result<bool> {
+    let reject_cusps_and_errors = k
+        .fixes
+        .is_topological_vertex_rejects_cusps_and_tangent_errors;
     let sedges = edges(b, v, None)?;
 
     // only edges connected to exactly 2 edges are Topological
@@ -863,6 +886,16 @@ pub fn is_topological_vertex(k: &Kernel, b: &mut Brep, v: VertexId) -> Result<bo
         return Ok(false);
     }
 
+    // WR-727: joining the two edges removes every use of the vertex, so a use that is
+    // not one of theirs (a vertex loop in another face, a shell vertex) keeps it
+    if k.fixes.topological_vertex_has_only_edge_uses {
+        for vu in vertexuses(b, v)? {
+            if !vertexuse::is_edge_vertexuse(b, vu)? {
+                return Ok(false);
+            }
+        }
+    }
+
     // skip verices marking poles
     if is_on_pole(k, b, v)? {
         return Ok(false);
@@ -872,9 +905,12 @@ pub fn is_topological_vertex(k: &Kernel, b: &mut Brep, v: VertexId) -> Result<bo
     let line_of = |e: EdgeId| -> Result<Option<Vec3>> {
         let r = b.edge(e)?;
         match &r.curve {
-            Some(c) => Ok(c
-                .is_line(k, IS_LINE_SAMPLES, r.tolerance / 1000.0)?
-                .map(|(_, t)| t)),
+            Some(c) => {
+                let inside_out_line = reject_cusps_and_errors
+                    && matches!(c.kind(), CurveKind::Line(l) if l.inside_out());
+                Ok(c.is_line(k, IS_LINE_SAMPLES, r.tolerance / 1000.0)?
+                    .map(|(_, t)| if inside_out_line { -t } else { t }))
+            }
             None => Ok(None),
         }
     };
@@ -887,11 +923,14 @@ pub fn is_topological_vertex(k: &Kernel, b: &mut Brep, v: VertexId) -> Result<bo
     // same (see the module docs)
     let curves_differ = b.edge(edge1)?.curve.is_some() || b.edge(edge2)?.curve.is_some();
 
+    let mut ends_at_start = None;
+
     // when either curve is not a line - Curve params must be the same
     if line1.is_none() || line2.is_none() {
         // Check start/end ends of both edges.
         let at_start1 = edge_start_vertex(b, edge1)? == Some(v);
         let at_start2 = edge_start_vertex(b, edge2)? == Some(v);
+        ends_at_start = Some((at_start1, at_start2));
 
         // First check that they are at the same parameter value.
         let ivl1 = b.edge(edge1)?.interval;
@@ -910,13 +949,20 @@ pub fn is_topological_vertex(k: &Kernel, b: &mut Brep, v: VertexId) -> Result<bo
             {
                 if at_start {
                     // SER: a failed status is returned as the SmBoolean result (TRUE)
+                    // unless WR-92 propagates it.
                     match edge_end_tangent(k, b, e, true) {
                         Ok(t) => *tan = Some(t),
-                        Err(
-                            err @ (SolidError::Unported { .. }
-                            | SolidError::InvalidInput { .. }
-                            | SolidError::NotFound { .. }),
-                        ) => return Err(err),
+                        Err(err)
+                            if reject_cusps_and_errors
+                                || matches!(
+                                    err,
+                                    SolidError::Unported { .. }
+                                        | SolidError::InvalidInput { .. }
+                                        | SolidError::NotFound { .. }
+                                ) =>
+                        {
+                            return Err(err);
+                        }
                         Err(_) => return Ok(true),
                     }
                 } else if let Some(t) = end_tangent_ignoring_status(k, b, e, false)? {
@@ -932,18 +978,40 @@ pub fn is_topological_vertex(k: &Kernel, b: &mut Brep, v: VertexId) -> Result<bo
 
     let angle_rad = if curves_differ {
         // a tangent nothing wrote is the default SmVector3d (SM_UNDEF_DOUBLE)
-        let t1 = tan1.unwrap_or(Vec3::UNDEF);
-        let t2 = tan2.unwrap_or(Vec3::UNDEF);
-        // AngleBetween sets the angle to 0 on failure (status ignored)
-        t1.angle_between(t2).unwrap_or(0.0)
+        let mut t1 = tan1.unwrap_or(Vec3::UNDEF);
+        let mut t2 = tan2.unwrap_or(Vec3::UNDEF);
+        if reject_cusps_and_errors {
+            let (at_start1, at_start2) = if let Some(ends) = ends_at_start {
+                ends
+            } else {
+                (
+                    edge_start_vertex(b, edge1)? == Some(v),
+                    edge_start_vertex(b, edge2)? == Some(v),
+                )
+            };
+            if at_start1 {
+                t1 = -t1;
+            }
+            if !at_start2 {
+                t2 = -t2;
+            }
+        }
+        // AngleBetween sets the angle to 0 on failure (status ignored); with the opt-in
+        // fix the curves are not shown to meet G1 without it, so the vertex stays
+        // (tangency-labs/smlib 7a35f33)
+        match t1.angle_between(t2) {
+            Err(_) if k.fixes.query_statuses_pass_on => return Ok(false),
+            r => r.unwrap_or(0.0),
+        }
     } else {
         0.0
     };
 
     // when lines are not G1 - Vertex is not topological
     if angle_rad.abs() > ang_limit_rad
-        && (angle_rad - PI).abs() > ang_limit_rad // gwc: is this a bug? it counts cusps
-        && (angle_rad + PI).abs() > ang_limit_rad
+        && (reject_cusps_and_errors
+            || ((angle_rad - PI).abs() > ang_limit_rad // gwc: is this a bug? it counts cusps
+                && (angle_rad + PI).abs() > ang_limit_rad))
     {
         return Ok(false);
     }
@@ -1194,7 +1262,7 @@ pub fn refresh_tolerance(b: &mut Brep, v: VertexId, nested_refreshes: bool) -> R
 pub fn notify(
     b: &mut Brep,
     v: VertexId,
-    records: &mut BTreeMap<ObjectKey, Topology>,
+    records: &mut crate::topology::topology::NotifyRecords,
     attributes: &mut AttributeStore,
     mut context: Option<&mut Context>,
     operation: NotifyOperation,
@@ -1239,7 +1307,7 @@ pub fn set_point(
     b: &mut Brep,
     v: VertexId,
     new_point: Point3,
-    records: &mut BTreeMap<ObjectKey, Topology>,
+    records: &mut crate::topology::topology::NotifyRecords,
     attributes: &mut AttributeStore,
     context: Option<&mut Context>,
     this: ObjectRef,
@@ -1258,6 +1326,349 @@ pub fn set_point(
     )?;
     b.vertex_mut(v)?.point = new_point;
     Ok(())
+}
+
+// ---- pointer check (SmVertex::CheckPointers) ------------------------------------------------
+
+/// `SmVertex::CheckPointers()`: whether the topology around `v` is linked consistently,
+/// through each of its vertex uses in list order (stopping at the first failure): a
+/// shell vertex use is the vertex's only use and its shell's sole list member; a loop
+/// vertex use and the one of its mate loop use name this vertex, one loop, one face
+/// and mated loop uses and face uses that point back; an edge vertex use of a wire
+/// edge has mated shell edge uses of one shell; one of a loop edge has, with its mate
+/// and the corner neighbour at this vertex and its mate, one loop, one face, mated
+/// edge, loop and face uses that point back and consistent use types. Any other vertex
+/// use or edge use type fails.
+///
+/// # Errors
+///
+/// [`SolidError::NotFound`] for a dangling id; [`SolidError::InvalidInput`] where the
+/// accessors upstream calls dereference null (an edge use without edge or primary edge
+/// use in `GetMate`, an edge use without vertex use or mate in
+/// `GetCornerMateEdgeuse`).
+pub fn check_pointers(b: &Brep, v: VertexId) -> Result<bool> {
+    use crate::topology::shell::ShellMembers;
+    use crate::topology::EdgeuseOwner;
+
+    // locals
+    let mut rtn = true;
+    let vertexuses = vertexuses(b, v)?;
+    let lu_mate = |lu: LoopuseId| -> Result<Option<LoopuseId>> { Ok(b.loopuse(lu)?.mate) };
+    let lu_vertexuse = |lu: LoopuseId| -> Result<Option<VertexuseId>> {
+        Ok(match b.loopuse(lu)?.start {
+            LoopuseStart::Vertexuse(vu) => vu,
+            _ => None,
+        })
+    };
+    let lu_loop = |lu: LoopuseId| -> Result<Option<LoopId>> { Ok(b.loopuse(lu)?.loop_) };
+    let lu_faceuse = |lu: LoopuseId| -> Result<Option<FaceuseId>> { Ok(b.loopuse(lu)?.faceuse) };
+    let lu_is = |lu: LoopuseId, edge_type: bool| -> Result<bool> {
+        Ok(match b.loopuse(lu)?.start {
+            LoopuseStart::Edgeuse(_) => edge_type,
+            LoopuseStart::Vertexuse(_) => !edge_type,
+            LoopuseStart::Unknown => false,
+        })
+    };
+    let fu_face = |fu: FaceuseId| -> Result<Option<FaceId>> { Ok(b.faceuse(fu)?.face) };
+    let fu_mate = |fu: FaceuseId| -> Result<Option<FaceuseId>> { Ok(b.faceuse(fu)?.mate) };
+    let fu_has = |fu: FaceuseId, lu: LoopuseId| -> Result<bool> {
+        Ok(b.faceuse(fu)?.loopuses.contains(&lu))
+    };
+    let face_fu = |f: FaceId| -> Result<Option<FaceuseId>> { Ok(b.face(f)?.faceuse) };
+    let loop_lu = |l: LoopId| -> Result<Option<LoopuseId>> { Ok(b.loop_(l)?.loopuse) };
+    let vu_vertex = |vu: VertexuseId| -> Result<Option<VertexId>> { Ok(b.vertexuse(vu)?.vertex) };
+    let vu_is_edge = |vu: VertexuseId| -> Result<bool> {
+        Ok(matches!(b.vertexuse(vu)?.owner, VertexuseOwner::Edgeuse(_)))
+    };
+    let eu_is_loop = |eu: EdgeuseId| -> Result<bool> {
+        Ok(matches!(b.edgeuse(eu)?.owner, EdgeuseOwner::Loopuse(_)))
+    };
+    let eu_is_shell = |eu: EdgeuseId| -> Result<bool> {
+        Ok(matches!(b.edgeuse(eu)?.owner, EdgeuseOwner::Shell(_)))
+    };
+    let some_eq = |a: Option<VertexId>| a == Some(v);
+
+    // For every Face - find all the Vertexuses
+    let mut ii = 0;
+    while rtn && ii < vertexuses.len() {
+        let Some(&vui) = vertexuses.get(ii) else {
+            break;
+        };
+        ii += 1;
+
+        // switch on Vertexuse Type
+        match b.vertexuse(vui)?.owner {
+            VertexuseOwner::Shell(shell) => {
+                // ShellVertex checks
+                rtn &= shell.is_some();
+                if let (true, Some(shell)) = (rtn, shell) {
+                    let members = &b.shell(shell)?.members;
+                    /* 1 */
+                    rtn &= vertexuses.len() == 1;
+                    /* 2 */
+                    rtn &= *members == ShellMembers::Vertexuse(vui);
+                    /* 3 (GetSize() == 1: the list of a vertex shell holds its one use) */
+                    rtn &= matches!(members, ShellMembers::Vertexuse(_));
+                }
+            }
+            VertexuseOwner::Loopuse(lu1) => {
+                let lu2 = match lu1 {
+                    Some(l) => lu_mate(l)?,
+                    None => None,
+                };
+                let vuj = match lu2 {
+                    Some(l) => lu_vertexuse(l)?,
+                    None => None,
+                };
+                let v1 = b.vertexuse(vui)?.vertex;
+                let v2 = match vuj {
+                    Some(u) => vu_vertex(u)?,
+                    None => None,
+                };
+                let loop1 = match lu1 {
+                    Some(l) => lu_loop(l)?,
+                    None => None,
+                };
+                let loop2 = match lu2 {
+                    Some(l) => lu_loop(l)?,
+                    None => None,
+                };
+                let fu1 = match lu1 {
+                    Some(l) => lu_faceuse(l)?,
+                    None => None,
+                };
+                let fu2 = match lu2 {
+                    Some(l) => lu_faceuse(l)?,
+                    None => None,
+                };
+                let face1 = match fu1 {
+                    Some(f) => fu_face(f)?,
+                    None => None,
+                };
+                let face2 = match fu2 {
+                    Some(f) => fu_face(f)?,
+                    None => None,
+                };
+
+                // LoopVertex checks
+                let all = (lu1, lu2, vuj, v1, v2, loop1, loop2, fu1, fu2, face1, face2);
+                rtn &= matches!(
+                    all,
+                    (
+                        Some(_),
+                        Some(_),
+                        Some(_),
+                        Some(_),
+                        Some(_),
+                        Some(_),
+                        Some(_),
+                        Some(_),
+                        Some(_),
+                        Some(_),
+                        Some(_)
+                    )
+                );
+                if let (
+                    true,
+                    (
+                        Some(lu1),
+                        Some(lu2),
+                        Some(vuj),
+                        Some(_),
+                        Some(_),
+                        Some(loop1),
+                        Some(_),
+                        Some(fu1),
+                        Some(fu2),
+                        Some(face1),
+                        Some(_),
+                    ),
+                ) = (rtn, all)
+                {
+                    /*  1 */
+                    rtn &= some_eq(v1) && some_eq(v2);
+                    /*  2 */
+                    rtn &= all.5 == all.6;
+                    /*  3 */
+                    rtn &= all.9 == all.10;
+                    /*  4 */
+                    rtn &= lu_mate(lu1)? == Some(lu2) && lu_mate(lu2)? == Some(lu1);
+                    /*  5 */
+                    rtn &= fu_mate(fu1)? == Some(fu2) && fu_mate(fu2)? == Some(fu1);
+                    /*  6 */
+                    let up = face_fu(face1)?;
+                    rtn &= up == Some(fu1) || up == Some(fu2);
+                    /*  7 */
+                    let l = loop_lu(loop1)?;
+                    rtn &= l == Some(lu1) || l == Some(lu2);
+                    /*  8 */
+                    rtn &= fu_has(fu1, lu1)?;
+                    /*  9 */
+                    rtn &= fu_has(fu2, lu2)?;
+                    /* 10 */
+                    rtn &= lu_vertexuse(lu1)? == Some(vui);
+                    /* 11 */
+                    rtn &= lu_vertexuse(lu2)? == Some(vuj);
+                    /* 12 */
+                    rtn &= some_eq(vu_vertex(vui)?) && some_eq(vu_vertex(vuj)?);
+                    /* 13 */
+                    rtn &= lu_is(lu1, false)? && lu_is(lu2, false)?;
+                }
+            }
+            VertexuseOwner::Edgeuse(eu1_) => {
+                let eu2_ = match eu1_ {
+                    Some(e) => eu1::mate(b, e)?,
+                    None => None,
+                };
+                let eu1_owner = match eu1_ {
+                    Some(e) => Some(b.edgeuse(e)?.owner),
+                    None => None,
+                };
+
+                // switch on Edgeuse TYpe
+                match eu1_owner {
+                    Some(EdgeuseOwner::Shell(_)) => {
+                        // EdgeVertex Part of a Shell
+                        let shell = match eu1_ {
+                            Some(e) => eu1::shell(b, e)?,
+                            None => None,
+                        };
+                        rtn &= eu1_.is_some() && eu2_.is_some() && shell.is_some();
+                        if let (true, Some(e1), Some(e2), Some(_)) = (rtn, eu1_, eu2_, shell) {
+                            /*  1 */
+                            rtn &= shell == eu1::shell(b, e1)? && shell == eu1::shell(b, e2)?;
+                            /*  2 */
+                            rtn &= eu1::mate(b, e1)? == Some(e2) && eu1::mate(b, e2)? == Some(e1);
+                            /*  3 */
+                            rtn &= eu1::vertexuse(b, e1)? == Some(vui);
+                            /*  4 */
+                            rtn &= eu_is_shell(e1)? && eu_is_shell(e2)?;
+                        }
+                    }
+                    Some(EdgeuseOwner::Loopuse(_)) => {
+                        // EdgeVertex Part of an Loopuse
+                        let eu3_ = match eu1_ {
+                            Some(e) => eu1::corner_mate_edgeuse(b, e, Some(v))?,
+                            None => None,
+                        };
+                        let eu4_ = match eu3_ {
+                            Some(e) => eu1::mate(b, e)?,
+                            None => None,
+                        };
+                        let eus = [eu1_, eu2_, eu3_, eu4_];
+                        let mut lus = [None; 4];
+                        let mut loops = [None; 4];
+                        let mut fus = [None; 4];
+                        let mut faces = [None; 4];
+                        let mut vus = [Some(vui), None, None, None];
+                        let mut vs = [None; 4];
+                        for (i, eu) in eus.iter().enumerate() {
+                            if let Some(e) = *eu {
+                                if let Some(slot) = lus.get_mut(i) {
+                                    *slot = eu1::loopuse(b, e)?;
+                                }
+                                if let Some(slot) = fus.get_mut(i) {
+                                    *slot = eu1::faceuse(b, e)?;
+                                }
+                                if i > 0 {
+                                    if let Some(slot) = vus.get_mut(i) {
+                                        *slot = eu1::vertexuse(b, e)?;
+                                    }
+                                }
+                            }
+                        }
+                        for i in 0..4 {
+                            if let (Some(slot), Some(Some(l))) = (loops.get_mut(i), lus.get(i)) {
+                                *slot = lu_loop(*l)?;
+                            }
+                            if let (Some(slot), Some(Some(f))) = (faces.get_mut(i), fus.get(i)) {
+                                *slot = fu_face(*f)?;
+                            }
+                            if let (Some(slot), Some(Some(u))) = (vs.get_mut(i), vus.get(i)) {
+                                *slot = vu_vertex(*u)?;
+                            }
+                        }
+
+                        // Vertex->LoopEdge checks
+                        let present = eus.iter().all(Option::is_some)
+                            && lus.iter().all(Option::is_some)
+                            && loops.iter().all(Option::is_some)
+                            && fus.iter().all(Option::is_some)
+                            && faces.iter().all(Option::is_some)
+                            && vus.iter().all(Option::is_some)
+                            && vs.iter().all(Option::is_some);
+                        rtn &= present;
+                        if let (
+                            true,
+                            [Some(e1), Some(e2), Some(e3), Some(e4)],
+                            [Some(l1), Some(l2), Some(l3), Some(l4)],
+                            [Some(f1), Some(f2), _, _],
+                            [Some(loop1), _, _, _],
+                            [Some(face1), _, _, _],
+                            [Some(u1), Some(u2), Some(u3), Some(u4)],
+                        ) = (rtn, eus, lus, fus, loops, faces, vus)
+                        {
+                            let [vi, _, _, vl] = vs;
+                            /*  1 */
+                            rtn &= some_eq(vi) && some_eq(vl);
+                            /*  2 */
+                            rtn &= loops.first() == loops.get(1)
+                                && loops.first() == loops.get(2)
+                                && loops.first() == loops.get(3);
+                            /*  3 */
+                            rtn &= faces.first() == faces.get(1)
+                                && faces.first() == faces.get(2)
+                                && faces.first() == faces.get(3);
+                            /*  4 */
+                            rtn &= eu1::mate(b, e1)? == Some(e2)
+                                && eu1::mate(b, e2)? == Some(e1)
+                                && eu1::mate(b, e3)? == Some(e4)
+                                && eu1::mate(b, e4)? == Some(e3);
+                            /*  5 */
+                            rtn &= lu_mate(l1)? == Some(l2) && lu_mate(l2)? == Some(l1);
+                            /*  6 */
+                            rtn &= fu_mate(f1)? == Some(f2) && fu_mate(f2)? == Some(f1);
+                            /*  7 */
+                            let up = face_fu(face1)?;
+                            rtn &= up == Some(f1) || up == Some(f2);
+                            /*  8 */
+                            let l = loop_lu(loop1)?;
+                            rtn &= l == Some(l1) || l == Some(l2);
+                            /*  9 */
+                            rtn &= fu_has(f1, l1)?;
+                            /* 10 */
+                            rtn &= fu_has(f2, l2)?;
+                            /* 11 */
+                            rtn &= eu1::vertexuse(b, e1)? == Some(u1)
+                                && eu1::vertexuse(b, e2)? == Some(u2)
+                                && eu1::vertexuse(b, e3)? == Some(u3)
+                                && eu1::vertexuse(b, e4)? == Some(u4);
+                            /* 12 */
+                            rtn &= vu_is_edge(u1)?
+                                && vu_is_edge(u2)?
+                                && vu_is_edge(u3)?
+                                && vu_is_edge(u4)?;
+                            /* 13 */
+                            rtn &= eu_is_loop(e1)?
+                                && eu_is_loop(e2)?
+                                && eu_is_loop(e3)?
+                                && eu_is_loop(e4)?;
+                            /* 14 */
+                            rtn &= lu_is(l1, true)?
+                                && lu_is(l2, true)?
+                                && lu_is(l3, true)?
+                                && lu_is(l4, true)?;
+                        }
+                    }
+                    _ => rtn = false,
+                }
+            }
+            VertexuseOwner::Unknown => rtn = false,
+        }
+    }
+
+    // all done
+    Ok(rtn)
 }
 
 #[cfg(test)]
@@ -1506,6 +1917,22 @@ mod tests {
         assert!(is_topological_vertex(&k, &mut b, v[1]).unwrap());
     }
 
+    // tangency-labs/smlib 7a35f33 (SmVertex::IsTopologicalVertex): without the angle
+    // between the two tangents (the default zero tangent of a failed end evaluation)
+    // the curves are not shown to meet G1, so the vertex is kept.
+    #[test]
+    fn issue_2009_vertex_without_tangent_angle_is_kept() {
+        use crate::curve::composite_curve::CompositeCurve;
+        let (mut b, v, e) = chain(true, Vec3::X, Vec3::Y);
+        let e0 = b.edge_mut(e[0]).unwrap();
+        e0.curve = Some(Curve::from(CompositeCurve::new(3)));
+        e0.interval = Extent1d::from_min_max(-1.0, 0.0);
+        let mut k = Kernel::default();
+        assert!(is_topological_vertex(&k, &mut b, v[1]).unwrap());
+        k.fixes.query_statuses_pass_on = true;
+        assert!(!is_topological_vertex(&k, &mut b, v[1]).unwrap());
+    }
+
     #[test]
     fn gaps_and_notify() {
         let k = Kernel::default();
@@ -1538,7 +1965,7 @@ mod tests {
             Err(SolidError::InvalidInput { .. })
         ));
 
-        let mut records = BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attrs = AttributeStore::default();
         let r = |key: u64| ObjectRef {
             type_code: TYPE,
@@ -1571,5 +1998,338 @@ mod tests {
             .unwrap()
             .vertex_edge_gap
             .is_init());
+    }
+
+    #[test]
+    fn wr92_flag_lookup_and_default() {
+        use crate::kernel::UpstreamFixes;
+
+        let mut fixes = UpstreamFixes::default();
+        assert!(!fixes.is_topological_vertex_rejects_cusps_and_tangent_errors);
+        assert!(UpstreamFixes::NAMES
+            .contains(&"is_topological_vertex_rejects_cusps_and_tangent_errors"));
+        let slot = fixes
+            .flag_mut("is_topological_vertex_rejects_cusps_and_tangent_errors")
+            .unwrap();
+        assert!(!*slot);
+        *slot = true;
+        assert!(fixes.is_topological_vertex_rejects_cusps_and_tangent_errors);
+        *fixes
+            .flag_mut("is_topological_vertex_rejects_cusps_and_tangent_errors")
+            .unwrap() = false;
+        assert!(!fixes.is_topological_vertex_rejects_cusps_and_tangent_errors);
+    }
+
+    #[test]
+    fn wr92_rejects_cusps_and_keeps_smooth_g1_and_corners() {
+        use crate::nurbs::b_spline_curve::{
+            BSplineCurve, BSplineCurveForm, CanonicalData, KnotType,
+        };
+
+        let k_default = Kernel::default();
+        let mut k_fix = Kernel::default();
+        k_fix
+            .fixes
+            .is_topological_vertex_rejects_cusps_and_tangent_errors = true;
+
+        let dir_deg = |deg: f64| -> Vec3 {
+            let rad = deg * (PI / 180.0);
+            Vec3::new(rad.cos(), rad.sin(), 0.0)
+        };
+
+        // Line-chain cases: (d2, expected_default, expected_opt_in)
+        for (d2, want_default, want_fix) in [
+            (Vec3::X, true, true),          // 0.0° smooth G1 continuation
+            (dir_deg(0.3), true, true),     // 0.3° within SM_CONTINUITY_ANGLE (0.5°)
+            (dir_deg(0.6), false, false),   // 0.6° outside SM_CONTINUITY_ANGLE
+            (Vec3::Y, false, false),        // 90.0° right-angle corner
+            (-Vec3::X, true, false),        // 180.0° exact cusp
+            (dir_deg(179.7), true, false),  // 179.7° near-cusp within 0.5° of PI
+            (dir_deg(-179.7), true, false), // -179.7° near-cusp within 0.5° of -PI
+        ] {
+            let (mut b, v, e) = chain(true, Vec3::X, d2);
+            assert_eq!(
+                is_topological_vertex(&k_default, &mut b, v[1]).unwrap(),
+                want_default
+            );
+            assert_eq!(
+                is_topological_vertex(&k_fix, &mut b, v[1]).unwrap(),
+                want_fix
+            );
+            assert_eq!(
+                are_edges_tangent(&k_fix, &b, v[1], e[0], e[1], CONTINUITY_ANGLE).unwrap(),
+                want_fix
+            );
+        }
+
+        // Curved degree-2 B-splines (not lines) meeting at matching parameter 1.0
+        let quad = |pts: [Point3; 3], u0: f64, u1: f64| -> Curve {
+            Curve::from(
+                BSplineCurve::create_canonical(&CanonicalData {
+                    dim: 3,
+                    degree: 2,
+                    control_points: &pts,
+                    form: BSplineCurveForm::Unspecified,
+                    knot_multiplicities: &[3, 3],
+                    knots: &[u0, u1],
+                    knot_type: KnotType::Unspecified,
+                    weights: None,
+                    trim: None,
+                })
+                .unwrap(),
+            )
+        };
+
+        let c0 = quad(
+            [
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(0.5, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+            ],
+            0.0,
+            1.0,
+        );
+        assert!(c0
+            .is_line(&k_default, IS_LINE_SAMPLES, ZONE_TOL_3D / 1000.0)
+            .unwrap()
+            .is_none());
+
+        for (pts1, want_default, want_fix) in [
+            // Smooth G1 continuation at (1, 0, 0) with outgoing tangent +X
+            (
+                [
+                    Vec3::new(1.0, 0.0, 0.0),
+                    Vec3::new(1.5, 0.0, 0.0),
+                    Vec3::new(2.0, 1.0, 0.0),
+                ],
+                true,
+                true,
+            ),
+            // 180° curved cusp at (1, 0, 0) with outgoing tangent -X
+            (
+                [
+                    Vec3::new(1.0, 0.0, 0.0),
+                    Vec3::new(0.5, 0.0, 0.0),
+                    Vec3::new(0.0, -1.0, 0.0),
+                ],
+                true,
+                false,
+            ),
+            // 90° curved corner at (1, 0, 0) with outgoing tangent +Y
+            (
+                [
+                    Vec3::new(1.0, 0.0, 0.0),
+                    Vec3::new(1.0, 0.5, 0.0),
+                    Vec3::new(2.0, 1.0, 0.0),
+                ],
+                false,
+                false,
+            ),
+        ] {
+            let c1 = quad(pts1, 1.0, 2.0);
+            assert!(c1
+                .is_line(&k_default, IS_LINE_SAMPLES, ZONE_TOL_3D / 1000.0)
+                .unwrap()
+                .is_none());
+            let (mut b, v, e) = chain(false, Vec3::X, pts1[2] - Vec3::X);
+            let e0 = b.edge_mut(e[0]).unwrap();
+            e0.curve = Some(c0.clone());
+            e0.interval = Extent1d::from_min_max(0.0, 1.0);
+            let e1 = b.edge_mut(e[1]).unwrap();
+            e1.curve = Some(c1);
+            e1.interval = Extent1d::from_min_max(1.0, 2.0);
+
+            assert_eq!(
+                is_topological_vertex(&k_default, &mut b, v[1]).unwrap(),
+                want_default
+            );
+            assert_eq!(
+                is_topological_vertex(&k_fix, &mut b, v[1]).unwrap(),
+                want_fix
+            );
+        }
+    }
+
+    #[test]
+    fn wr92_reversed_and_inside_out_edges_distinguish_g1_from_cusp() {
+        use crate::curve::line::BoundedLineOptions;
+        use crate::nurbs::b_spline_curve::{
+            BSplineCurve, BSplineCurveForm, CanonicalData, KnotType,
+        };
+
+        let k_default = Kernel::default();
+        let mut k_fix = Kernel::default();
+        k_fix
+            .fixes
+            .is_topological_vertex_rejects_cusps_and_tangent_errors = true;
+
+        // 1a. Reversed second line edge (at_start1 == false, at_start2 == false):
+        // smooth G1 continuation (0,0,0) -> (1,0,0) -> (2,0,0) with opposing raw tangents
+        let (mut b, v, e) = chain(false, Vec3::X, Vec3::X);
+        b.edge_mut(e[0]).unwrap().curve =
+            Some(Curve::from(Line::from_points(Vec3::ZERO, Vec3::X, 3)));
+        b.edge_mut(e[1]).unwrap().vertices = [v[2], v[1]];
+        b.edge_mut(e[1]).unwrap().curve = Some(Curve::from(Line::from_points(
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::X,
+            3,
+        )));
+        b.edgeuse_mut(EdgeuseId::from_index(2)).unwrap().orientation = OrientType::Opposite;
+        b.edgeuse_mut(EdgeuseId::from_index(3)).unwrap().orientation = OrientType::Same;
+        assert_eq!(edge_start_vertex(&b, e[1]).unwrap(), Some(v[2]));
+        assert!(are_edges_tangent(&k_fix, &b, v[1], e[0], e[1], CONTINUITY_ANGLE).unwrap());
+        assert!(is_topological_vertex(&k_default, &mut b, v[1]).unwrap());
+        assert!(is_topological_vertex(&k_fix, &mut b, v[1]).unwrap());
+
+        // 1b. Reversed second line edge forming a 180° cusp (0,0,0) -> (1,0,0) and
+        // (1,0,0) -> (0,0,0) whose raw curve tangents are parallel (+X and +X)
+        let (mut b, v, e) = chain(false, Vec3::X, -Vec3::X);
+        b.edge_mut(e[0]).unwrap().curve =
+            Some(Curve::from(Line::from_points(Vec3::ZERO, Vec3::X, 3)));
+        b.edge_mut(e[1]).unwrap().vertices = [v[2], v[1]];
+        b.edge_mut(e[1]).unwrap().curve =
+            Some(Curve::from(Line::from_points(Vec3::ZERO, Vec3::X, 3)));
+        b.edgeuse_mut(EdgeuseId::from_index(2)).unwrap().orientation = OrientType::Opposite;
+        b.edgeuse_mut(EdgeuseId::from_index(3)).unwrap().orientation = OrientType::Same;
+        assert_eq!(edge_start_vertex(&b, e[1]).unwrap(), Some(v[2]));
+        assert!(!are_edges_tangent(&k_fix, &b, v[1], e[0], e[1], CONTINUITY_ANGLE).unwrap());
+        assert!(is_topological_vertex(&k_default, &mut b, v[1]).unwrap());
+        assert!(!is_topological_vertex(&k_fix, &mut b, v[1]).unwrap());
+
+        // 1c. Same reversed-edge check on curved degree-2 B-splines meeting at param 1.0
+        let quad = |pts: [Point3; 3]| -> Curve {
+            Curve::from(
+                BSplineCurve::create_canonical(&CanonicalData {
+                    dim: 3,
+                    degree: 2,
+                    control_points: &pts,
+                    form: BSplineCurveForm::Unspecified,
+                    knot_multiplicities: &[3, 3],
+                    knots: &[0.0, 1.0],
+                    knot_type: KnotType::Unspecified,
+                    weights: None,
+                    trim: None,
+                })
+                .unwrap(),
+            )
+        };
+        for (pts1, want_fix) in [
+            (
+                [
+                    Vec3::new(2.0, 1.0, 0.0),
+                    Vec3::new(1.5, 0.0, 0.0),
+                    Vec3::new(1.0, 0.0, 0.0),
+                ],
+                true,
+            ),
+            (
+                [
+                    Vec3::new(0.0, -1.0, 0.0),
+                    Vec3::new(0.5, 0.0, 0.0),
+                    Vec3::new(1.0, 0.0, 0.0),
+                ],
+                false,
+            ),
+        ] {
+            let (mut b, v, e) = chain(false, Vec3::X, pts1[0] - Vec3::X);
+            b.edge_mut(e[0]).unwrap().curve = Some(quad([
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(0.5, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+            ]));
+            b.edge_mut(e[1]).unwrap().vertices = [v[2], v[1]];
+            b.edge_mut(e[1]).unwrap().curve = Some(quad(pts1));
+            b.edgeuse_mut(EdgeuseId::from_index(2)).unwrap().orientation = OrientType::Opposite;
+            b.edgeuse_mut(EdgeuseId::from_index(3)).unwrap().orientation = OrientType::Same;
+            assert!(is_topological_vertex(&k_default, &mut b, v[1]).unwrap());
+            assert_eq!(
+                is_topological_vertex(&k_fix, &mut b, v[1]).unwrap(),
+                want_fix
+            );
+        }
+
+        // 2. Line::bounded with inside_out = true (IsLine returns STEP vector, while NURB
+        // parameter runs opposite to STEP)
+        let domain = Extent1d::from_min_max(0.0, 1.0);
+        let opts = BoundedLineOptions {
+            inside_out: true,
+            ..BoundedLineOptions::default()
+        };
+
+        // Smooth G1 continuation: NURB [0, 1] runs from (1,0,0) to (2,0,0)
+        let line_io_smooth = Line::bounded(Vec3::new(2.0, 0.0, 0.0), -Vec3::X, &domain, &opts);
+        assert!(line_io_smooth.evaluate_point(0.0).approx_eq(Vec3::X));
+        assert!(line_io_smooth
+            .evaluate_point(1.0)
+            .approx_eq(Vec3::new(2.0, 0.0, 0.0)));
+        let (mut b, v, e) = chain(true, Vec3::X, Vec3::X);
+        b.edge_mut(e[1]).unwrap().curve = Some(Curve::from(line_io_smooth));
+        assert!(are_edges_tangent(&k_fix, &b, v[1], e[0], e[1], CONTINUITY_ANGLE).unwrap());
+        assert!(is_topological_vertex(&k_default, &mut b, v[1]).unwrap());
+        assert!(is_topological_vertex(&k_fix, &mut b, v[1]).unwrap());
+
+        // 180° cusp: NURB [0, 1] runs from (1,0,0) back to (0,0,0)
+        let line_io_cusp = Line::bounded(Vec3::ZERO, Vec3::X, &domain, &opts);
+        assert!(line_io_cusp.evaluate_point(0.0).approx_eq(Vec3::X));
+        assert!(line_io_cusp.evaluate_point(1.0).approx_eq(Vec3::ZERO));
+        let (mut b, v, e) = chain(true, Vec3::X, -Vec3::X);
+        b.edge_mut(e[1]).unwrap().curve = Some(Curve::from(line_io_cusp));
+        assert!(!are_edges_tangent(&k_fix, &b, v[1], e[0], e[1], CONTINUITY_ANGLE).unwrap());
+        assert!(is_topological_vertex(&k_default, &mut b, v[1]).unwrap());
+        assert!(!is_topological_vertex(&k_fix, &mut b, v[1]).unwrap());
+    }
+
+    #[test]
+    fn wr92_propagates_failed_start_tangent_evaluation() {
+        use crate::curve::composite_curve::CompositeCurve;
+        use crate::error::SM_ERR;
+
+        let k_default = Kernel::default();
+        let mut k_fix = Kernel::default();
+        k_fix
+            .fixes
+            .is_topological_vertex_rejects_cusps_and_tangent_errors = true;
+
+        // 1. Edge 1 starts at v[1] (at_start2 == true) at matching parameter 1.0, and
+        // CompositeCurve::evaluate returns SM_ERR.
+        let (mut b, v, e) = chain(true, Vec3::X, Vec3::Y);
+        let e1 = b.edge_mut(e[1]).unwrap();
+        e1.curve = Some(Curve::from(CompositeCurve::new(3)));
+        e1.interval = Extent1d::from_min_max(1.0, 2.0);
+        assert!(edge_end_tangent(&k_default, &b, e[1], true).is_err());
+        assert!(is_topological_vertex(&k_default, &mut b, v[1]).unwrap());
+        assert!(matches!(
+            is_topological_vertex(&k_fix, &mut b, v[1]),
+            Err(SolidError::Upstream { code: SM_ERR, .. })
+        ));
+
+        // 2. Edge 0 reversed so it starts at v[1] (at_start1 == true) at matching
+        // parameter 0.0, and CompositeCurve::evaluate returns SM_ERR.
+        let (mut b, v, e) = chain(true, Vec3::X, Vec3::Y);
+        b.edge_mut(e[0]).unwrap().vertices = [v[1], v[0]];
+        b.edge_mut(e[0]).unwrap().curve = Some(Curve::from(CompositeCurve::new(3)));
+        b.edge_mut(e[0]).unwrap().interval = Extent1d::from_min_max(0.0, 1.0);
+        b.edgeuse_mut(EdgeuseId::from_index(0)).unwrap().orientation = OrientType::Opposite;
+        b.edgeuse_mut(EdgeuseId::from_index(1)).unwrap().orientation = OrientType::Same;
+        assert_eq!(edge_start_vertex(&b, e[0]).unwrap(), Some(v[1]));
+        assert!(edge_end_tangent(&k_default, &b, e[0], true).is_err());
+        assert!(is_topological_vertex(&k_default, &mut b, v[1]).unwrap());
+        assert!(matches!(
+            is_topological_vertex(&k_fix, &mut b, v[1]),
+            Err(SolidError::Upstream { code: SM_ERR, .. })
+        ));
+
+        // 3. Composition with query_statuses_pass_on when GetEndTangent(false) fails
+        // (WR-256): -Vec3::UNDEF still fails AngleBetween and keeps the vertex.
+        let (mut b, v, e) = chain(true, Vec3::X, Vec3::Y);
+        let e0 = b.edge_mut(e[0]).unwrap();
+        e0.curve = Some(Curve::from(CompositeCurve::new(3)));
+        e0.interval = Extent1d::from_min_max(-1.0, 0.0);
+        let mut k_both = Kernel::default();
+        k_both
+            .fixes
+            .is_topological_vertex_rejects_cusps_and_tangent_errors = true;
+        k_both.fixes.query_statuses_pass_on = true;
+        assert!(!is_topological_vertex(&k_both, &mut b, v[1]).unwrap());
     }
 }

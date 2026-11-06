@@ -14,6 +14,7 @@
 //! | [`SurfaceEval::eval_normal_section`]              | `SmSurfaceEval::EvalNormalSection`               |
 //! | [`pass_sp_convergence_test`]                      | `sm_PassSPConvergenceTest` (static)              |
 //! | [`Surface::create_seam_curve`]                    | `SmSurface::CreateSeamCurve`                     |
+//! | [`Surface::create_line_on_surf`]                  | `SmSurface::CreateLineOnSurf`                    |
 //! | [`Surface::is_on_seam`], [`SeamInfo`]             | `SmSurface::IsOnSeam`                            |
 //! | [`Surface::global_point_solve`], [`Surface::global_point_solve_point_test_off`], [`Surface::global_point_solve_face_tested`], [`FaceTest`], [`global_point_solve_starts`], [`NoObject`] | `SmSurface::GlobalPointSolve` |
 //! | [`classify_curve_surface_xsect_point`], [`XsectClassification`] | `sm_ClassifyCurveSurfaceXSectPoint` (static) |
@@ -73,7 +74,9 @@ use crate::curve::crv_on_surf::CrvOnSurf;
 use crate::curve::curve::p2::evaluate_geometric as curve_evaluate_geometric;
 use crate::curve::curve::Curve;
 use crate::curve::line::Line;
-use crate::error::{ignore_status, ignored, Result, SolidError, SM_ERR};
+use crate::error::{
+    ignore_or_pass_on, ignored, ignored_or_pass_on, passed_on, Result, SolidError, SM_ERR,
+};
 use crate::geom::assert_array::labels::{EDGE_TYPE, FACE_TYPE};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
@@ -91,7 +94,8 @@ use crate::geom::vector2d::Vec2;
 use crate::geom::vector3d::{asin, sqrt as sm_sqrt};
 use crate::kernel::Kernel;
 use crate::math::{
-    Point2, Point3, Vec3, EFF_ZERO, EFF_ZERO_RAD, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI, UNDEF_DOUBLE,
+    Point2, Point3, Vec3, EFF_ZERO, EFF_ZERO_PARAM, EFF_ZERO_RAD, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI,
+    UNDEF_DOUBLE,
 };
 use crate::nurbs::b_spline_surface::SurfParamType;
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
@@ -116,6 +120,7 @@ const OP_SSI_NORMALIZE: &str = "surface::surface::p4::SsiNormalizeEnfo::evaluate
 const OP_SS_NORMALIZE: &str = "surface::surface::p4::SsNormalizeEnfo::evaluate";
 const OP_EVAL_NORMAL: &str = "surface::surface::p4::SurfaceEval::eval_normal";
 const OP_CLASSIFY: &str = "surface::surface::p4::classify_curve_surface_xsect_point";
+const OP_LINE_ON_SURF: &str = "surface::surface::p4::Surface::create_line_on_surf";
 
 /// The trim boundary test a caller holding a face gives
 /// [`Surface::global_point_solve_face_tested`]: whether the solution at `uv` (classified
@@ -274,6 +279,8 @@ impl EvalNFunctions for CsNormalizeEnfo<'_> {
         mut jacobian: Option<&mut Matrix>,
     ) -> Result<bool> {
         let k = self.kernel;
+        // (the fork's `SER(Unitize)`, with the opt-in fix: WR-663, tangency-labs/smlib 21dcf69)
+        let pass = k.fixes.query_statuses_pass_on;
         let directed = self.solver_operation == SolverOperation::Signed3dDirectedMinimize;
         let count = if directed { 4 } else { 3 };
         check_len(x, f, count, OP_CS_NORMALIZE)?;
@@ -321,7 +328,7 @@ impl EvalNFunctions for CsNormalizeEnfo<'_> {
         }
 
         // Unitize Ct and get its derivative.
-        let ct_unit = ct.unitize_or_z();
+        let ct_unit = unitize_or_pass_on(ct, pass)?;
         let ct_unit_t = ct.unitized_derivative(ctt);
 
         if directed {
@@ -335,7 +342,7 @@ impl EvalNFunctions for CsNormalizeEnfo<'_> {
             let cross_u = su.derivative_of_cross_product(sv, suu, suv);
             let cross_v = su.derivative_of_cross_product(sv, suv, svv);
 
-            let n = cross.unitize_or_z();
+            let n = unitize_or_pass_on(cross, pass)?;
             let n_u = cross.unitized_derivative(cross_u);
             let n_v = cross.unitized_derivative(cross_v);
 
@@ -368,10 +375,10 @@ impl EvalNFunctions for CsNormalizeEnfo<'_> {
             set_all(f, &[ct_unit.dot(n), vec.x, vec.y, vec.z]);
         } else {
             // Normalization, Minimization, Maximization: unitized Ct, Su and Sv.
-            let su_unit = su.unitize_or_z();
+            let su_unit = unitize_or_pass_on(su, pass)?;
             let su_unit_u = su.unitized_derivative(suu);
             let su_unit_v = su.unitized_derivative(suv);
-            let sv_unit = sv.unitize_or_z();
+            let sv_unit = unitize_or_pass_on(sv, pass)?;
             let sv_unit_u = sv.unitized_derivative(suv);
             let sv_unit_v = sv.unitized_derivative(svv);
 
@@ -635,8 +642,8 @@ impl EvalNFunctions for SsiNormalizeEnfo<'_> {
         if let Some(jac) = jacobian {
             // The analytic Jacobian upstream builds is overwritten by the finite
             // difference one over the natural domains of both surfaces.
-            let dom = self.surface.natural_uv_domain();
-            let dom2 = self.other_surface.natural_uv_domain();
+            let dom = self.surface.natural_uv_domain_with_nurb(k)?;
+            let dom2 = self.other_surface.natural_uv_domain_with_nurb(k)?;
             let domains = [
                 dom.u_interval(),
                 dom.v_interval(),
@@ -661,6 +668,8 @@ impl EvalNFunctions for SsNormalizeEnfo<'_> {
         mut jacobian: Option<&mut Matrix>,
     ) -> Result<bool> {
         let k = self.kernel;
+        // (the fork's `SER(Unitize)`, with the opt-in fix: WR-663, tangency-labs/smlib 21dcf69)
+        let pass = k.fixes.query_statuses_pass_on;
         let directed = self.solver_operation == SolverOperation::Signed3dDirectedMinimize;
         let count = if directed { 5 } else { 4 };
         check_len(x, f, count, OP_SS_NORMALIZE)?;
@@ -706,10 +715,10 @@ impl EvalNFunctions for SsNormalizeEnfo<'_> {
         }
 
         // Unitize S1u and S1v and get their derivatives.
-        let s1u_unit = s1u.unitize_or_z();
+        let s1u_unit = unitize_or_pass_on(s1u, pass)?;
         let s1u_unit_u = s1u.unitized_derivative(s1uu);
         let s1u_unit_v = s1u.unitized_derivative(s1uv);
-        let s1v_unit = s1v.unitize_or_z();
+        let s1v_unit = unitize_or_pass_on(s1v, pass)?;
         let s1v_unit_u = s1v.unitized_derivative(s1uv); // not the same as s1u_unit_v
         let s1v_unit_v = s1v.unitized_derivative(s1vv);
 
@@ -724,7 +733,7 @@ impl EvalNFunctions for SsNormalizeEnfo<'_> {
             let cross2_u = s2u.derivative_of_cross_product(s2v, s2uu, s2uv);
             let cross2_v = s2u.derivative_of_cross_product(s2v, s2uv, s2vv);
 
-            let n2 = cross2.unitize_or_z();
+            let n2 = unitize_or_pass_on(cross2, pass)?;
             let n2_u = cross2.unitized_derivative(cross2_u);
             let n2_v = cross2.unitized_derivative(cross2_v);
 
@@ -769,10 +778,10 @@ impl EvalNFunctions for SsNormalizeEnfo<'_> {
             );
         } else {
             // Unitize S2u and S2v and get their derivatives.
-            let s2u_unit = s2u.unitize_or_z();
+            let s2u_unit = unitize_or_pass_on(s2u, pass)?;
             let s2u_unit_u = s2u.unitized_derivative(s2uu);
             let s2u_unit_v = s2u.unitized_derivative(s2uv);
-            let s2v_unit = s2v.unitize_or_z();
+            let s2v_unit = unitize_or_pass_on(s2v, pass)?;
             let s2v_unit_u = s2v.unitized_derivative(s2uv); // not the same as s2u_unit_v
             let s2v_unit_v = s2v.unitized_derivative(s2vv);
 
@@ -821,15 +830,20 @@ impl SurfaceEval<'_> {
     /// (`EvalNormal`, co-ported from unit `surface.surface_p3`): `Du x Dv`, at a
     /// singular point the mixed partial's cross product, then `EvaluateNormal`.
     ///
+    /// A failed evaluation does not stop it: as upstream, which ignores `Eval`'s
+    /// status, the normal is made from the matrix the failed evaluation wrote (the
+    /// derivatives before a failed zero-tangent correction).
+    ///
     /// # Errors
     ///
-    /// Those of [`SurfaceEval::eval`] (upstream ignores that status and reads the
-    /// stale matrix) and of `EvaluateNormal`.
+    /// [`SolidError::Unported`] from [`SurfaceEval::eval`]; those of `EvaluateNormal`.
     pub fn eval_normal(&mut self, k: &Kernel) -> Result<()> {
         if *self.state_mut().normal_set {
             return Ok(());
         }
-        self.eval()?;
+        // upstream ignores the status (`Eval();`) and reads the matrix as it stands
+        // (passed on with the opt-in fix, WR-663, tangency-labs/smlib 21dcf69)
+        ignore_or_pass_on(self.eval(), k.fixes.query_statuses_pass_on)?;
 
         let uv = self.uv();
         let (u_left, v_left) = self.sides();
@@ -855,7 +869,7 @@ impl SurfaceEval<'_> {
         // On the high side of the 'good' domain, this must be flipped (because it's
         // decreasing).
         let surface = surface.ok_or(SolidError::null_pointer(OP_EVAL_NORMAL))?;
-        let domain = surface.natural_uv_domain();
+        let domain = surface.natural_uv_domain_with_nurb(k)?;
         if sing_u {
             let mut n = duv.cross(dv);
             if uv.x > domain.u_interval().mid() {
@@ -907,9 +921,11 @@ impl SurfaceEval<'_> {
             return Ok(());
         }
 
-        // upstream ignores the statuses of both evaluations
-        ignore_status(self.eval())?;
-        ignore_status(self.eval_normal(k))?;
+        // upstream ignores the statuses of both evaluations (passed on with the opt-in
+        // fix, WR-663, tangency-labs/smlib 21dcf69)
+        let pass = k.fixes.query_statuses_pass_on;
+        ignore_or_pass_on(self.eval(), pass)?;
+        ignore_or_pass_on(self.eval_normal(k), pass)?;
 
         let dir = self.sect_dir();
         let st = self.state_mut();
@@ -989,7 +1005,7 @@ pub fn is_point_on_normal(
         approx_dev: 0.0,
     };
 
-    let natural = surface.natural_uv_domain();
+    let natural = surface.natural_uv_domain_with_nurb(k)?;
     let uv_domain_used = uv_domain.copied().unwrap_or(natural);
 
     // Clamp input uv if indicated.
@@ -1071,15 +1087,19 @@ pub fn is_point_on_normal(
             if on_boundary {
                 // Get Surface 3d outside pointing vector
                 let outward = -bi_norm;
-                let srf_pd = ignored(evaluate_directional_derivs(
-                    k,
-                    surface,
-                    uv_to_test,
-                    outward,
-                    1,
-                    Side::Left,
-                    Side::Left,
-                ))?;
+                // (passed on with the opt-in fix, WR-663, tangency-labs/smlib 21dcf69)
+                let srf_pd = ignored_or_pass_on(
+                    evaluate_directional_derivs(
+                        k,
+                        surface,
+                        uv_to_test,
+                        outward,
+                        1,
+                        Side::Left,
+                        Side::Left,
+                    ),
+                    k.fixes.query_statuses_pass_on,
+                )?;
                 if let Some(pd) = srf_pd {
                     if let (Some(&p0), Some(&p1)) = (pd.first(), pd.get(1)) {
                         // the drop vector from SrfPoint3d to 3dTestPoint
@@ -1147,7 +1167,7 @@ impl Surface {
         known_closed: bool,
     ) -> Result<Option<CrvOnSurf>> {
         // locals
-        let uv_domain = self.natural_uv_domain();
+        let uv_domain = self.natural_uv_domain_with_nurb(kernel)?;
         let uv_min = uv_domain.min();
         let uv_max = uv_domain.max();
         let is_closed = known_closed || self.is_closed(kernel, &uv_domain, param, None, false)?.0;
@@ -1180,6 +1200,53 @@ impl Surface {
         Ok(Some(seam))
     }
 
+    /// The line from `start_uv` to `end_uv` in the surface's parameter space, as a 3d
+    /// curve on the surface (`CreateLineOnSurf`): a dimension-2 [`Line`] over `[0, 1]`
+    /// on this surface, over its natural UV domain (owner flag 1: the line copied).
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::InvalidInput`] (`SM_ERR_INVALID_INPUT`) when the points are not
+    /// farther apart than `SM_EFF_ZERO_PARAM`; `SM_ERR` when either is outside the
+    /// natural UV domain (by more than `SM_EFF_ZERO`); those of the domain, the
+    /// surface copy and the curve construction.
+    pub fn create_line_on_surf(
+        &self,
+        kernel: &Kernel,
+        start_uv: Point2,
+        end_uv: Point2,
+    ) -> Result<CrvOnSurf> {
+        // locals
+        let uv_domain = self.natural_uv_domain_with_nurb(kernel)?;
+
+        // check state - Degenerate Line
+        if (end_uv - start_uv).length() <= EFF_ZERO_PARAM {
+            return Err(SolidError::invalid_input(
+                OP_LINE_ON_SURF,
+                "start and end UV points are too close together",
+            ));
+        }
+
+        // check state - input UVPoints not in sUVDomain
+        if !(uv_domain.contains_point(start_uv, EFF_ZERO)
+            && uv_domain.contains_point(end_uv, EFF_ZERO))
+        {
+            return Err(SolidError::sm_err(OP_LINE_ON_SURF));
+        }
+
+        // Build the UV line
+        let start = Point3::new(start_uv.x, start_uv.y, 0.0);
+        let end = Point3::new(end_uv.x, end_uv.y, 0.0);
+        let line = Line::from_points(start, end, 2);
+        CrvOnSurf::new(
+            kernel,
+            Curve::from(line),
+            self.clone_for_evaluation()?,
+            Some(uv_domain),
+            1,
+        )
+    }
+
     /// Whether `uv` is on a seam of the surface (`IsOnSeam`): on a domain boundary
     /// across which the surface is closed, with the seam direction and the UV points
     /// across the seam that map to the same 3d point. `opt_tol_3d` defaults to the
@@ -1191,7 +1258,7 @@ impl Surface {
     /// [`Surface::is_on_boundary`], the tolerances and [`Surface::is_closed`].
     pub fn is_on_seam(&self, k: &Kernel, uv: Point2, opt_tol_3d: Option<f64>) -> Result<SeamInfo> {
         // locals
-        let domain = self.natural_uv_domain();
+        let domain = self.natural_uv_domain_with_nurb(k)?;
 
         // init output
         let mut info = SeamInfo {
@@ -1460,6 +1527,45 @@ impl Surface {
         )
     }
 
+    /// [`Surface::global_point_solve_into_with_context`] with the surface cache's point
+    /// testing off for the call (`m_bPointTestEnabled` FALSE, as `SmSurface::DropCurve`
+    /// sets it for its whole call): the fast drop keeps every solution, the face's trim
+    /// boundaries are not tested.
+    ///
+    /// # Errors
+    /// As [`Surface::global_point_solve_into_with_context`].
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn global_point_solve_into_with_context_point_test_off<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        surface: Option<O>,
+        cache: Option<&crate::surface::surface_cache::SurfaceCache<O>>,
+        context: &mut dyn super::p1::SurfaceSolveContext<O>,
+        uv_domain: &Extent2d,
+        op: SolverOperation,
+        test_point: Point3,
+        src_zone_tol_3d: f64,
+        opt_target_distance: Option<f64>,
+        requested: SolutionRequested,
+        solutions: &mut SolutionArray<O>,
+    ) -> Result<()> {
+        self.global_point_solve_in(
+            k,
+            surface,
+            cache,
+            Some(context),
+            uv_domain,
+            op,
+            test_point,
+            src_zone_tol_3d,
+            opt_target_distance,
+            requested,
+            solutions,
+            None,
+            true,
+        )
+    }
+
     /// [`Surface::global_point_solve`] of a face's surface by a caller that holds the
     /// face and the surface's cache: the trim boundary test of the fast drop
     /// (`pFace->PointClassify(uv, tol, TRUE, FALSE, ..)` of each solution, keeping
@@ -1508,7 +1614,7 @@ impl Surface {
         k: &Kernel,
         surface: Option<O>,
         cache: Option<&crate::surface::surface_cache::SurfaceCache<O>>,
-        context: Option<&mut dyn super::p1::SurfaceSolveContext<O>>,
+        mut context: Option<&mut dyn super::p1::SurfaceSolveContext<O>>,
         uv_domain: &Extent2d,
         op: SolverOperation,
         test_point: Point3,
@@ -1578,12 +1684,12 @@ impl Surface {
                                 }
                             }
                         }
-                    } else if let Some(context) = context {
+                    } else if let Some(context) = context.as_deref_mut() {
                         let built;
                         let cache = if let Some(cache) = cache {
                             cache
                         } else {
-                            built = context.build_surface_cache(k, self, surface)?;
+                            built = context.surface_cache_state(k, self, surface)?;
                             &built
                         };
                         if cache.is_trimmed()
@@ -1622,25 +1728,24 @@ impl Surface {
                             }
                         }
                     } else {
-                        get_surface_cache(k, self, None::<NoObject>)?;
-                        // UNPORTED(query.face_p2): SmFace::PointClassify
-                        // NOTE for the face_p2 porter: upstream callers disable the surface
-                        // cache's point test (`m_bPointTestEnabled`, SmTemporaryChangeValue)
-                        // around GlobalPointSolve so every solution is kept unclassified:
-                        // SmCurveClass.cpp:1040, SmTopologySolver.cpp:1665,
-                        // SmVertexUse.cpp:471-480, SmBrep.cpp:11098, SmFilletGeom.cpp:149-150,
-                        // 446-447, SmFace.cpp:12801 and SmOffsetExecutive.cpp:3725-3734 (Rust:
-                        // `intersect::curve_class::p1`, `intersect::topology_solver::p2`,
-                        // `topology::vertexuse`, `topology::brep::p1::find_sector_of_face`,
-                        // `blend::fillet_geom::p1`, `query::face::p1::point_3d_classify`, and
-                        // the lamina test in
-                        // `offset::offset_executive::p1::build_contained_offset_faces`).
-                        // The Rust cache has no such switch yet; add it when this stub is
-                        // wired.
-                        return Err(SolidError::unported(
-                            "SmFace::PointClassify",
-                            "query.face_p2",
-                        ));
+                        // Without a context the surface's own cache is made here. For a
+                        // face-owned surface its trimmed cache needs the face's
+                        // topology, so `get_surface_cache` already returns `Unported`
+                        // when it would build one; a plain cache it falls back to is not
+                        // an SmTrimSrfCache (SM_CAST_PTR gives NULL): no test, as
+                        // upstream.
+                        let cache = get_surface_cache(k, self, None::<NoObject>)?;
+                        if cache.is_trimmed()
+                            && cache.point_test_enabled
+                            && !cache.face_was_modified
+                        {
+                            // SmFace::PointClassify of a bare face-owned surface: the
+                            // classifier is the context's FaceQueries
+                            return Err(SolidError::unported(
+                                "SmFace::PointClassify",
+                                "query.face_p2",
+                            ));
+                        }
                     }
                 }
 
@@ -1667,13 +1772,16 @@ impl Surface {
                 src_zone_tol_3d,
                 opt_target_distance,
                 requested,
-                Some(OperandObject::Surface(0, self.natural_uv_domain())),
+                Some(OperandObject::Surface(0, self.stand_in_key_domain(k)?)),
             )?
             .without_objects()
         } else if let Some(surface) = surface {
-            self.global_point_solve_0(
+            self.global_point_solve_0_in(
                 k,
                 surface,
+                cache,
+                context,
+                point_test_off,
                 uv_domain,
                 op,
                 test_point,
@@ -1684,9 +1792,12 @@ impl Surface {
         } else {
             // no handle for the solutions' objects (upstream passes `this`): solve with
             // a stand-in and leave the objects null
-            let found = self.global_point_solve_0(
+            let found = self.global_point_solve_0_in(
                 k,
                 NoObject,
+                None,
+                None,
+                point_test_off,
                 uv_domain,
                 op,
                 test_point,
@@ -1759,7 +1870,6 @@ fn farther_line_param(params: &[f64]) -> f64 {
 /// [`SolidError::Unported`]: an edge or face tolerance of an owned curve or surface
 /// (`topology.edge`, `topology.face_p2`); those of the evaluations and of the
 /// line/circle intersections.
-#[allow(clippy::too_many_lines)]
 pub fn classify_curve_surface_xsect_point(
     k: &Kernel,
     surface: &Surface,
@@ -1769,6 +1879,32 @@ pub fn classify_curve_surface_xsect_point(
     current_uv: Point2,
     current_t: f64,
 ) -> Result<XsectClassification> {
+    classify_curve_surface_xsect_point_with(
+        k, surface, uv_domain, curve, interval, current_uv, current_t, None,
+    )
+}
+
+/// [`classify_curve_surface_xsect_point`] by a caller that resolves the tolerance of
+/// the curve's owning edge (`pCurveOwner->GetTolerance()`): `edge_tolerance`, `None`
+/// when it cannot.
+///
+/// # Errors
+///
+/// As [`classify_curve_surface_xsect_point`]; [`SolidError::Unported`] for an
+/// edge's curve only when `edge_tolerance` is `None`.
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+pub fn classify_curve_surface_xsect_point_with(
+    k: &Kernel,
+    surface: &Surface,
+    uv_domain: &Extent2d,
+    curve: &Curve,
+    interval: &Extent1d,
+    current_uv: Point2,
+    current_t: f64,
+    edge_tolerance: Option<f64>,
+) -> Result<XsectClassification> {
+    // (the fork's `SER`s, with the opt-in fix: WR-663, tangency-labs/smlib 21dcf69)
+    let pass = k.fixes.query_statuses_pass_on;
     let mut out = XsectClassification {
         found_guess: false,
         new_uv_guess: Point2::UNDEF,
@@ -1876,7 +2012,7 @@ pub fn classify_curve_surface_xsect_point(
 
     // get the cosine of the angle between the surfaceSectionNormal plane and the plane
     // of the curve's osculating circle (needed for Meusnier's Theorem)
-    let ang_rad = curve_binormal.angle_between(surface_normal).unwrap_or(0.0);
+    let ang_rad = passed_on(curve_binormal.angle_between(surface_normal), pass)?.unwrap_or(0.0);
     let cos_phi = (ang_rad - PI / 2.0).cos().abs();
 
     // characterize the curve shape as a circle or a line
@@ -1939,8 +2075,8 @@ pub fn classify_curve_surface_xsect_point(
                 let d_x = sm_sqrt(tmp);
                 surface_vec = d_y * pk_vec1 + d_x * pk_vec2;
                 surface_vec2 = d_y * pk_vec1 - d_x * pk_vec2;
-                surface_vec = surface_vec.unitize_or_z();
-                surface_vec2 = surface_vec2.unitize_or_z();
+                surface_vec = unitize_or_pass_on(surface_vec, pass)?;
+                surface_vec2 = unitize_or_pass_on(surface_vec2, pass)?;
             }
             LocalSurfaceType::Cylindrical => {
                 out.point_type = TsectCurveType::Tangent;
@@ -1973,7 +2109,7 @@ pub fn classify_curve_surface_xsect_point(
         let mut circle_center_vec = curve_binormal
             .cross(sgn(surface_section_curvature) * surface_normal)
             .cross(curve_binormal);
-        circle_center_vec = circle_center_vec.unitize_or_z();
+        circle_center_vec = unitize_or_pass_on(circle_center_vec, pass)?;
 
         // the center lies in direction of the circle center vector, not the surface
         // normal
@@ -1987,22 +2123,27 @@ pub fn classify_curve_surface_xsect_point(
     let mut curve_tol = EFF_ZERO_SQRT; // default values, if nothing else to use.
     let mut surface_tol = EFF_ZERO_SQRT;
     if curve.owner().is_some_and(|o| o.type_code == EDGE_TYPE) {
-        // UNPORTED(topology.edge): SmEdge::GetTolerance
-        let _ = curve_tol;
-        return Err(SolidError::unported(
-            "SmEdge::GetTolerance",
-            "topology.edge",
-        ));
+        // pCurveOwner->GetTolerance(), as the caller resolves it
+        curve_tol = edge_tolerance.ok_or_else(|| {
+            // UNPORTED(topology.edge): SmEdge::GetTolerance (a caller without the edge)
+            // Proof (unreachable): the plain wrapper passes None, the library callers
+            // (surface p9, p10) use classify_curve_surface_xsect_point_with with the
+            // caller's edge tolerance; 0 hits in the green difftest sweep.
+            SolidError::unported("SmEdge::GetTolerance", "topology.edge")
+        })?;
     } else if !curve_line {
         curve_tol = curve_radius / 1000.0;
     }
     if surface.owner().is_some_and(|o| o.type_code == FACE_TYPE) {
         // pSurfaceOwner->GetTolerance(): the direct owner is the face, so the face the
         // surface reaches; its tolerance as cached by the B-rep
-        surface_tol = surface.owner_zone_tol_3d().ok_or(
+        surface_tol = surface.owner_zone_tol_3d().ok_or_else(|| {
             // UNPORTED(topology.face_p2): SmFace::GetTolerance (a bare face handle)
-            SolidError::unported("SmFace::GetTolerance", "topology.face_p2"),
-        )?;
+            // Proof (unreachable): a B-rep face's surface carries the face tolerance
+            // (Brep::sync_face_surface_tolerance invariant, see Surface::face_zone_tol_3d);
+            // 0 hits in the green difftest sweep.
+            SolidError::unported("SmFace::GetTolerance", "topology.face_p2")
+        })?;
     } else if !surface_line {
         surface_tol = surface_radius / 1000.0;
     }
@@ -2273,6 +2414,17 @@ pub fn global_point_solve_starts(
     Ok(solutions.as_slice().iter().map(|s| s.start).collect())
 }
 
+/// `Unitize()` whose status SMLib drops and the fork passes on (`SER`): with `pass_on`
+/// (the opt-in `Kernel::fixes.query_statuses_pass_on`, WR-663; tangency-labs/smlib
+/// 21dcf69) a zero vector is returned as the error, without it `(0, 0, 1)` as upstream.
+fn unitize_or_pass_on(v: Vec3, pass_on: bool) -> Result<Vec3> {
+    if pass_on {
+        v.unitize()
+    } else {
+        Ok(v.unitize_or_z())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2342,7 +2494,7 @@ mod tests {
             3,
         ));
         let uv = Point2::new(0.1, 0.2);
-        let dom = s.natural_uv_domain();
+        let dom = s.natural_uv_domain_if_built();
         let r = classify_curve_surface_xsect_point(
             k,
             &s,

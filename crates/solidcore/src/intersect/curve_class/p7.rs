@@ -77,12 +77,13 @@
 //!   so their additions are discarded. A handle the adapter cannot resolve keeps the
 //!   [`SolidError::Unported`] dispatch-gap deferral. An edge of another B-rep has no
 //!   use on the face: not inside, as upstream's use walk finds. **Cache history:** a
-//!   face query on the mutable path that raises a vertex or edge tolerance (a trimmed
-//!   surface cache built with the face's UV trim curves, `smsurf_GetSurfaceCache`)
-//!   defers on `surface.surface_p2`: upstream reuses an `SmTrimSrfCache` made earlier
-//!   without the face (no UV trims, no tolerance growth) when one exists, which the port
-//!   cannot know (`plan/findings.md`, "classification face queries through
-//!   `ClassGeometryMut`").
+//!   face query on the mutable path may build the face surface's trimmed surface cache
+//!   with the face (`smsurf_GetSurfaceCache`), whose UV trim curves raise vertex and
+//!   edge tolerances, or reuse the one the surface already holds (made earlier, with or
+//!   without the face). The surface's cache slot keeps that history
+//!   ([`crate::query::face::p2::face_surface_cache`]), so the query does what upstream
+//!   does and the raised tolerances stay on the B-rep (`plan/findings.md`, "trimmed
+//!   surface cache history: tolerance-growth deferral removed").
 //! - **`SmFace::FindVertexSector`** runs on the mutable path only; the read-only
 //!   path returns [`SolidError::Unported`] (`topology.face_p4`).
 //! - **`SmFace::PointClassify`** ([`crate::query::face::p2::point_classify`]) runs on
@@ -1155,7 +1156,7 @@ pub fn set_do_filleting_geometry<O: ClassObject>(
     other: Option<&CurveClassification<O>>,
     todo: u64,
 ) -> Result<()> {
-    set_do_filleting_geometry_with(k, &mut ReadOnly(geometry), index, this, other, todo)
+    set_do_filleting_geometry_with(k, &mut ReadOnly(geometry), index, this, other, todo, false)
 }
 
 /// [`set_do_filleting_geometry`] with mutable access to the B-rep behind the topology
@@ -1172,7 +1173,51 @@ pub fn set_do_filleting_geometry_mut<O: ClassObject>(
     other: Option<&CurveClassification<O>>,
     todo: u64,
 ) -> Result<()> {
-    set_do_filleting_geometry_with(k, &mut Mutable(geometry), index, this, other, todo)
+    set_do_filleting_geometry_with(k, &mut Mutable(geometry), index, this, other, todo, false)
+}
+
+/// The same operation with an explicitly linked, actual local peer.
+/// # Errors
+/// The shared fillet geometry operation fails or lacks editing context.
+pub(super) fn set_do_filleting_geometry_linked<O: ClassObject>(
+    k: &Kernel,
+    geometry: &impl ClassGeometry<O>,
+    index: usize,
+    this: &CurveClassification<O>,
+    other: &CurveClassification<O>,
+    todo: u64,
+) -> Result<()> {
+    set_do_filleting_geometry_with(
+        k,
+        &mut ReadOnly(geometry),
+        index,
+        this,
+        Some(other),
+        todo,
+        true,
+    )
+}
+
+/// The linked-peer operation over actual mutable topology.
+/// # Errors
+/// The shared fillet geometry operation fails or lacks editing context.
+pub(super) fn set_do_filleting_geometry_mut_linked<O: ClassObject>(
+    k: &Kernel,
+    geometry: &mut impl ClassGeometryMut<O>,
+    index: usize,
+    this: &CurveClassification<O>,
+    other: &CurveClassification<O>,
+    todo: u64,
+) -> Result<()> {
+    set_do_filleting_geometry_with(
+        k,
+        &mut Mutable(geometry),
+        index,
+        this,
+        Some(other),
+        todo,
+        true,
+    )
 }
 
 fn set_do_filleting_geometry_with<O: ClassObject>(
@@ -1182,9 +1227,10 @@ fn set_do_filleting_geometry_with<O: ClassObject>(
     this: &CurveClassification<O>,
     other: Option<&CurveClassification<O>>,
     todo: u64,
+    linked: bool,
 ) -> Result<()> {
     // no work - don't have DoingFillet Data
-    if !this.doing_fillets() || this.other_classification().is_none() {
+    if !this.doing_fillets() || (!linked && this.other_classification().is_none()) {
         return Ok(());
     }
 
@@ -1741,6 +1787,7 @@ const fn as_b_spline(c: &Curve) -> Option<&BSplineCurve> {
         | CurveKind::Offset(_)
         | CurveKind::CrvInVolume(_)
         | CurveKind::CrvOnSurf(_)
+        | CurveKind::TangentField(_)
         | CurveKind::Composite(_) => None,
     }
 }
@@ -1840,7 +1887,7 @@ fn connect_target<O: ClassObject>(
 ) -> Result<Option<EntityRef>> {
     let (tb, e) = geometry
         .topology_entity(target)
-        .ok_or(SolidError::unported(upstream, unit))?;
+        .ok_or_else(|| SolidError::unported(upstream, unit))?;
     Ok(std::ptr::eq(b, tb).then_some(e))
 }
 
@@ -2005,14 +2052,20 @@ impl<O: ClassObject, G: ClassGeometry<O>> FilletAccess<O> for ReadOnly<'_, G> {
         self.0
     }
     fn set_vertex_point(&mut self, _vertex: O, _point: Point3) -> Result<()> {
-        // UNPORTED(topology.vertex): SmVertex::SetPoint
+        // DISPATCH GAP: SmVertex::SetPoint (topology.vertex, green)
+        // Proof (unreachable): the ReadOnly view serves queries that only make caches, and
+        // 0 hits in the green difftest sweep show none met this; Mutable and the B-rep
+        // impls resolve it.
         Err(SolidError::unported(
             "SmVertex::SetPoint",
             "topology.vertex",
         ))
     }
     fn set_edge_curve(&mut self, _edge: O, _curve: Curve) -> Result<()> {
-        // UNPORTED(topology.edge): SmEdge::SetCurve
+        // DISPATCH GAP: SmEdge::SetCurve (topology.edge, green)
+        // Proof (unreachable): the ReadOnly view serves queries that only make caches, and
+        // 0 hits in the green difftest sweep show none met this; Mutable and the B-rep
+        // impls resolve it.
         Err(SolidError::unported("SmEdge::SetCurve", "topology.edge"))
     }
 }
@@ -2036,6 +2089,9 @@ impl<O: ClassObject, G: ClassGeometry<O>> FaceQueries<O> for ReadOnly<'_, G> {
         _uv_space_okay: bool,
     ) -> Result<EndInside> {
         // UNPORTED(topology.face_p4): SmFace::FindVertexSector
+        // Proof (unreachable): the ReadOnly view serves queries that only make caches, and
+        // 0 hits in the green difftest sweep show none met this; Mutable and the B-rep
+        // impls resolve it.
         Err(SolidError::unported(
             "SmFace::FindVertexSector",
             "topology.face_p4",
@@ -2063,7 +2119,7 @@ impl<O: ClassObject, G: ClassGeometry<O>> FaceQueries<O> for ReadOnly<'_, G> {
         let Some(e) = same_brep_edge(self.0, b, edge).ok_or_else(unresolved)?? else {
             return Ok(EndInside::default());
         };
-        let mut copy = b.clone();
+        let mut copy = b.clone_standing_for_self()?;
         edge_curve_on_classify_in(
             k,
             &mut copy,
@@ -2120,7 +2176,7 @@ impl<O: ClassObject, G: ClassGeometry<O>> FaceQueries<O> for ReadOnly<'_, G> {
     ) -> Result<()> {
         let geometry = self.0;
         let (b, f) = resolve_face(geometry, face).ok_or_else(unresolved_3d)?;
-        let mut copy = b.clone();
+        let mut copy = b.clone_standing_for_self()?;
         point_3d_classify_in(
             k,
             geometry,
@@ -2185,7 +2241,6 @@ impl<O: ClassObject, G: ClassGeometryMut<O>> FaceQueries<O> for Mutable<'_, G> {
                 uv_space_okay,
             );
         };
-        let before = Tolerances::of(b);
         let r = find_vertex_sector_in(
             k,
             b,
@@ -2199,7 +2254,6 @@ impl<O: ClassObject, G: ClassGeometryMut<O>> FaceQueries<O> for Mutable<'_, G> {
             src_zone_tol_3d,
             uv_space_okay,
         )?;
-        before.check_unchanged(b, "SmFace::FindVertexSector")?;
         Ok(r)
     }
     fn edge_curve_on_classify(
@@ -2242,7 +2296,6 @@ impl<O: ClassObject, G: ClassGeometryMut<O>> FaceQueries<O> for Mutable<'_, G> {
                 face_index,
             );
         };
-        let before = Tolerances::of(b);
         let r = edge_curve_on_classify_in(
             k,
             b,
@@ -2256,7 +2309,6 @@ impl<O: ClassObject, G: ClassGeometryMut<O>> FaceQueries<O> for Mutable<'_, G> {
             uv_space_okay,
             face_index,
         )?;
-        before.check_unchanged(b, "SmFace::EdgeCurveOnClassify")?;
         Ok(r)
     }
     fn point_classify(
@@ -2287,7 +2339,6 @@ impl<O: ClassObject, G: ClassGeometryMut<O>> FaceQueries<O> for Mutable<'_, G> {
                 point_class,
             );
         };
-        let before = Tolerances::of(b);
         let r = qf2::point_classify(
             k,
             b,
@@ -2296,7 +2347,6 @@ impl<O: ClassObject, G: ClassGeometryMut<O>> FaceQueries<O> for Mutable<'_, G> {
             &mut pc,
             point_classify_options(src_zone_tol_3d, do_xsects, use_uv),
         );
-        before.check_unchanged(b, "SmFace::PointClassify")?;
         let geometry = &*self.0;
         let (b, _) = resolve_face(geometry, face).ok_or_else(unresolved_uv)?;
         *point_class =
@@ -2329,7 +2379,6 @@ impl<O: ClassObject, G: ClassGeometryMut<O>> FaceQueries<O> for Mutable<'_, G> {
                 point_class,
             );
         };
-        let before = Tolerances::of(b);
         let r = qf1::point_3d_classify(
             k,
             b,
@@ -2340,7 +2389,6 @@ impl<O: ClassObject, G: ClassGeometryMut<O>> FaceQueries<O> for Mutable<'_, G> {
             &mut pc,
             qf1::Point3dClassifyOptions::default(),
         );
-        before.check_unchanged(b, "SmFace::Point3DClassify")?;
         let geometry = &*self.0;
         let (b, _) = resolve_face(geometry, face).ok_or_else(unresolved_3d)?;
         *point_class =
@@ -2364,57 +2412,7 @@ impl<O: ClassObject, G: ClassGeometryMut<O>> FilletAccess<O> for Mutable<'_, G> 
         }
     }
     fn set_edge_curve(&mut self, edge: O, curve: Curve) -> Result<()> {
-        match self.0.topology_entity_mut(edge) {
-            Some((b, EntityRef::Edge(e))) => {
-                b.edge_mut(e)?.curve = Some(curve);
-                Ok(())
-            }
-            _ => ReadOnly(&*self.0).set_edge_curve(edge, curve),
-        }
-    }
-}
-
-/// The vertex and edge zone tolerances of a B-rep, taken before a face query of the
-/// mutable path.
-///
-/// A face query may build the face surface's trimmed surface cache
-/// (`smsurf_GetSurfaceCache`), whose `CreateUVTrimCurves` raises the tolerances of
-/// edges far from the surface. Upstream does that only when the surface has no
-/// trimmed cache yet: an `SmTrimSrfCache` made earlier while the surface had no
-/// owner face (no UV trim curves) is reused as is. The port keeps no object caches,
-/// so whether upstream grew the tolerances here depends on cache history it cannot
-/// know; a query that grew one defers (module Deviations).
-struct Tolerances {
-    vertices: Vec<f64>,
-    edges: Vec<f64>,
-}
-
-impl Tolerances {
-    fn of(b: &Brep) -> Self {
-        Self {
-            vertices: b.vertices().iter().map(|(_, v)| v.tolerance).collect(),
-            edges: b.edges().iter().map(|(_, e)| e.tolerance).collect(),
-        }
-    }
-
-    /// `Unported` when face query `query` raised a tolerance of `b`.
-    fn check_unchanged(&self, b: &Brep, query: &'static str) -> Result<()> {
-        let after = Self::of(b);
-        let grew = |before: &[f64], after: &[f64]| {
-            after
-                .iter()
-                .zip(before.iter().chain(core::iter::repeat(&f64::NEG_INFINITY)))
-                .any(|(a, b)| a > b)
-        };
-        if grew(&self.vertices, &after.vertices) || grew(&self.edges, &after.edges) {
-            let _ = query;
-            // UNPORTED(surface.surface_p2): smsurf_GetSurfaceCache object cache history
-            return Err(SolidError::unported(
-                "smsurf_GetSurfaceCache (trimmed surface cache history: tolerance growth)",
-                "surface.surface_p2",
-            ));
-        }
-        Ok(())
+        self.0.set_filleting_edge_curve(edge, curve)
     }
 }
 
@@ -2430,12 +2428,13 @@ fn resolve_face<O: ClassObject>(
     }
 }
 
-/// [`resolve_face`], mutably ([`ClassGeometryMut::topology_entity_mut`]).
+/// [`resolve_face`], mutably for the classification queries
+/// ([`ClassGeometryMut::topology_entity_for_query`]).
 fn resolve_face_mut<O: ClassObject>(
     geometry: &mut impl ClassGeometryMut<O>,
     face: O,
 ) -> Option<(&mut Brep, FaceId)> {
-    match geometry.topology_entity_mut(face)? {
+    match geometry.topology_entity_for_query(face)? {
         (b, EntityRef::Face(f)) => Some((b, f)),
         _ => None,
     }

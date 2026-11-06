@@ -13,14 +13,15 @@
 //! Deviations: out-parameters become result records; object pointers become caller
 //! handles. Direct local solutions retain the default variable count; the existing
 //! `LocalPointSolve` dispatcher sets it to two, as upstream does. Out-of-bounds
-//! evaluation uses a private surface copy, restoring the caller's state by
-//! construction. Copying checks every owned geometry branch against the `MAX_GEOMETRY_NESTING` (32)
+//! evaluation is enabled in place on the surface and restored after, as upstream's
+//! `SmTemporaryChangeValue`. The nesting check of the former evaluation copy still
+//! runs: it checks every owned geometry branch against the `MAX_GEOMETRY_NESTING` (32)
 //! depth bound. `CheckCrease` returns immediately because upstream disables it with
 //! `constexpr sbDoCreaseSubdomains = FALSE`. The local driver is iterative with
 //! upstream's fixed bound of 35.
 
 use super::p1::ErrorNormType;
-use super::p2::with_out_of_bounds_enabled;
+use super::p2::with_out_of_bounds_enabled_in_place;
 use super::{SurfPtGlobalSolver, SurfPtSolveStepper};
 use crate::curve::curve::p2::CurvePropertyType;
 use crate::curve::curve::p3::PointSolveOptions;
@@ -76,7 +77,7 @@ pub struct LocalPointSolve<O: Copy> {
 fn boundary_or_false(value: Result<bool>) -> Result<bool> {
     match value {
         Ok(v) => Ok(v),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(false),
     }
 }
@@ -111,7 +112,7 @@ impl SurfPtSolveStepper<'_> {
             };
         }
 
-        let natural = self.base.surface().natural_uv_domain();
+        let natural = self.base.surface().natural_uv_domain_with_nurb(k)?;
         let (param, iso, guess, iso_domain, cross_domain) = match bound {
             SurfParamType::UMin => (
                 SurfParamType::U,
@@ -144,6 +145,7 @@ impl SurfPtSolveStepper<'_> {
             _ => return Ok(false),
         };
         let curve = Curve::from(IsoCurve::from_surface(
+            k,
             self.base.surface().clone_for_evaluation()?,
             param,
             iso,
@@ -175,7 +177,7 @@ impl SurfPtSolveStepper<'_> {
                     sol = solution;
                     found
                 }
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => false,
             }
         };
@@ -267,7 +269,7 @@ impl SurfPtSolveStepper<'_> {
                         self.set_nr_suspect(true);
                     }
                 }
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => {
                     self.set_nr_suspect(true);
                     got_nr = false;
@@ -316,7 +318,7 @@ impl SurfPtSolveStepper<'_> {
                         return Ok(NextStep::success(reason));
                     }
                 }
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => got_plane = false,
             }
         }
@@ -360,13 +362,13 @@ impl SurfPtSolveStepper<'_> {
         }
         if got_nr {
             match nr.line_search(k, previous) {
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 _ => {}
             }
         }
         if got_plane {
             match plane.line_search(k, previous) {
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 _ => {}
             }
         }
@@ -441,10 +443,9 @@ impl Surface {
         guess: Point2,
         surface_object: Option<O>,
     ) -> Result<LocalPointSolve<O>> {
-        if let Some(surface) = with_out_of_bounds_enabled(self)? {
-            return surface.local_point_solve_1_body(k, domain, op, point, guess, surface_object);
-        }
-        self.local_point_solve_1_body(k, domain, op, point, guess, surface_object)
+        with_out_of_bounds_enabled_in_place(self, || {
+            self.local_point_solve_1_body(k, domain, op, point, guess, surface_object)
+        })
     }
 
     fn local_point_solve_1_body<O: Copy>(

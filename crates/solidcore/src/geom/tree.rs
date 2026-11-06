@@ -43,6 +43,12 @@
 //! | [`AuxDataType`], [`NodeGeomType`], [`SplitDir`], [`NodeClass`] | `SmAuxDataType`, `SmNodeGeomType`, `SmSurfParamType` (U/V), `SmNodeClassType` |
 //!
 //! Deviations:
+//! - **Handle space.** `Tree::retag_curve_tree` (not upstream) copies a curve
+//!   subdivision tree into another handle space, for the curve cache memo
+//!   (`curve.curve_p5`). Completed curve spans and parent data contain no handles
+//!   and are shared immutably across clones and handle conversions. Nodes, lists
+//!   and owner handles remain independent; replacing decomposition data replaces
+//!   only that tree's shared reference. Empty trees allocate no shared data.
 //! - Pointers become arena indices: nodes live in [`Tree::nodes`] ([`NodeId`]) and
 //!   object-list items in [`Tree::lists`] ([`ListId`]), both in allocation order,
 //!   exactly the order of upstream's `SmMemBlockMgr::GetActiveElements`. Resetting
@@ -63,7 +69,9 @@
 //! - The neighbour searches return a new `Vec` instead of appending to the
 //!   caller's `SmTArray`; the four direction-specific recursions (and the four
 //!   `Get*Side` functions) share one body parameterised by the
-//!   search direction, with the parent recursion turned into a loop.
+//!   search direction. Parent recursion is a loop; side descent uses an explicit
+//!   DFS continuation stack in the same child order, retaining the cycle guard
+//!   at depth > node count without an arbitrary geometry-depth bound.
 //! - The single-point constructor always allocates its node (and object-list
 //!   item) in the tree's arenas; upstream can also use caller-owned memory, which
 //!   is then invisible to `GetAllTreeNodes`/`GetNodeCount`.
@@ -81,6 +89,8 @@
 //!   `SurfaceCache::first_bezier_patch` answers the same walk from the cache.
 //! - `SM_ASSERT`, `WARN` (bad split-direction data) and debug drawing are not
 //!   ported; a `WARN` branch simply adds nothing, as upstream.
+
+use std::sync::Arc;
 
 use crate::curve::curve_cache::{BezierAux1d, BezierSpan};
 use crate::error::{Result, SolidError};
@@ -400,6 +410,14 @@ pub enum TreeOwner {
     Other,
 }
 
+/// Finished, handle-free curve data. Only the owning reference can be replaced;
+/// no mutable access to these arrays is exposed after installation.
+#[derive(Debug, PartialEq)]
+struct CurveTreeData {
+    spans: Vec<BezierSpan>,
+    parents: Vec<BezierAux1d>,
+}
+
 /// A binary tree of boxes (`SmTree`): an object spatial tree, a single point
 /// tree, or the skeleton of a curve/surface subdivision tree.
 #[derive(Debug, Clone, PartialEq)]
@@ -418,10 +436,9 @@ pub struct Tree<O> {
     nodes: Vec<TreeNode<O>>,
     /// `m_sListMgr`: every object-list item, in allocation order.
     lists: Vec<ObjectList<O>>,
-    /// The owning curve cache's leaf spans (its `m_sBezMgr`), for curve trees.
-    curve_spans: Vec<BezierSpan>,
-    /// The owning curve cache's parent data (its `m_sParentMgr`), for curve trees.
-    curve_parents: Vec<BezierAux1d>,
+    /// The curve cache's completed `m_sBezMgr` / `m_sParentMgr` arrays, shared
+    /// across handle conversions; absent for empty and non-curve trees.
+    curve_data: Option<Arc<CurveTreeData>>,
     /// The curve of an owning curve cache (`SmCurveCache::GetCurve`), as the
     /// caller's handle.
     owner_curve: Option<O>,
@@ -492,27 +509,88 @@ impl<O> Tree<O> {
     /// `m_sBezMgr`).
     #[must_use]
     pub fn curve_spans(&self) -> &[BezierSpan] {
-        &self.curve_spans
+        match &self.curve_data {
+            Some(data) => &data.spans,
+            None => &[],
+        }
     }
 
     /// The parent data of a curve tree (the owning `SmCurveCache`'s `m_sParentMgr`).
     #[must_use]
     pub fn curve_parents(&self) -> &[BezierAux1d] {
-        &self.curve_parents
+        match &self.curve_data {
+            Some(data) => &data.parents,
+            None => &[],
+        }
     }
 
     /// Hands the curve decomposition data of the owning curve cache to the tree
     /// (the arenas [`CurveSpanRef`] indexes) together with the cache's curve handle
     /// ([`Tree::owner_object`]).
+    /// Clones and handle conversions share these read-only arrays. Calling this
+    /// again replaces this tree's data without changing any other tree.
     pub fn set_curve_data(
         &mut self,
         spans: Vec<BezierSpan>,
         parents: Vec<BezierAux1d>,
         owner_curve: Option<O>,
     ) {
-        self.curve_spans = spans;
-        self.curve_parents = parents;
+        self.curve_data = if spans.is_empty() && parents.is_empty() {
+            None
+        } else {
+            Some(Arc::new(CurveTreeData { spans, parents }))
+        };
         self.owner_curve = owner_curve;
+    }
+
+    /// This curve subdivision tree in another handle space, its owner curve named
+    /// `owner_curve` (not upstream: one memoised curve cache serves callers of every
+    /// handle space, see [`crate::curve::curve::p5::make_curve_cache`]). `None` when the
+    /// tree names other objects (object lists, surface data or an owner surface), which
+    /// a curve cache's tree does not.
+    pub(crate) fn retag_curve_tree<P>(&self, owner_curve: Option<P>) -> Option<Tree<P>> {
+        if self.owner_surface.is_some() || self.lists.iter().any(|l| l.object.is_some()) {
+            return None;
+        }
+        let mut nodes = Vec::with_capacity(self.nodes.len());
+        for n in &self.nodes {
+            let data = match &n.data {
+                NodeData::None => NodeData::None,
+                NodeData::ObjectList(l) => NodeData::ObjectList(*l),
+                NodeData::Curve(c) => NodeData::Curve(*c),
+                NodeData::Surface(_) => return None,
+            };
+            nodes.push(TreeNode {
+                parent: n.parent,
+                child1: n.child1,
+                child2: n.child2,
+                bbox: n.bbox,
+                aux_type: n.aux_type,
+                data,
+                geom_type: n.geom_type,
+            });
+        }
+        let lists = self
+            .lists
+            .iter()
+            .map(|l| ObjectList {
+                next: l.next,
+                bbox: l.bbox,
+                object: None,
+            })
+            .collect();
+        Some(Tree {
+            max_elements_per_node: self.max_elements_per_node,
+            min_size_ratio: self.min_size_ratio,
+            node_reduction: self.node_reduction,
+            owner: self.owner,
+            top: self.top,
+            nodes,
+            lists,
+            curve_data: self.curve_data.clone(),
+            owner_curve,
+            owner_surface: None,
+        })
     }
 
     /// Sets the handle of the owning surface cache's surface
@@ -531,8 +609,8 @@ impl<O> Tree<O> {
     /// range (upstream reads through whatever `m_pData` points at).
     pub fn curve_aux(&self, node: &TreeNode<O>) -> Result<&BezierAux1d> {
         let found = match node.data {
-            NodeData::Curve(CurveSpanRef::Span(i)) => self.curve_spans.get(i).map(|s| &s.aux),
-            NodeData::Curve(CurveSpanRef::Parent(i)) => self.curve_parents.get(i),
+            NodeData::Curve(CurveSpanRef::Span(i)) => self.curve_spans().get(i).map(|s| &s.aux),
+            NodeData::Curve(CurveSpanRef::Parent(i)) => self.curve_parents().get(i),
             NodeData::None | NodeData::ObjectList(_) | NodeData::Surface(_) => None,
         };
         found.ok_or(SolidError::InvalidInput {
@@ -548,7 +626,7 @@ impl<O> Tree<O> {
     /// `InvalidInput` when the node does not point at a leaf span.
     pub fn curve_span(&self, node: &TreeNode<O>) -> Result<&BezierSpan> {
         let found = match node.data {
-            NodeData::Curve(CurveSpanRef::Span(i)) => self.curve_spans.get(i),
+            NodeData::Curve(CurveSpanRef::Span(i)) => self.curve_spans().get(i),
             NodeData::Curve(CurveSpanRef::Parent(_))
             | NodeData::None
             | NodeData::ObjectList(_)
@@ -576,8 +654,7 @@ impl<O: Copy + PartialEq> Tree<O> {
             top: None,
             nodes: Vec::new(),
             lists: Vec::new(),
-            curve_spans: Vec::new(),
-            curve_parents: Vec::new(),
+            curve_data: None,
             owner_curve: None,
             owner_surface: None,
         }
@@ -744,8 +821,7 @@ impl<O: Copy + PartialEq> Tree<O> {
             top: self.top,
             nodes,
             lists,
-            curve_spans: self.curve_spans.clone(),
-            curve_parents: self.curve_parents.clone(),
+            curve_data: self.curve_data.clone(),
             owner_curve: self.owner_curve.map(&map).transpose()?,
             owner_surface: self.owner_surface.map(map).transpose()?,
         })
@@ -1465,42 +1541,57 @@ impl<O: Copy + PartialEq> Tree<O> {
         node: NodeId,
         out: &mut Vec<NodeId>,
         search: &SideSearch,
-        mut bits: u64,
+        bits: u64,
         count: u64,
         depth: usize,
     ) -> Result<()> {
-        if depth > self.nodes.len() {
-            return Err(cyclic_links(search.op));
+        enum Frame {
+            Visit(NodeId, u64, u64, usize),
+            // Resolve child 2 only after child 1 finishes, preserving error timing.
+            SecondChild(NodeId, u64, u64, usize),
         }
-        let n = self.node(node)?;
-        if !n.aux_type.is_surface_subdivision() {
-            return Ok(());
-        }
-        if count == 0 {
-            bits = 0;
-        }
-        let split = self.surface_aux(node, search.op)?.split_dir;
-        let facing = search.facing.axis;
-        let cross = match facing {
-            SplitDir::U => SplitDir::V,
-            SplitDir::V => SplitDir::U,
-            SplitDir::Unknown => SplitDir::Unknown,
-        };
-        if n.child1.is_none() {
-            out.push(node);
-        } else if split == facing {
-            let c = self.child(node, search.facing.first, search.op)?;
-            self.side(c, out, search, bits, count, depth + 1)?;
-        } else if split == cross {
-            let (b1, b2) =
-                Self::split_targets(search.target_bits, search.target_count, bits, count);
-            if b1 {
-                let c1 = self.child(node, true, search.op)?;
-                self.side(c1, out, search, bits << 1, count + 1, depth + 1)?;
+
+        let mut stack = vec![Frame::Visit(node, bits, count, depth)];
+        while let Some(frame) = stack.pop() {
+            let (node, mut bits, count, depth) = match frame {
+                Frame::Visit(node, bits, count, depth) => (node, bits, count, depth),
+                Frame::SecondChild(node, bits, count, depth) => {
+                    let c2 = self.child(node, false, search.op)?;
+                    (c2, (bits << 1) | 1, count + 1, depth + 1)
+                }
+            };
+            if depth > self.nodes.len() {
+                return Err(cyclic_links(search.op));
             }
-            if b2 {
-                let c2 = self.child(node, false, search.op)?;
-                self.side(c2, out, search, (bits << 1) | 1, count + 1, depth + 1)?;
+            let n = self.node(node)?;
+            if !n.aux_type.is_surface_subdivision() {
+                continue;
+            }
+            if count == 0 {
+                bits = 0;
+            }
+            let split = self.surface_aux(node, search.op)?.split_dir;
+            let facing = search.facing.axis;
+            let cross = match facing {
+                SplitDir::U => SplitDir::V,
+                SplitDir::V => SplitDir::U,
+                SplitDir::Unknown => SplitDir::Unknown,
+            };
+            if n.child1.is_none() {
+                out.push(node);
+            } else if split == facing {
+                let c = self.child(node, search.facing.first, search.op)?;
+                stack.push(Frame::Visit(c, bits, count, depth + 1));
+            } else if split == cross {
+                let (b1, b2) =
+                    Self::split_targets(search.target_bits, search.target_count, bits, count);
+                if b2 {
+                    stack.push(Frame::SecondChild(node, bits, count, depth));
+                }
+                if b1 {
+                    let c1 = self.child(node, true, search.op)?;
+                    stack.push(Frame::Visit(c1, bits << 1, count + 1, depth + 1));
+                }
             }
         }
         Ok(())
@@ -1614,6 +1705,137 @@ mod tests {
         assert!(p.is_kind_of(Tree::<u32>::TYPE) && !p.is_kind_of(1));
     }
 
+    /// Nonempty, distinguishable data: empty slices could share dangling pointers.
+    fn curve_tree() -> Tree<u32> {
+        let mut tree = Tree::new(Some(TreeOwner::CurveCache));
+        let aux = |length| BezierAux1d {
+            max_length: length,
+            ..BezierAux1d::default()
+        };
+        tree.set_curve_data(
+            vec![
+                BezierSpan {
+                    aux: aux(3.0),
+                    ..BezierSpan::default()
+                },
+                BezierSpan {
+                    aux: aux(7.0),
+                    ..BezierSpan::default()
+                },
+            ],
+            vec![aux(11.0)],
+            Some(17),
+        );
+        for data in [CurveSpanRef::Parent(0), CurveSpanRef::Span(1)] {
+            tree.add_node(TreeNode {
+                data: NodeData::Curve(data),
+                ..TreeNode::new()
+            });
+        }
+        tree.set_top_node(Some(NodeId(0)));
+        tree
+    }
+
+    fn assert_shared_curve_data<P>(source: &Tree<u32>, other: &Tree<P>) {
+        assert_eq!(source.curve_spans().len(), 2);
+        assert_eq!(source.curve_parents().len(), 1);
+        assert_eq!(source.curve_spans(), other.curve_spans());
+        assert_eq!(source.curve_parents(), other.curve_parents());
+        assert!(
+            std::ptr::eq(source.curve_spans().as_ptr(), other.curve_spans().as_ptr()),
+            "immutable curve spans were copied"
+        );
+        assert!(
+            std::ptr::eq(
+                source.curve_parents().as_ptr(),
+                other.curve_parents().as_ptr()
+            ),
+            "immutable curve parents were copied"
+        );
+    }
+
+    #[test]
+    fn empty_curve_data_preserves_tree_equality() {
+        let empty: Tree<u32> = Tree::new(None);
+        let mut copy = empty.clone();
+        copy.set_curve_data(Vec::new(), Vec::new(), None);
+        assert_eq!(copy, empty);
+        let mapped = copy.map_objects(|o| Ok(u64::from(o))).unwrap();
+        assert_eq!(mapped, Tree::<u64>::new(None));
+    }
+
+    #[test]
+    fn cloned_curve_tree_shares_completed_data() {
+        let tree = curve_tree();
+        let mut copy = tree.clone();
+        assert_eq!(copy, tree);
+        assert_shared_curve_data(&tree, &copy);
+        copy.node_mut(NodeId(1)).unwrap().data = NodeData::None;
+        assert_eq!(
+            tree.curve_span(tree.node(NodeId(1)).unwrap())
+                .unwrap()
+                .aux
+                .max_length,
+            7.0
+        );
+        copy.set_curve_data(Vec::new(), Vec::new(), Some(99));
+        assert!(copy.curve_spans().is_empty());
+        assert!(copy.curve_parents().is_empty());
+        assert_eq!(tree.owner_object().unwrap(), Some(17));
+        assert_eq!(
+            tree.curve_aux(tree.node(NodeId(0)).unwrap())
+                .unwrap()
+                .max_length,
+            11.0
+        );
+    }
+
+    #[test]
+    fn mapped_curve_tree_shares_completed_data() {
+        let tree = curve_tree();
+        let mut mapped = tree.map_objects(|o| Ok(u64::from(o) + 100)).unwrap();
+        assert_eq!(mapped.owner_object().unwrap(), Some(117));
+        assert_eq!(tree.owner_object().unwrap(), Some(17));
+        assert_eq!(mapped.top_node(), tree.top_node());
+        assert_shared_curve_data(&tree, &mapped);
+        assert_eq!(
+            mapped
+                .curve_span(mapped.node(NodeId(1)).unwrap())
+                .unwrap()
+                .aux
+                .max_length,
+            7.0
+        );
+        mapped.set_curve_data(Vec::new(), Vec::new(), None);
+        assert_eq!(tree.curve_spans().len(), 2);
+        assert_eq!(mapped.owner_object().unwrap(), None);
+    }
+
+    #[test]
+    fn retagged_curve_tree_shares_completed_data() {
+        let mut tree = curve_tree();
+        let retagged = tree.retag_curve_tree(Some(-23i64)).unwrap();
+        assert_eq!(retagged.owner_object().unwrap(), Some(-23));
+        assert_shared_curve_data(&tree, &retagged);
+        tree.set_curve_data(Vec::new(), Vec::new(), None);
+        drop(tree);
+        assert_eq!(
+            retagged
+                .curve_span(retagged.node(NodeId(1)).unwrap())
+                .unwrap()
+                .aux
+                .max_length,
+            7.0
+        );
+        assert_eq!(
+            retagged
+                .curve_aux(retagged.node(NodeId(0)).unwrap())
+                .unwrap()
+                .max_length,
+            11.0
+        );
+    }
+
     fn surf(split: SplitDir) -> NodeData<u32> {
         NodeData::Surface(SurfaceAux {
             split_dir: split,
@@ -1711,6 +1933,80 @@ mod tests {
             s.find_node(&unit_box()),
             Err(SolidError::InvalidInput { .. })
         ));
+    }
+
+    fn surface_leaf(t: &mut Tree<u32>, parent: Option<NodeId>) -> NodeId {
+        t.add_node(TreeNode {
+            parent,
+            aux_type: AuxDataType::AuxData,
+            data: surf(SplitDir::Unknown),
+            ..TreeNode::new()
+        })
+    }
+
+    fn split_surface_leaf(t: &mut Tree<u32>, node: NodeId, split: SplitDir) -> [NodeId; 2] {
+        let c1 = surface_leaf(t, Some(node));
+        let c2 = surface_leaf(t, Some(node));
+        let n = t.node_mut(node).unwrap();
+        n.data = surf(split);
+        n.child1 = Some(c1);
+        n.child2 = Some(c2);
+        [c1, c2]
+    }
+
+    #[test]
+    fn right_neighbors_deep_u_split_sibling_chain() {
+        let mut t = Tree::new(None);
+        let root = surface_leaf(&mut t, None);
+        t.set_top_node(Some(root));
+        let [left, mut facing] = split_surface_leaf(&mut t, root, SplitDir::U);
+        // Linear-time public-API construction: append two arena nodes and update
+        // just their parent per level, with no ancestor walks or tree cloning.
+        for _ in 0..20_000 {
+            [facing, _] = split_surface_leaf(&mut t, facing, SplitDir::U);
+        }
+        assert_eq!(t.right_neighbors(left).unwrap(), vec![facing]);
+    }
+
+    #[test]
+    fn mixed_split_neighbors_preserve_depth_first_order() {
+        let mut t = Tree::new(None);
+        let root = surface_leaf(&mut t, None);
+        t.set_top_node(Some(root));
+        let [left, right] = split_surface_leaf(&mut t, root, SplitDir::U);
+        let [lb, lt] = split_surface_leaf(&mut t, left, SplitDir::V);
+        let [rb, rt] = split_surface_leaf(&mut t, right, SplitDir::V);
+        let [rb_facing, _] = split_surface_leaf(&mut t, rb, SplitDir::U);
+        let [rbb, rbt] = split_surface_leaf(&mut t, rb_facing, SplitDir::V);
+        let [rbt_facing, _] = split_surface_leaf(&mut t, rbt, SplitDir::U);
+        let [rtb, rtt] = split_surface_leaf(&mut t, rt, SplitDir::V);
+        assert_eq!(
+            t.right_neighbors(left).unwrap(),
+            vec![rbb, rbt_facing, rtb, rtt]
+        );
+        // The left V split supplies nonzero target_count and both target bits.
+        assert_eq!(t.right_neighbors(lb).unwrap(), vec![rbb, rbt_facing]);
+        assert_eq!(t.right_neighbors(lt).unwrap(), vec![rtb, rtt]);
+    }
+
+    #[test]
+    fn downward_side_cycles_preserve_error_timing() {
+        for split in [SplitDir::U, SplitDir::V] {
+            let (mut t, [_, left, right, ..]) = grid();
+            let n = t.node_mut(right).unwrap();
+            n.data = surf(split);
+            n.child1 = Some(right);
+            // For a cross split, child 2 must not be resolved before the cyclic
+            // child-1 descent returns its error.
+            n.child2 = None;
+            assert!(matches!(
+                t.right_neighbors(left),
+                Err(SolidError::InvalidInput {
+                    operation: "geom::tree::Tree::right_neighbors",
+                    reason: "tree node links are cyclic",
+                })
+            ));
+        }
     }
 
     #[test]

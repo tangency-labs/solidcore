@@ -51,6 +51,7 @@
 //! | [`Line::trim`]                               | `Trim`                                            |
 //! | [`Line::assert_valid`]                       | `AssertValid`                                     |
 //! | [`Line::read_from_db`]                       | `ReadFromDB`                                      |
+//! | [`Line::write_to_db`]                        | `WriteToDB`                                       |
 //! | [`Line::is_kind_of`], [`Line::TYPE`], [`Line::type_string`], [`Line::class_string`] | `IsKindOf`, `GetType`, `GetClassType`, `GetTypeString`, `GetClassString` (`SM_COMMON`) |
 //! | [`Line::step_interval`], [`Line::max_analytic_domain`], [`Line::degree`], [`Line::number_natural_knots`] | `GetSTEPInterval`, `GetMaxAnalyticDomain`, `GetDegree`, `GetNumberNaturalKnots` (inline) |
 //! | [`Line::line_point`], [`Line::line_vector`], [`Line::line_scale`], [`Line::inside_out`] | `GetLinePoint`, `GetLineVector`, `GetLineScale`, `GetInsideOut` (inline) |
@@ -139,7 +140,8 @@ use crate::nurbs::b_spline_curve_n_lib::{InValueType, TrimMode};
 use crate::nurbs::b_spline_surface::p1::SurfParamType;
 use crate::nurbs::math::NOW;
 use crate::nurbs::nurbs_crv::allocate_nurb_curve;
-use crate::topology::database_io::{DatabaseReader, FileType, InputStream};
+use crate::surface::surface::Surface;
+use crate::topology::database_io::{DatabaseReader, DatabaseWriter, FileType, InputStream};
 
 const OP_SEGMENT: &str = "curve::line::Line::create_line_segment";
 const OP_OFFSET: &str = "curve::line::Line::create_simple_offset";
@@ -584,6 +586,17 @@ impl Line {
     /// Sets the analytic domain (`SetAnalyticDomain`; the NURB is not rebuilt).
     pub fn set_analytic_domain(&mut self, domain: Extent1d) {
         self.anal_domain = domain;
+    }
+
+    /// The same line on its STEP parameters moved by `h`: its analytic domain's ends moved
+    /// by `h` and its point by `-h` steps along it, so that the point at each NURB parameter
+    /// is unchanged (to the rounding of `P - h s V`) and the NURB is kept. Not upstream: a
+    /// surface of revolution whose heights are measured from another origin on its axis moves
+    /// its generator's parameters with its own (`implicit::on_axis_from`).
+    pub(crate) fn shift_step_parameter(&mut self, h: f64) {
+        self.point -= h * self.vector * self.scale;
+        self.anal_domain =
+            Extent1d::from_min_max(self.anal_domain.min() + h, self.anal_domain.max() + h);
     }
 
     /// `TRUE` (`IsAnalytic`).
@@ -1500,7 +1513,7 @@ impl Line {
     }
 
     /// `GetOrCreateGwNurbPointer`: makes the NURB when missing (status ignored).
-    fn ensure_nurb(&mut self, owner: Option<ObjectRef>) -> Result<()> {
+    pub(crate) fn ensure_nurb(&mut self, owner: Option<ObjectRef>) -> Result<()> {
         if self.base.nurb.is_none() {
             ignore_status(self.make_nurb_owned(owner))?;
         }
@@ -1909,10 +1922,10 @@ impl Line {
         if both_free {
             // init line parameters
             let mut ivl = Extent1d::from_min_max(0.0, 1.0);
-            let start =
-                tgt_start.unwrap_or(self.point + self.scale * self.anal_domain.min() * self.vector);
-            let end =
-                tgt_end.unwrap_or(self.point + self.scale * self.anal_domain.max() * self.vector);
+            let start = tgt_start
+                .unwrap_or_else(|| self.point + self.scale * self.anal_domain.min() * self.vector);
+            let end = tgt_end
+                .unwrap_or_else(|| self.point + self.scale * self.anal_domain.max() * self.vector);
             let mut vec = end - start;
             let mut scale = vec.length();
 
@@ -2019,6 +2032,25 @@ impl Line {
         level_given: bool,
         key: ObjectKey,
     ) -> Result<bool> {
+        self.assert_valid_on(k, list, level_given, key, None)
+    }
+
+    /// [`Line::assert_valid`] of a UV trim on `trim_surface`, its face's surface: the
+    /// `SmBSplineCurve` checks measure the trim on it with
+    /// `Kernel::fixes.uv_trim_checks_on_surface` (WR-560, see
+    /// [`BSplineCurve::assert_valid_on`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`Line::assert_valid`].
+    pub fn assert_valid_on(
+        &mut self,
+        k: &Kernel,
+        list: Option<&mut AssertArray>,
+        level_given: bool,
+        key: ObjectKey,
+        trim_surface: Option<&Surface>,
+    ) -> Result<bool> {
         let mut list = list;
         let mut rtn = true;
 
@@ -2041,6 +2073,9 @@ impl Line {
                     analytic: this.is_analytic(),
                     bounded: this.is_bounded(),
                     is_degenerate: &is_degenerate,
+                    trim_surface,
+                    // (WR-668's zero-speed end needs three control points; a line has two)
+                    edge_ends: None,
                 },
             )?;
         }
@@ -2162,10 +2197,37 @@ impl Line {
                     line.convert_to_2d()?;
                 }
             }
-            Err(e @ SolidError::Unported { .. }) => return Err(e),
+            Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => return Err(e),
             Err(_) => {}
         }
         Ok(line)
+    }
+
+    /// `WriteToDB`: writes the line point, vector, analytic domain, scale and
+    /// inside-out flag, then the B-spline curve part.
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR` when the B-spline part has no NURB (upstream ignores the part's
+    /// status; its virtual `GetOrCreateGwNurbPointer` always has one to write).
+    pub fn write_to_db(&self, db: &mut DatabaseWriter, version: u64) -> Result<()> {
+        let (p, v) = (self.point, self.vector);
+        let (lo, hi) = (self.anal_domain.min(), self.anal_domain.max());
+        let inside_out = i32::from(self.inside_out);
+        if db.file_type() == FileType::Ascii {
+            db.out_reals(&[p.x, p.y, p.z]);
+            db.out_str(" SmLine Line Point \n");
+            db.out_reals(&[v.x, v.y, v.z]);
+            db.out_str(" SmLine Line Vector \n");
+            db.out_reals(&[lo, hi]).out_str(" SmLine Line Domain \n");
+            db.out_f64(self.scale).out_str(" SmLine Line Scale \n");
+            db.out_i64(inside_out.into());
+            db.out_str(" SmLine InsideOut Flag \n");
+        } else {
+            db.write_doubles(&[p.x, p.y, p.z, v.x, v.y, v.z, lo, hi, self.scale]);
+            db.write_boolean(inside_out);
+        }
+        self.base.write_to_db(db, version)
     }
 }
 

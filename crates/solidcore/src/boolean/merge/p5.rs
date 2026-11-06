@@ -397,7 +397,7 @@ fn collect_wires_and_shell_vertices(
     // A pass keeps one query for the B-rep it classifies against, which it does not
     // edit; the other-wire pass makes a fresh one per classification (MergeEdge edits
     // `brep` in between).
-    let other_query = BrepQuery::default();
+    let other_query = BrepQuery::of_brep(other);
     let mut done = !removes_primary(operation);
     while !done {
         done = true;
@@ -474,7 +474,7 @@ fn collect_wires_and_shell_vertices(
         let point = midpoint(kernels.other(), other, id)?;
         let region = classify_region(
             kernels.primary(),
-            &BrepQuery::default(),
+            &BrepQuery::of_brep(brep),
             brep,
             point,
             true,
@@ -500,7 +500,7 @@ fn collect_wires_and_shell_vertices(
     }
 
     if removes_primary(operation) {
-        let other_query = BrepQuery::default();
+        let other_query = BrepQuery::of_brep(other);
         let vertices: Vec<_> = brep.vertices().ids().collect();
         for v in vertices {
             if brep_marks.is_marked(kernels.primary(), Entity::Vertex(v), brep_mark)
@@ -518,7 +518,7 @@ fn collect_wires_and_shell_vertices(
         }
     }
 
-    let brep_query = BrepQuery::default();
+    let brep_query = BrepQuery::of_brep(brep);
     let mut keep_vertices = Vec::new();
     for v in other.vertices().ids() {
         if other_marks.is_marked(kernels.other(), Entity::Vertex(v), other_mark)
@@ -541,7 +541,7 @@ mod tests {
     use super::*;
     use crate::geom::attribute::{AttributeStore, ObjectKey};
     use crate::geom::object::ObjectRef;
-    use crate::topology::topology::Topology;
+
     use std::collections::BTreeMap;
 
     use crate::curve::line::Line;
@@ -550,7 +550,7 @@ mod tests {
     use crate::topology::{Edge, Edgeuse, EdgeuseOwner, Vertexuse, VertexuseOwner};
 
     fn copy<'a>(
-        records: &'a mut BTreeMap<ObjectKey, Topology>,
+        records: &'a mut crate::topology::topology::NotifyRecords,
         attributes: &'a mut AttributeStore,
     ) -> TopologyCopy<'a> {
         TopologyCopy {
@@ -588,6 +588,7 @@ mod tests {
                 key: ObjectKey(7_000_000 + u64::from(f.index())),
                 type_code: 16002,
             },
+            surface_attributes: true,
             face_destination_key: &|f| ObjectRef {
                 key: ObjectKey(6_000_000 + u64::from(f.index())),
                 type_code: 16002,
@@ -644,7 +645,7 @@ mod tests {
         bm.mark(&k, Entity::Edge(be), mt);
         let mut relations = Relations::default();
         relations.edges.record(ae, be).unwrap();
-        let mut records = BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attrs = AttributeStore::new();
         let mut keep = vec![EdgeId::from_index(u32::MAX)];
         let result = process_wires_and_shell_vertices(
@@ -691,7 +692,7 @@ mod tests {
             for (&other, &primary) in &edges {
                 relations.edges.record(primary, other).unwrap();
             }
-            let mut records = BTreeMap::new();
+            let mut records = crate::topology::topology::NotifyRecords::new();
             let mut attrs = AttributeStore::new();
             for operation in [
                 BooleanOperation::Union,

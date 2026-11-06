@@ -1,11 +1,14 @@
-//! Borrowed and owned topology access for sweeps and primitive creation.
+//! Borrowed and owned topology access for sweeps, primitive creation and the offset
+//! executive's merge.
 //!
 //! Upstream: `source/SMLib/src/SmTopologySweep.cpp`,
-//! `source/SMLib/src/SmPrimitiveCreation.cpp` (caller-owned modeling services).
+//! `source/SMLib/src/SmPrimitiveCreation.cpp` (caller-owned modeling services),
+//! `source/SMLib/src/SmOffsetExecutive.cpp` (`PiecewiseMerge`'s `SmMerge`).
 //!
 //! | Rust | Upstream |
 //! |------|----------|
-//! | [`SweepStore`] | B-rep/context ownership used by the two modeling callers |
+//! | [`SweepStore`] | B-rep/context ownership used by the modeling callers |
+//! | [`SweepStore::piecewise_merge_skipping`] | `SmMerge::PiecewiseMerge` with its skip relation |
 //!
 //! Deviations: checked, never-reused handles replace pointers. Contexts are shared
 //! by id, not copied. Notification identities reuse the Boolean adapter's encoding.
@@ -13,12 +16,16 @@
 //! HCR entries own their actual scene; no scene copy is kept. Native dependency
 //! errors and partial geometry are preserved. No numerical algorithm or recursion
 //! is introduced. Destruction releases the Rust-owned registry/attribute state;
-//! the unported native B-rep destructor is not emulated.
+//! the unported native B-rep destructor is not emulated. `RemoveFaces`,
+//! `RemoveAllTopology` and the sweep stitch edit through the context the store has
+//! already lent to the edit (the trait defaults lend it again and fail).
+//! A body's own attributes ([`Brep::add_attribute`]) move into the shared store
+//! when it is inserted or adopted, and a taken body gets a copy of its live objects'
+//! lists back.
 
 pub(crate) mod classification;
 mod merge;
 
-use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::{atomic::AtomicU64, Arc};
 
@@ -34,6 +41,7 @@ use crate::geom::attribute::{
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::context::{Context, MarkLock, MarkType};
 use crate::geom::object::ObjectRef;
+use crate::geom::tol::Relation;
 use crate::kernel::Kernel;
 use crate::primitive::primitive_creation::p3::PrimitiveAccess;
 use crate::topology::brep::p3 as brep_p3;
@@ -41,6 +49,7 @@ use crate::topology::edge::NotifyEnv;
 use crate::topology::topology::Topology;
 use crate::topology::topology_traverser::{self as traverser, Entity, FaceTraversalMarks};
 use crate::topology::{Brep, BrepId, EdgeId, FaceId};
+use std::collections::BTreeMap;
 
 const OP: &str = "sweep::topology_sweep::store";
 
@@ -127,6 +136,12 @@ pub trait SweepIdentities {
     fn new_curve(&self, _brep: BrepId, _edge: EdgeId, _type_code: i64) -> Result<ObjectRef> {
         Err(invalid("new split curve needs its caller identity"))
     }
+    /// Whether a curve the merge allocates at an edge split takes its actual Curve
+    /// identity from the edit's notification context when it is constructed
+    /// (`p9::CurveIdentity::Actual`), instead of [`Self::new_curve`].
+    fn actual_curve_identities(&self) -> bool {
+        false
+    }
     /// Reserve two distinct non-object handles for each primary region's merge
     /// source lists. They must not collide with topology, geometry or other lists.
     fn source_lists(
@@ -148,6 +163,10 @@ impl core::fmt::Debug for Identities<'_> {
     }
 }
 impl Identities<'_> {
+    fn actual_curve_identities(self) -> bool {
+        self.0.is_some_and(SweepIdentities::actual_curve_identities)
+    }
+
     fn source_lists(
         self,
         namespace: u32,
@@ -208,7 +227,7 @@ pub struct SweepStore<'a> {
     kernels: Vec<KernelEntry<'a>>,
     bodies: BodySlots<'a>,
     identities: Identities<'a>,
-    records: Storage<'a, BTreeMap<ObjectKey, Topology>>,
+    records: Storage<'a, crate::topology::topology::NotifyRecords>,
     attributes: Storage<'a, AttributeStore>,
     geometry_sequence: Arc<AtomicU64>,
     cleanup_errors: Vec<SolidError>,
@@ -283,6 +302,22 @@ fn entity(value: SweepEntity) -> (BrepId, EntityRef) {
     }
 }
 
+/// Every live topology object of `b` that can carry attributes, in arena order.
+fn live_entities(b: &Brep) -> Vec<EntityRef> {
+    let mut out: Vec<EntityRef> = Vec::new();
+    out.extend(b.regions().ids().map(EntityRef::Region));
+    out.extend(b.shells().ids().map(EntityRef::Shell));
+    out.extend(b.faces().ids().map(EntityRef::Face));
+    out.extend(b.faceuses().ids().map(EntityRef::Faceuse));
+    out.extend(b.loops().ids().map(EntityRef::Loop));
+    out.extend(b.loopuses().ids().map(EntityRef::Loopuse));
+    out.extend(b.edges().ids().map(EntityRef::Edge));
+    out.extend(b.edgeuses().ids().map(EntityRef::Edgeuse));
+    out.extend(b.vertices().ids().map(EntityRef::Vertex));
+    out.extend(b.vertexuses().ids().map(EntityRef::Vertexuse));
+    out
+}
+
 fn validate(b: &Brep, value: EntityRef) -> Result<()> {
     match value {
         EntityRef::Brep(_) => {}
@@ -325,7 +360,7 @@ impl<'a> SweepStore<'a> {
     /// Keep `next_handle` across sessions; registrations never reuse a handle.
     pub fn new(
         identities: &'a dyn SweepIdentities,
-        records: &'a mut BTreeMap<ObjectKey, Topology>,
+        records: &'a mut crate::topology::topology::NotifyRecords,
         attributes: &'a mut AttributeStore,
         next_handle: &'a mut u32,
     ) -> Self {
@@ -452,6 +487,8 @@ impl<'a> SweepStore<'a> {
 
     /// Adopt an unregistered body. Existing external identities are rejected before
     /// mutation; owned curves/surfaces receive their actual enclosing topology owner.
+    /// The body's own attributes ([`Brep::add_attribute`], `SmAObject` attributes)
+    /// join the shared store under its identities, where the store's edits carry them.
     pub fn insert_brep(&mut self, context: ContextId, brep: Brep) -> Result<BrepId> {
         if brep.key() != ObjectKey(0)
             || brep.edges().iter().any(|(_, e)| {
@@ -466,7 +503,181 @@ impl<'a> SweepStore<'a> {
         {
             return Err(invalid("body already has external object identities"));
         }
-        self.insert_body(context, Body::Owned(Box::new(brep)))
+        let mut brep = brep;
+        let own = brep.take_attributes();
+        let id = self.insert_body(context, Body::Owned(Box::new(brep)))?;
+        self.seed_attributes(id, own)?;
+        Ok(id)
+    }
+
+    /// (not upstream) Moves a body's own attributes (`SmAObject` attributes, keyed by
+    /// [`crate::topology::loopuse::notify_ref`]) into the shared store under the
+    /// body's identities, where the store's edits carry them.
+    fn seed_attributes(&mut self, id: BrepId, own: AttributeStore) -> Result<()> {
+        let namespace = entry(&self.bodies, id)?.namespace;
+        let identities = self.identities;
+        self.attributes.absorb(own, &|key| {
+            crate::topology::loopuse::entity_of_notify_key(key)
+                .map(|e| identities.object(namespace, e).key)
+                .ok_or_else(|| invalid("attribute list names no object"))
+        })
+    }
+
+    /// Move in a caller body whose objects already carry the caller's identities for
+    /// the handle it receives (its key and records, as the caller notified them
+    /// before). Unlike [`Self::insert_brep`] nothing is re-keyed: the store edits the
+    /// body under those same identities, and a Boolean may consume it.
+    /// The body's own attributes ([`Brep::add_attribute`]) join the shared store under
+    /// those identities, as [`Self::insert_brep`]'s do.
+    ///
+    /// # Errors
+    /// An unknown context, exhausted handles, no caller identities, or a B-rep key
+    /// that disagrees with the caller resolver; no registration is made.
+    pub fn adopt_brep(&mut self, context: ContextId, brep: Brep) -> Result<BrepId> {
+        self.kernels
+            .get(context.0 as usize)
+            .ok_or_else(|| invalid("unknown context"))?;
+        if self.identities.0.is_none() {
+            return Err(invalid("adopting a body needs caller identities"));
+        }
+        let index = u32::try_from(self.bodies.len()).map_err(|_| invalid("too many bodies"))?;
+        let namespace = index
+            .checked_add(1)
+            .filter(|n| *n <= 0x03ff_ffff)
+            .ok_or_else(|| invalid("body identity namespace exhausted"))?;
+        let id = BrepId::from_index(index);
+        if brep.key() != self.identities.object(namespace, EntityRef::Brep(id)).key {
+            return Err(invalid(
+                "adopted B-rep identity disagrees with caller resolver",
+            ));
+        }
+        let mut brep = brep;
+        let own = brep.take_attributes();
+        self.bodies.push(Some(BodyEntry {
+            context,
+            namespace,
+            body: Body::Owned(Box::new(brep)),
+        }));
+        self.seed_attributes(id, own)?;
+        Ok(id)
+    }
+
+    /// Move an owned body out to the caller, with its records and attributes left in
+    /// the caller's stores under its identities (the counterpart of
+    /// [`Self::adopt_brep`]). The id is not reused. The body also takes a copy of the lists of its
+    /// live objects as its own attributes ([`Brep::entity_attributes`]), `SM_AI_TAG`
+    /// tags of a tagging sweep among them, as upstream's objects keep theirs.
+    ///
+    /// # Errors
+    /// An unknown or released id, or a borrowed or retained HCR body.
+    pub fn take_brep(&mut self, id: BrepId) -> Result<Brep> {
+        if !matches!(entry(&self.bodies, id)?.body, Body::Owned(_)) {
+            return Err(invalid("only an owned body can be taken"));
+        }
+        // (not upstream) the body's objects take their attribute lists with them, as
+        // `SmAObject` attributes travel with their objects; the shared store keeps its
+        // own (the caller's stores, under the body's identities)
+        let own = self.body_attributes(id)?;
+        let slot = self
+            .bodies
+            .get_mut(id.index() as usize)
+            .ok_or_else(|| invalid("unknown body"))?;
+        match slot.take().map(|e| e.body) {
+            Some(Body::Owned(mut b)) => {
+                b.set_attributes(own);
+                Ok(*b)
+            }
+            _ => Err(invalid("only an owned body can be taken")),
+        }
+    }
+
+    /// (not upstream) A copy of the shared store's lists for the live objects of body
+    /// `id`, keyed by [`crate::topology::loopuse::notify_ref`] (the body's own
+    /// attributes once it leaves the store).
+    fn body_attributes(&self, id: BrepId) -> Result<AttributeStore> {
+        let e = entry(&self.bodies, id)?;
+        let names: BTreeMap<ObjectKey, ObjectKey> = live_entities(e.body.brep())
+            .into_iter()
+            .map(|x| {
+                (
+                    self.identities.object(e.namespace, x).key,
+                    crate::topology::loopuse::notify_ref(x).key,
+                )
+            })
+            .collect();
+        let mut own = (*self.attributes).clone();
+        own.retain_rekeyed(&|key| names.get(&key).copied())?;
+        Ok(own)
+    }
+
+    /// `SmMerge::PiecewiseMerge(pOptSkipPairs, bUseExistingTopology,
+    /// bCreateNewBrepsForFaces, rpResult)` with the surface pairs whose SSI is skipped
+    /// (`SmTArrayRelation` of surfaces, as the driver's surface identities; `None` is
+    /// a `NULL` relation, as [`SweepAccess::piecewise_merge`] passes).
+    ///
+    /// # Errors
+    /// Those of [`crate::boolean::merge::p3::piecewise_merge`]; `SM_ERR_NULL_POINTER`
+    /// for a null result.
+    pub fn piecewise_merge_skipping(
+        &mut self,
+        id: SweepMergeId,
+        skip_pairs: Option<&Relation<ObjectRef, ObjectRef>>,
+        use_existing_topology: bool,
+        create_new_breps_for_faces: bool,
+    ) -> Result<BrepId> {
+        self.run_merge(id, |k, driver| {
+            crate::boolean::merge::p3::piecewise_merge(
+                k,
+                driver,
+                skip_pairs,
+                use_existing_topology,
+                create_new_breps_for_faces,
+            )?
+            .ok_or_else(|| SolidError::null_pointer(OP))
+        })
+    }
+
+    /// [`Self::piecewise_merge_skipping`] after its leading `IntersectInsertRelate`
+    /// ([`crate::boolean::merge::p3::piecewise_merge_related`]): the caller has
+    /// already related the operands on its own intersector.
+    ///
+    /// # Errors
+    /// As [`Self::piecewise_merge_skipping`].
+    pub fn piecewise_merge_related_skipping(
+        &mut self,
+        id: SweepMergeId,
+        skip_pairs: Option<&Relation<ObjectRef, ObjectRef>>,
+        use_existing_topology: bool,
+        create_new_breps_for_faces: bool,
+    ) -> Result<BrepId> {
+        self.run_merge(id, |k, driver| {
+            crate::boolean::merge::p3::piecewise_merge_related(
+                k,
+                driver,
+                skip_pairs,
+                use_existing_topology,
+                create_new_breps_for_faces,
+            )?
+            .ok_or_else(|| SolidError::null_pointer(OP))
+        })
+    }
+
+    /// The `m_vTI` of a live merge session, for a caller that configures it as its
+    /// own `SmMerge` base does (`SmFilletExecutive` sets `m_bIgnoreTangency` and
+    /// `m_bDoingFillets`).
+    ///
+    /// # Errors
+    /// An unknown or released merge.
+    pub fn merge_intersector_mut(
+        &mut self,
+        id: SweepMergeId,
+    ) -> Result<&mut KernelManifoldIntersector> {
+        Ok(&mut self
+            .merges
+            .get_mut(id.0 as usize)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| invalid("unknown or released merge"))?
+            .intersector)
     }
 
     fn insert_body(&mut self, context: ContextId, mut body: Body<'a>) -> Result<BrepId> {
@@ -484,23 +695,34 @@ impl<'a> SweepStore<'a> {
         b.set_key(bk.key);
         let edges: Vec<_> = b.edges().ids().collect();
         for e in edges {
-            if let Some(c) = &mut b.edge_mut(e)?.curve {
-                let _ = c.set_owner(
-                    Some(self.identities.object(namespace, EntityRef::Edge(e))),
-                    Some(bk),
-                );
+            let owner = self.identities.object(namespace, EntityRef::Edge(e));
+            let has_curve = if let Some(c) = &mut b.edge_mut(e)?.curve {
+                let _ = c.set_owner(Some(owner), Some(bk));
                 let kernel = &mut self
                     .kernels
                     .get_mut(context.0 as usize)
                     .ok_or_else(|| invalid("unknown context"))?
                     .kernel;
                 brep_p3::edge_curve_identity(&mut kernel.context, b, e)?;
+                true
+            } else {
+                false
+            };
+            if has_curve {
+                b.set_geometry_owner_key(EntityRef::Edge(e), Some(owner));
             }
         }
         let faces: Vec<_> = b.faces().ids().collect();
         for f in faces {
-            if let Some(s) = &mut b.face_mut(f)?.surface {
-                s.set_owner(Some(self.identities.object(namespace, EntityRef::Face(f))));
+            let owner = self.identities.object(namespace, EntityRef::Face(f));
+            let has_surface = if let Some(s) = &mut b.face_mut(f)?.surface {
+                s.set_owner(Some(owner));
+                true
+            } else {
+                false
+            };
+            if has_surface {
+                b.set_geometry_owner_key(EntityRef::Face(f), Some(owner));
             }
             // the owned surface carries its face's tolerance, as wherever a face gets its
             // surface (`SmFace::GetTolerance` through `SmSurface::GetFace`)
@@ -623,7 +845,7 @@ fn body_keys(
     identities: Identities<'_>,
     id: BrepId,
     body: &Brep,
-    records: &BTreeMap<ObjectKey, Topology>,
+    records: &crate::topology::topology::NotifyRecords,
 ) -> Vec<ObjectKey> {
     let mut keys = if let Some(provider) = identities.0 {
         provider.owned_auxiliary_objects(id, body)
@@ -666,7 +888,7 @@ fn body_keys(
 }
 
 struct RecordMarks<'a> {
-    records: &'a mut BTreeMap<ObjectKey, Topology>,
+    records: &'a mut crate::topology::topology::NotifyRecords,
     namespace: u32,
     identities: Identities<'a>,
 }
@@ -695,12 +917,11 @@ impl FaceTraversalMarks for RecordMarks<'_> {
     }
     fn mark(&mut self, k: &Kernel, e: Entity, mark: MarkType) {
         self.records
-            .entry(
+            .or_default(
                 self.identities
                     .object(self.namespace, traversal_entity(e))
                     .key,
             )
-            .or_default()
             .mark(Some(&k.context), mark);
     }
 }
@@ -864,7 +1085,11 @@ impl SweepAccess for SweepStore<'_> {
                 .ok_or_else(|| invalid("unknown context"))?
                 .kernel;
             if let Body::Hcr(hcr) = &mut e.body {
-                crate::error::ignore_status(hcr.compute_global_visibility(k))?;
+                let p = k.fixes.sweep_statuses_pass_on; // fork c8f6a31 (WR-662)
+                crate::error::ignore_status(crate::error::passed_on(
+                    hcr.compute_global_visibility(k),
+                    p,
+                )?)?;
             }
             Ok(super::access::SweepScene { brep: scene })
         })();
@@ -972,16 +1197,7 @@ impl SweepAccess for SweepStore<'_> {
         use_existing_topology: bool,
         create_new_breps_for_faces: bool,
     ) -> Result<BrepId> {
-        self.run_merge(id, |k, driver| {
-            crate::boolean::merge::p3::piecewise_merge(
-                k,
-                driver,
-                None,
-                use_existing_topology,
-                create_new_breps_for_faces,
-            )?
-            .ok_or_else(|| SolidError::null_pointer(OP))
-        })
+        self.piecewise_merge_skipping(id, None, use_existing_topology, create_new_breps_for_faces)
     }
     fn union(&mut self, id: SweepMergeId) -> Result<BrepId> {
         self.run_merge(id, |k, driver| driver.union(k))
@@ -1041,10 +1257,7 @@ impl SweepAccess for SweepStore<'_> {
             .get(c.0 as usize)
             .ok_or_else(|| invalid("unknown context"))?
             .kernel;
-        self.records
-            .entry(key)
-            .or_default()
-            .mark(Some(&k.context), mark);
+        self.records.or_default(key).mark(Some(&k.context), mark);
         Ok(())
     }
     fn collect_faces(
@@ -1073,6 +1286,66 @@ impl SweepAccess for SweepStore<'_> {
             None,
             None,
         )
+    }
+    /// `SmBrep::RemoveFaces`, notifying the store's lent context. The default's
+    /// kernel-callback variant would lend that context a second time.
+    fn remove_faces(&mut self, brep: BrepId, faces: &[FaceId]) -> Result<()> {
+        self.with_brep_mut(brep, |kernel, brep, _, env| {
+            let editing = brep.editing_enabled();
+            crate::topology::brep::p5::remove_faces_notified(kernel, brep, editing, faces, env)
+        })
+    }
+    /// `SmBrep::RemoveAllTopology`, notifying the store's lent context (as
+    /// [`Self::remove_faces`]).
+    fn remove_all_topology(&mut self, brep: BrepId) -> Result<()> {
+        self.with_brep_mut(brep, |kernel, brep, _, env| {
+            crate::topology::brep::p10::remove_all_topology_notified(kernel, brep, env)
+        })
+    }
+    /// `SmStitch(SmSweepStitchCallback, tol, TRUE, TRUE).DoStitching()`, editing
+    /// through the store's lent context (as [`Self::remove_faces`]). Split curves
+    /// take the caller's identities.
+    fn stitch(
+        &mut self,
+        brep: BrepId,
+        sweep: &mut super::TopologySweep,
+        tolerance: f64,
+        making_manifold_solid: bool,
+    ) -> Result<()> {
+        let identities = self.identities;
+        let new_curve = |edge: EdgeId, type_code: i64| {
+            identities
+                .0
+                .ok_or_else(|| invalid("new split curve needs its caller identity"))?
+                .new_curve(brep, edge, type_code)
+        };
+        self.with_brep_mut(brep, |kernel, model, _, env| {
+            let curve_identity = if identities.actual_curve_identities() {
+                crate::topology::brep::p9::CurveIdentity::Actual(
+                    &crate::topology::brep::p9::issue_curve_identity,
+                )
+            } else {
+                crate::topology::brep::p9::CurveIdentity::Checked(&new_curve)
+            };
+            let mut edits = crate::heal::stitch::p1::BorrowedStitchEdits {
+                env,
+                curve_identity,
+            };
+            let mut callback = super::access::SweepStitchCallback { brep, sweep };
+            let mut stitch =
+                crate::heal::stitch::p1::Stitch::new(&mut callback, tolerance, true, true);
+            stitch.making_manifold_solid = making_manifold_solid;
+            stitch.edits = Some(&mut edits);
+            stitch
+                .do_stitching(
+                    kernel,
+                    model,
+                    None,
+                    None,
+                    crate::heal::stitch::p2::MinGapRequest::default(),
+                )
+                .map(|_| ())
+        })
     }
 }
 
@@ -1526,6 +1799,37 @@ mod tests {
     }
 
     #[test]
+    fn inserted_bodies_bring_their_attributes_and_taken_bodies_take_them_back() {
+        // #1462: a B-rep's own attributes join the shared store under the body's
+        // identities, and a taken body carries the lists of its live objects again
+        let mut store = SweepStore::owned();
+        let c = store.insert_kernel(Kernel::default()).unwrap();
+        let mut raw = Brep::new_with_infinite_region().unwrap();
+        let shell = raw.add_shell().unwrap();
+        let f = raw.add_face(shell).unwrap();
+        raw.add_attribute(
+            EntityRef::Face(f),
+            Attribute::long(10007, 7, Behavior::Copy),
+        )
+        .unwrap();
+        let b = store.insert_brep(c, raw).unwrap();
+        let key = store.object_ref(b, EntityRef::Face(f)).unwrap().key;
+        let h = store
+            .attributes(b)
+            .unwrap()
+            .find_attribute(key, 10007)
+            .unwrap();
+        assert_eq!(
+            store.attributes(b).unwrap().get(h).unwrap().long_value(),
+            Some(7)
+        );
+        let back = store.take_brep(b).unwrap();
+        let a = back.find_attribute(EntityRef::Face(f), 10007).unwrap();
+        assert_eq!(a.long_value(), Some(7));
+        assert_eq!(back.entity_attributes(EntityRef::Face(f)).len(), 1);
+    }
+
+    #[test]
     fn face_collection_observes_the_same_persistent_marks_as_native_notifications() {
         let mut store = SweepStore::owned();
         let c = store.insert_kernel(Kernel::default()).unwrap();
@@ -1583,7 +1887,7 @@ mod tests {
         assert_eq!(store.curve_tag((b, edge)).unwrap(), Some(curve_tag));
         assert_eq!(store.tag(SweepEntity::Edge(b, edge)).unwrap(), None);
         assert!(store
-            .insert_brep(c, store.brep(b).unwrap().clone())
+            .insert_brep(c, store.brep(b).unwrap().clone_standing_for_self().unwrap())
             .is_err());
         store.remove_brep(b).unwrap();
         assert!(!store.attributes.is_live(h));
@@ -1796,7 +2100,7 @@ mod borrowed_tests {
         let mut k = Kernel::default();
         let mut b = Brep::new();
         b.set_key(ObjectKey(991));
-        let mut records = BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attributes = AttributeStore::new();
         let mut next = 15;
         let mut store = SweepStore::new(&Identities, &mut records, &mut attributes, &mut next);
@@ -1804,6 +2108,37 @@ mod borrowed_tests {
         assert!(store.register_brep(c, &mut b).is_err());
         assert_eq!(*store.bodies.next, 15);
         assert!(store.bodies.slots.is_empty());
+    }
+    #[test]
+    fn adopted_bodies_keep_their_identities_and_can_be_taken_back() {
+        let mut k = Kernel::default();
+        let mut records = crate::topology::topology::NotifyRecords::new();
+        let mut attributes = AttributeStore::new();
+        let mut next = 4;
+        let mut store = SweepStore::new(&Identities, &mut records, &mut attributes, &mut next);
+        let c = store.register_kernel(&mut k).unwrap();
+        let id = BrepId::from_index(4);
+        let mut wrong = Brep::new();
+        wrong.set_key(ObjectKey(991));
+        assert!(store.adopt_brep(c, wrong).is_err());
+        let mut b = Brep::new_with_infinite_region().unwrap();
+        b.set_key(Identities.topology(id, EntityRef::Brep(id)).key);
+        b.set_tolerance(0.25);
+        assert_eq!(store.adopt_brep(c, b).unwrap(), id);
+        // nothing is re-keyed or registered for the adopted body
+        assert_eq!(
+            store.brep(id).unwrap().key(),
+            Identities.topology(id, EntityRef::Brep(id)).key
+        );
+        assert!(store.records.is_empty());
+        let b = store.take_brep(id).unwrap();
+        assert_eq!(b.tolerance(), 0.25);
+        assert!(!store.contains_brep(id));
+        assert!(store.take_brep(id).is_err());
+        // a store without caller identities cannot adopt
+        let mut owned = SweepStore::owned();
+        let c = owned.insert_kernel(Kernel::default()).unwrap();
+        assert!(owned.adopt_brep(c, Brep::new()).is_err());
     }
     #[test]
     fn actual_shared_and_distinct_contexts_and_borrow_orders() {
@@ -1816,7 +2151,7 @@ mod borrowed_tests {
         let mut b = Brep::new();
         let mut c = Brep::new();
         a.set_editing_enabled(true);
-        let mut records = BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attributes = AttributeStore::new();
         let mut next_handle = 0;
         let mut store =
@@ -1877,7 +2212,7 @@ mod borrowed_tests {
         face.loops.push(LoopId::from_index(99));
         face.faceuse = Some(FaceuseId::from_index(99));
         let f = b.add_face_record(face).unwrap();
-        let mut records = BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attributes = AttributeStore::new();
         let mut next_handle = 0;
         let mut store =
@@ -1984,7 +2319,7 @@ mod bounding_box_tests {
         let interval = curve.natural_interval();
         brep_p5::create_wire_edge_from_curve(&mut k, &mut b, curve, interval).unwrap();
         let vertex = b.vertices().ids().next().unwrap();
-        let mut records = BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attrs = AttributeStore::new();
         let mut next = 0;
         {
@@ -2036,7 +2371,7 @@ mod bounding_box_tests {
             BSplineSurface::from_data(2, 2, 2, 2, 5, 5, &net, &knots, &knots).unwrap(),
         );
         let domain = Extent2d::from_bounds(0.2, 0.25, 0.8, 0.75);
-        let mut records = BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attrs = AttributeStore::new();
         let face = {
             let key_of = |entity| Identities.topology(id, entity);
@@ -2122,7 +2457,7 @@ mod production_path_tests {
             k2.context.set_doing_boolean(true);
             let mut original = Brep::new_with_infinite_region().unwrap();
             let mut destination = Brep::new_with_infinite_region().unwrap();
-            let mut records = BTreeMap::new();
+            let mut records = crate::topology::topology::NotifyRecords::new();
             let mut attrs = AttributeStore::new();
             let mut next_handle = 0;
             let mut store =
@@ -2177,7 +2512,7 @@ mod production_path_tests {
     fn hcr_scene_access_and_idempotent_release() {
         let mut k = Kernel::default();
         let mut original = Brep::new_with_infinite_region().unwrap();
-        let mut records = BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attrs = AttributeStore::new();
         let mut next_handle = 0;
         let mut store = SweepStore::new(&Identities, &mut records, &mut attrs, &mut next_handle);
@@ -2263,7 +2598,7 @@ mod persistence_tests {
         )
         .unwrap();
         let mut b = Brep::new();
-        let mut records = BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attrs = AttributeStore::new();
         let mut next = 0;
         {
@@ -2347,7 +2682,7 @@ mod persistence_tests {
         edge.curve =
             Some(Line::from_points(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), 3).into());
         let edge = original.add_edge_record(edge).unwrap();
-        let mut records = BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attrs = AttributeStore::new();
         let mut next = 0;
         let old_temporary;
@@ -2439,7 +2774,7 @@ mod borrowed_wire_tests {
             let v = original
                 .add_vertex_record(crate::topology::Vertex::default())
                 .unwrap();
-            let mut records = BTreeMap::new();
+            let mut records = crate::topology::topology::NotifyRecords::new();
             let mut attributes = AttributeStore::new();
             let mut next = 0;
             let mut store = SweepStore::new(&Identities, &mut records, &mut attributes, &mut next);
@@ -2507,8 +2842,11 @@ mod borrowed_wire_tests {
                 (Kernel::default(), Kernel::default());
             let mut source_body = Brep::new_with_infinite_region().unwrap();
             let mut destination_body = Brep::new_with_infinite_region().unwrap();
-            let (mut records, mut attributes, mut next) =
-                (BTreeMap::new(), AttributeStore::new(), 29);
+            let (mut records, mut attributes, mut next) = (
+                crate::topology::topology::NotifyRecords::new(),
+                AttributeStore::new(),
+                29,
+            );
             let mut store = SweepStore::new(&Identities, &mut records, &mut attributes, &mut next);
             let source_context = store.register_kernel(&mut source_kernel).unwrap();
             let destination_context = if shared {

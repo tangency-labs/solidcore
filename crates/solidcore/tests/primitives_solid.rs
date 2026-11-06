@@ -41,6 +41,8 @@ fn precise_sphere_properties_scale_and_translate() {
     for (center, radius) in [(Vec3::ZERO, 2.0), (Vec3::new(1.0, -2.0, 0.5), 5.0)] {
         for no_pole in [false, true] {
             let mut k = Kernel::default();
+            // 1.0.1's error scales cannot converge at 1e-10 on a sphere (WR-472)
+            k.fixes.precise_properties_body_length_scale = true;
             let mut b = if no_pole {
                 create_sphere_no_pole_with_tolerance(&mut k, center, radius, 1e-9)
             } else {
@@ -70,14 +72,66 @@ fn precise_sphere_properties_scale_and_translate() {
     }
 }
 
+/// SMLib 1.0.1's default (WR-472): `SmFace::ComputePreciseProperties` holds the volume
+/// and moments of a sphere of radius 3 below roundoff at 1e-10, and the integration fails
+/// with `SM_ERR`. The opt-in `precise_properties_body_length_scale` measures it.
 #[test]
-#[ignore = "blocked: partial sphere/torus construction needs SmFace::CurveOnClassify"]
-fn spheres_and_tori_are_closed_solids_with_analytic_properties() {
-    let failures: Vec<String> = checks::curved_specs()
-        .iter()
-        .filter_map(|s| checks::check(s).err().map(|e| format!("{}: {e}", s.name)))
-        .collect();
-    assert!(failures.is_empty(), "{failures:#?}");
+fn default_sphere_precise_properties_fail_at_tight_accuracy() {
+    use solidcore::geom::attribute::{AttributeStore, ObjectKey};
+    use solidcore::mass::integrator::properties::{
+        brep_properties, MassPropertyBehavior, PropertyAttributes,
+    };
+    use solidcore::primitive::api_primitives::create_sphere;
+    use solidcore::query::brep::{calculate_bounding_box, BoundingBoxOptions};
+    use solidcore::{math::Vec3, Kernel, SolidError};
+
+    let store = AttributeStore::default();
+    let key_of = |_| ObjectKey(0);
+    let attributes = PropertyAttributes {
+        store: &store,
+        key_of: &key_of,
+    };
+    for fixed in [false, true] {
+        let mut k = Kernel::default();
+        k.fixes.precise_properties_body_length_scale = fixed;
+        let mut b = create_sphere(&mut k, Vec3::ZERO, 3.0).unwrap();
+        let mid = calculate_bounding_box(&k, &b, BoundingBoxOptions::default())
+            .unwrap()
+            .mid();
+        let result = brep_properties(
+            &k,
+            &mut b,
+            1e-10,
+            mid,
+            MassPropertyBehavior::default(),
+            &attributes,
+        );
+        if fixed {
+            assert!(result.is_ok(), "{result:?}");
+        } else {
+            assert!(
+                matches!(
+                    result,
+                    // the step control failing: upstream's SM_ERR, named by its cause
+                    Err(SolidError::Upstream {
+                        operation: "mass::integrator::step_control",
+                        code: solidcore::error::SM_ERR,
+                        ..
+                    })
+                ),
+                "{result:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn partial_spheres_and_tori_have_analytic_properties() {
+    let specs = checks::curved_specs();
+    for name in ["partial sphere r3 0..90", "partial torus R5 r1.5 0..90"] {
+        let spec = specs.iter().find(|spec| spec.name == name).unwrap();
+        checks::check(spec).unwrap_or_else(|e| panic!("{name}: {e}"));
+    }
 }
 
 #[test]
