@@ -1983,11 +1983,9 @@ pub(super) fn face_silhouettes<O: SolutionObject>(
     // This sets the tracer's requested accuracy; it does not turn its sampled
     // span checks into a certified bound on the UV trace.
     let projection_scale = view.length_squared();
-    let approx_tol = if projection_scale == 0.0 {
-        tolerance_3d
-    } else {
-        tolerance_3d / projection_scale
-    };
+    // A contracting projection must not loosen the geometric tolerance: the
+    // tracer also uses it to decide whether a geometric segment exists.
+    let approx_tol = tolerance_3d / projection_scale.max(1.0);
     if !projection_scale.is_finite()
         || !approx_tol.is_finite()
         || approx_tol < 0.0

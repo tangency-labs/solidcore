@@ -25,6 +25,7 @@ fn projected_sphere_face_maximum_matches_surface_and_closed_form() {
 
 #[test]
 fn projected_tilted_sphere_face_maximum_uses_projection_metric() {
+    check_sphere_projection(45.0, 0.001);
     check_sphere_projection(45.0, 1.0);
     check_sphere_projection(45.0, 1000.0);
 }
