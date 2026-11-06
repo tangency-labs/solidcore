@@ -1,58 +1,40 @@
-//! Runner for unit `topology.face_p1`. C++: `solidcore_ffi::units::topology_face_p1`.
+//! Runner for unit `topology.face_p1`. Ported from upstream `SmFace.cpp` (the shim
+//! `harness/cpp/shim/topology_face_p1.cpp` was the reference); checked against its golden.
 //! Rust: `solidcore::topology::face::p1`.
 //!
 //! Every op runs on a B-rep of unit `topology.vertexuse` (upstream `.smb` files, faces of
-//! B-spline surfaces or real `SmPlane`s, wire edges, the `my_test_topology` network): the
-//! C++ side builds a real `SmBrep` and runs the `SmFace` member on the selected face of its
-//! native geometry; the Rust side builds the same B-rep itself ([`own_brep`]: the Rust
-//! kernel's builders, or the Rust `.smb` reader, renumbered into the shim's traversal
-//! order), gives each edge curve its edge as owner (as upstream) and runs the port. No
-//! C++ state reaches the Rust side: each side resolves the face and loop selectors
-//! (modulo their counts) on its own B-rep. Both sides produce one flat record
-//! (`out`, laid out as in the ffi module): statuses, domains, gaps, curve samples and
-//! the orientation / UV trim curve state after the mutating ops.
+//! B-spline surfaces or planes, wire edges, the `my_test_topology` network), built by
+//! [`own_brep`] (the Rust kernel's builders, or the Rust `.smb` reader, renumbered into
+//! the shim's traversal order), with each edge curve owned by its edge (as upstream). The
+//! face and loop selectors are taken modulo their counts. The runner records one flat
+//! record (`out`): statuses, domains, gaps, curve samples and the orientation / UV trim
+//! curve state after the mutating ops.
 //!
-//! `MoveSeam` / `SplitAtSeam` take `HasSeamProblem`'s classifications and enums. Each
-//! side computes its own: the C++ side calls `SmFace::HasSeamProblem` before the call,
-//! the Rust side `topology::face::p4::has_seam_problem_in_brep_mut` (default arguments)
-//! on its own B-rep, and both record what it found (`has crossed missing near_miss`,
-//! then per direction the target-loop flag, interval count and middle point classes),
-//! so the seam problem is compared as a value and no C++ result reaches the Rust call.
-//! With `props` both sides also pass face properties
-//! with the given seam verdicts and closed flags. The classification handles name the
-//! B-rep's own entities, surface, curves and seam temporaries (as upstream's `SmObject`
-//! pointers do), so the seam problem a `MoveSeam` with split recomputes after the move
-//! (`HasSeamProblem` over the face's own objects) runs as upstream's does. The split
-//! that follows defers: the caller's classification geometry here cannot borrow the
-//! B-rep the call mutates, so its merges resolve no topology (`plan/findings.md`).
+//! `MoveSeam` / `SplitAtSeam` take `HasSeamProblem`'s classifications and enums: the
+//! runner computes them with `topology::face::p4::has_seam_problem_in_brep_mut` (default
+//! arguments) on the case's B-rep and records what it found (`has crossed missing
+//! near_miss`, then per direction the target-loop flag, interval count and middle point
+//! classes). With `props` it also passes face properties with the given seam verdicts and
+//! closed flags. The classification handles name the B-rep's own entities, surface,
+//! curves and seam temporaries (as upstream's `SmObject` pointers do), so the seam problem
+//! a `MoveSeam` with split recomputes after the move (`HasSeamProblem` over the face's own
+//! objects) runs as upstream's does. The split that follows defers: the caller's
+//! classification geometry here cannot borrow the B-rep the call mutates, so its merges
+//! resolve no topology (`plan/findings.md`).
 //!
-//! After a seam op both sides also count the B-rep's geometry owners (`owners`, the ffi
-//! module): how many faces' surfaces, edges' curves and edge uses' UV trim curves are owned
-//! by their own entity, by nothing or by another object. Counted, so the two sides'
-//! numbering of the faces and edges the op made does not matter; each side reads its own
-//! B-rep (the Rust side resolves an owner key with `own_builder::resolve_owner`, or as
-//! this runner's own [`key_of`] names the entity).
+//! After a seam op the runner also counts the B-rep's geometry owners (`owners`): how many
+//! faces' surfaces, edges' curves and edge uses' UV trim curves are owned by their own
+//! entity, by nothing or by another object (an owner key resolves with
+//! `own_builder::resolve_owner`, or as this runner's own [`key_of`] names the entity).
 //!
 //! Deferred: the cone `TrimWithDomain` callbacks of `ShrinkGeometry`
 //! (`surface.surface_p2`), and the `MoveSeam` splits past the recomputed seam problem
-//! (merges whose handles the geometry cannot resolve). Rejected: the seam calls the C++ crash trap (below) catches.
+//! (merges whose handles the geometry cannot resolve).
 //!
-//! **C++ crash trap.** Upstream `SplitAtSeam`'s U-then-V branch recurses on the wrong
-//! face and crashes (`plan/upstream-issues.md` UB-137). The shim runs every seam call
-//! that can reach it in a forked child: a `SplitAtSeam` merging in both directions on a
-//! face periodic in either (by the face properties' closed flags or by the surface
-//! itself), and every `MoveSeam` with split past its early return (it recomputes the seam
-//! problem before splitting). A child that crashes answers `-4`; where the shim cannot
-//! fork (Windows) it skips the call (`-3`) as before. Both are inputs undefined in C++
-//! (AGENTS.md section 5.6), so the C++ side reports them as `rejected` with a reason
-//! naming UB-137 and the trap: the harness then skips the Rust side and compares
-//! nothing. Seam calls the trap runs to completion compare as usual.
-//!
-//! Both sides hold the B-rep's native geometry (analytic surfaces, conic edge curves),
-//! so the conic and analytic branches (`SwapUV`'s conic mirrors) are compared.
+//! The B-rep holds native geometry (analytic surfaces, conic edge curves), so the conic
+//! and analytic branches (`SwapUV`'s conic mirrors) are exercised.
 
 use std::cell::RefCell;
-use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -73,8 +55,6 @@ use solidcore::topology::face::p2 as fp2;
 use solidcore::topology::face::p4 as fp4;
 use solidcore::topology::{Brep, EdgeId, EdgeuseId, FaceId, LoopId, VertexId};
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::topology_face_p1::{self as ffi, Op};
-use solidcore_ffi::units::topology_vertexuse as fixture;
 
 use super::topology_vertexuse::{self as shared, BrepIn};
 use crate::case::CaseContext;
@@ -90,10 +70,6 @@ fn harness(msg: impl Into<String>) -> HarnessError {
 
 /// "Upstream would dereference null" in an output slot.
 const NULL_DEREF: f64 = -2.0;
-/// A seam call the shim skipped: it could not run it in a child process (UB-137).
-const NOT_RUN: f64 = -3.0;
-/// A seam call whose child process crashed, hung or sent no whole record (UB-137).
-const CRASHED: f64 = -4.0;
 /// `SM_ERR_INVALID_INPUT`.
 const SM_ERR_INVALID_INPUT: f64 = 1007.0;
 
@@ -196,96 +172,6 @@ fn flag(b: bool) -> f64 {
     }
 }
 
-/// The B-rep block (`validate_only` and `init_gaps` off).
-fn brep_block(b: &BrepIn) -> Result<Vec<f64>, HarnessError> {
-    let mut out = Vec::new();
-    match b {
-        BrepIn::File { rebuild, .. } => out.extend([0.0, flag(*rebuild)]),
-        BrepIn::Wire { curve, t0, t1 } => {
-            out.push(1.0);
-            shared::push_curve(&mut out, curve)?;
-            out.extend([*t0, *t1]);
-        }
-        BrepIn::Face { surface, dom } => {
-            out.push(2.0);
-            shared::push_surface(&mut out, surface)?;
-            out.extend(dom);
-        }
-        BrepIn::Network => out.push(3.0),
-    }
-    out.extend([0.0, 0.0]);
-    Ok(out)
-}
-
-fn props_args(p: Option<PropsIn>) -> [f64; 6] {
-    match p {
-        None => [0.0, 4.0, 4.0, 4.0, 0.0, 0.0],
-        Some(p) => [
-            1.0,
-            f64::from(p.crossed),
-            f64::from(p.missing),
-            f64::from(p.near_miss),
-            f64::from(p.closed_u),
-            f64::from(p.closed_v),
-        ],
-    }
-}
-
-/// The op code and its arguments after the face index.
-fn op_args(op: &OpIn) -> (Op, Vec<f64>) {
-    match op {
-        OpIn::UvDomain {
-            limit,
-            want_max,
-            want_2nd,
-        } => (
-            Op::UvDomain,
-            vec![flag(*limit), flag(*want_max), flag(*want_2nd)],
-        ),
-        OpIn::UvDomainAfterTrimShift {
-            limit,
-            want_max,
-            want_2nd,
-            domain,
-            shift,
-        } => {
-            let mut args = vec![flag(*limit), flag(*want_max), flag(*want_2nd)];
-            args.extend(domain);
-            args.extend(shift);
-            (Op::UvDomainAfterTrimShift, args)
-        }
-        OpIn::Oriented { param, fill, loop_ } => {
-            (Op::Oriented, vec![flag(*param), flag(*fill), *loop_ as f64])
-        }
-        OpIn::Rect => (Op::Rect, vec![]),
-        OpIn::Flip => (Op::Flip, vec![]),
-        OpIn::SetSurface { delete } => (Op::SetSurface, vec![flag(*delete)]),
-        OpIn::LoopRoundTrip { loop_ } => (Op::LoopRoundTrip, vec![*loop_ as f64]),
-        OpIn::RemoveUv => (Op::RemoveUv, vec![]),
-        OpIn::SwapUv => (Op::SwapUv, vec![]),
-        OpIn::Shrink => (Op::Shrink, vec![]),
-        OpIn::MoveSeam {
-            props,
-            center,
-            split,
-        } => {
-            let mut v = props_args(*props).to_vec();
-            v.extend([flag(*center), flag(*split)]);
-            (Op::MoveSeam, v)
-        }
-        OpIn::SplitAtSeam { props } => {
-            let mut v = props_args(*props).to_vec();
-            v.extend([0.0, 0.0]);
-            (Op::SplitAtSeam, v)
-        }
-        OpIn::DeleteInnerLoop { loops, attributed } => {
-            let mut v = vec![flag(*attributed), loops.len() as f64];
-            v.extend((0..4).map(|i| loops.get(i).map_or(-1.0, |&l| l as f64)));
-            (Op::DeleteInnerLoop, v)
-        }
-    }
-}
-
 /// The file of a B-rep: under `TestFiles/pt_TestFiles`, or with the prefix `fixture:`
 /// one of this unit's hand-built files in `fixtures/topology.face_p1` (planar plates with
 /// holes for `DeleteInnerLoop`).
@@ -302,55 +188,6 @@ fn path_of(brep: &BrepIn) -> Result<String, HarnessError> {
         }
     }
     shared::path_of(brep)
-}
-
-/// A cached export with its key (the `.smb` path and the block's bits).
-type CachedExport = (String, Vec<u64>, Rc<Vec<f64>>);
-
-thread_local! {
-    /// The last few exports (both sides of a case export the same B-rep).
-    static EXPORTS: RefCell<Vec<CachedExport>> = const { RefCell::new(Vec::new()) };
-}
-
-/// The export of a B-rep.
-fn export_of(brep: &BrepIn) -> Result<Rc<Vec<f64>>, HarnessError> {
-    let path = path_of(brep)?;
-    let block = brep_block(brep)?;
-    let bits: Vec<u64> = block.iter().map(|x| x.to_bits()).collect();
-    if let Some(e) = EXPORTS.with(|c| {
-        c.borrow()
-            .iter()
-            .find(|(p, b, _)| *p == path && *b == bits)
-            .map(|(_, _, e)| Rc::clone(e))
-    }) {
-        return Ok(e);
-    }
-    let e = Rc::new(
-        fixture::eval(fixture::Op::Export, &path, &block)
-            .map_err(|e| harness(format!("c++ export: {e}")))?,
-    );
-    EXPORTS.with(|c| {
-        let mut c = c.borrow_mut();
-        if c.len() >= 4 {
-            c.remove(0);
-        }
-        c.push((path, bits, Rc::clone(&e)));
-    });
-    Ok(e)
-}
-
-/// The inputs with the face and loop selectors resolved; `Err(output)` when the case
-/// ends before the op (the B-rep did not build, or it has no face).
-/// A resolved case (inputs and the B-rep export), or the output of a case that ends
-/// before the op.
-type Resolved = Result<(Inputs, Rc<Vec<f64>>), Output>;
-
-fn resolve(i: &Inputs) -> Result<Resolved, HarnessError> {
-    let ex = export_of(&i.brep)?;
-    let Some(c) = fixture::counts(&ex) else {
-        return Ok(Err(Output::new().values("out", ex.to_vec())));
-    };
-    Ok(resolve_with(i, c).map(|r| (r, ex)).map_err(|o| *o))
 }
 
 /// The inputs with the selectors resolved against entity counts `c`, or the output of
@@ -393,45 +230,6 @@ fn resolve_with(i: &Inputs, c: [usize; 10]) -> Result<Inputs, Box<Output>> {
         _ => {}
     }
     Ok(r)
-}
-
-fn input_of(i: &Inputs) -> Result<(Op, String, Vec<f64>), HarnessError> {
-    let (op, args) = op_args(&i.op);
-    let mut v = vec![i.face as f64];
-    v.extend(args);
-    v.extend(brep_block(&i.brep)?);
-    Ok((op, path_of(&i.brep)?, v))
-}
-
-// ---- C++ side ---------------------------------------------------------------------------
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (r, _) = match resolve(i)? {
-        Ok(x) => x,
-        Err(o) => return Ok(o),
-    };
-    let (op, path, input) = input_of(&r)?;
-    let out = ffi::eval(op, &path, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    if let Some(reason) = trapped(&out) {
-        return Ok(Output::rejected(reason));
-    }
-    Ok(Output::new().values("out", out))
-}
-
-/// The rejection of a seam call the shim's crash trap did not get a record from: the
-/// input is undefined in C++ (`plan/upstream-issues.md` UB-137, AGENTS.md section 5.6).
-/// The child crashed (`-4`, confirmed at runtime), or the shim could not fork and
-/// skipped the call (`-3`). The harness then runs neither the Rust side nor a compare.
-fn trapped(out: &[f64]) -> Option<&'static str> {
-    match out {
-        [b, x] if *b == 0.0 && *x == CRASHED => {
-            Some("UB-137: SmFace::SplitAtSeam crashed in the shim's fork crash trap")
-        }
-        [b, x] if *b == 0.0 && *x == NOT_RUN => {
-            Some("UB-137: SmFace::SplitAtSeam can crash; no fork for the crash trap, call skipped")
-        }
-        _ => None,
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------------
@@ -1382,10 +1180,6 @@ fn gen_inputs(rng: &mut Rng) -> Inputs {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.face_p1"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
