@@ -36,7 +36,9 @@
 //! `SmTemporaryRadiusChange`, which only the solver it is applied to evaluates before
 //! the change is reverted, so the copies evaluate as the shared object does.
 //! This foundation supports solver construction/loading; it does not substitute a
-//! result for the remaining fillet execution stages. No recursion.
+//! result for the remaining fillet execution stages. Band checks recognize constrained
+//! closest-point endpoints within the existing solver tolerance in geometric space.
+//! No recursion.
 //! Attributes (issue #1462): upstream they live on the bodies' objects; here
 //! [`FilletSession::with_second_base`] moves the target's (and second base's) own
 //! attributes ([`Brep::add_attribute`]) into the session store under the bodies' issued
@@ -5255,6 +5257,8 @@ impl SolverGeometryAccess<FilletObject> for SessionObjects<'_> {
                     .clone()
                     .ok_or_else(|| invalid("filleted edge without curve"))?;
                 let edge_ivl_b = self.target.edge(edge_b)?.interval;
+                let edge_start_b = edge_curve_b.evaluate_point(k, edge_ivl_b.min())?;
+                let edge_end_b = edge_curve_b.evaluate_point(k, edge_ivl_b.max())?;
                 let (Some(rails_a), Some(rails_b)) = (rails.get(a), rails.get(b)) else {
                     continue;
                 };
@@ -5313,6 +5317,17 @@ impl SolverGeometryAccess<FilletObject> for SessionObjects<'_> {
                                 continue; // beside the band, not across it
                             }
                             let e = edge_curve_b.evaluate_point(k, t)?;
+                            // A constrained closest point can return an endpoint one
+                            // parameter ulp inside the interval. It is still beside
+                            // the band: testing only t would extend the band's chord
+                            // across the face and falsely catch a distant rail (#2903).
+                            // Use the existing solver tolerance in geometric space,
+                            // independent of the edge curve's parameterization.
+                            if (e - edge_start_b).length() <= tol
+                                || (e - edge_end_b).length() <= tol
+                            {
+                                continue;
+                            }
                             let r = curve_b.evaluate_point(k, on_rail.parameter)?;
                             let mut chord = e - r;
                             let width = chord.length();
@@ -6072,7 +6087,7 @@ impl SessionObjects<'_> {
         executive: &mut FilletExecutive<FilletObject>,
     ) -> Result<()> {
         use crate::blend::fillet_corner::topology::join::{
-            JoinTopology, JoinTopologyEnv, JOIN_ACROSS_EDGES,
+            JoinTopology, JoinTopologyEnv, JOIN_ACROSS_EDGES, JOIN_UNEQUAL_OFFSETS,
         };
         let corner = self
             .corners
@@ -6128,6 +6143,34 @@ impl SessionObjects<'_> {
             let edge = crate::topology::edgeuse::p1::edge(target, first)?;
             executive.note_fit_radius(
                 0.0,
+                edge.map(|e| FilletObject::Topology(FilletBody::Target, EntityRef::Edge(e))),
+                crate::blend::fillet_executive::p3::FitKind::Radius,
+            );
+            return Err(SolidError::sm_err("SmBlendCorner::MakeJoinTopology"));
+        }
+        // (#2905) the size that builds: the other blend's offset, on the wider one's edge
+        if let JoinTopology::RefusedUnequalOffsets { blend, builds } = built {
+            let location = match vertex {
+                Some(v) => crate::topology::vertex::point(target, v).ok(),
+                None => None,
+            };
+            executive.error.note_vertex_error(
+                vertex.map(|v| FilletObject::Topology(FilletBody::Target, EntityRef::Vertex(v))),
+                location,
+                crate::blend::fillet_geom::p1::FilStatus::Failure,
+                crate::blend::fillet_geom::p1::FilletErrorType::NoRoom,
+                Some(JOIN_UNEQUAL_OFFSETS),
+            );
+            executive.error.no_room =
+                Some(crate::blend::fillet_executive::NoRoomReason::JoinOffsetsDiffer);
+            let wider = corners
+                .get(id.0 as usize)
+                .and_then(|c| c.solver_eus.as_deref())
+                .and_then(|eus| eus.get(blend).copied())
+                .ok_or_else(|| SolidError::null_pointer("SmBlendCorner::MakeJoinTopology"))?;
+            let edge = crate::topology::edgeuse::p1::edge(target, wider)?;
+            executive.note_fit_radius(
+                builds,
                 edge.map(|e| FilletObject::Topology(FilletBody::Target, EntityRef::Edge(e))),
                 crate::blend::fillet_executive::p3::FitKind::Radius,
             );

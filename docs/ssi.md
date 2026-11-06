@@ -274,8 +274,8 @@ and the bottom row its result panel.
 #17 proposed three steps:
 1. **The corpus becomes fixtures for the `intersect.*` units**: per case, the two surfaces, the exact
    truth (implicit or parametric) and the expected branches, isolated points, singular points and
-   coincident regions with a coverage tolerance. difftest uses only the surfaces, so the gate stays
-   Rust against C++ at 1e-9.
+   coincident regions with a coverage tolerance. The unit runners use only the surfaces, and
+   their goldens record the results.
 2. **A separate ground-truth acceptance test** that scores the port's output against the exact truth
    per case, and does not gate a unit's green status (a green unit must reproduce the gaps).
 3. **Fixes after parity**: each gap its own change, gated by the acceptance test going from fail to
@@ -285,14 +285,15 @@ What came of it, from #17's thread:
 - The corpus is public at [jyviko/ssi-corpus](https://github.com/jyviko/ssi-corpus) (MIT OR
   Apache-2.0): the 119 case files with exact truth, the generators, the scorer, and the SMLib runner
   as the runner contract's example.
-- `difftest --ssi-corpus` is step 2. It scores the C++ at 81/119, matching #17, and its scorer
+- `goldens --ssi-corpus` is step 2. It scored the C++ at 81/119, matching #17, and its scorer
   agrees with the corpus's `score.py` on 119/119 verdicts (§9). The 38 C++ misses are logged as
   WR-74 to WR-80, the fixes of §4.4.
 - #17 also recommends the method of Yang, Jia and Yan [16] for completeness, since neither SMLib nor
   SolidCraft's earlier kernel completed the cases reported in the literature.
 - Step 3's policy has since been replaced: fixes change the default result, with no compatibility
   flag, and the existing `UpstreamFixes` flags are to be retired (AGENTS.md §4b, 2026-11-04). The
-  WR-74 to WR-80 fixes still sit behind flags (§4.4), which is open work.
+  WR-80 fix is the default; the WR-74 to WR-79 fixes still sit behind flags (§4.4), which is
+  open work.
 
 ## 4. The pipeline
 
@@ -413,6 +414,8 @@ marching direction; at the branch point B (right) there are four, and both branc
 a point with parallel normals from the two Dupin indicatrices: no common direction is a tangent
 point, two a tangent curve, more a singularity whose directions are the indicatrices' intersections
 (preferring one into both domains at a start, else the one closest to the previous direction).
+Directions count as one only when they are the same one, to about 0.08°: upstream's 25.8° window read
+two close branches as a tangent curve (#2695).
 Equal umbilical curvatures are a coincidence. It runs on start points and on points the corrector
 lands on, not on every point the marcher passes, so the base marcher steps straight through a branch
 point. The fork's fixes, all off by default:
@@ -423,7 +426,6 @@ point. The fork's fixes, all off by default:
 | `ssi_tangent_curve_tracer` (WR-75, #395) | traces tangent curves the marcher cannot follow: Levenberg-Marquardt on S1 − S2 = 0 with n1 ∥ n2, directions probed on a small circle in the tangent plane; traces crossing branches through tangent contact nodes and reports the nodes | `surface_intersector/tangent_curves.rs`, `tangent_tracer.rs` |
 | `ssi_tangent_contact_points` (WR-74, #394) | Newton on a 4 × 4 system (the gap along S2's tangents, S1's tangents against n2) from the leaf pairs the interior search skips, plus the poles; a root is a touch point when the gap is below 1e-7 of the tolerance and the normals agree to 1e-4 rad | `adv_surface_intersector/tangent_contacts.rs` |
 | `ssi_trace_tangent_curves_once` (WR-76, #392) | one start point per cluster of tangent boundary start points, so an open tangent curve is traced once | `surface_intersector/p5.rs` |
-| `ssi_no_reverse_of_empty_trace` (WR-80, #391) | does not reverse and retrace an empty trace | `p5.rs`, `adv_surface_intersector.rs` |
 | `ssi_singular_start_inside_direction` (WR-512) | a curve starting at a singularity leaves along a direction into both domains | `adv_surface_intersector.rs` |
 | `ssi_pole_point_keeps_its_tangent` (WR-550) | a point at a pole keeps its exact limit tangent when stepping back | `surface_intersector/p1.rs` |
 
@@ -583,8 +585,8 @@ tighter enclosure, never a sample.
 | `EFF_ZERO`, `EFF_ZERO_SQRT` | 1e-12, 1e-6 | `math.rs` | zero tests; the closed forms' tolerance when none is given |
 | a face's tolerance | per face | the B-rep | plane boxes in the closed forms are expanded by it (`PlaneOwner`) |
 | interior seed angles | 5°, 2° | `adv_surface_intersector.rs` | below them a leaf pair's seed is skipped |
-| corpus approximation tolerance | 1e-6 | `difftest --ssi-corpus` | the tolerance passed to both engines |
-| corpus accuracy tolerance | 1e-5 (10 × tol) | `difftest/src/ssi/score.rs` | a curve farther than this from an exact surface is `INACCURATE` |
+| corpus approximation tolerance | 1e-6 | `goldens --ssi-corpus` | the tolerance passed to each engine |
+| corpus accuracy tolerance | 1e-5 (10 × tol) | `goldens/src/ssi/score.rs` | a curve farther than this from an exact surface is `INACCURATE` |
 | `ssi` Newton | 1e-11 | `ssi::Options::tolerance` | residual, scaled by the sine of the angle |
 | `ssi` link, resolution | 1e-7, 1e-5 | `ssi::Options` | arc ends joined; pieces below this unresolved are refused |
 | `ssi` field band | 1e-14 of the field's scale | `trace2d.rs`, `CLEAR` | a value within it is zero to rounding |
@@ -612,13 +614,13 @@ and why the approximation tolerance is half of it.
 | plane a hair off a cylinder wall | two lines microns apart instead of one tangent line | WR-510, `cylinder_plane_tangent_within_tolerance` | | flag on by default |
 | near-miss seam | an intersection runs within tolerance of a closed surface's seam | the curve and its trims end near but not on the seam: `SmFace::Test #36` "Face Near missing Seam", or `make_faceuse` 1001 | curves split at the seam by `solidcore-ssi` | #2538, #2537, cause not traced |
 | curve across a pole | the UV coordinate along a collapsed edge names no point | `ssi_pole_point_keeps_its_tangent` | split at the pole; placed by its approach; the pole divided out of the field | |
-| empty trace reversed (#17 gap 4) | `SM_ERR_NULL_POINTER` | `ssi_no_reverse_of_empty_trace` (#391) | | #391 |
+| empty trace reversed (#17 gap 4) | `SM_ERR_NULL_POINTER` | not traced back: a trace that produced no points is not reversed (WR-80, `surface_intersector/p4.rs`, `p5.rs`) | | `adv_surface_intersector.rs`'s own trace-back is unchecked; no known case reaches it (WR-80 addendum 2026-11-05) |
 | trace that never ends | 5000 points, or a creeping boundary trace | an error at 5000; `ssi_start_loop_trace_budget` bounds all start points | `Error::Unfinished` at 100,000 steps; pair budget 2,000,000 | |
 
 **Refusals.** `ssi` refuses by name: `BOOLEAN_TANGENT` (a contact it cannot prove), `BAD_PATCH`,
 `MARCHING_STALLED`, `EXIT_DIVERGED`, `ARC_UNFINISHED` (`ssi/src/lib.rs`). A refusal names where. The
 port returns `SolidError` statuses; a refusal there is an error code, and an unported callee is
-`SolidError::Unported`, which difftest scores as `DEFERRED`, never as a result.
+`SolidError::Unported`, which the corpus report scores as `DEFERRED`, never as a result.
 
 **Near-miss seams (#2538, #2537).** A box cut by a cylinder tilted 4° whose axis lies in a box face, or
 whose end cap is bisected by a face, fails the B-rep check with `SmFace::Test #36` or a 1001 in
@@ -656,15 +658,16 @@ A reviewer can check each of these on a change to SSI.
 13. The same input gives bit-identical output, independent of thread count.
 14. A change's tests check values a wrong result changes: corpus verdicts, distances to the exact
     curve, counts of curves and points, exact volumes in the boolean. Never timings.
-15. A change to ported code that is not a fix keeps difftest parity bit for bit on its
-    `intersect.*` units; a fix changes the default result and lists what changed (AGENTS.md §4b).
+15. A change to ported code that is not a fix keeps the goldens of its `intersect.*` units bit
+    for bit; a fix changes the default result, blesses the goldens it moves and lists what changed
+    (AGENTS.md §1, §4b).
 
 ## 9. Status
 
-**The SSI corpus.** `difftest --ssi-corpus` scores the engines on jyviko's corpus
+**The SSI corpus.** `goldens --ssi-corpus` scores the engines on jyviko's corpus
 ([ssi-corpus](https://github.com/jyviko/ssi-corpus), commit `b04c8a6`): 119 cases (planes,
 quadrics, tori, B-spline and NURBS pairs, 25 from Yang, Jia and Yan [16]), each with the dense exact
-intersection and its topology, at approximation tolerance 1e-6 (`crates/difftest/README.md`).
+intersection and its topology, at approximation tolerance 1e-6 (`crates/goldens/README.md`).
 
 | engine | pass (of 119) | not passing | source |
 |---|---|---|---|
@@ -678,7 +681,7 @@ The C++ row reproduces #17's primary run (§3.2). The port's column is the pinne
 case no engine passes, `y23_fig1d_two_quads`, is two patches 1e-8 apart that separate only at second
 order in places, below the 4.4e-13 their degree-9 form is exact to.
 
-**Port units.** The difftest units are `intersect.surface_intersector_p1` to `_p5`,
+**Port units.** The goldens units are `intersect.surface_intersector_p1` to `_p5`,
 `intersect.adv_surface_intersector`, `intersect.surface_tracer`, `intersect.surface_drop_lib_p1` to
 `_p3`, `intersect.surface_drop_curve`, `intersect.curve_class_p1` to `_p9`, `intersect.point_class`,
 `intersect.topology_solver_p1` and `_p2`, `intersect.api_intersectors`, `intersect.ray_tracer`,
@@ -690,7 +693,7 @@ boolean's side.
 | issue | topic |
 |---|---|
 | [#17](https://github.com/tangency-labs/solidcore/issues/17) | the corpus and the measured gaps of the upstream intersector |
-| [#391](https://github.com/tangency-labs/solidcore/issues/391) | an empty trace reversed (`SM_ERR_NULL_POINTER`); fix behind a flag |
+| [#391](https://github.com/tangency-labs/solidcore/issues/391) | an empty trace reversed (`SM_ERR_NULL_POINTER`); fixed on the default path |
 | [#393](https://github.com/tangency-labs/solidcore/issues/393) | curves not split at singular crossing points; fix behind a flag |
 | [#395](https://github.com/tangency-labs/solidcore/issues/395) | tangent and high-order contact curves missed or collapsed; fix behind a flag |
 | [#1552](https://github.com/tangency-labs/solidcore/issues/1552) | how `solidcore-ssi` is wired into the kernel |
@@ -723,7 +726,7 @@ implementations ([layers.md](layers.md) §2, step 4 of its order).
   through a pole, is §7's near-miss seam or pole row.
 - **Check the flags.** The port's fixes are off by default; SolidCraft runs with most of them on. A
   result that differs between the two is usually a flag (`UpstreamFixes::flags` lists them).
-- **Use the corpus.** `difftest --ssi-corpus 'c3_*'` runs a class; the per-case JSON in
+- **Use the corpus.** `goldens --ssi-corpus 'c3_*'` runs a class; the per-case JSON in
   `reports/` has each verdict's distances and topology signature. Add a corpus-style case for your
   pair when none exists.
 - **Read the literature before designing.** The survey chapters of [11] and the papers below cover
