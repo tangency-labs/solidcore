@@ -1,6 +1,8 @@
-//! `SmBrepCache` differential runner: real poly geometry, tree structure and order,
-//! object and node boxes, spatial queries and exact-vertex resize requests. Exact
-//! `BuildTrees` explicitly defers to the unported `query.brep` box calculation.
+//! Runner for unit `topology.brep_cache` (`SmBrepCache`): real poly geometry, tree
+//! structure and order, object and node boxes, spatial queries and exact-vertex resize
+//! requests. Exact `BuildTrees` explicitly defers to the unported `query.brep` box
+//! calculation. Ported from upstream `SmBrepCache`; checked against its golden.
+
 use crate::case::CaseContext;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
@@ -14,7 +16,6 @@ use solidcore::query::poly::PolyBrep;
 use solidcore::topology::brep_cache::{self, arena_identity, BrepCache, CacheObject, CacheSource};
 use solidcore::topology::{Brep, Vertex};
 use solidcore::Result as SolidResult;
-use solidcore_ffi::units::topology_brep_cache as ffi;
 
 /// Differential coverage of `SmBrepCache`.
 pub struct Runner;
@@ -39,27 +40,6 @@ struct Inputs {
 }
 fn yes() -> bool {
     true
-}
-fn encode(i: &Inputs) -> Vec<f64> {
-    let mut v = vec![
-        f64::from(i.exact),
-        f64::from(i.build),
-        i.tol,
-        i.vertices.len() as f64,
-    ];
-    v.extend(i.vertices.iter().flatten());
-    v.push(i.faces.len() as f64);
-    for f in &i.faces {
-        v.push(f.len() as f64);
-        v.extend(f.iter().map(|&x| x as f64));
-    }
-    v.push(i.resize.len() as f64);
-    v.extend(i.resize.iter().flatten());
-    v.push(i.resize_edges.len() as f64);
-    v.extend(i.resize_edges.iter().flatten());
-    v.push(i.queries.len() as f64);
-    v.extend(i.queries.iter().flatten());
-    v
 }
 fn ext(v: [f64; 6]) -> Extent3d {
     Extent3d::from_bounds(v[0], v[1], v[2], v[3], v[4], v[5])
@@ -330,28 +310,6 @@ impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.brep_cache"
     }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let v = ffi::eval(&encode(&i)).map_err(|e| HarnessError::new(e.to_string()))?;
-        let n = *v
-            .first()
-            .ok_or_else(|| HarnessError::new("missing topology length"))? as usize;
-        let end = n
-            .checked_add(1)
-            .ok_or_else(|| HarnessError::new("topology length overflow"))?;
-        let ints = v
-            .get(1..end)
-            .ok_or_else(|| HarnessError::new("invalid topology length"))?;
-        let floats = v
-            .get(end..)
-            .ok_or_else(|| HarnessError::new("invalid box offset"))?;
-        Ok(Output::new()
-            .ints(
-                "topology",
-                ints.iter().map(|&x| x as i64).collect::<Vec<_>>(),
-            )
-            .values("boxes", floats.to_vec()))
-    }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
         match run(&i) {
@@ -435,7 +393,7 @@ impl UnitDiff for Runner {
 mod tests {
     use super::*;
     #[test]
-    fn native_tolerance_normalization_matches_rust() {
+    fn tolerance_normalization_is_owner_independent() {
         for tolerance in [-0.001, solidcore::geom::tol::USE_DEFAULT] {
             let input = Inputs {
                 exact: false,
@@ -459,16 +417,14 @@ mod tests {
                 source: crate::case::CaseSource::Inline,
                 inputs: serde_json::to_value(&input).unwrap(),
             };
-            let cpp = Runner.run_cpp(&case).unwrap();
             let rust = Runner.run_rust(&case).unwrap();
-            assert!(cpp
+            assert!(rust
                 .values
                 .get("boxes")
                 .is_some_and(|values| !values.is_empty()));
-            assert_eq!(cpp, rust);
             // Equivalent geometry reached through generated-curve and edgeuse
-            // identities must resolve to the same native edge bounding boxes.
-            assert_eq!(cpp, run_with_intermediate_owners(&input, true).unwrap());
+            // identities must resolve to the same edge bounding boxes.
+            assert_eq!(rust, run_with_intermediate_owners(&input, true).unwrap());
         }
     }
 }
