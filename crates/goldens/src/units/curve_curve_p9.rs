@@ -1482,28 +1482,28 @@ mod tests {
 
     #[test]
     fn infinite_tangents_stop_scaling() {
-        // fuzz00144 / fuzz01222: the FFI refuses their `-1.8e308` weights; run
-        // directly, `FindPcExtremaEfo::evaluate` divided an infinite tangent by ten
-        // forever (issue #504). It now fails past `MAX_PC_SCALE_STEPS`, and the end
-        // solve treats that as no answer.
-        for name in ["fuzz00144_rust_hang", "fuzz01222_rust_hang"] {
-            let out = corpus_rust(name);
-            assert_eq!(out.ints["status"], vec![0], "{name}: {out:?}");
-            assert_eq!(out.values["out"], vec![0.0], "{name}: {out:?}");
-        }
+        // fuzz01222: the runner refuses its mixed rationality; run directly,
+        // `FindPcExtremaEfo::evaluate` divided an infinite tangent by ten forever. It now
+        // fails past `MAX_PC_SCALE_STEPS`, and the end solve treats that as no answer.
+        let out = corpus_rust("fuzz01222_rust_hang");
+        assert_eq!(out.ints["status"], vec![0], "{out:?}");
+        assert_eq!(out.values["out"], vec![0.0], "{out:?}");
+        // fuzz00144: a weight of 0 among its points puts its box at infinity, so
+        // `GlobalCurveSolve` refuses it before the solve (the coordinate bound).
+        let out = corpus_rust("fuzz00144_rust_hang");
+        assert_eq!(out.ints["status"], vec![1007], "{out:?}");
     }
 
     #[test]
-    fn unculled_solves_stop_at_the_branch_bound() {
-        // fuzz01043: boxes of `-1.8e308` weights cull nothing, so the global solve visited
-        // branches for minutes (issue #504). It now stops past `MAX_SOLVE_BRANCHES`
-        // (`2^23`); `GlobalCurveSolve` ignores the solve's status (as upstream) and keeps
-        // the 139 solutions found by then (20 under the old `2^20`). It takes about 14 s in
-        // the goldens profile, the optimised build CI runs the unit runners in (`--profile
-        // goldens`).
+    fn unmeasurable_curves_are_refused_before_the_global_solve() {
+        // fuzz01043: a Hermite end tangent of `1e300` puts control points at 3.3e299; the
+        // boxes cull nothing and the global solve visited branches until
+        // `MAX_SOLVE_BRANCHES` (`2^23`, about 14 s), keeping the 139 solutions found by
+        // then. `GlobalCurveSolve` now refuses a curve whose box reaches past
+        // `MAX_COORDINATE_MAGNITUDE` before building a cache: SM_ERR_INVALID_INPUT.
         let out = corpus_rust("fuzz01043_rust_hang");
-        assert_eq!(out.ints["status"], vec![0], "{out:?}");
-        assert_eq!(out.values["out"].first(), Some(&139.0), "{out:?}");
+        assert_eq!(out.ints["status"], vec![1007], "{out:?}");
+        assert!(out.values["out"].is_empty(), "{out:?}");
     }
 
     /// Generated cases mostly run (pass or defer), not harness errors.
