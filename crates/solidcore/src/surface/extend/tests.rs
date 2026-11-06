@@ -448,10 +448,6 @@ fn curvature_meets_every_distance_across_a_mirror_knot() {
         BoxSide::UMax,
     )
     .unwrap();
-    let net = match s.kind() {
-        SurfaceKind::BSpline(b) => b.gw_nurb().unwrap().clone(),
-        _ => panic!(),
-    };
     let mut last = 0.0;
     for i in 1..=60 {
         let e = 0.85 + 0.005 * f64::from(i);
@@ -1136,7 +1132,11 @@ fn the_ruled_product_form_past_every_side_keeps_the_source_and_every_row_is_stra
         let e = s
             .extended_by_distance(&k(), &dom(&s), side, Continuity::Ruled, 40.0)
             .unwrap();
-        assert!(e.source > 0.0 && e.source <= 1e-11, "{side:?}: {}", e.source);
+        assert!(
+            e.source > 0.0 && e.source <= 1e-11,
+            "{side:?}: {}",
+            e.source
+        );
         for i in 0..=nu {
             for j in 0..=nv {
                 let uv = Vec2::new(f64::from(i) / f64::from(nu), f64::from(j) / f64::from(nv));
@@ -1176,7 +1176,10 @@ fn the_ruled_product_form_past_every_side_keeps_the_source_and_every_row_is_stra
             let c = extract_iso_crv(net, t, dir).unwrap();
             let l = c.derivs(joint, Side::Left, 1).unwrap()[1];
             let r = c.derivs(joint, Side::Right, 1).unwrap()[1];
-            assert!(l.distance(r) < 1e-9 * l.length(), "{side:?} {t}: {l:?} {r:?}");
+            assert!(
+                l.distance(r) < 1e-9 * l.length(),
+                "{side:?} {t}: {l:?} {r:?}"
+            );
             let p0 = e.surface.evaluate_point(&k(), uv(joint, t)).unwrap();
             for i in 1..=8 {
                 let a = joint + (far - joint) * f64::from(i) / 8.0;
@@ -1194,9 +1197,18 @@ fn the_ruled_product_form_past_every_side_keeps_the_source_and_every_row_is_stra
 fn the_ruled_product_form_extends_past_a_second_side() {
     let s = ruled_product_net();
     let sides = s
-        .extended_sides(&k(), &[BoxSide::UMin, BoxSide::UMax], Continuity::Ruled, 5.0)
+        .extended_sides(
+            &k(),
+            &[BoxSide::UMin, BoxSide::UMax],
+            Continuity::Ruled,
+            5.0,
+        )
         .unwrap();
-    assert!(sides.source > 0.0 && sides.source <= 1e-10, "{}", sides.source);
+    assert!(
+        sides.source > 0.0 && sides.source <= 1e-10,
+        "{}",
+        sides.source
+    );
     let SurfaceKind::BSpline(b) = sides.surface.kind() else {
         panic!()
     };

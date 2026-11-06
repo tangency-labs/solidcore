@@ -6,7 +6,12 @@
 //! Ruled past its end, could not reach the local operation's margin. In its own test binary:
 //! SolidCraft's fixes are process-wide (`session::set_fixes`).
 
-#![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)] // test
+#![allow(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::disallowed_methods
+)] // test, its closed forms independent of the kernel
 
 mod common;
 
@@ -77,7 +82,7 @@ fn grown(t: f64) -> f64 {
 /// What the round's continuation past an end of radius r takes from that end's added
 /// wedge, x within y t past the end, where the continuation is the end's quarter-circle
 /// section carried straight along the edge: the corner square less the quarter disc,
-/// t * integral_0^r y (r - sqrt(r^2 - (r - y)^2)) dy = t r^3 (5/6 - pi/4).
+/// `t * integral_0^r y (r - sqrt(r^2 - (r - y)^2)) dy = t r^3 (5/6 - pi/4)`.
 fn end_take(t: f64, r: f64) -> f64 {
     t * r * r * r * (5.0 / 6.0 - PI / 4.0)
 }
