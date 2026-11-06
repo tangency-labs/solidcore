@@ -80,13 +80,17 @@ pub(crate) fn expand_knots(knots: &[f64], mults: &[u32], expected: usize) -> Opt
     Some(out)
 }
 
-/// The point at `t` (de Boor), homogeneous when rational.
+/// The point at `t` (de Boor), homogeneous when rational; `None` for knots that are not
+/// increasing (the reader refuses them, a model built by hand may carry them).
 pub(crate) fn bspline_point(c: &BSplineCurve, t: f64) -> Option<P3> {
     let p = c.degree as usize;
     let n = c.points.len();
     let u = expand_knots(&c.knots, &c.mults, n.checked_add(p)?.checked_add(1)?)?;
     let lo = *u.get(p)?;
     let hi = *u.get(n)?;
+    if lo.is_nan() || hi.is_nan() || lo > hi {
+        return None;
+    }
     let t = t.clamp(lo, hi);
     // span k with u[k] <= t < u[k+1], k in [p, n-1]
     let mut k = p;
