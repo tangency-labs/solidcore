@@ -7,7 +7,7 @@
 //! status, the body's counts and, per face (edge), its area (length) with the set of
 //! attributes it carries, rows sorted by attributes.
 //!
-//! C++: `solidcore_ffi::units::blend_fillet_executive_p3::attributed`.
+//! Checked against the golden of unit `blend.fillet_executive_p3`.
 
 use super::end_to_end::status;
 use crate::{HarnessError, Output};

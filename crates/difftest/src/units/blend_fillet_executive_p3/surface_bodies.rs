@@ -3,7 +3,7 @@
 //! after the call, which upstream edits in place (the rails are merged into the base
 //! faces' B-reps).
 //!
-//! C++: `solidcore_ffi::units::blend_fillet_executive_p3::surface_surface_bodies`.
+//! Checked against the golden of unit `blend.fillet_executive_p3`.
 
 use super::end_to_end::{section, status, take_section, topology};
 use crate::{HarnessError, Output};
