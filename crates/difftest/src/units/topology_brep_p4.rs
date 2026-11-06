@@ -1,40 +1,29 @@
-//! Differential runner for unit `topology.brep_p4`: `SmBrep::DeleteEdge`,
-//! `DeleteVertex`, `ShrinkGeometry`, `StitchFaces` and `~SmBrep` on real B-reps.
+//! Runner for unit `topology.brep_p4`: `SmBrep::DeleteEdge`, `DeleteVertex`,
+//! `ShrinkGeometry`, `StitchFaces` and `~SmBrep` on real B-reps
+//! (`solidcore::topology::brep::p4`, ported from upstream `SmBrep.cpp`); checked against
+//! its golden.
 //!
-//! The B-rep comes from the shared fixture (`sc_topology_fixture.h`): the C++ side
-//! builds it; the Rust side builds the same source with the Rust kernel
-//! ([`crate::own_builder`]) or reads an `.smb` file with the Rust reader, renumbered into
-//! the shim's walk order, so the target indices name the same objects on both sides. No
-//! C++ state reaches the Rust side: its vertex use lists are in the Rust build's order.
-//! Compared: the status, and on success (for the edits also
-//! after a failed status, which can come after part of the topology changed) the ten
-//! record counts of the B-rep afterwards (`StitchFaces` adds its outputs; the
-//! destructor its context flag) and every record of the B-rep, field by field (see
-//! [`Rec`]): links
-//! (labels), lists in their order, orientations, flags, domains, tolerances, points,
-//! intervals, UV points. Cases whose Rust path reaches an unported callee are deferred.
-//! A source the Rust kernel fails to build reports that failure (the shim's NULL build
-//! reports its status).
+//! The case builds its source with the Rust kernel ([`crate::own_builder`]) or reads an
+//! `.smb` file with the Rust reader, renumbered into the upstream test fixture's walk
+//! order, so the target indices name objects of that walk. Recorded: the status, and on
+//! success (for the edits also after a failed status, which can come after part of the
+//! topology changed) the ten record counts of the B-rep afterwards (`StitchFaces` adds
+//! its outputs; the destructor its context flag) and every record of the B-rep, field by
+//! field (see [`Rec`]): links (labels), lists in their order, orientations, flags,
+//! domains, tolerances, points, intervals, UV points. The kernel's refusal of an input
+//! (a damaged B-rep it will not walk) is recorded as that error. Cases whose path reaches
+//! an unported callee are deferred. A source the kernel fails to build records that
+//! failure.
 //!
-//! **Record naming.** A record that existed before the operation keeps the index of
-//! the first walk on both sides (the Rust arena id; the shim tags the C++ object).
-//! Records the operation made are renumbered by [`canonicalize`] (the same function on
-//! both sides) from their contents and links, so the order the two sides created or
-//! reached them in does not matter. The `Check` operation runs nothing and compares
-//! the Rust-built B-rep with the C++ records.
-//!
-//! Deviations: the runner-local native record decoder validates finite,
-//! nonnegative integral counts below the exclusive `2^usize::BITS` bound and
-//! checks available tokens before iterating records or lists. Storage grows
-//! incrementally; valid record ordering, labels and float bits are unchanged.
-
-#[path = "fixtures/topology_brep_records.rs"]
-mod records;
-
-use records::{parse_records, Model, Rec};
+//! **Record naming.** A record that existed before the operation keeps its index in the
+//! first walk (the arena id). Records the operation made are renumbered by
+//! [`canonicalize`] from their contents and links, so the order they were created or
+//! reached in does not matter. The `Check` operation runs nothing and records the built
+//! B-rep.
 
 use super::topology_vertexuse::{self as shared, BrepIn};
 use crate::case::CaseContext;
+use crate::cases::contract;
 use crate::output::Topology;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -54,8 +43,6 @@ use solidcore::topology::shell::ShellMembers;
 use solidcore::topology::{
     ArenaId, Brep, EdgeId, EdgeuseOwner, FaceId, LoopuseStart, ShellId, VertexId, VertexuseOwner,
 };
-use solidcore_ffi::units::topology_brep_p4::{self as ffi, Damage, Op, Request, NULL_DEREFERENCE};
-use solidcore_ffi::units::topology_vertexuse::{counts, validate_block};
 use std::collections::BTreeMap;
 
 /// Differential runner for `topology.brep_p4`.
@@ -69,13 +56,13 @@ enum OpIn {
     ShrinkGeometry,
     StitchFaces,
     Destroy,
-    /// No operation: the imported model against the C++ records.
+    /// No operation: the built B-rep's records.
     Check,
 }
 
 /// A hand-made defect of the built B-rep (the fixtures build whole B-reps only), put in
-/// before the operation on both sides. Inputs upstream dereferences `NULL` on are refused
-/// by the shim (the guard) and the case is `rejected`; every other damaged input runs.
+/// before the operation. Inputs upstream dereferences `NULL` on are refused by the kernel
+/// (an `InvalidInput` error, recorded); every other damaged input runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum DamageIn {
@@ -177,29 +164,6 @@ fn path_of(brep: &BrepIn) -> Result<String, HarnessError> {
     shared::path_of(brep)
 }
 
-fn request(i: &Inputs) -> Request {
-    Request {
-        damage: i.damage.map(|d| match d {
-            DamageIn::NoSurface(f) => Damage::NoSurface(f),
-            DamageIn::NoRegion(s) => Damage::NoRegion(s),
-            DamageIn::LostVertexuse(v) => Damage::LostVertexuse(v),
-        }),
-        op: match i.op {
-            OpIn::DeleteEdge => Op::DeleteEdge,
-            OpIn::DeleteVertex => Op::DeleteVertex,
-            OpIn::ShrinkGeometry => Op::ShrinkGeometry,
-            OpIn::StitchFaces => Op::StitchFaces,
-            OpIn::Destroy => Op::Destroy,
-            OpIn::Check => Op::Check,
-        },
-        editing: i.editing,
-        target: i.target,
-        keep: i.keep,
-        tol: i.tol,
-        flag: i.flag,
-    }
-}
-
 /// The Rust side's B-rep: the case's source built by the Rust kernel as the shim builds
 /// it ([`crate::own_builder::build_as`]), or its `.smb` file read by the Rust reader
 /// ([`crate::own_builder::read_with`]), renumbered into the shim's walk order under
@@ -238,6 +202,51 @@ fn record_counts(b: &Brep) -> [usize; 10] {
 }
 
 // ---- the records ---------------------------------------------------------------------------
+
+/// One record, retaining labels, ordered integer links and real values.
+#[derive(Debug, Clone, PartialEq)]
+struct Rec {
+    label: i64,
+    ints: Vec<i64>,
+    /// The kind each integer links to, if it is a link.
+    links: Vec<Option<usize>>,
+    floats: Vec<f64>,
+}
+
+impl Rec {
+    fn new(label: i64) -> Self {
+        Self {
+            label,
+            ints: Vec::new(),
+            links: Vec::new(),
+            floats: Vec::new(),
+        }
+    }
+    /// A plain integer.
+    fn i(&mut self, x: i64) {
+        self.ints.push(x);
+        self.links.push(None);
+    }
+    /// A link to record `x` of `kind`.
+    fn r(&mut self, kind: usize, x: i64) {
+        self.ints.push(x);
+        self.links.push(Some(kind));
+    }
+    /// An ordered list of links to records of `kind`, after its length.
+    fn l(&mut self, kind: usize, xs: &[i64]) {
+        self.i(xs.len() as i64);
+        for &x in xs {
+            self.r(kind, x);
+        }
+    }
+    /// A real field.
+    fn f(&mut self, x: f64) {
+        self.floats.push(x);
+    }
+}
+
+/// Records in the walk's ten-kind order.
+type Model = [Vec<Rec>; 10];
 
 /// The first label of a record the operation made.
 const NEW_BASE: i64 = 1_000_000;
@@ -461,10 +470,10 @@ fn rust_records(b: &Brep, pre: [usize; 10]) -> Model {
     ]
 }
 
-/// Renumbers the records the operation made, the same way on both sides.
+/// Renumbers the records the operation made.
 ///
-/// A new record has no name both sides agree on: C++ finds the objects in its walk
-/// order, Rust made them in the order of its arena. Its class is refined until stable
+/// A new record has no stable name: a walk finds the objects in its order, the kernel
+/// made them in the order of its arena. Its class is refined until stable
 /// from what is known of it: its fields, with the links to old records as they are
 /// and the links to new records by the class of their target (colour refinement); a
 /// new record is then labelled `NEW_BASE + class`. New records that cannot be told
@@ -575,13 +584,14 @@ fn status_output(status: f64) -> Output {
     Output::new().values("status", vec![status])
 }
 
-fn rust_status(e: &SolidError) -> Result<Output, HarnessError> {
+fn rust_status(e: &SolidError) -> Output {
     if let Some(o) = Output::unported(e) {
-        return Ok(o);
+        return o;
     }
     match e {
-        SolidError::Upstream { code, .. } => Ok(status_output(f64::from(*code))),
-        other => Err(err(&format!("rust: {other}"))),
+        SolidError::Upstream { code, .. } => status_output(f64::from(*code)),
+        // the kernel's refusal of the input (a damaged B-rep it will not walk)
+        other => Output::err(other.to_string()),
     }
 }
 
@@ -681,55 +691,16 @@ impl UnitDiff for Runner {
         "topology.brep_p4"
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let (path, blk) = block(&i.brep)?;
-        let out = ffi::eval(&path, &blk, request(&i)).map_err(|e| err(&e))?;
-        let Some((&status, rest)) = out.split_first() else {
-            return Err(err("empty shim output"));
-        };
-        if status == -1.0 {
-            return Ok(Output::rejected("fixture B-rep did not build"));
-        }
-        if status == NULL_DEREFERENCE {
-            // the guard: upstream dereferences NULL on this damaged B-rep, nothing was run
-            return Ok(Output::rejected(
-                "upstream dereferences NULL on the damaged B-rep (FFI guard)",
-            ));
-        }
-        if i.op == OpIn::Destroy {
-            return Ok(status_output(status).values("doing_boolean", rest.to_vec()));
-        }
-        let mut o = status_output(status);
-        // the records follow a success and, for the edits, a failed status too
-        if status == 0.0 || edits(i.op) {
-            // the four outputs of `StitchFaces`, the ten counts, the records
-            let n_extra = if i.op == OpIn::StitchFaces { 4 } else { 0 };
-            let (extra, rest) = rest.split_at(n_extra.min(rest.len()));
-            let (cnt, records) = rest.split_at(10.min(rest.len()));
-            if i.op == OpIn::StitchFaces {
-                o = o.values("stitch", extra.to_vec());
-            }
-            o = o.ints("counts", cnt.iter().map(|&x| x as i64).collect::<Vec<_>>());
-            let mut model = parse_records(records)?;
-            canonicalize(&mut model);
-            o = records_output(o, &model);
-        }
-        Ok(o)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
-        // an input the FFI refuses is a harness error on both sides (PR #502's
-        // convention): the shim never builds it, so the Rust side must not either. Fuzz
-        // case fuzz00285 (`--fuzz 300 --seeds 5` and `24`) gave one control point of a
-        // rational net a weight of `1e-300` among `-f64::MAX` ones: the fixture export
-        // refuses the net (mixed rationality) for the C++ side, while this side built the
-        // face and spun in `GlobalCoincidenceChecker` for over 30 s. `validate_block` is
-        // the export's own block checks (pure Rust, no shim call), on the block `run_cpp`
-        // sends.
+        // a B-rep block outside the contract is a harness error (PR #502's convention).
+        // Fuzz case fuzz00285 (`--fuzz 300 --seeds 5` and `24`) gave one control point of
+        // a rational net a weight of `1e-300` among `-f64::MAX` ones (mixed rationality):
+        // the face built and spun in `GlobalCoincidenceChecker` for over 30 s.
         let (path, blk) = block(&i.brep)?;
-        validate_block(&path, &blk).map_err(|e| err(&e))?;
+        if !contract::brep_block(&path, &blk) {
+            return Err(err("invalid argument: B-rep block outside the input contract"));
+        }
         let mut k = Kernel::default();
         // the B-rep built (or read) by the Rust kernel; a read keeps the face surfaces'
         // cache states the Rust read left (the renumbered copy keeps their slots)
@@ -794,7 +765,7 @@ impl UnitDiff for Runner {
                         "doing_boolean",
                         vec![f64::from(u8::from(k.context.doing_boolean()))],
                     )),
-                    Err(e) => rust_status(&e),
+                    Err(e) => Ok(rust_status(&e)),
                 };
             }
         };
@@ -815,7 +786,7 @@ impl UnitDiff for Runner {
             Err(e) => {
                 // a failed edit leaves the records it changed (the shim walks the B-rep
                 // after a failed status of the edits as well)
-                let o = rust_status(&e)?;
+                let o = rust_status(&e);
                 if edits(i.op) && matches!(e, SolidError::Upstream { .. }) {
                     let counts = record_counts(&b)
                         .iter()
@@ -860,9 +831,13 @@ fn try_generate(rng: &mut Rng) -> Option<Value> {
     } else {
         shared::gen_brep(rng)
     };
+    // a source the fixture builds: a block inside the contract that the kernel builds
     let (path, blk) = block(&brep).ok()?;
-    let f = ffi::export(&path, &blk).ok()?;
-    let c = counts(&f.graph)?;
+    if !contract::brep_block(&path, &blk) {
+        return None;
+    }
+    let b = own_brep(&mut Kernel::default(), &brep).ok()?.ok()?;
+    let c = record_counts(&b);
     let n = match op {
         OpIn::DeleteEdge => c[7],
         OpIn::DeleteVertex => c[9],
