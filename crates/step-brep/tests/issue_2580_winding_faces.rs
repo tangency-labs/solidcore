@@ -45,8 +45,9 @@
 //! **Sister exports.** A file without a validation volume of its own is checked against
 //! another export's where the corpus holds one of the same part ([`Volume::Sister`]), and
 //! the test first checks that they are one part ([`validation::same_form`]: the sizes of
-//! the vertices' box and the distinct cylinder, sphere and torus radii, within the larger
-//! of the files' uncertainties):
+//! the vertices' box, the cylinder, sphere and torus radii, and every corner of the
+//! export with fewer corners at a vertex of the other, however it is placed, within the
+//! larger of the files' uncertainties):
 //!
 //! - `ftc_06_rd` and `stc_06` against `nist_ftc_06_asme1_ap242-e2`, whose 187 faces are
 //!   the same part with its periodic faces split (cylinders 58 → 88 faces' surfaces,
@@ -593,6 +594,38 @@ fn ftc_11_exports_are_two_parts() {
     );
     println!("{difference:?}");
     assert!(difference.is_err());
+}
+
+/// [`validation::same_form`] finds one part however the export turns and moves it, and
+/// tells a part whose corner moved by more than the uncertainty from it.
+#[test]
+fn same_form_finds_a_turned_part_and_a_moved_corner() {
+    let corners = vec![
+        [0.0, 0.0, 0.0],
+        [4.0, 0.0, 0.0],
+        [4.0, 2.0, 0.0],
+        [0.0, 2.0, 1.0],
+    ];
+    let form = |corners: Vec<[f64; 3]>| validation::Form {
+        vertices: corners.clone(),
+        corners,
+        box_sizes: [1.0, 2.0, 4.0],
+        radii: vec![("cylinder", vec![1.5])],
+        uncertainty: 0.01,
+    };
+    let part = form(corners.clone());
+    // turned a quarter about z and moved: (x, y, z) -> (10 - y, x, z + 3)
+    let turned = form(
+        corners
+            .iter()
+            .map(|p| [10.0 - p[1], p[0], p[2] + 3.0])
+            .collect(),
+    );
+    assert_eq!(validation::same_form(&part, &turned), Ok(()));
+    let mut moved = corners;
+    moved[2] = [4.0, 2.05, 0.0];
+    let moved = form(moved);
+    assert!(validation::same_form(&part, &moved).is_err());
 }
 
 /// A volume that is not finite never counts as close to its expected value.

@@ -340,11 +340,17 @@ fn shell_faces(file: &StepFile, id: u64) -> usize {
 }
 
 /// The shape a file describes, as far as two exports of one part must agree on it
-/// whatever their faces: the sizes of its vertices' box and its curved-surface radii,
-/// all in mm. Two exporters split a part's periodic faces differently (one
-/// cylinder face or two halves), so face, edge and vertex counts are not compared.
+/// whatever their faces: the sizes of its vertices' box, its curved-surface radii and
+/// its corners, all in mm. Two exporters split a part's periodic faces differently (one
+/// cylinder face or two halves) and put a full circle's one vertex anywhere on it, so
+/// face, edge and vertex counts and the vertices of closed edges are not compared.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Form {
+    /// Every `VERTEX_POINT`'s point.
+    pub vertices: Vec<[f64; 3]>,
+    /// The points of the vertices that are not the one vertex of a closed edge (an
+    /// `EDGE_CURVE` from a vertex to itself): where faces meet in a corner.
+    pub corners: Vec<[f64; 3]>,
     /// The box of the `VERTEX_POINT`s, its three sizes in ascending order (exports place
     /// the part differently, so the axes are not compared).
     pub box_sizes: [f64; 3],
@@ -368,7 +374,20 @@ pub fn form(file: &StepFile) -> Result<Form, String> {
     let mut low = [f64::INFINITY; 3];
     let mut high = [f64::NEG_INFINITY; 3];
     let mut radii: Vec<(&'static str, Vec<f64>)> = Vec::new();
+    let mut seams: Vec<u64> = Vec::new();
     for instance in file.entities.values() {
+        let Some(edge) = instance.record("EDGE_CURVE") else {
+            continue;
+        };
+        if let (Some(start), Some(end)) = (ref_at(edge, 1), ref_at(edge, 2)) {
+            if start == end {
+                seams.push(start);
+            }
+        }
+    }
+    let mut vertices = Vec::new();
+    let mut corners = Vec::new();
+    for (&id, instance) in &file.entities {
         if let Some(measure) = instance.record("UNCERTAINTY_MEASURE_WITH_UNIT") {
             let value = measure
                 .params
@@ -390,10 +409,16 @@ pub fn form(file: &StepFile) -> Result<Form, String> {
                     .and_then(|p| p.params.get(1))
                     .and_then(Param::as_list)
                     .ok_or("a vertex without a point")?;
+                let mut at = [0.0; 3];
                 for (axis, coordinate) in point.iter().take(3).enumerate() {
                     let value = coordinate.as_f64().ok_or("a coordinate")? * mm;
                     low[axis] = low[axis].min(value);
                     high[axis] = high[axis].max(value);
+                    at[axis] = value;
+                }
+                vertices.push(at);
+                if !seams.contains(&id) {
+                    corners.push(at);
                 }
             }
             "CYLINDRICAL_SURFACE" | "SPHERICAL_SURFACE" => {
@@ -420,15 +445,20 @@ pub fn form(file: &StepFile) -> Result<Form, String> {
     let mut box_sizes = [high[0] - low[0], high[1] - low[1], high[2] - low[2]];
     box_sizes.sort_by(f64::total_cmp);
     Ok(Form {
+        vertices,
+        corners,
         box_sizes,
         radii,
         uncertainty,
     })
 }
 
-/// Whether `a` and `b` are one part: the same box sizes, and the same set of radii (each
-/// kind and radius of one has a match in the other), within the larger of the two
-/// files' uncertainties.
+/// Whether `a` and `b` are one part: the same box sizes, the same set of radii (each
+/// kind and radius of one has a match in the other), and every corner of the one with
+/// fewer corners at a vertex of the other (an export that splits more faces has more
+/// corners), all within the larger of the two files' uncertainties. The exports may
+/// place the part differently: the corners are compared under each of the 48 signed
+/// permutations of the axes, with the two vertex boxes' low corners matched.
 ///
 /// # Errors
 ///
@@ -466,7 +496,63 @@ pub fn same_form(a: &Form, b: &Form) -> Result<(), String> {
             "radii without a match within {tolerance} mm: first {only_a:?}, second {only_b:?}"
         ));
     }
-    Ok(())
+    let (coarse, fine) = if a.corners.len() <= b.corners.len() {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    let low = |points: &[[f64; 3]]| {
+        points.iter().fold([f64::INFINITY; 3], |m, p| {
+            [m[0].min(p[0]), m[1].min(p[1]), m[2].min(p[2])]
+        })
+    };
+    let fine_low = low(&fine.vertices);
+    let mut fewest = usize::MAX;
+    for permutation in [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ] {
+        for signs in 0..8_u32 {
+            let map = |p: &[f64; 3]| -> [f64; 3] {
+                let mut q = [0.0; 3];
+                for (axis, &from) in permutation.iter().enumerate() {
+                    let sign = if signs & (1 << axis) == 0 { 1.0 } else { -1.0 };
+                    q[axis] = sign * p[from];
+                }
+                q
+            };
+            let mapped: Vec<[f64; 3]> = coarse.vertices.iter().map(map).collect();
+            let coarse_low = low(&mapped);
+            let shift = [
+                fine_low[0] - coarse_low[0],
+                fine_low[1] - coarse_low[1],
+                fine_low[2] - coarse_low[2],
+            ];
+            let missing = coarse
+                .corners
+                .iter()
+                .map(map)
+                .filter(|p| {
+                    !fine.vertices.iter().any(|q| {
+                        (0..3).all(|axis| (p[axis] + shift[axis] - q[axis]).abs() <= tolerance)
+                    })
+                })
+                .count();
+            if missing == 0 {
+                return Ok(());
+            }
+            fewest = fewest.min(missing);
+        }
+    }
+    Err(format!(
+        "{fewest} of {} corners have no vertex within {tolerance} mm in the other export, \
+         however the part is turned",
+        coarse.corners.len()
+    ))
 }
 
 /// mm per unit of the length unit of `file`'s geometry: the `LENGTH_UNIT` of its
