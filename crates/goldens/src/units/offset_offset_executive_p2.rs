@@ -2443,20 +2443,34 @@ mod tests {
 
     #[test]
     fn positive_geometry_and_strict_boundaries_preserve_explicit_partial_paths() {
-        for (operation, fixture, extend, symbol) in [
-            // An empty rounded offset completes and returns its (empty) result.
-            (Operation::StaticOffset, Fixture::Empty, false, RESULT),
-            (Operation::Solid, sheet([0.0; 3], 1.0, 0), false, RESULT),
-            (Operation::Extended, sheet([0.0; 3], 1.0, 0), true, RESULT),
+        for (operation, fixture, extend) in [
+            (Operation::StaticOffset, Fixture::Empty, false),
+            (Operation::Solid, sheet([0.0; 3], 1.0, 0), false),
+            (Operation::Extended, sheet([0.0; 3], 1.0, 0), true),
         ] {
-            for distance in [0.0, 1.9999999999999995e-6, 2e-6, 2.0000000000000003e-6] {
+            // A distance below the source's B-rep tolerance (1e-6) is refused before
+            // anything is built: SM_ERR_INVALID_INPUT and no result.
+            for distance in [0.0, 9.999999999999997e-7] {
                 let mut input = input(operation);
                 input.source = Some(fixture.clone());
                 input.config.offset_distance = distance;
                 input.config.member_distance = distance;
                 input.config.extend_convex = extend;
                 let output = Runner.run_rust(&case(&input)).unwrap();
-                assert_reaches(&output, symbol);
+                assert!(output.deferred.is_none(), "{:?}", output.deferred);
+                assert!(output.error.is_none(), "{:?}", output.error);
+                assert_eq!(output.ints["status"], [1007], "{operation:?} {distance}");
+                assert_eq!(output.ints["result.present"], [0]);
+            }
+            // From the tolerance up, the offset completes and returns its result.
+            for distance in [1e-6, 1.0000000000000002e-6, 2e-6, 2.0000000000000003e-6] {
+                let mut input = input(operation);
+                input.source = Some(fixture.clone());
+                input.config.offset_distance = distance;
+                input.config.member_distance = distance;
+                input.config.extend_convex = extend;
+                let output = Runner.run_rust(&case(&input)).unwrap();
+                assert_reaches(&output, RESULT);
             }
         }
         // The pure shell API copies the empty source and shells the copy: the strict
