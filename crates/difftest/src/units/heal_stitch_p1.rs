@@ -1,5 +1,5 @@
-//! Runner for unit `heal.stitch_p1`. C++: `solidcore_ffi::units::heal_stitch_p1`.
-//! Rust: `solidcore::heal::stitch::p1`.
+//! Runner for unit `heal.stitch_p1`: upstream `SmStitch` ported into
+//! `solidcore::heal::stitch::p1`, checked against the unit's golden.
 //!
 //! The C++ side builds a real `SmBrep` per call: an upstream `.smb` file, a wire edge,
 //! a face or the `prog_test` wire network (the B-rep blocks of `topology.edgeuse_p1`),
@@ -57,11 +57,9 @@ use solidcore::topology::face::p2 as fp2;
 use solidcore::topology::loopuse as lu;
 use solidcore::topology::{edge, vertex, Brep, EdgeId, FaceId, VertexId};
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::heal_stitch_p1::{self as ffi, Op, TY_EDGE, TY_FACE, TY_VERTEX};
-use solidcore_ffi::units::topology_brep_p1::counts;
 
 use super::topology_edgeuse_p1::{
-    brep_block_of, flag, gen_brep, path_of, push_surface, sel, BrepIn, SrfIn,
+    flag, gen_brep, sel, BrepIn, SrfIn,
 };
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -221,67 +219,6 @@ struct Inputs {
     attributed: bool,
 }
 
-pub(crate) fn block_of(b: &StitchBrep) -> Result<Vec<f64>, HarnessError> {
-    let mut v = Vec::new();
-    match b {
-        StitchBrep::Brep {
-            brep,
-            validate_only,
-            init_gaps,
-        } => {
-            v.push(0.0);
-            v.extend(brep_block_of(Some(brep), *validate_only, *init_gaps)?);
-        }
-        StitchBrep::Sheets { faces } => {
-            v.push(1.0);
-            v.push(faces.len() as f64);
-            for f in faces {
-                push_surface(&mut v, &f.surface)?;
-                v.extend(f.dom);
-            }
-        }
-        StitchBrep::Box { p, size } => {
-            v.push(2.0);
-            v.extend(p);
-            v.extend(size);
-        }
-        StitchBrep::HermiteWire {
-            p1,
-            d1,
-            p2,
-            d2,
-            interval,
-            edge_tol,
-            vertex_tol,
-        } => {
-            v.push(3.0);
-            v.extend(p1);
-            v.extend(d1);
-            v.extend(p2);
-            v.extend(d2);
-            v.extend(interval);
-            v.extend([*edge_tol, *vertex_tol]);
-        }
-    }
-    Ok(v)
-}
-
-pub(crate) fn path(b: &StitchBrep) -> Result<String, HarnessError> {
-    match b {
-        StitchBrep::Brep { brep, .. } => path_of(Some(brep)),
-        _ => Ok(String::new()),
-    }
-}
-
-/// The C++ export of the case's B-rep.
-pub(crate) fn export(b: &StitchBrep) -> Result<Vec<f64>, HarnessError> {
-    let (path, block) = (path(b)?, block_of(b)?);
-    crate::export_memo::export("heal_stitch_p1", &[&path], &block, || {
-        ffi::eval(Op::Export, &path, &block)
-    })
-    .map_err(|e| harness(format!("c++ export: {e}")))
-}
-
 /// The Rust B-rep of the case's block, built by the Rust kernel as the shim's
 /// `build_block` builds it (no C++ export reaches the Rust side): a B-rep block of
 /// `topology.edgeuse_p1` ([`crate::own_builder::build_any`]: an `.smb` file read by the
@@ -369,23 +306,10 @@ pub(crate) fn own_unit_box(origin: [f64; 3]) -> Result<Brep, HarnessError> {
     .map_err(|o| harness(format!("rust box build failed: {o:?}")))
 }
 
-pub(crate) fn build_failure(export: &[f64]) -> Output {
-    Output::err(format!(
-        "brep_build_status_{}",
-        export.get(1).copied().unwrap_or(0.0)
-    ))
-}
-
 /// An op naming an entity kind the B-rep lacks (e.g. a face op on a wire B-rep): no code
 /// runs on either side, so the case is rejected (not counted as a pass).
 pub(crate) fn no_entity() -> Output {
     Output::rejected("no entity of the op's kind in this B-rep: nothing runs on either side")
-}
-
-/// Whether the case's B-rep is built by each side itself instead of imported from the
-/// C++ export ([`StitchBrep::HermiteWire`]).
-pub(crate) fn native(b: &StitchBrep) -> bool {
-    matches!(b, StitchBrep::HermiteWire { .. })
 }
 
 /// The Rust B-rep of a [`StitchBrep::HermiteWire`] block: the same native constructors
@@ -686,110 +610,9 @@ fn idx<I: solidcore::topology::ArenaId>(id: I) -> f64 {
     f64::from(id.index())
 }
 
-fn ty_code(e: EntityRef) -> (f64, f64) {
-    match e {
-        EntityRef::Vertex(v) => (TY_VERTEX as f64, idx(v)),
-        EntityRef::Edge(x) => (TY_EDGE as f64, idx(x)),
-        EntityRef::Face(f) => (TY_FACE as f64, idx(f)),
-        _ => (-1.0, -1.0),
-    }
-}
-
 fn push_ids<I: solidcore::topology::ArenaId + Copy>(v: &mut Vec<f64>, ids: &[I]) {
     v.push(ids.len() as f64);
     v.extend(ids.iter().map(|&i| idx(i)));
-}
-
-fn args(op: &Resolved) -> (Op, Vec<f64>) {
-    let mut v = Vec::new();
-    let code = match op {
-        Resolved::Export => Op::Export,
-        Resolved::Select { a, b, dist } => {
-            let (t1, i1) = ty_code(*a);
-            let (t2, i2) = ty_code(*b);
-            v.extend([t1, i1, t2, i2, *dist]);
-            Op::Select
-        }
-        Resolved::Interior { edge, t, tol } => {
-            v.extend([idx(*edge), *t, *tol]);
-            Op::Interior
-        }
-        Resolved::Split {
-            edge,
-            p,
-            tol,
-            editing,
-            probe,
-        } => {
-            v.extend([
-                idx(*edge),
-                p.x,
-                p.y,
-                p.z,
-                *tol,
-                flag(*editing),
-                flag(*probe),
-            ]);
-            Op::Split
-        }
-        Resolved::VPairs {
-            tol,
-            ignore,
-            l1,
-            l2,
-        } => {
-            v.extend([*tol, flag(*ignore)]);
-            push_ids(&mut v, l1);
-            push_ids(&mut v, l2);
-            Op::VPairs
-        }
-        Resolved::Edges { tol, flags, verts } => {
-            v.push(*tol);
-            v.extend(flags.iter().map(|&f| flag(f)));
-            push_ids(&mut v, verts);
-            Op::Edges
-        }
-        Resolved::Simple {
-            api,
-            tol,
-            keep,
-            del,
-        } => {
-            v.extend([flag(*api), *tol]);
-            push_ids(&mut v, keep);
-            push_ids(&mut v, del);
-            Op::Simple
-        }
-        Resolved::Unify { api, tol, face, n } => {
-            v.extend([flag(*api), *tol, idx(*face), *n as f64]);
-            Op::Unify
-        }
-        Resolved::Api {
-            which,
-            null_brep,
-            face,
-            n,
-            well_formed,
-            ratio,
-            tol,
-            flags,
-        } => {
-            v.extend([f64::from(*which), flag(*null_brep)]);
-            let face1 = face.map_or(0.0, |f| idx(f) + 1.0);
-            match which {
-                1 => v.push(face1),
-                3 => v.extend([flag(*well_formed), *ratio]),
-                4 => v.extend([face1, *n as f64]),
-                6 => {
-                    v.push(*tol);
-                    v.extend(flags.iter().map(|&f| flag(f)));
-                }
-                _ => {}
-            }
-            Op::Api
-        }
-    };
-    (code, v)
 }
 
 // ---- C++ side ---------------------------------------------------------------------------
@@ -800,54 +623,6 @@ fn guarded_output(o: Vec<f64>) -> Output {
     } else {
         Output::new().values("out", o)
     }
-}
-
-fn run_cpp(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
-    // a natively built B-rep ([`StitchBrep::HermiteWire`]) has no export to import: the
-    // shim builds it from the same block, so only [`own_brep`] can resolve the op
-    let b = if native(&i.brep) {
-        match own_brep(&mut Kernel::default(), &i.brep)? {
-            Ok(b) => b,
-            Err(o) => return Ok(o),
-        }
-    } else {
-        let ex = export(&i.brep)?;
-        let Some((_, graph_at)) = counts(&ex) else {
-            return Ok(build_failure(&ex));
-        };
-        // both sides resolve the selectors and parameters on the Rust build ([`own_brep`]),
-        // so they get the same numbers; the C++ side on the import of its export only when
-        // the Rust build fails
-        match own_brep(&mut Kernel::default(), &i.brep)? {
-            Ok(b) => b,
-            Err(_) => super::topology_brep_p1::import_raw(&ex, graph_at)?.0,
-        }
-    };
-    let Some(op) = resolve(k, &i.op, &b)? else {
-        return Ok(no_entity());
-    };
-    let (code, a) = args(&op);
-    let mut input = block_of(&i.brep)?;
-    input.extend(a);
-    let p = path(&i.brep)?;
-    let call = || {
-        if i.attributed {
-            ffi::eval_tagged(code, &p, &input)
-        } else {
-            ffi::eval(code, &p, &input)
-        }
-    };
-    // A file B-rep's op runs in a fresh process: after a stitch of an `.smb` B-rep, the
-    // next read of a file in the same process exports differently (state the shim's
-    // context keeps), so a case's C++ result would depend on the cases before it.
-    let out = if p.is_empty() {
-        call()
-    } else {
-        solidcore_ffi::isolate::fresh_process(call)
-    }
-    .map_err(|e| harness(format!("c++: {e}")))?;
-    let body = out.get(1..).ok_or_else(|| harness("c++: empty output"))?;
-    Ok(guarded_output(body.to_vec()))
 }
 
 // ---- Rust side --------------------------------------------------------------------------
@@ -1443,11 +1218,6 @@ fn gen_op(rng: &mut Rng) -> OpIn {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "heal.stitch_p1"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let k = &Kernel::default();
-        run_cpp(k, &case.parse::<Inputs>()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

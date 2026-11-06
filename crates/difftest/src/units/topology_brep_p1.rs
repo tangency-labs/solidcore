@@ -51,11 +51,11 @@ use solidcore::topology::{
     RegionId, ShellId, VertexId, VertexuseId, VertexuseOwner,
 };
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::topology_brep_p1::{self as ffi, Op, N_EXTRA_SCALARS, TARGET_TYPES};
+use solidcore_ffi::units::topology_brep_p1::{self as ffi, Op, TARGET_TYPES};
 
 use crate::util::trim_curve::put_trim_curve;
 use super::topology_edgeuse_p1::{
-    brep_block_of, bspline_of, flag, gen_brep, gen_curve, import_raw_with_types, path_of,
+    brep_block_of, bspline_of, flag, gen_brep, gen_curve, path_of,
     push_curve, sel, surface_of, BrepIn, CrvIn, ImportTypes, FILES,
 };
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -769,122 +769,6 @@ fn build_failure(export: &[f64]) -> Output {
         "brep_build_status_{}",
         export.get(1).copied().unwrap_or(0.0)
     ))
-}
-
-/// The B-rep of an export with this unit's extras applied, and the geometry types of
-/// the import, its cached gaps not refilled (they stay marked as set with
-/// `SM_UNDEF_DOUBLE` placeholder values): for C++ sides that only resolve selectors on
-/// the import (the `heal.stitch_p1` / `heal.stitch_p2` runners).
-pub(crate) fn import_raw(ex: &[f64], graph_at: usize) -> Result<(Brep, ImportTypes), HarnessError> {
-    let mut graph = vec![0.0];
-    graph.extend_from_slice(ex.get(graph_at..).ok_or_else(|| harness("short export"))?);
-    let (mut b, types) = import_raw_with_types(&graph)?;
-    let x = ex
-        .get(1..1 + N_EXTRA_SCALARS)
-        .ok_or_else(|| harness("short extras"))?;
-    let [inf, editing, est, ratio, head_is_inf] = *x else {
-        return Err(harness("short extras"));
-    };
-    if inf >= 0.0 {
-        b.set_infinite_region(Some(RegionId::from_index(inf as u32)));
-    }
-    // a freshly built SmBrep: its head region is the infinite one and its size
-    // estimates are the defaults, which the Rust B-rep starts with
-    if editing != 0.0 || est != tol::USE_DEFAULT || ratio != tol::USE_DEFAULT || head_is_inf != 1.0
-    {
-        return Err(harness("export: unexpected SmBrep state"));
-    }
-    // the exported head of the region list (`m_pList`) is the infinite region (or NULL
-    // on a wire B-rep without regions), checked just above
-    b.set_region_list_head(b.infinite_region());
-    let n_v = *ex
-        .get(1 + N_EXTRA_SCALARS)
-        .ok_or_else(|| harness("short extras"))? as usize;
-    let mut at = 2 + N_EXTRA_SCALARS;
-    for v in 0..n_v {
-        let n = *ex.get(at).ok_or_else(|| harness("short vertex list"))? as usize;
-        let list: Vec<VertexuseId> = ex
-            .get(at + 1..at + 1 + n)
-            .ok_or_else(|| harness("short vertex list"))?
-            .iter()
-            .map(|&i| VertexuseId::from_index(i as u32))
-            .collect();
-        at += 1 + n;
-        b.vertex_mut(VertexId::from_index(v as u32))
-            .map_err(|e| harness(e.to_string()))?
-            .vertexuses = list;
-    }
-    // the B-rep's face, edge and vertex lists in their list order
-    let read_list = |at: &mut usize| -> Result<Vec<u32>, HarnessError> {
-        let n = *ex.get(*at).ok_or_else(|| harness("short list"))? as usize;
-        let v = ex
-            .get(*at + 1..*at + 1 + n)
-            .ok_or_else(|| harness("short list"))?
-            .iter()
-            .map(|&i| i as u32)
-            .collect();
-        *at += 1 + n;
-        Ok(v)
-    };
-    let fl = read_list(&mut at)?;
-    let el = read_list(&mut at)?;
-    let vl = read_list(&mut at)?;
-    b.set_face_list(fl.into_iter().map(FaceId::from_index).collect())
-        .map_err(|e| harness(format!("face list: {e}")))?;
-    b.set_edge_list(el.into_iter().map(EdgeId::from_index).collect())
-        .map_err(|e| harness(format!("edge list: {e}")))?;
-    b.set_vertex_list(vl.into_iter().map(VertexId::from_index).collect())
-        .map_err(|e| harness(format!("vertex list: {e}")))?;
-    // the geometry's owners (`SmSurface::GetOwner` / `SmCurve::GetOwner`, set by the
-    // B-rep build upstream): the kernel's arena identities
-    let edge_ids: Vec<EdgeId> = b.edges().ids().collect();
-    for id in edge_ids {
-        if let Some(curve) = b
-            .edge_mut(id)
-            .map_err(|e| harness(e.to_string()))?
-            .curve
-            .as_mut()
-        {
-            let _ = curve.set_owner(
-                Some(arena_identity(CacheObject::Edge(id))),
-                Some(arena_identity(CacheObject::Brep)),
-            );
-        }
-    }
-    let face_ids: Vec<FaceId> = b.faces().ids().collect();
-    for id in face_ids {
-        if let Some(surface) = b
-            .face_mut(id)
-            .map_err(|e| harness(e.to_string()))?
-            .surface
-            .as_mut()
-        {
-            let _ = surface.set_owner(Some(arena_identity(CacheObject::Face(id))));
-        }
-        // the face's tolerance, as the face upstream answers GetTolerance with
-        b.sync_face_surface_tolerance(id)
-            .map_err(|e| harness(e.to_string()))?;
-    }
-    // the shared import leaves `m_pFU` unset: the face's upward (SAME) face use
-    let ups: Vec<(FaceId, FaceuseId)> = b
-        .faceuses()
-        .iter()
-        .filter(|(_, r)| r.orientation == OrientType::Same)
-        .filter_map(|(id, r)| r.face.map(|f| (f, id)))
-        .collect();
-    for (f, fu) in ups {
-        if let Ok(face) = b.face_mut(f) {
-            if face.faceuse.is_none() {
-                face.faceuse = Some(fu);
-            }
-        }
-    }
-    // the import names every geometry owner by arena identity (above); record that
-    // naming (and each owner) on the B-rep, so library queries that name geometry under
-    // another scheme's identities (a glue's notification identities, overridden by
-    // recorded owners) resolve the owners instead of failing internally
-    b.use_arena_naming().map_err(|e| harness(e.to_string()))?;
-    Ok((b, types))
 }
 
 // ---- C++ side ---------------------------------------------------------------------------

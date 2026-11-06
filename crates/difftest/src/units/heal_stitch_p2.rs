@@ -1,19 +1,17 @@
-//! Runner for unit `heal.stitch_p2`. C++: `solidcore_ffi::units::heal_stitch_p2`.
-//! Rust: `solidcore::heal::stitch::p2`.
+//! Runner for unit `heal.stitch_p2`: upstream `SmStitch` ported into
+//! `solidcore::heal::stitch::p2`, checked against the unit's golden.
 //!
 //! The B-reps are those of unit `heal.stitch_p1` (an upstream `.smb` file or another
 //! B-rep block of `topology.edgeuse_p1`, unstitched sheets, or `SmApiCreateBox`), built
-//! by the C++ side and, for the Rust side, by the Rust kernel (`heal.stitch_p1`'s
-//! `own_brep`: the Rust `.smb` reader and constructors, renumbered into the shim's
-//! traversal order, so no C++ export reaches it). Every op's C++ output after the build status is
-//! compared with the Rust side's as one float array (`out`): statuses, traversal
-//! indices (`-3` for an entity the op created), flags, values and the B-rep digest
-//! after the op. `-2` (upstream would dereference null) and `-3` (upstream would
-//! never return) in a status slot are guards, an error on both sides.
+//! by the Rust kernel (`heal.stitch_p1`'s `own_brep`: the Rust `.smb` reader and
+//! constructors, renumbered into the reference fixture's traversal order). Every op's
+//! output is one float array (`out`): statuses, traversal indices (`-3` for an entity the
+//! op created), flags, values and the B-rep digest after the op. `-2` (upstream would
+//! dereference null) and `-3` (upstream would never return) in a status slot are
+//! guards, recorded as errors.
 //!
 //! Selectors are taken modulo the entity count (`-1` is a null list entry); an op
-//! needing a vertex the B-rep lacks is rejected (nothing runs on either side). Both
-//! sides resolve the selectors on the Rust build.
+//! needing a vertex the B-rep lacks is rejected (nothing runs).
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -24,11 +22,9 @@ use solidcore::kernel::Kernel;
 use solidcore::topology::brep::p1 as bp1;
 use solidcore::topology::{vertex, ArenaId, Brep, EdgeId, VertexId};
 use solidcore::SolidError;
-use solidcore_ffi::units::heal_stitch_p2::{self as ffi, Op};
-use solidcore_ffi::units::topology_brep_p1::counts;
 
 use super::topology_edgeuse_p1::{
-    brep_block_of, flag, gen_brep, path_of, push_surface, sel, BrepIn, SrfIn,
+    flag, gen_brep, sel, BrepIn, SrfIn,
 };
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -74,57 +70,6 @@ enum StitchBrep {
     Sheets { faces: Vec<SheetFace> },
     /// `SmApiCreateBox(p, size[0], size[1], size[2])`.
     Box { p: [f64; 3], size: [f64; 3] },
-}
-
-fn block_of(b: &StitchBrep) -> Result<Vec<f64>, HarnessError> {
-    let mut v = Vec::new();
-    match b {
-        StitchBrep::Brep {
-            brep,
-            validate_only,
-            init_gaps,
-        } => {
-            v.push(0.0);
-            v.extend(brep_block_of(Some(brep), *validate_only, *init_gaps)?);
-        }
-        StitchBrep::Sheets { faces } => {
-            v.push(1.0);
-            v.push(faces.len() as f64);
-            for f in faces {
-                push_surface(&mut v, &f.surface)?;
-                v.extend(f.dom);
-            }
-        }
-        StitchBrep::Box { p, size } => {
-            v.push(2.0);
-            v.extend(p);
-            v.extend(size);
-        }
-    }
-    Ok(v)
-}
-
-fn path(b: &StitchBrep) -> Result<String, HarnessError> {
-    match b {
-        StitchBrep::Brep { brep, .. } => path_of(Some(brep)),
-        _ => Ok(String::new()),
-    }
-}
-
-/// The C++ export of the B-rep.
-fn export(b: &StitchBrep) -> Result<Vec<f64>, HarnessError> {
-    let (path, block) = (path(b)?, block_of(b)?);
-    crate::export_memo::export("heal_stitch_p2", &[&path], &block, || {
-        ffi::eval(Op::Export, &path, &block)
-    })
-    .map_err(|e| harness(format!("c++ export: {e}")))
-}
-
-fn build_failure(export: &[f64]) -> Output {
-    Output::err(format!(
-        "brep_build_status_{}",
-        export.get(1).copied().unwrap_or(0.0)
-    ))
 }
 
 /// An op needing a vertex the B-rep lacks: no code runs on either side, so the case is
@@ -345,69 +290,6 @@ fn idx<I: ArenaId>(id: I) -> f64 {
     f64::from(id.index())
 }
 
-fn push_opt<I: ArenaId + Copy>(v: &mut Vec<f64>, ids: &[Option<I>]) {
-    v.push(ids.len() as f64);
-    v.extend(ids.iter().map(|i| i.map_or(-1.0, idx)));
-}
-
-fn push_all<I: ArenaId + Copy>(v: &mut Vec<f64>, ids: &[I]) {
-    v.push(ids.len() as f64);
-    v.extend(ids.iter().map(|&i| idx(i)));
-}
-
-fn args(op: &Resolved) -> (Op, Vec<f64>) {
-    let mut v = Vec::new();
-    let code = match op {
-        Resolved::Do {
-            tol,
-            flags,
-            cand_vertices,
-            cand_edges,
-        } => {
-            v.push(*tol);
-            v.extend(flags.iter().map(|&f| flag(f)));
-            v.push(flag(cand_vertices.is_some()));
-            push_all(&mut v, cand_vertices.as_deref().unwrap_or_default());
-            v.push(flag(cand_edges.is_some()));
-            push_all(&mut v, cand_edges.as_deref().unwrap_or_default());
-            Op::Do
-        }
-        Resolved::Solid => Op::Solid,
-        Resolved::Shell {
-            well_formed,
-            max_tol,
-        } => {
-            v.extend([flag(*well_formed), *max_tol]);
-            Op::Shell
-        }
-        Resolved::VList {
-            tol,
-            manifold,
-            squeeze,
-            list,
-        } => {
-            v.extend([*tol, flag(*manifold), flag(*squeeze)]);
-            push_opt(&mut v, list);
-            Op::VList
-        }
-        Resolved::Split {
-            tol,
-            manifold,
-            ignore,
-            verts,
-            edges,
-            editing,
-        } => {
-            v.extend([*tol, flag(*manifold), flag(*ignore)]);
-            push_opt(&mut v, verts);
-            push_opt(&mut v, edges);
-            v.push(flag(*editing));
-            Op::Split
-        }
-    };
-    (code, v)
-}
-
 // ---- C++ side ---------------------------------------------------------------------------
 
 fn guarded_output(o: Vec<f64>) -> Output {
@@ -416,21 +298,6 @@ fn guarded_output(o: Vec<f64>) -> Output {
         Some(&s) if s == NO_RETURN => Output::err("no_return_guard"),
         _ => Output::new().values("out", o),
     }
-}
-
-/// The C++ side's resolved op, or the early output: resolved on the Rust build
-/// ([`prepare_rust`]), so both sides get the same op, and on the import of the C++
-/// export only when the Rust build fails.
-fn prepare_cpp(i: &Inputs) -> Result<Result<Resolved, Output>, HarnessError> {
-    let ex = export(&i.brep)?;
-    let Some((_, graph_at)) = counts(&ex) else {
-        return Ok(Err(build_failure(&ex)));
-    };
-    if let Ok((_, op)) = prepare_rust(&mut Kernel::default(), i)? {
-        return Ok(Ok(op));
-    }
-    let (b, _) = super::topology_brep_p1::import_raw(&ex, graph_at)?;
-    Ok(resolve(&i.op, &b).ok_or_else(no_entity))
 }
 
 /// The Rust side's own B-rep of the case (`heal.stitch_p1`'s [`own_brep`], built by the
@@ -449,29 +316,6 @@ fn prepare_rust(k: &mut Kernel, i: &Inputs) -> Result<Result<(Brep, Resolved), O
         return Ok(Err(no_entity()));
     };
     Ok(Ok((b, op)))
-}
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let op = match prepare_cpp(i)? {
-        Ok(r) => r,
-        Err(o) => return Ok(o),
-    };
-    let (code, a) = args(&op);
-    let mut input = block_of(&i.brep)?;
-    input.extend(a);
-    let p = path(&i.brep)?;
-    let call = || ffi::eval(code, &p, &input);
-    // A file B-rep's op runs in a fresh process: after a stitch of an `.smb` B-rep, the
-    // next read of a file in the same process exports differently (state the shim's
-    // context keeps), so a case's C++ result would depend on the cases before it.
-    let out = if p.is_empty() {
-        call()
-    } else {
-        solidcore_ffi::isolate::fresh_process(call)
-    }
-    .map_err(|e| harness(format!("c++: {e}")))?;
-    let body = out.get(1..).ok_or_else(|| harness("c++: empty output"))?;
-    Ok(guarded_output(body.to_vec()))
 }
 
 // ---- Rust side --------------------------------------------------------------------------
@@ -858,10 +702,6 @@ fn gen_op(rng: &mut Rng) -> OpIn {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "heal.stitch_p2"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse::<Inputs>()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
