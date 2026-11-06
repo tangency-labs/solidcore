@@ -49,8 +49,7 @@ reproduction, not that any particular algorithm is the cause.
 
 The example runs successfully on Linux; targeted clippy with warnings denied
 also exits successfully. Two further fresh-process executions completed, but
-their output could not yet be retrieved after SSH authentication began rejecting
-new connections. No medians or cross-run count agreement are claimed here.
+their output is not yet archived in this evidence record. No medians or cross-run count agreement are claimed here.
 The example was formatted with rustfmt and `git diff --check` passes.
 
 No kernel behavior, tolerance, unit status or known-mismatch classification is
