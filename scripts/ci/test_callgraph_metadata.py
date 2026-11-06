@@ -3,8 +3,10 @@
 import contextlib
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -64,6 +66,7 @@ class CallgraphMetadataTests(unittest.TestCase):
                 return False
 
             def imap_unordered(self, work, entries):
+                """Record the production commands without invoking the AST worker."""
                 for entry in entries:
                     seen.append(entry)
                     yield entry["file"], "metadata only"
@@ -156,6 +159,54 @@ class CallgraphMetadataTests(unittest.TestCase):
         self.assertIsNotNone(error)
         self.assertIn("no C++ sources", error)
         self.assertEqual(self.seen, [])
+
+    def test_upstream_symlink_keeps_lexical_paths_for_the_extractors_allowlist(self):
+        """A shared upstream checkout works without resolving paths out of scope."""
+        upstream = self.root / "upstream"
+        target = self.root / "shared reference"
+        upstream.rename(target)
+        upstream.symlink_to(target, target_is_directory=True)
+        self.assertIsNone(self.run_extract())
+        self.assertEqual(len(self.seen), len(SOURCES))
+        self.assertTrue(all(e["file"].startswith(str(upstream) + os.sep) for e in self.seen))
+
+    def test_symlinked_source_file_refuses_before_parser(self):
+        """A source filename cannot redirect parsing outside the cleared group."""
+        target = self.write_source("unrelated/hidden.cpp")
+        (self.root / "upstream/source/SMLib/src/link.cpp").symlink_to(target)
+        error = self.run_extract()
+        self.assertIsNotNone(error)
+        self.assertIn("source symlinks", error)
+        self.assertEqual(self.seen, [])
+
+    def test_symlinked_source_group_refuses_before_parser(self):
+        """A cleared group cannot itself redirect discovery to another tree."""
+        group = self.root / "upstream/tests/prog_test"
+        target = self.root / "redirected group"
+        group.rename(target)
+        group.symlink_to(target, target_is_directory=True)
+        error = self.run_extract()
+        self.assertIsNotNone(error)
+        self.assertIn("source directory", error)
+        self.assertEqual(self.seen, [])
+
+    def test_legacy_database_is_ignored_even_when_present(self):
+        """Old metadata cannot reintroduce retired or uncleared translation units."""
+        legacy = self.root / "bin/cpp/compile_commands.json"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text("not valid JSON; do not load me")
+        self.assertIsNone(self.run_extract())
+        self.assertEqual(len(self.seen), len(SOURCES))
+
+    def test_metadata_cli_needs_no_tools_and_writes_only_json_to_stdout(self):
+        """The inspection entry point works with no compiler or CMake on PATH."""
+        result = subprocess.run(
+            [sys.executable, "-B", str(CALLGRAPH / "compile_commands.py"), "--root", str(self.root)],
+            env={**os.environ, "PATH": ""}, capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), self.extract.entries(self.root))
+        self.assertEqual(result.stderr, "")
+        self.assertFalse((self.root / "bin").exists())
 
 
 if __name__ == "__main__":

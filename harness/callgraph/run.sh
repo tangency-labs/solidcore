@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerate the call graph and the plan (plan/closure.md, plan/units/*.toml, plan/order.md).
-# Requires bin/cpp/compile_commands.json (a CMake compilation database of upstream/source/SMLib
-# and SM_API configured with g++; nothing is compiled) and libclang (see README.md).
+# Requires the four cleared upstream source trees and libclang (see README.md).
+# extract.py constructs its analysis metadata directly; no CMake or C++ build is used.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 VENV=bin/callgraph-venv

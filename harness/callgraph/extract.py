@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Extract a function-level call graph from the upstream SMLib/SM_API C++ sources.
 
-Uses libclang (Python bindings, `pip install libclang`) against bin/cpp/compile_commands.json.
+Uses libclang (Python bindings, `pip install libclang`) with analysis-only metadata
+from compile_commands.py. No reference build or external compilation database is needed.
 For every translation unit it records:
   * function/method definitions located in upstream/ (USR, qualified name, file, line span,
     virtual flag, overridden methods, owning class),
@@ -23,14 +24,15 @@ import sys
 import time
 from multiprocessing import Pool
 
+from compile_commands import entries
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 UPSTREAM = os.path.join(ROOT, "upstream")
 OUT = os.path.join(ROOT, "bin", "callgraph", "tu")
-CCDB = os.path.join(ROOT, "bin", "cpp", "compile_commands.json")
 LIBCLANG = os.environ.get("LIBCLANG", "/home/linuxbrew/.linuxbrew/opt/llvm/lib/libclang.so")
 RESOURCE_DIR = os.environ.get("CLANG_RESOURCE_DIR", "/home/linuxbrew/.linuxbrew/Cellar/llvm/21.1.8/lib/clang/21")
 
-# libstdc++ include dirs matching the g++ the compilation database names (from `g++ -E -v`).
+# Standard-library include dirs for the analysis toolchain (override for another host).
 SYS_INCLUDES = os.environ.get("CXX_SYS_INCLUDES", "/usr/include/c++/13:/usr/include/x86_64-linux-gnu/c++/13:"
                               "/usr/include/c++/13/backward").split(":")
 
@@ -474,11 +476,12 @@ def work(entry):
 
 
 def main():
+    """Analyse the selected cleared sources using generated metadata, not a build."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--filter", default="")
     a = ap.parse_args()
-    db = json.load(open(CCDB))
+    db = entries(ROOT)
     db = [e for e in db if allowed(e["file"]) and a.filter in e["file"]]
     db.sort(key=lambda e: -os.path.getsize(e["file"]))
     with Pool(a.jobs) as p:
