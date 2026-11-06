@@ -96,7 +96,7 @@ fn the_set_back_box_is_convex_and_inside_its_bounds() {
     // below, the three rounds' prisms above
     let volume = brep_volume_default(&k, &mut b, 1e-6).unwrap();
     assert!(
-        (47_271.9757..=47_384.8935).contains(&volume),
+        (47_271.975_7..=47_384.893_5).contains(&volume),
         "volume {volume}"
     );
 }
