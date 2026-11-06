@@ -184,19 +184,10 @@ fn a_variable_round_runs_from_its_start() {
     assert!(v < ABC - off(1.0) && v > ABC - off(2.0), "{v}");
     assert!(b.check(CheckLevel::All).unwrap().is_valid());
 
-    // a law with a corner, one zero inside, one that starts off the edge
+    // a law zero inside, one that starts off the edge
     let b = block();
     let e = top_front(&b);
     let start = vertex_at(&b, [0.0, 0.0, 10.0]);
-    let bent = fillet_variable(
-        &b,
-        e,
-        start,
-        1,
-        &[0.0, 0.0, 0.5, 1.0, 1.0],
-        &[1.0, 2.0, 1.0],
-    );
-    assert!(matches!(bent, Err(Error::Unsupported(_))), "{bent:?}");
     let pinched = fillet_variable(
         &b,
         e,
@@ -211,6 +202,214 @@ fn a_variable_round_runs_from_its_start() {
     assert_eq!(off_edge, Err(Error::Argument));
     // refused: the body as it came in
     assert!(rel(volume(&b), ABC) < 1e-12);
+}
+
+/// A law with a corner rounds its edge as the union of its balls (`docs/generic-blend.md` §3.2,
+/// "Corners in a radius law"): at a peak the two sides' rounds cross and end on their crossing,
+/// at a dip the corner ball's zone lies between them. Each removes its balls' union, integrated
+/// numerically (SolidCraft's `variable_radius_with_a_corner_through_a_middle_point` for the
+/// peak, the fork's capi cases for the others, as `wr685_law_corners` holds them), to that
+/// test's 1e-4 relative; each keeps the law's radius at its start and is one sound body.
+#[test]
+fn a_variable_round_with_a_corner_in_its_law_is_its_balls_union() {
+    // box size, the edge's middle, its start, the start's rail ends, knots, radii, removed, faces
+    type Case<'a> = (
+        [f64; 3],
+        [f64; 3],
+        [f64; 3],
+        [[f64; 3]; 2],
+        &'a [f64],
+        &'a [f64],
+        f64,
+        usize,
+    );
+    all_fixes();
+    let peak = [0.0, 0.0, 0.5, 1.0, 1.0];
+    let dip_then_peak = [0.0, 0.0, 0.25, 0.75, 1.0, 1.0];
+    let cases: [Case<'_>; 4] = [
+        // 2 -> 4 -> 2 on the 10 x 20 x 30 box's top edge x = 10, z = 30, from y = 0
+        (
+            [10.0, 20.0, 30.0],
+            [10.0, 10.0, 30.0],
+            [10.0, 0.0, 30.0],
+            [[8.0, 0.0, 30.0], [10.0, 0.0, 28.0]],
+            &peak,
+            &[2.0, 4.0, 2.0],
+            39.541034,
+            8,
+        ),
+        // 4 -> 2 -> 4 on the 20 cube's edge y = z = 20, from x = 0
+        (
+            [20.0; 3],
+            [10.0, 20.0, 20.0],
+            [0.0, 20.0, 20.0],
+            [[0.0, 16.0, 20.0], [0.0, 20.0, 16.0]],
+            &peak,
+            &[4.0, 2.0, 4.0],
+            39.542073,
+            9,
+        ),
+        // 4, 2, 4, 2 at 0, 0.25, 0.75, 1 on the same edge, from either end (mirror images)
+        (
+            [20.0; 3],
+            [10.0, 20.0, 20.0],
+            [0.0, 20.0, 20.0],
+            [[0.0, 16.0, 20.0], [0.0, 20.0, 16.0]],
+            &dip_then_peak,
+            &[4.0, 2.0, 4.0, 2.0],
+            38.818277,
+            10,
+        ),
+        (
+            [20.0; 3],
+            [10.0, 20.0, 20.0],
+            [20.0, 20.0, 20.0],
+            [[20.0, 16.0, 20.0], [20.0, 20.0, 16.0]],
+            &dip_then_peak,
+            &[4.0, 2.0, 4.0, 2.0],
+            38.818277,
+            10,
+        ),
+    ];
+    for (size, middle, from, rails, knots, radii, want, faces) in cases {
+        let b = make_box([0.0; 3], size).unwrap();
+        let e = edge_at(&b, middle);
+        let start = vertex_at(&b, from);
+        fillet_variable(&b, e, start, 1, knots, radii).unwrap();
+        let removed = size[0] * size[1] * size[2] - volume(&b);
+        eprintln!("{radii:?} from {from:?}: removed {removed}, want {want}");
+        assert!(
+            (removed - want).abs() <= 1e-4 * want,
+            "{radii:?} from {from:?}: removed {removed}, want {want}"
+        );
+        assert_eq!(b.counts().unwrap()[0], faces, "{radii:?} from {from:?}");
+        // the round's end at its start is a section of the law's first radius
+        for p in rails {
+            vertex_at(&b, p);
+        }
+        assert!(b.check(CheckLevel::All).unwrap().is_valid());
+    }
+}
+
+/// Select the cube's edge along x at y = z = 20, with its record Order.
+fn variable_ordered_edge(b: &Body) -> (solidcore_ops::Order, usize) {
+    let (record, order) = b.to_record().unwrap();
+    let edge = record
+        .edges
+        .iter()
+        .position(|e| {
+            e.vertices.iter().all(|&v| {
+                let p = record.vertices[usize::try_from(v).unwrap()].point;
+                p[1] == 20.0 && p[2] == 20.0
+            })
+        })
+        .unwrap();
+    (order, edge)
+}
+
+#[test]
+fn a_record_ordered_variable_round_keeps_its_selected_edge() {
+    all_fixes();
+    for permuted in [false, true] {
+        let b = make_box([0.0; 3], [20.0; 3]).unwrap();
+        let (mut order, edge) = variable_ordered_edge(&b);
+        let selected = order.edges[edge];
+        if permuted {
+            order.edges.rotate_left(5);
+        }
+        let edge = order.edges.iter().position(|&e| e == selected).unwrap();
+        solidcore_ops::fillet_variable_ordered(
+            &b,
+            &order,
+            edge,
+            [-10.0, 20.0, 20.0],
+            1,
+            &[0.0, 0.0, 1.0, 1.0],
+            &[2.0, 2.0],
+        )
+        .unwrap();
+        let want = 8000.0 - (1.0 - PI / 4.0) * 4.0 * 20.0;
+        assert!((b.volume(1e-9).unwrap() - want).abs() <= want * 1e-9);
+        for point in [
+            [0.0, 18.0, 20.0],
+            [0.0, 20.0, 18.0],
+            [20.0, 18.0, 20.0],
+            [20.0, 20.0, 18.0],
+        ] {
+            vertex_at(&b, point);
+        }
+        assert!(b.check(CheckLevel::All).unwrap().is_valid());
+    }
+}
+
+/// Reversing this law leaves its total volume the same, so its start's radius-4 rail
+/// vertices and its ten faces, not volume alone, prove which end receives the law.
+#[test]
+fn a_record_ordered_variable_round_keeps_the_near_end_and_tie_rule() {
+    all_fixes();
+    for point in [[-10.0, 20.0, 20.0], [30.0, 20.0, 20.0], [10.0, 20.0, 20.0]] {
+        let b = make_box([0.0; 3], [20.0; 3]).unwrap();
+        let (record, _) = b.to_record().unwrap();
+        let (mut order, edge) = variable_ordered_edge(&b);
+        let selected = order.edges[edge];
+        let solidcore_record::brep::Curve::Line { start, .. } = record.edges[edge].curve else {
+            panic!("the selected edge is a line");
+        };
+        let from_x = if point[0] < 0.0 {
+            0.0
+        } else if point[0] > 20.0 {
+            20.0
+        } else {
+            start[0]
+        };
+        order.edges.reverse();
+        let edge = order.edges.iter().position(|&e| e == selected).unwrap();
+        solidcore_ops::fillet_variable_ordered(
+            &b,
+            &order,
+            edge,
+            point,
+            1,
+            &[0.0, 0.0, 0.25, 0.75, 1.0, 1.0],
+            &[4.0, 2.0, 4.0, 2.0],
+        )
+        .unwrap();
+        assert_eq!(b.counts().unwrap()[0], 10, "start {point:?}");
+        vertex_at(&b, [from_x, 16.0, 20.0]);
+        vertex_at(&b, [from_x, 20.0, 16.0]);
+        assert!(b.check(CheckLevel::All).unwrap().is_valid());
+    }
+}
+
+#[test]
+fn an_ordered_variable_round_rejects_bad_selection_without_editing() {
+    all_fixes();
+    let b = make_box([0.0; 3], [20.0; 3]).unwrap();
+    let (before, _) = b.to_record().unwrap();
+    let (order, edge) = variable_ordered_edge(&b);
+    let law = |order: &solidcore_ops::Order, edge: usize, start| {
+        solidcore_ops::fillet_variable_ordered(
+            &b,
+            order,
+            edge,
+            start,
+            1,
+            &[0.0, 0.0, 1.0, 1.0],
+            &[2.0, 2.0],
+        )
+    };
+    assert_eq!(
+        law(&order, usize::MAX, [0.0, 20.0, 20.0]),
+        Err(Error::Argument)
+    );
+    let mut missing = order.clone();
+    missing.edges[edge] = EdgeId::from_index(1_000_000);
+    assert_eq!(law(&missing, edge, [0.0, 20.0, 20.0]), Err(Error::Argument));
+    assert_eq!(
+        law(&order, edge, [f64::NAN, 20.0, 20.0]),
+        Err(Error::Argument)
+    );
+    assert_eq!(b.to_record().unwrap().0, before);
 }
 
 #[test]
