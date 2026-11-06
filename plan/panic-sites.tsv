@@ -965,7 +965,6 @@ crates/solidcore/src/topology/brep/p1.rs	create_corner_blend	rotate	1	open	rotat
 crates/solidcore/src/topology/brep/p1.rs	create_corner_blend	rotate	2	open	rotate_right(1)	
 crates/solidcore/src/topology/brep/p1.rs	create_corner_blend	rotate	3	open	rotate_right(1)	
 crates/solidcore/src/topology/brep/p1.rs	create_corner_blend	rotate	4	open	rotate_right(1)	
-crates/solidcore/src/topology/brep/p1.rs	create_corner_blend	with_capacity	1	open	Vec::with_capacity(ordered_surfs.len())	
 crates/solidcore/src/topology/brep/p1.rs	create_edge_edge_blend	with_capacity	1	open	Vec::with_capacity(num_loc)	
 crates/solidcore/src/topology/brep/p1.rs	create_edge_edge_blend	with_capacity	2	open	Vec::with_capacity(num_loc)	
 crates/solidcore/src/topology/brep/p1.rs	mark_loops_to_delete_bounded	int-rem	1	proven	rec_level % 2	constant non-zero divisor
@@ -997,8 +996,6 @@ crates/solidcore/src/topology/brep/p5.rs	make_manifold_in	Vec::remove	1	open	rem
 crates/solidcore/src/topology/brep/p5.rs	remove_vertexuse	Vec::remove	1	open	remove(index)	
 crates/solidcore/src/topology/brep/p7.rs	edge_remove	Vec::remove	1	open	remove(at)	
 crates/solidcore/src/topology/brep/p7.rs	glue_edges_general	Vec::remove	1	open	remove(at)	
-crates/solidcore/src/topology/brep/p8.rs	create_face_in_region_from_surface	with_capacity	1	open	Vec::with_capacity(natural.uv_curves.len())	
-crates/solidcore/src/topology/brep/p8.rs	create_planar_faces_with_3d_curves	with_capacity	1	open	Vec::with_capacity(plane.ordered_curves.len())	
 crates/solidcore/src/topology/brep/p9.rs	faceuse_pre_insert_loopuse	Vec::insert	1	proven	insert(0, lu)	index 0 is never past the end
 crates/solidcore/src/topology/brep/p9.rs	faceuse_remove_loopuse	Vec::remove	1	open	remove(at)	
 crates/solidcore/src/topology/brep/p9.rs	make_vertex_split_edge_with_curve_identity_state	chunks	1	proven	chunks_exact(2)	constant non-zero size
@@ -1069,8 +1066,6 @@ crates/solidcore/src/topology/proto_topology/p1/proto.rs	ProtoTopologyManager::r
 crates/solidcore/src/topology/proto_topology/p1/proto.rs	ProtoVertex::remove_proto_edge	Vec::remove	1	open	remove(i)	
 crates/solidcore/src/topology/proto_topology/p1/proto.rs	ProtoVertex::remove_vertex_definition	Vec::remove	1	open	remove(i)	
 crates/solidcore/src/topology/proto_topology/p2.rs	ProtoTopologyManager::combine_proto_edge	Vec::remove	1	open	remove(idx)	
-crates/solidcore/src/topology/proto_topology/p2/imprint_ends.rs	extended_curve	with_capacity	1	open	Vec::with_capacity(degree + 1)	
-crates/solidcore/src/topology/proto_topology/p2/imprint_ends.rs	extended_curve	with_capacity	2	open	Vec::with_capacity(degree + 1)	
 crates/solidcore/src/topology/proto_topology/p3.rs	ProtoTopologyManager::find_or_create_proto_edge	with_capacity	1	open	Vec::with_capacity(overlapping.len())	
 crates/solidcore/src/topology/proto_topology/p3.rs	ProtoTopologyManager::glue_coincident_brep_vertices	with_capacity	1	open	Vec::with_capacity(defs.len())	
 crates/solidcore/src/topology/shell.rs	is_inner_shell_of	step_by	1	proven	step_by(2)	constant non-zero step
