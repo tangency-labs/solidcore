@@ -45,7 +45,6 @@ use solidcore::surface::plane::Plane;
 use solidcore::surface::surf_of_revolution::{test_for_iso_circles, SurfOfRevolution};
 use solidcore::surface::surface::p2::{B_SPLINE_SURFACE_TYPE, SURF_OF_REVOLUTION_TYPE, TYPE};
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_surf_of_revolution_p1 as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -268,57 +267,6 @@ fn cpts4(c: &InlineCrv) -> Result<Vec<[f64; 4]>, HarnessError> {
                 .collect())
         }
     }
-}
-
-fn ffi_gen(g: &GenIn) -> Result<ffi::Gen, HarnessError> {
-    Ok(match g {
-        GenIn::BSpline(c) => ffi::Gen::BSpline(ffi::BSplineData {
-            cpts: cpts4(c)?,
-            p: c.p,
-            knots: c.u.clone(),
-        }),
-        GenIn::Line { a, b } => ffi::Gen::Line { a: *a, b: *b },
-        GenIn::Circle { c, x, y, d, r } => ffi::Gen::Circle {
-            c: *c,
-            x: *x,
-            y: *y,
-            d: *d,
-            r: *r,
-        },
-        GenIn::Hyperbola { c, x, y, d, a, b } => ffi::Gen::Hyperbola {
-            c: *c,
-            x: *x,
-            y: *y,
-            d: *d,
-            a: *a,
-            b: *b,
-        },
-    })
-}
-
-pub(crate) fn ffi_surf(s: &SurfIn) -> Result<ffi::Surf, HarnessError> {
-    Ok(ffi::Surf {
-        gen: ffi_gen(&s.gen)?,
-        build: match &s.build {
-            BuildIn::Canonical { point, axis } => ffi::Build::Canonical {
-                point: *point,
-                axis: *axis,
-            },
-            BuildIn::Ctor {
-                origin,
-                x,
-                y,
-                domain,
-            } => ffi::Build::Ctor {
-                origin: *origin,
-                x: *x,
-                y: *y,
-                domain: *domain,
-            },
-        },
-        oob: s.oob,
-        swap: s.swap,
-    })
 }
 
 /// Splits a record into `build`, `status` and `out`.
