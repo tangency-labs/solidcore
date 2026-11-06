@@ -285,7 +285,7 @@ fn sub(n: &Extent2d, u: (f64, f64), v: (f64, f64)) -> Extent2d {
 #[test]
 fn bspline_patch_keeps_its_trims() {
     let d = Extent2d::from_points(Point2::new(0.2, 0.3), Point2::new(0.7, 0.9));
-    let on = shrunk_face_trims(&mut kernel(true), bspline_patch(), &d);
+    let on = shrunk_face_trims(&mut Kernel::default(), bspline_patch(), &d);
     assert_eq!((on.kept, on.removed), (8, 0));
     assert!(on.off <= 1e-12, "off {}", on.off);
     let off = shrunk_face_trims(&mut kernel(false), bspline_patch(), &d);
@@ -294,7 +294,7 @@ fn bspline_patch_keeps_its_trims() {
 
 #[test]
 fn cylinder_trimmed_along_its_axis_keeps_its_trims() {
-    let mut k = kernel(true);
+    let mut k = Kernel::default();
     let s = quarter_cylinder(&k);
     let n = s.natural_uv_domain_with_nurb(&k).unwrap();
     let d = sub(&n, (0.0, 1.0), (0.2, 0.7));
@@ -337,8 +337,7 @@ fn bound_a_rounding_step_past_a_knot_ends_on_the_knot() {
     // fork's `shrink_bound_a_rounding_step_past_a_knot`): with WR-702 the bound is 0.5 and
     // the patch has the one span [0.2, 0.5] along u
     let d = Extent2d::from_points(Point2::new(0.2, 0.3), Point2::new(0.5_f64.next_up(), 0.9));
-    let mut k = kernel(true);
-    k.fixes.face_shrink_bound_on_knot = true;
+    let mut k = Kernel::default();
     let on = shrunk_face_trims(&mut k, bspline_patch(), &d);
     assert_eq!((on.kept, on.removed, on.spans_u), (8, 0, 1));
     assert!(on.off <= 1e-12, "off {}", on.off);
