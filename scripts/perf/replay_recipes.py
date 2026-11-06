@@ -254,20 +254,16 @@ def execute(command, environment, prefix, timeout):
     started = time.perf_counter()
     result = {"status": "spawn_error", "exit": None}
     with Path(str(prefix) + ".stdout").open("wb") as stdout, Path(str(prefix) + ".stderr").open("wb") as stderr:
-        try:
-            process = subprocess.Popen(command, env=environment, stdout=stdout, stderr=stderr, start_new_session=True)
-        except OSError:
-            result["seconds"] = time.perf_counter() - started
-            return result
         finished, expired = threading.Event(), threading.Event()
         cleanup_lock = threading.Lock()
         cleaned = False
+        process = None
 
         def cleanup():
             """Serialize watchdog and interruption cleanup for this group."""
             nonlocal cleaned
             with cleanup_lock:
-                if not cleaned:
+                if process is not None and not cleaned:
                     stop_process(process)
                     cleaned = True
 
@@ -278,8 +274,13 @@ def execute(command, environment, prefix, timeout):
                 cleanup()
 
         watcher = threading.Thread(target=watchdog, daemon=True)
-        watcher.start()
         try:
+            try:
+                process = subprocess.Popen(command, env=environment, stdout=stdout, stderr=stderr, start_new_session=True)
+            except OSError:
+                result["seconds"] = time.perf_counter() - started
+                return result
+            watcher.start()
             try:
                 # A timeout argument makes POSIX Popen.wait poll with sleeps,
                 # biasing short recipes. Only the watchdog waits on a clock.
@@ -297,9 +298,15 @@ def execute(command, environment, prefix, timeout):
         except KeyboardInterrupt:
             cleanup()
             ended = time.perf_counter()
-            result.update(status="interrupted", exit=process.returncode)
+            result.update(status="interrupted", exit=process.returncode if process is not None else None)
+        except BaseException:
+            # Startup can fail after we own the evaluator but before wait begins.
+            cleanup()
+            raise
+        finally:
             finished.set()
-            watcher.join()
+            if watcher.ident is not None:
+                watcher.join()
         if expired.is_set() and result["status"] != "interrupted":
             result.update(status="timeout", exit=process.returncode)
     result["seconds"] = ended - started

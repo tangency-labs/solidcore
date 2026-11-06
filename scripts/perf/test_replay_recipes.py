@@ -164,6 +164,45 @@ class ReplayTests(unittest.TestCase):
         process.wait.assert_called_once_with()
         self.assertEqual(result["status"], "ok")
 
+    def test_watchdog_startup_interrupt_cleans_owned_evaluator(self):
+        """Cancellation before the watchdog starts still reaps the evaluator."""
+        process = Mock(returncode=-15)
+        with patch.object(replay.subprocess, "Popen", return_value=process), patch.object(replay.threading.Thread, "start", side_effect=KeyboardInterrupt), patch.object(replay, "stop_process") as stop:
+            result = replay.execute(["fake"], {}, self.root / "startup-interrupt", 1)
+        stop.assert_called_once_with(process)
+        self.assertEqual(result["status"], "interrupted")
+        self.assertEqual(result["exit"], -15)
+
+    def test_watchdog_startup_failure_cleans_owned_evaluator(self):
+        """A thread-start failure cannot leak a successfully spawned evaluator."""
+        process = Mock(returncode=-15)
+        with patch.object(replay.subprocess, "Popen", return_value=process), patch.object(replay.threading.Thread, "start", side_effect=RuntimeError("thread startup failed")), patch.object(replay, "stop_process") as stop:
+            with self.assertRaises(RuntimeError):
+                replay.execute(["fake"], {}, self.root / "startup-failure", 1)
+        stop.assert_called_once_with(process)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "owned process-group cleanup requires Linux")
+    def test_startup_interrupt_reaps_real_evaluator(self):
+        """Inject interruption at watchdog startup and verify real child exit."""
+        processes = []
+        popen = subprocess.Popen
+
+        def spawn(*args, **kwargs):
+            process = popen(*args, **kwargs)
+            processes.append(process)
+            return process
+
+        try:
+            with patch.object(replay.subprocess, "Popen", side_effect=spawn), patch.object(replay.threading.Thread, "start", side_effect=KeyboardInterrupt):
+                result = replay.execute([sys.executable, "-c", "import time; time.sleep(60)"], os.environ.copy(), self.root / "real-startup", 5)
+            self.assertEqual(result["status"], "interrupted")
+            self.assertIsNotNone(processes[0].poll())
+            self.assertFalse(replay.process_group_exists(processes[0]))
+        finally:
+            for process in processes:
+                if process.poll() is None:
+                    replay.stop_process(process)
+
     def run_mocked(self, execute):
         # Exercise orchestration on all hosts without invoking Linux utilities.
         with patch.object(replay.sys, "platform", "linux"), patch.object(replay.shutil, "which", return_value="nice"), patch.object(replay.Path, "is_file", return_value=True), patch.object(replay, "execute", side_effect=execute):
