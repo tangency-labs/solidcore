@@ -569,13 +569,7 @@ struct LiftPart {
 ///
 /// [`SolidError::PortInvariant`] for a missing derivative; those of
 /// [`curve_derivs_over`], [`net_partials`] and [`net_parts`].
-fn lift_over(
-    net: &Nurbs,
-    uvn: &NurbsCurve,
-    cn: &NurbsCurve,
-    a: f64,
-    b: f64,
-) -> Result<LiftPart> {
+fn lift_over(net: &Nurbs, uvn: &NurbsCurve, cn: &NurbsCurve, a: f64, b: f64) -> Result<LiftPart> {
     let m = 0.5 * (a + b);
     let t = Ivl::new(a, b);
     let dt = t - Ivl::from(m);
