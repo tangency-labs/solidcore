@@ -27,6 +27,8 @@
 //! | `GlobalSolve::identical_solutions` for [`TopologySolver`], `TopologyDomains` (private) | `SmGlobalSolver::IdenticalSolutions` (not overridden upstream: the solutions' `SmObject*` resolve through [`TopologyObjects`]) |
 //!
 //! Deviations:
+//! - **Silhouette measurements.** Queries evaluate trimmed UV silhouettes on the
+//!   source surface, avoiding the independent 3D fit's extra measurement error.
 //! - **Objects.** Tree objects and solution objects are a caller-chosen handle `O`
 //!   (upstream `SmObject*`; a null pointer is `None`). Everything the solvers read
 //!   through those pointers (the curve behind a tree object, a vertex's point and
@@ -1944,6 +1946,8 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
 /// vector `opt_vectors[0]` (3D curves and their UV trim curves), taken from the
 /// surface cache's alternate caches or made and cached there (silhouette curves of
 /// the surface to ten times `tolerance_3d` and 20 degrees, trimmed by the face).
+/// The returned 3D curves evaluate the trimmed UV curves on the source surface;
+/// the fitted 3D curves remain construction/trimming aids in the cache.
 /// The surface cache is the one the caller's
 /// [`TopologyObjects::surface_solve_context`] makes for the face's surface (else the
 /// per-call [`surface_cache`]); either is this call's copy, so the alternate caches

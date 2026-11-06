@@ -1,20 +1,22 @@
 //! Projected face measurements must use the surface at the returned UV point.
 
-use solidcore::geom::extent2d::Extent2d;
-use solidcore::geom::global_solver::{SolutionRequested, SolverOperation};
-use solidcore::geom::tol::USE_DEFAULT;
-use solidcore::geom::vector2d::Vec2;
-use solidcore::intersect::topology_solver::p1::{LocalSolver, LocalSolverKind, TopologySolver};
-use solidcore::kernel::Kernel;
-use solidcore::math::Vec3;
-use solidcore::surface::sphere::{Sphere, SphereOptions};
-use solidcore::surface::surface::Surface;
-use solidcore::topology::brep::p2::ArenaNotifyState;
-use solidcore::topology::brep::p3::new_brep;
-use solidcore::topology::brep::p8::{create_face_from_surface, FaceBuildEnv};
-use solidcore::topology::brep_cache::{arena_identity, BrepObjects, CacheObject};
-use solidcore::topology::topology_traverser::Marks;
-use solidcore::topology::BrepId;
+use crate::geom::extent2d::Extent2d;
+use crate::geom::global_solver::{SolutionRequested, SolverOperation};
+use crate::geom::tol::USE_DEFAULT;
+use crate::geom::vector2d::Vec2;
+use crate::intersect::topology_solver::p1::{
+    LocalSolver, LocalSolverKind, TopologyObjects, TopologySolver,
+};
+use crate::kernel::Kernel;
+use crate::math::Vec3;
+use crate::surface::sphere::{Sphere, SphereOptions};
+use crate::surface::surface::Surface;
+use crate::topology::brep::p2::ArenaNotifyState;
+use crate::topology::brep::p3::new_brep;
+use crate::topology::brep::p8::{create_face_from_surface, FaceBuildEnv};
+use crate::topology::brep_cache::{arena_identity, BrepObjects, CacheObject};
+use crate::topology::topology_traverser::Marks;
+use crate::topology::BrepId;
 
 #[test]
 fn projected_sphere_face_maximum_matches_surface_and_closed_form() {
@@ -44,8 +46,30 @@ fn projected_sphere_face_maximum_matches_surface_and_closed_form() {
     };
     let face = create_face_from_surface(&mut k, &mut b, Some(surface.clone()), &domain, &mut fenv)
         .unwrap();
+    let mut preparation = crate::query::brep::RayPreparation::default();
+    {
+        let objects = BrepObjects {
+            preparation: Some(&preparation),
+            brep: &b,
+            brep_id: BrepId::from_index(0),
+            cache: None,
+            keys: &arena_identity,
+            owner_of: &|_| None,
+        };
+        let mut context = objects.surface_solve_context().unwrap();
+        assert!(matches!(
+            context.build_surface_cache(
+                &k,
+                b.face(face).unwrap().surface.as_ref().unwrap(),
+                Some(CacheObject::Surface(face))
+            ),
+            Err(crate::SolidError::PreparationRequired { .. })
+        ));
+    }
+    let request = preparation.take_request().unwrap();
+    preparation.prepare(&k, &mut b, request).unwrap();
     let objects = BrepObjects {
-        preparation: None,
+        preparation: Some(&preparation),
         brep: &b,
         brep_id: BrepId::from_index(0),
         cache: None,

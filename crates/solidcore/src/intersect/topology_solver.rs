@@ -8,3 +8,6 @@
 
 pub mod p1;
 pub mod p2;
+
+#[cfg(test)]
+mod silhouette_accuracy_tests;
