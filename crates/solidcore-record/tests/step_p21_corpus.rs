@@ -16,11 +16,13 @@
 //! runs.
 //!
 //! `corpus_units` (ignored too, same variable and command with `corpus_units` as the filter)
-//! reads every geometric representation context with assigned units in each file and prints
-//! one line per file and a table of how often each length and plane angle unit occurs, and
-//! how many contexts state an uncertainty. It fails when a file does not parse. Files with no
-//! context whose length unit can be read are listed and counted, not failed: a file written
-//! with Part 21 short names (`SUNT`, `LNGUNT`, `GMRPCN`, …) or one without geometry has none.
+//! reads every geometric representation context in each file (`GEOMETRIC_REPRESENTATION_CONTEXT`,
+//! or `GMRPCN` in Part 21 short names; not a `PARAMETRIC_REPRESENTATION_CONTEXT`, which has no
+//! units) and prints one line per file, a table of how often each
+//! length and plane angle unit occurs (its name and factor), how many contexts state a distance
+//! uncertainty, and each context whose length unit is unreadable, with why. It fails when a file
+//! does not parse; unreadable units are listed and counted, not failed (a file written with
+//! Part 21 short names has them, and the importer decides).
 
 #![allow(
     clippy::unwrap_used,
@@ -33,7 +35,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use solidcore_record::step::p21;
-use solidcore_record::step::units::{self, UnitKind};
+use solidcore_record::step::units::{self, Unit, Unreadable};
 
 fn files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -119,28 +121,16 @@ fn corpus_parses() {
     );
 }
 
-/// A length factor's name (millimetres per unit).
-fn length_name(f: f64) -> String {
-    match f {
-        1.0 => "mm".into(),
-        25.4 => "inch".into(),
-        1000.0 => "m".into(),
-        10.0 => "cm".into(),
-        304.8 => "foot".into(),
-        _ => format!("{f} mm"),
-    }
+/// An error as text, whichever type the parser's error is.
+fn text(e: &impl std::fmt::Display) -> String {
+    e.to_string()
 }
 
-/// A plane angle factor's name (radians per unit). A degree is the number the file writes:
-/// `degree` when it is π/180 to 12 digits or more, else the written factor, so a file that
-/// rounds π/180 shorter (`0.0174532925`) shows in the table as what it is.
-fn angle_name(f: f64) -> String {
-    if f == 1.0 {
-        "rad".into()
-    } else if (f - std::f64::consts::PI / 180.0).abs() <= 1e-14 {
-        "degree".into()
-    } else {
-        format!("{f} rad")
+/// A unit as a table key: its name and factor, or why it is unreadable.
+fn key(u: &Result<Unit, Unreadable>) -> String {
+    match u {
+        Ok(u) => format!("{} {}", u.name, u.factor),
+        Err(e) => format!("unreadable {:?}", e.why),
     }
 }
 
@@ -156,10 +146,11 @@ fn corpus_units() {
     files(root, &mut paths);
     assert!(!paths.is_empty(), "no STEP files under {dir:?}");
     let mut failures = Vec::new();
-    let mut unread = Vec::new();
+    let mut unreadable = Vec::new();
+    let mut without = Vec::new();
     let mut lengths: BTreeMap<String, usize> = BTreeMap::new();
     let mut angles: BTreeMap<String, usize> = BTreeMap::new();
-    let (mut contexts, mut with_uncertainty, mut files_read) = (0usize, 0usize, 0usize);
+    let (mut contexts, mut with_uncertainty) = (0usize, 0usize);
     for path in &paths {
         let name = path
             .strip_prefix(root)
@@ -167,8 +158,8 @@ fn corpus_units() {
             .display()
             .to_string();
         let ex = match std::fs::read(path)
-            .map_err(|e| e.to_string())
-            .and_then(|b| p21::parse(&String::from_utf8_lossy(&b)))
+            .map_err(|e| text(&e))
+            .and_then(|b| p21::parse(&String::from_utf8_lossy(&b)).map_err(|e| text(&e)))
         {
             Ok(ex) => ex,
             Err(e) => {
@@ -178,49 +169,49 @@ fn corpus_units() {
             }
         };
         let mut here = Vec::new();
-        let mut readable = false;
+        let mut bad = 0usize;
         for (&id, e) in &ex.entities {
-            if !(e.has("GEOMETRIC_REPRESENTATION_CONTEXT") && e.has("GLOBAL_UNIT_ASSIGNED_CONTEXT"))
+            // A parametric context (the (u, v) space of a pcurve) has no units.
+            if !(e.has("GEOMETRIC_REPRESENTATION_CONTEXT") || e.has("GMRPCN"))
+                || e.has("PARAMETRIC_REPRESENTATION_CONTEXT")
             {
                 continue;
             }
-            // Whether the context names a length unit that reads as a factor, rather than
-            // falling back to millimetres.
-            readable |= e
-                .record("GLOBAL_UNIT_ASSIGNED_CONTEXT")
-                .and_then(<[p21::Param]>::first)
-                .and_then(p21::Param::as_list)
-                .is_some_and(|l| {
-                    l.iter().filter_map(p21::Param::as_ref_id).any(|u| {
-                        matches!(units::unit_factor(&ex, u),
-                            Some((UnitKind::Length, f)) if f.is_finite() && f > 0.0)
-                    })
-                });
             let c = units::context(&ex, id);
             contexts += 1;
-            with_uncertainty += usize::from(c.uncertainty.is_some());
-            let (l, a) = (length_name(c.units.len), angle_name(c.units.ang));
+            with_uncertainty += usize::from(matches!(c.uncertainty, Some(Ok(_))));
+            let (l, a) = (key(&c.units.len), key(&c.units.ang));
             *lengths.entry(l.clone()).or_default() += 1;
             *angles.entry(a.clone()).or_default() += 1;
-            here.push(format!("#{id} {l}/{a} uncertainty {:?}", c.uncertainty));
+            if let Err(u) = c.units.len {
+                bad += 1;
+                println!(
+                    "{name}: #{id} length unit unreadable at #{}: {:?}",
+                    u.entity, u.why
+                );
+            }
+            here.push(format!("#{id} {l} / {a} uncertainty {:?}", c.uncertainty));
         }
         println!("{name}: {} contexts: {}", here.len(), here.join(", "));
-        if readable {
-            files_read += 1;
-        } else {
-            println!("{name}: no context with a readable length unit");
-            unread.push(name);
+        if here.is_empty() {
+            without.push(name);
+        } else if bad > 0 {
+            unreadable.push(format!("{name} ({bad} of {})", here.len()));
         }
     }
     println!(
-        "{files_read} of {} files have a context with a readable length unit; {contexts} contexts, {with_uncertainty} with an uncertainty",
+        "{} files; {contexts} contexts, {with_uncertainty} with a distance uncertainty",
         paths.len()
     );
     println!("length units (contexts): {lengths:?}");
     println!("plane angle units (contexts): {angles:?}");
     println!(
-        "no context with a readable length unit: {} files {unread:?}",
-        unread.len()
+        "files with an unreadable length unit: {} {unreadable:?}",
+        unreadable.len()
+    );
+    println!(
+        "files with no geometric representation context: {} {without:?}",
+        without.len()
     );
     assert!(
         failures.is_empty(),
