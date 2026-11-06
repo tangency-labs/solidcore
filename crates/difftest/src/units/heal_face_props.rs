@@ -1,11 +1,11 @@
 //! Runner for unit `heal.face_props`: `SmFaceProps`, `SmLoopProps` and the
 //! `SmLooptreeItem` tree.
 //!
-//! C++: `solidcore_ffi::units::heal_face_props` (upstream `SmFaceProps.cpp`,
-//! `SmLoopProps.cpp`) on a one-face B-rep built with `SmBrepConstructor`. Rust:
-//! `solidcore::heal::face_props` on the same B-rep, rebuilt record by record by
-//! [`rust_brep`] (same surface, owned by the face, same vertex loop or edge loops and holes,
-//! same face tolerance).
+//! Ported from upstream `SmFaceProps.cpp` and `SmLoopProps.cpp` into
+//! `solidcore::heal::face_props`; checked against the unit's golden. The one-face B-rep is
+//! built record by record by [`rust_brep`] as upstream's `SmBrepConstructor` builds it
+//! (the surface, owned by the face, the vertex loop or edge loops and holes, the face
+//! tolerance).
 //!
 //! Two kinds of case. `props`: a script of ops on one face props object (`SetProps` and its
 //! three stages, `ReSet`, `HasProps`, `HasProblems`, `IsPoint3dOnPole`, field seeds, and
@@ -30,11 +30,12 @@
 //! (`set_props_with_query_gaps`, `set_props_stage2_mut`, `set_props_stage3_mut`): a re-run
 //! of `ClassifyLoops` reads the UV trim curves the first one made.
 //!
-//! **Scripts are guarded.** [`ffi::validate`] runs on both sides and rejects what crashes or is
-//! undefined upstream (including the scripts of UB-131: `SetProps_Stage2` / `Stage3` on a
-//! stage past `GAPSa` with no face pointer, `plan/upstream-issues.md`). A fixture case with
-//! `expect_rejected` is a regression case for the guard: both sides must reject it (the
-//! error `rejected`); the C++ is never called for it.
+//! **Scripts are guarded.** [`script_contract`] is the reference wrapper's input contract:
+//! it rejects what crashes or is undefined upstream (including the scripts of UB-131:
+//! `SetProps_Stage2` / `Stage3` on a stage past `GAPSa` with no face pointer,
+//! `plan/upstream-issues.md`); the generator redraws until it holds. A fixture case with
+//! `expect_rejected` is a regression case for the guard: it must be rejected (the error
+//! `rejected`).
 //!
 //! Not reached: `m_lBadMissingPoles` (it needs a pole on a side in the surface's closed
 //! direction with a `SM_CD_POLE_NO_VERTEX` classify curve end; a surface closed both ways
@@ -70,7 +71,6 @@ use solidcore::topology::{
     LoopId, Loopuse, LoopuseId, LoopuseStart, Region, Shell, VertexId, Vertexuse,
     VertexuseId, VertexuseOwner,
 };
-use solidcore_ffi::units::heal_face_props as ffi;
 
 use crate::case::{CaseContext, CaseSource};
 use crate::runner::default_cases;
@@ -272,124 +272,471 @@ enum CaseIn {
     },
 }
 
-fn ffi_gen(g: &GenIn) -> ffi::Gen {
-    match g {
-        GenIn::Line { a, b } => ffi::Gen::Line { a: *a, b: *b },
-        GenIn::Circle { c, x, y, d, r } => ffi::Gen::Circle {
-            c: *c,
-            x: *x,
-            y: *y,
-            d: *d,
-            r: *r,
-        },
-    }
+// ---- the input contract ----------------------------------------------------------
+//
+// The reference wrapper accepts only scripts upstream runs without crashing or undefined
+// behaviour; the generator redraws until a script keeps that contract, and the Rust side
+// runs only such scripts (the guard's regression cases are fixtures).
+
+/// Values per snapshot.
+const SNAP_LEN: usize = 82;
+/// Largest number of ops.
+const MAX_OPS: usize = 64;
+/// Largest number of tree items.
+const MAX_ITEMS: usize = 32;
+/// Number of seedable fields (ids `0..SEED_FIELDS`).
+const SEED_FIELDS: i64 = 26;
+/// Loops whose props ops `8` and `9` report.
+const MAX_LOOP_SNAPS: usize = 4;
+/// Largest number of loops.
+const MAX_LOOPS: usize = 4;
+/// Largest number of points per loop.
+const MAX_LOOP_POINTS: usize = 8;
+/// The smallest side of a plane domain with edge or circle loops a script may run
+/// `SetProps_Stage3` on (UB-128: `SmFace::ClassifyLoops` crashes upstream on tiny
+/// domains, not monotonically in the size, so the bound is a safe one).
+const MIN_PLANE_SIDE_FOR_STAGE3: f64 = 1e-6;
+
+fn sq_dist(a: [f64; 3], b: [f64; 3]) -> f64 {
+    let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
 }
 
-pub(crate) fn ffi_face(f: &FaceIn) -> ffi::FaceSpec {
-    let surf = match &f.surf {
-        None => ffi::Surf::Plane {
-            o: f.o,
-            x: f.x,
-            y: f.y,
-            domain: f.domain,
-        },
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn sq_len(a: [f64; 3]) -> f64 {
+    a[0] * a[0] + a[1] * a[1] + a[2] * a[2]
+}
+
+/// Whether every value is finite and within `1e9`.
+fn finite(vals: impl IntoIterator<Item = f64>) -> bool {
+    vals.into_iter().all(|v| v.is_finite() && v.abs() <= 1e9)
+}
+
+/// Whether a circle `(c, x, y, d, r)` is one upstream builds: non-parallel axes, a radius
+/// of at least `1e-3` and 1 to 360 degrees.
+fn circle_ok(c: &[f64; 3], x: &[f64; 3], y: &[f64; 3], d: &[f64; 2], r: f64) -> bool {
+    finite(c.iter().chain(x).chain(y).chain(d).copied().chain([r]))
+        && sq_len(cross(*x, *y)) >= 1e-6
+        && r >= 1e-3
+        && d[1] - d[0] >= 1.0
+        && d[1] - d[0] <= 360.0
+}
+
+/// The face contract: a face tolerance in `(0, 1e9]` (`SmFace::SetTolerance` turns a value
+/// at or below zero into the default, which the raw field write does not), finite values,
+/// a plane with non-parallel axes and a non-empty domain, a revolution about a non-zero
+/// axis over 1 to 360 degrees of a generator line longer than `1e-3` or a circle
+/// ([`circle_ok`]), and one to [`MAX_LOOPS`] loops: edge loops of three to
+/// [`MAX_LOOP_POINTS`] points with edges longer than `1e-3`, or circle loops.
+fn face_contract(face: &FaceIn) -> Result<(), &'static str> {
+    if !face.tol.is_finite() || face.tol <= 0.0 || face.tol > 1e9 {
+        return Err("face tolerance");
+    }
+    match &face.surf {
+        None => {
+            let (o, x, y, domain) = (&face.o, &face.x, &face.y, &face.domain);
+            if !finite(o.iter().chain(x).chain(y).chain(domain).copied()) {
+                return Err("face values");
+            }
+            if sq_len(cross(*x, *y)) < 1e-6 {
+                return Err("plane axes");
+            }
+            if domain[2] <= domain[0] || domain[3] <= domain[1] {
+                return Err("plane domain");
+            }
+        }
         Some(SurfIn::Revolution {
             gen,
             point,
             axis,
-            swap,
             sweep,
-        }) => ffi::Surf::Revolution {
-            gen: ffi_gen(gen),
-            point: *point,
-            axis: *axis,
-            swap: *swap,
-            sweep: *sweep,
-        },
-    };
-    let loops = match &f.loops {
-        None => ffi::Loops::Vertex([0.0; 3]),
-        Some(LoopsIn::Vertex { at }) => ffi::Loops::Vertex(*at),
-        Some(LoopsIn::Edges { loops }) => ffi::Loops::Edges(loops.clone()),
-        Some(LoopsIn::Circles { circles }) => ffi::Loops::Circles(
-            circles
-                .iter()
-                .map(|c| ffi::CircleLoop {
-                    c: c.c,
-                    x: c.x,
-                    y: c.y,
-                    d: c.d,
-                    r: c.r,
-                })
-                .collect(),
-        ),
-    };
-    ffi::FaceSpec {
-        tol: f.tol,
-        surf,
-        loops,
-    }
-}
-
-fn ffi_ops(ops: &[[f64; 5]]) -> Vec<ffi::Op> {
-    ops.iter()
-        .map(|o| ffi::Op {
-            op: o[0] as i64,
-            p: [o[1], o[2], o[3], o[4]],
-        })
-        .collect()
-}
-
-// ---- C++ ----------------------------------------------------------------------------
-
-/// The output of a regression case for the FFI guard: the script must be rejected (the C++
-/// is not called: upstream crashes on these scripts).
-fn rejection(face: &FaceIn, ops: &[[f64; 5]]) -> Result<Output, HarnessError> {
-    match ffi::validate(&ffi_face(face), &ffi_ops(ops)) {
-        Err(_) => Ok(Output::err("rejected")),
-        Ok(()) => Err(harness("expected the FFI guard to reject the script")),
-    }
-}
-
-fn cpp(c: &CaseIn) -> Result<Output, HarnessError> {
-    match c {
-        CaseIn::Props {
-            face,
-            ops,
-            expect_rejected,
-        } => {
-            if *expect_rejected {
-                return rejection(face, ops);
+            ..
+        }) => {
+            if !finite(point.iter().chain(axis).copied()) || !finite([*sweep]) {
+                return Err("revolution values");
             }
-            let r = ffi::run(&ffi_face(face), &ffi_ops(ops)).map_err(|e| harness(e.to_string()))?;
-            Ok(Output::new().values("v", r))
+            if sq_len(*axis) < 1e-6 || !(1.0..=360.0).contains(sweep) {
+                return Err("revolution axis or sweep");
+            }
+            match gen {
+                GenIn::Line { a, b } => {
+                    if !finite(a.iter().chain(b).copied()) || sq_dist(*a, *b) < 1e-6 {
+                        return Err("generator line");
+                    }
+                }
+                GenIn::Circle { c, x, y, d, r } => {
+                    if !circle_ok(c, x, y, d, *r) {
+                        return Err("generator circle");
+                    }
+                }
+            }
         }
-        CaseIn::Tree {
-            items,
-            links,
-            finds,
-        } => {
-            let r = tree_ffi(items, links, finds)?;
-            Ok(Output::new().values("v", r))
+    }
+    match &face.loops {
+        None => {}
+        Some(LoopsIn::Vertex { at }) => {
+            if !finite(at.iter().copied()) {
+                return Err("vertex loop point");
+            }
         }
+        Some(LoopsIn::Edges { loops }) => {
+            if loops.is_empty() || loops.len() > MAX_LOOPS {
+                return Err("loop count");
+            }
+            for l in loops {
+                if l.len() < 3 || l.len() > MAX_LOOP_POINTS {
+                    return Err("loop point count");
+                }
+                for (i, p) in l.iter().enumerate() {
+                    let Some(q) = l.get((i + 1) % l.len()).copied() else {
+                        return Err("loop point");
+                    };
+                    if !finite(p.iter().copied()) || sq_dist(*p, q) < 1e-6 {
+                        return Err("loop point");
+                    }
+                }
+            }
+        }
+        Some(LoopsIn::Circles { circles }) => {
+            if circles.is_empty() || circles.len() > MAX_LOOPS {
+                return Err("loop count");
+            }
+            if !circles.iter().all(|l| circle_ok(&l.c, &l.x, &l.y, &l.d, l.r)) {
+                return Err("circle loop");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The `(stage, face pointer set)` pair of `SmFaceProps` the null pointer rule needs.
+type State = (i64, bool);
+
+/// `SM_PROPSTAGE_GAPSa`, `GAPS`, `2a`, `2`, `3a`, `3`.
+const GAPS_A: i64 = 1;
+const GAPS: i64 = 2;
+const STAGE2_A: i64 = 3;
+const STAGE2: i64 = 4;
+const STAGE3_A: i64 = 5;
+const STAGE3: i64 = 6;
+/// `SM_HO_FIX_TOLSIZES`, `SM_HO_FIX_SPLITEDGE_ATSEAM`.
+const HO_FIX_TOLSIZES: f64 = 5.0;
+const HO_FIX_SPLITEDGE_ATSEAM: f64 = 19.0;
+
+/// The states a stage call can leave, each with whether it returned success.
+type Outcomes = Vec<(State, bool)>;
+
+/// `SetProps_Gaps`: returns at once from `GAPSa` on; else `m_pFace = cpFace`.
+fn sim_gaps(s: State) -> State {
+    if s.0 >= GAPS_A {
+        s
+    } else {
+        (GAPS, true)
     }
 }
 
-fn tree_ffi(
+/// `SetProps_Stage2`; `None` when it would dereference a null `m_pFace` (UB-131).
+fn sim_stage2(s: State, heal: f64) -> Option<Outcomes> {
+    if s.0 >= STAGE2_A {
+        return Some(vec![(s, true)]);
+    }
+    if heal < HO_FIX_TOLSIZES {
+        return Some(vec![(s, false)]);
+    }
+    let mut s = s;
+    if s.0 < GAPS || !s.1 {
+        s = sim_gaps(s);
+    }
+    if !s.1 {
+        return None;
+    }
+    // ReSet(2) then the body: it can stop at 2a on an error (a callee fails), else 2
+    Some(vec![((STAGE2_A, true), false), ((STAGE2, true), true)])
+}
+
+/// `SetProps_Stage3`; `None` when it would dereference a null `m_pFace` (UB-131).
+fn sim_stage3(s: State, heal: f64) -> Option<Outcomes> {
+    if s.0 >= STAGE3_A {
+        return Some(vec![(s, true)]);
+    }
+    if heal < HO_FIX_SPLITEDGE_ATSEAM {
+        return Some(vec![(s, false)]);
+    }
+    let mut out: Outcomes = Vec::new();
+    let mut go: Vec<State> = vec![s];
+    if s.0 < STAGE2 || !s.1 {
+        go.clear();
+        for (t, ok) in sim_stage2(s, heal)? {
+            if ok {
+                go.push(t);
+            } else {
+                // SER: the failed status returns
+                out.push((t, false));
+            }
+        }
+    }
+    for t in go {
+        if !t.1 {
+            return None;
+        }
+        out.push(((STAGE3_A, true), false));
+        out.push(((STAGE3, true), true));
+    }
+    Some(out)
+}
+
+/// `SetProps(stage, face, index, heal)`: the calls it makes, in order, on every state it
+/// can be in; `None` when one of them would dereference a null `m_pFace` (UB-131).
+fn sim_set_props(s: State, stage: i64, heal: f64) -> Option<Vec<State>> {
+    // SetProps_Gaps (HasProps_Stage1: stage >= GAPS)
+    let cur: Vec<State> = [s]
+        .into_iter()
+        .map(|t| {
+            if stage == GAPS || (stage > GAPS && t.0 < GAPS) {
+                sim_gaps(t)
+            } else {
+                t
+            }
+        })
+        .collect();
+    // SetProps_Stage2 (HasProps_Stage2: stage >= 2 and the face is cpFace)
+    let mut next = Vec::new();
+    for t in &cur {
+        if stage == STAGE2 || (stage > STAGE2 && !(t.0 >= STAGE2 && t.1)) {
+            next.extend(sim_stage2(*t, heal)?.into_iter().map(|x| x.0));
+        } else {
+            next.push(*t);
+        }
+    }
+    // SetProps_Stage3
+    let mut out = Vec::new();
+    for t in &next {
+        if stage == STAGE3 {
+            out.extend(sim_stage3(*t, heal)?.into_iter().map(|x| x.0));
+        } else {
+            out.push(*t);
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    Some(out)
+}
+
+/// Whether no op of the script reaches a `SetProps_Stage2` or `SetProps_Stage3` that would
+/// dereference a null `m_pFace` (UB-131: `SetProps_Gaps` returns early from `GAPSa` on, so
+/// the re-run that `m_pFace != cpFace` asks for never sets the face), over every state the
+/// script can be in.
+fn null_face_free(ops: &[[f64; 5]]) -> bool {
+    let mut states: Vec<State> = vec![(0, false)];
+    for &[op, p0, p1, p2, _] in ops {
+        let mut next: Vec<State> = Vec::new();
+        for &s in &states {
+            let r: Option<Vec<State>> = match op as i64 {
+                0 => sim_set_props(s, p0 as i64, p1),
+                1 => {
+                    let c = p0 as i64;
+                    let stage = if c <= GAPS {
+                        0
+                    } else if c <= STAGE2 {
+                        GAPS
+                    } else if c <= STAGE3 {
+                        STAGE2
+                    } else {
+                        s.0
+                    };
+                    Some(vec![(stage, c > GAPS && s.1)])
+                }
+                5 if p0 as i64 == 0 => Some(vec![(p2 as i64, s.1)]),
+                5 if p0 as i64 == 24 => Some(vec![(s.0, p2 != 0.0)]),
+                6 => match p0 as i64 {
+                    1 => Some(vec![sim_gaps(s)]),
+                    2 => sim_stage2(s, p1).map(|v| v.into_iter().map(|x| x.0).collect()),
+                    _ => sim_stage3(s, p1).map(|v| v.into_iter().map(|x| x.0).collect()),
+                },
+                _ => Some(vec![s]),
+            };
+            match r {
+                Some(v) => next.extend(v),
+                None => return false,
+            }
+        }
+        next.sort_unstable();
+        next.dedup();
+        states = next;
+    }
+    true
+}
+
+/// The range of one seed (op `5`) value of field `field` (in `0..SEED_FIELDS`).
+fn seed_ok(field: i64, v: f64) -> bool {
+    match field {
+        // m_ePropStage
+        0 => (0.0..=6.0).contains(&v),
+        // SmMixedLinkType
+        7 | 8 => (0.0..=5.0).contains(&v),
+        // SmHealNotYetFaceType
+        21 => (0.0..=3.0).contains(&v),
+        // SmBoolean / SmBooleanUL: FALSE, TRUE, UNSURE
+        5 | 6 | 10 | 11 | 16 | 20 | 22 | 23 | 25 => (0.0..=2.0).contains(&v),
+        // ULONG members: a negative value cast to ULONG is undefined
+        3 | 9 | 12..=15 | 17..=19 => v >= 0.0,
+        _ => true,
+    }
+}
+
+/// The script contract: the face's ([`face_contract`]), at most [`MAX_OPS`] ops with
+/// finite operands within `1e9` and per op its stage, heal op, bit mask, seed field and
+/// value or stage call in range and a non-negative index; no `SetProps_Stage3` on a plane
+/// domain with edge or circle loops and a side below [`MIN_PLANE_SIDE_FOR_STAGE3`]
+/// (UB-128), and no null face dereference ([`null_face_free`], UB-131).
+fn script_contract(face: &FaceIn, ops: &[[f64; 5]]) -> Result<(), &'static str> {
+    face_contract(face)?;
+    if ops.len() > MAX_OPS {
+        return Err("op count");
+    }
+    for &[op, p0, p1, p2, p3] in ops {
+        if [p0, p1, p2, p3].iter().any(|v| !v.is_finite() || v.abs() > 1e9) {
+            return Err("operand");
+        }
+        let op = op as i64;
+        let ok = match op {
+            0 => (0.0..=6.0).contains(&p0) && (0.0..=26.0).contains(&p1),
+            1 | 2 => (0.0..=6.0).contains(&p0),
+            // the bit mask is cast to ULONG
+            3 => p0 >= 0.0,
+            4 | 7 | 8 | 9 => true,
+            5 => {
+                (0.0..SEED_FIELDS as f64).contains(&p0)
+                    && p0.fract() == 0.0
+                    && seed_ok(p0 as i64, p2)
+            }
+            6 => (1.0..=3.0).contains(&p0) && (0.0..=26.0).contains(&p1),
+            _ => false,
+        };
+        if !ok || (op == 0 || op == 6) && p2 < 0.0 {
+            return Err("op");
+        }
+    }
+    let loops = matches!(
+        face.loops,
+        Some(LoopsIn::Edges { .. } | LoopsIn::Circles { .. })
+    );
+    if face.surf.is_none() && loops {
+        let d = &face.domain;
+        let small = !((d[2] - d[0]) >= MIN_PLANE_SIDE_FOR_STAGE3
+            && (d[3] - d[1]) >= MIN_PLANE_SIDE_FOR_STAGE3);
+        let reaches = ops
+            .iter()
+            .any(|o| (o[0] as i64 == 0 && o[1] as i64 >= STAGE3_A) || (o[0] as i64 == 6 && o[1] as i64 == 3));
+        if small && reaches {
+            return Err("degenerate plane domain with edge loops reaches SetProps_Stage3 (UB-128)");
+        }
+    }
+    if !null_face_free(ops) {
+        return Err("script would dereference the null face of SetProps_Stage2/3 (UB-131)");
+    }
+    Ok(())
+}
+
+/// The loop tree contract: one to [`MAX_ITEMS`] items with loops in `-1..=1000` and
+/// partners in `-2..=1000`, links (`0` child, `1` sibling) between two distinct items
+/// that link each item at most once and leave no cycle, and finds from an item.
+fn tree_contract(
     items: &[[i64; 2]],
     links: &[[i64; 3]],
     finds: &[[i64; 2]],
-) -> Result<Vec<f64>, HarnessError> {
-    let items: Vec<ffi::TreeItem> = items
-        .iter()
-        .map(|i| ffi::TreeItem {
-            loop_: i[0],
-            partner: i[1],
-        })
+) -> Result<(), &'static str> {
+    let n = items.len() as i64;
+    if items.is_empty() || items.len() > MAX_ITEMS {
+        return Err("item count");
+    }
+    let mut linked = vec![false; items.len()];
+    for &[kind, a, c] in links {
+        if !(0..=1).contains(&kind) || !(0..n).contains(&a) || !(0..n).contains(&c) || a == c {
+            return Err("link");
+        }
+        let Some(flag) = usize::try_from(c).ok().and_then(|c| linked.get_mut(c)) else {
+            return Err("link");
+        };
+        if *flag {
+            return Err("item linked twice");
+        }
+        *flag = true;
+    }
+    // no cycles: the pointers AddChild / AddSibling leave; every item is the target of at
+    // most one pointer, so there is a cycle exactly when the items reachable from the
+    // items nothing points to are not all of them
+    let mut child = vec![None::<usize>; items.len()];
+    let mut sib = vec![None::<usize>; items.len()];
+    for &[kind, a, c] in links {
+        let (Ok(a), Ok(c)) = (usize::try_from(a), usize::try_from(c)) else {
+            return Err("link");
+        };
+        let old = if kind == 0 { child.get(a) } else { sib.get(a) }
+            .copied()
+            .flatten();
+        if let Some(slot) = sib.get_mut(c) {
+            *slot = old;
+        }
+        let target = if kind == 0 {
+            child.get_mut(a)
+        } else {
+            sib.get_mut(a)
+        };
+        if let Some(slot) = target {
+            *slot = Some(c);
+        }
+    }
+    let mut pointed = vec![false; items.len()];
+    for t in child.iter().chain(sib.iter()).flatten() {
+        if let Some(p) = pointed.get_mut(*t) {
+            *p = true;
+        }
+    }
+    let mut stack: Vec<usize> = (0..items.len())
+        .filter(|i| !pointed.get(*i).copied().unwrap_or(true))
         .collect();
-    let links: Vec<(i64, i64, i64)> = links.iter().map(|l| (l[0], l[1], l[2])).collect();
-    let finds: Vec<(i64, i64)> = finds.iter().map(|f| (f[0], f[1])).collect();
-    ffi::tree(&items, &links, &finds).map_err(|e| harness(e.to_string()))
+    let mut reached = 0usize;
+    while let Some(i) = stack.pop() {
+        reached += 1;
+        stack.extend(child.get(i).copied().flatten());
+        stack.extend(sib.get(i).copied().flatten());
+        if reached > items.len() {
+            return Err("cycle");
+        }
+    }
+    if reached != items.len() {
+        return Err("cycle");
+    }
+    if items
+        .iter()
+        .any(|&[l, partner]| !(-1..=1000).contains(&l) || !(-2..=1000).contains(&partner))
+    {
+        return Err("item");
+    }
+    if finds
+        .iter()
+        .any(|&[s, l]| !(0..n).contains(&s) || !(-1..=1000).contains(&l))
+    {
+        return Err("find");
+    }
+    Ok(())
+}
+
+/// The output of a regression case for the guard: the script must be outside the contract
+/// (upstream crashes on these scripts).
+fn rejection(face: &FaceIn, ops: &[[f64; 5]]) -> Result<Output, HarnessError> {
+    match script_contract(face, ops) {
+        Err(_) => Ok(Output::err("rejected")),
+        Ok(()) => Err(harness("expected the input contract to reject the script")),
+    }
 }
 
 // ---- Rust ---------------------------------------------------------------------------
@@ -916,7 +1263,7 @@ pub(crate) fn snapshot<O: LoopObject>(p: &FaceProps<O>, face: FaceId) -> Vec<f64
     o.push(t(p.bad_crossed_pole));
     o.push(f64::from(u8::from(p.crossed_pole_edge.is_some())));
     o.push(p.crossed_pole_parameter);
-    o.resize(ffi::SNAP_LEN, 0.0);
+    o.resize(SNAP_LEN, 0.0);
     o
 }
 
@@ -931,7 +1278,7 @@ fn loop_snapshot(
     let t = |x: solidcore::heal::face_props::Tri| x.code() as f64;
     let loops = solidcore::topology::face::p2::loops(b, face, false, None)?;
     let mut o: Vec<f64> = Vec::new();
-    for l in loops.iter().take(ffi::MAX_LOOP_SNAPS) {
+    for l in loops.iter().take(MAX_LOOP_SNAPS) {
         let mut lp = LoopProps::new();
         lp.set_props(k, b, *l, p)?;
         o.push(lp.loopuse_type.code() as f64);
@@ -949,7 +1296,7 @@ fn loop_snapshot(
         o.push(orient_code(lp.winding_orient_v) as f64);
         o.push(t(lp.area_loop));
     }
-    o.resize(ffi::SNAP_LEN, 0.0);
+    o.resize(SNAP_LEN, 0.0);
     Ok((loops.len() as f64, o))
 }
 
@@ -960,7 +1307,7 @@ fn stage3_loop_snapshot(b: &Brep, p: &FaceProps<H>, face: FaceId) -> Vec<f64> {
     let t = |x: solidcore::heal::face_props::Tri| x.code() as f64;
     let loops = b.face(face).map(|f| f.loops.clone()).unwrap_or_default();
     let mut o: Vec<f64> = Vec::new();
-    for lp in p.loop_props.iter().take(ffi::MAX_LOOP_SNAPS) {
+    for lp in p.loop_props.iter().take(MAX_LOOP_SNAPS) {
         let at = lp
             .loop_
             .and_then(|l| loops.iter().position(|x| *x == l))
@@ -977,7 +1324,7 @@ fn stage3_loop_snapshot(b: &Brep, p: &FaceProps<H>, face: FaceId) -> Vec<f64> {
         o.push(orient_code(lp.desired_loop_orient) as f64);
         o.push(t(lp.good_orient));
     }
-    o.resize(ffi::SNAP_LEN, 0.0);
+    o.resize(SNAP_LEN, 0.0);
     o
 }
 
@@ -1029,7 +1376,7 @@ pub(crate) fn seed<O: LoopObject>(p: &mut FaceProps<O>, face: FaceId, field: i64
 }
 
 fn rust_props(f: &FaceIn, ops: &[[f64; 5]]) -> Result<Output, HarnessError> {
-    ffi::validate(&ffi_face(f), &ffi_ops(ops)).map_err(|e| harness(e.to_string()))?;
+    script_contract(f, ops).map_err(harness)?;
     let k = Kernel::default();
     let (mut b, face) = rust_brep(&k, f)?;
     // the down face use's side, as `SmBrepConstructor` builds it: the seam classifications
@@ -1099,17 +1446,7 @@ fn rust_tree(
     links: &[[i64; 3]],
     finds: &[[i64; 2]],
 ) -> Result<Output, HarnessError> {
-    // the same guards as the FFI wrapper
-    let it: Vec<ffi::TreeItem> = items
-        .iter()
-        .map(|i| ffi::TreeItem {
-            loop_: i[0],
-            partner: i[1],
-        })
-        .collect();
-    let lk: Vec<(i64, i64, i64)> = links.iter().map(|l| (l[0], l[1], l[2])).collect();
-    let fd: Vec<(i64, i64)> = finds.iter().map(|f| (f[0], f[1])).collect();
-    ffi::tree_validate(&it, &lk, &fd).map_err(|e| harness(e.to_string()))?;
+    tree_contract(items, links, finds).map_err(harness)?;
 
     let lid = |i: i64| LoopId::from_index(i as u32);
     let mut t = Looptree::new();
@@ -1675,7 +2012,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        // redraw scripts the FFI guard rejects (the guard cases are fixtures)
+        // redraw scripts outside the input contract (the guard cases are fixtures)
         for _ in 0..64 {
             let c = if rng.chance(0.85) {
                 gen_props(rng)
@@ -1683,7 +2020,7 @@ impl UnitDiff for Runner {
                 gen_tree(rng)
             };
             if let CaseIn::Props { face, ops, .. } = &c {
-                if ffi::validate(&ffi_face(face), &ffi_ops(ops)).is_err() {
+                if script_contract(face, ops).is_err() {
                     continue;
                 }
             }
@@ -1705,7 +2042,7 @@ impl UnitDiff for Runner {
             let mut rng = Rng::new(seed);
             let c = gen_stage3(&mut rng);
             if let CaseIn::Props { face, ops, .. } = &c {
-                if ffi::validate(&ffi_face(face), &ffi_ops(ops)).is_err() {
+                if script_contract(face, ops).is_err() {
                     continue;
                 }
             }
@@ -1718,10 +2055,6 @@ impl UnitDiff for Runner {
             });
         }
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
