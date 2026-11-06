@@ -4772,7 +4772,7 @@ fn ignored_trim_cache_result<T>(result: Result<T>) -> Result<Option<T>> {
 /// The value of a surface call whose ordinary upstream status is ignored.
 /// Control errors must leave the caller before it reads a fallback value.
 pub(super) fn ignored_surface_result<T>(r: Result<T>) -> Result<Option<T>> {
-    crate::error::ignored(r)
+    ignored(r)
 }
 
 #[cfg(test)]
