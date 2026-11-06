@@ -160,8 +160,7 @@ fn surfaces(k: &Kernel) -> Vec<(&'static str, Surface, bool)> {
 
 #[test]
 fn analytic_frames_survive_swap_uv() {
-    let mut k = Kernel::default();
-    k.fixes.swap_uv_keeps_analytic_definition = true;
+    let k = Kernel::default();
     for (what, s, plane) in surfaces(&k) {
         let (once, twice, net) = turn(&k, s, plane);
         assert!(
