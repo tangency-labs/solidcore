@@ -33,6 +33,7 @@ use crate::error::offset::OffsetFailure;
 use crate::error::{EntityRef, Failure, Result, SolidError};
 use crate::geom::attribute::ObjectKey;
 use crate::geom::axis2_placement::Axis2Placement;
+use crate::geom::extent2d::Extent2d;
 use crate::kernel::Kernel;
 use crate::math::Vec3;
 use crate::nurbs::b_spline_surface::p1::SurfParamType;
@@ -47,6 +48,7 @@ use crate::surface::surface::SurfaceKind;
 use crate::topology::brep::p1 as bp1;
 use crate::topology::brep::p2;
 use crate::topology::brep::p5;
+use crate::topology::brep::validation::{self, FailureClass};
 use crate::topology::face::p2 as face_ops;
 use crate::topology::{Brep, FaceId};
 
@@ -78,10 +80,15 @@ fn null() -> SolidError {
 /// `SM_ERR` when the extended offset fails (its own status with
 /// `Kernel::fixes.local_operation_offset_status`); `InvalidInput` where upstream dereferences
 /// null (a surface list shorter than the face list, a face without surface);
-/// [`OffsetFailure::SeamOpened`] (not upstream) when a face that meets itself across an
-/// edge (a seam) is given a surface that is not closed, before anything changes; those of
-/// the callees ([`crate::offset::offset_executive::p2`], the surfaces' normals,
-/// reversal and analytic copy, the bounding box).
+/// [`OffsetFailure::SeamOpened`] (not upstream) when a face that meets itself across
+/// edges (seams) is given a surface closed in fewer directions than it meets itself in,
+/// before anything changes; [`OffsetFailure::Unsound`] (not upstream) when the body built
+/// fails what `b` did not (`refuse_unsound`: a check failure class `b`'s check has fewer
+/// lines of, a geometry the check could not reach, a manifold solid lost, a volume not
+/// positive); those of the callees ([`crate::offset::offset_executive::p2`], the surfaces'
+/// normals, reversal and analytic copy, the bounding box). On every error `b` is as it
+/// came in, the caches its surfaces had included (the operation edits a copy of it), and
+/// so are `notifications.records` and `notifications.attributes`.
 pub fn local_operation(
     k: &mut Kernel,
     b: &mut Brep,
@@ -92,6 +99,33 @@ pub fn local_operation(
     if surfaces.len() < faces.len() {
         return Err(null());
     }
+    // (not upstream) a refusal or a failure leaves `b` as it came in, the caches its
+    // surfaces had included (the operation runs on its copy), and the caller's
+    // notification stores as they were
+    let records = notifications.records.clone();
+    let attributes = notifications.attributes.clone();
+    let done = b.with_rollback_untouched(
+        |b| local_operation_on(k, b, faces, surfaces, notifications),
+        Result::is_ok,
+    );
+    if done.is_err() {
+        *notifications.records = records;
+        *notifications.attributes = attributes;
+    }
+    done
+}
+
+/// [`local_operation`] on the copy of `b` it edits.
+fn local_operation_on(
+    k: &mut Kernel,
+    b: &mut Brep,
+    faces: &[FaceId],
+    surfaces: Vec<Surface>,
+    notifications: &mut OffsetNotifications<'_>,
+) -> Result<()> {
+    // (not upstream) the input's standing, measured once before anything changes: the
+    // final gate (`refuse_unsound`) holds the operation to what it adds
+    let input = validation::standing(k, &mut b.clone_standing_for_self()?)?;
     // Make a new list of all surfaces in this Brep: for every face, the new surface if it
     // is in the list to be replaced (turned to the original's side), else a copy of its own.
     let all_faces = bp1::faces(b, None)?;
@@ -134,9 +168,9 @@ pub fn local_operation(
         };
         let surface = if let Some(mut new) = replacement {
             moved.push(face);
-            // (not upstream) a face that meets itself across an edge cannot take an open
-            // surface: refused before anything is changed
-            if meets_itself(b, face)? && !is_closed_surface(k, &new, b.tolerance())? {
+            // (not upstream) a face that meets itself across seams cannot take a surface
+            // closed in fewer directions: refused before anything is changed
+            if closed_directions(k, &new, b.tolerance())? < seam_directions(k, b, face)? {
                 return Err(Failure::new(OP, OffsetFailure::SeamOpened { face }).into_error());
             }
             let domain = new.natural_uv_domain_if_built();
@@ -247,14 +281,83 @@ pub fn local_operation(
     let mut new_brep = new_brep?;
 
     // remove all faces from this Brep, then move all faces of the new Brep into it
-    // (`CopyFaces` with a merge, which also grows this Brep's tolerance to the new one's)
+    // (`CopyFaces` with a merge, which also grows this Brep's tolerance to the new one's);
+    // (not upstream) a body that is not sound, or a failed move, is refused
+    // (`local_operation` puts `b` back)
     let editing = b.editing_enabled();
     b.set_editing_enabled(true);
     let moved = move_faces(k, b, &mut new_brep);
     b.set_editing_enabled(editing);
     // (not upstream: the port's cached topology fields, true again for the caller)
     b.refresh_cached_topology();
-    moved
+    moved?;
+    refuse_unsound(k, b, &input)
+}
+
+/// (not upstream) The local operation's final gate: the body it built is refused when it
+/// fails what its input did not ([`validation::soundness`] of both, `input` measured
+/// before the edit, the body on a private copy):
+///
+/// - the check at `SM_LEVEL_2` has more failure lines of some class (the failed test and
+///   the type of the object it is about, [`FailureClass`]) than the input's check had
+///   ([`BrepCheck::failures_beyond`](validation::BrepCheck::failures_beyond));
+/// - the body's pointer check failed, so its geometry was not checked (`AssertValid` is
+///   skipped then), even where the input's pointer check failed alike;
+/// - the input was a manifold solid and the body is not;
+/// - the body is a manifold solid whose volume is not positive (the input's volume is
+///   not measured).
+///
+/// The owners the check tests the geometry against are the identities the body's naming
+/// scheme names its entities by ([`validation::standing`]), as `move_faces` sets them.
+///
+/// Failures are compared by class, not by entity: the operation rebuilds every face (the
+/// extended offset builds them all, unmoved ones on copies of their surfaces, and they
+/// are copied into `b`), so no identity persists to compare by. A failure the input had
+/// and the body still has is the input's; one the input had on a face the operation
+/// rebuilt and the body no longer has is gone; a class the body has more of is the
+/// operation's. (A failure gone from one entity while one of its class appears on
+/// another is counted as the input's.)
+///
+/// Each moved edge is found again where extended surfaces meet; where that cannot close
+/// the body (a surface that meets its neighbours nowhere near the old edges, a vertex
+/// whose faces no longer meet in one point), the merge closes what is left by growing
+/// tolerances, and the body it leaves is no solid: refused, not returned.
+///
+/// # Errors
+///
+/// [`OffsetFailure::Unsound`] naming what the body fails; those of the copy and the
+/// measurement.
+fn refuse_unsound(k: &mut Kernel, b: &Brep, input: &validation::Standing) -> Result<()> {
+    use crate::error::offset::Unsoundness;
+    let mut copy = b.clone_standing_for_self()?;
+    let found = validation::standing(k, &mut copy)?;
+    let added = found.check.failures_beyond(&input.check);
+    let what = if let Some(&(class, _)) = added.first() {
+        Unsoundness::Check {
+            failures: added.iter().fold(0, |n, &(_, more)| n.saturating_add(more)),
+            first: match class {
+                FailureClass::Report {
+                    reporting_type,
+                    test_index,
+                    ..
+                } => Some((reporting_type, test_index)),
+                _ => None,
+            },
+        }
+    } else if found.check.assert_valid.is_none() {
+        // the pointer check failed, so `AssertValid` did not run: the body's geometry is
+        // not checked at all, whatever the input's pointer failures were
+        Unsoundness::GeometryUnchecked
+    } else if input.manifold && !found.manifold {
+        Unsoundness::NotManifoldSolid
+    } else if found.manifold
+        && validation::volume(k, &mut copy)?.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)
+    {
+        Unsoundness::VolumeNotPositive
+    } else {
+        return Ok(());
+    };
+    Err(Failure::new(OP, OffsetFailure::Unsound { what }).into_error())
 }
 
 /// (not upstream) The planes faces that keep their surfaces continue as: a face whose
@@ -340,19 +443,42 @@ fn meets_itself(b: &Brep, face: FaceId) -> Result<bool> {
     Ok(false)
 }
 
-/// Whether `surface` is closed in either direction over its natural domain (a plane
-/// never is; `IsClosed` at `tolerance` for the others, as `SmEdge::IsSeam` asks it).
-fn is_closed_surface(k: &Kernel, surface: &Surface, tolerance: f64) -> Result<bool> {
-    let domain = surface.natural_uv_domain_with_nurb(k)?;
+/// The number of directions `surface` is closed in over `domain` (a plane none; `IsClosed`
+/// at `tolerance` for the others, as `SmEdge::IsSeam` asks it).
+fn closed_in(k: &Kernel, surface: &Surface, domain: &Extent2d, tolerance: f64) -> Result<usize> {
+    let mut n = 0_usize;
     for direction in [SurfParamType::U, SurfParamType::V] {
         if surface
-            .is_closed(k, &domain, direction, Some(tolerance), false)?
+            .is_closed(k, domain, direction, Some(tolerance), false)?
             .0
         {
-            return Ok(true);
+            n = n.saturating_add(1);
         }
     }
-    Ok(false)
+    Ok(n)
+}
+
+/// The number of directions `surface` is closed in over its natural domain.
+fn closed_directions(k: &Kernel, surface: &Surface, tolerance: f64) -> Result<usize> {
+    closed_in(
+        k,
+        surface,
+        &surface.natural_uv_domain_with_nurb(k)?,
+        tolerance,
+    )
+}
+
+/// The number of directions `face` meets itself across seams in: none for a face that
+/// does not ([`meets_itself`]), else the directions its own surface is closed in over the
+/// face's UV domain (a torus face round both ways two, a cylinder's side, or a torus face
+/// cut across its tube, one), and at least the one its seam is in. The new surface must be
+/// closed in as many: a seam has no edge on a surface open across it.
+fn seam_directions(k: &Kernel, b: &Brep, face: FaceId) -> Result<usize> {
+    if !meets_itself(b, face)? {
+        return Ok(0);
+    }
+    let own = face_ops::surface(b, face)?.ok_or_else(null)?;
+    Ok(closed_in(k, own, &b.face(face)?.uv_domain, b.tolerance())?.max(1))
 }
 
 /// Whether `given` is the surface `own` lies on, exactly: both of one analytic kind
@@ -590,7 +716,16 @@ fn move_faces(k: &mut Kernel, b: &mut Brep, new_brep: &mut Brep) -> Result<()> {
     // arena-only store (a default record per object of both B-reps) whose source
     // identities are distinct from `b`'s, holding both B-reps' attributes; `b` gets the
     // attributes its objects end with (the merge branch of `p7::copy_faces`)
-    crate::boolean::merge::p3::copy_component(k, new_brep, &new_faces, b, &face_ref)
+    crate::boolean::merge::p3::copy_component(k, new_brep, &new_faces, b, &face_ref)?;
+    // (not upstream, as for the surfaces) the copied edges' curves and edge uses' UV trim
+    // curves are owned under the copy's notification identities; a B-rep not named by
+    // them names its edges and edge uses by the arena identities: rebound to those, so
+    // the body's geometry names the entities it lies on (`SmBrep` test #61, Bad Edge)
+    crate::topology::brep::p3::rebind_geometry_owners(
+        b,
+        crate::topology::loopuse::notify_ref,
+        |e| crate::topology::scheme_owner_identity(naming, e),
+    )
 }
 
 #[cfg(test)]
@@ -695,6 +830,31 @@ mod tests {
         f(b, &mut notifications)
     }
 
+    /// A body named by its arena identities (as an imported one is): the edges copied in
+    /// from the offset own their curves under those identities, not the copy's
+    /// notification ones, so the body passes its check under its own naming, and the
+    /// operation returns it (the 20 mm box, its top raised to z = 25: 10000 mm³).
+    #[test]
+    fn an_arena_named_body_keeps_its_naming_on_the_edges_copied_in() {
+        let mut k = Kernel::default();
+        let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 20.0, 20.0, 20.0).unwrap();
+        b.use_arena_naming().unwrap();
+        let top = box_top(&k, &b);
+        let raised = Surface::from(Plane::from_normal(Vec3::new(0.0, 0.0, 25.0), Vec3::Z));
+        let why = refused_unchanged_or_returned(&mut k, &mut b, &[top], vec![raised]);
+        assert_eq!(why, None);
+        let lines = validation::check_brep(
+            &mut k,
+            &mut b.clone_standing_for_self().unwrap(),
+            validation::CheckLevel::Level2,
+        )
+        .unwrap()
+        .lines();
+        assert!(lines.is_empty(), "{lines:?}");
+        let (v, manifold) = volume_and_manifold(&k, &mut b);
+        assert!(manifold && (v - 10000.0).abs() <= 1e-9 * 10000.0, "{v}");
+    }
+
     #[test]
     fn moves_the_top_of_a_box_and_keeps_it_a_solid() {
         let mut k = Kernel::default();
@@ -777,47 +937,61 @@ mod tests {
         assert!(r.is_err());
     }
 
+    /// The top face of a 20 mm cube.
+    fn box_top(k: &Kernel, b: &Brep) -> FaceId {
+        bp1::faces(b, None)
+            .unwrap()
+            .into_iter()
+            .find(|&f| {
+                let s = face_ops::surface(b, f).unwrap().unwrap();
+                let p = s
+                    .evaluate_point(
+                        k,
+                        s.natural_uv_domain_with_nurb(k).unwrap().evaluate(0.5, 0.5),
+                    )
+                    .unwrap();
+                (p.z - 20.0).abs() < 1e-9
+            })
+            .unwrap()
+    }
+
     /// WR-534 (the fork's tangency-labs/smlib@a1ee273): a 20 mm cube's top moved up by
-    /// 60, further than the cube's size, is a 20 x 20 x 80 box with the opt-in.
+    /// 60, further than the cube's size, is a sound 20 x 20 x 80 box with the opt-in.
     #[test]
     fn moves_the_top_of_a_box_further_than_its_size() {
         let mut k = Kernel::default();
         k.fixes.local_operation_box_holds_new_surfaces = true;
         let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 20.0, 20.0, 20.0).unwrap();
-        let top = bp1::faces(&b, None)
-            .unwrap()
-            .into_iter()
-            .find(|&f| {
-                let s = face_ops::surface(&b, f).unwrap().unwrap();
-                let p = s
-                    .evaluate_point(
-                        &k,
-                        s.natural_uv_domain_with_nurb(&k)
-                            .unwrap()
-                            .evaluate(0.5, 0.5),
-                    )
-                    .unwrap();
-                (p.z - 20.0).abs() < 1e-9
-            })
-            .unwrap();
+        let top = box_top(&k, &b);
+        let raised = Surface::from(Plane::from_normal(Vec3::new(0.0, 0.0, 80.0), Vec3::Z));
+        let why = refused_unchanged_or_returned(&mut k, &mut b, &[top], vec![raised]);
+        assert_eq!(why, None);
+        assert_eq!(bp1::faces(&b, None).unwrap().len(), 6);
+        let (v, _) = volume_and_manifold(&k, &mut b);
+        assert!((v - 32000.0).abs() <= 1e-9 * 32000.0, "{v}");
+    }
+
+    /// The same top given a plane parametrised over the unit square, 20 mm a unit: the
+    /// body built leaves the corner over (20, 20) unbuilt (the vertical edge there ends at
+    /// the old top, z = 20, and the moved top's two edges into that corner end 60 from
+    /// their vertex), so it is refused as not sound, the cube as it came in (a defect of
+    /// its own, not of the gate: the plane through the same points parametrised by length
+    /// gives the sound box above).
+    #[test]
+    fn a_far_top_on_a_unit_square_plane_is_refused_as_not_sound() {
+        let mut k = Kernel::default();
+        k.fixes.local_operation_box_holds_new_surfaces = true;
+        let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 20.0, 20.0, 20.0).unwrap();
+        let top = box_top(&k, &b);
         let raised = Surface::from(Plane::new(
             Vec3::new(0.0, 0.0, 80.0),
             Vec3::X,
             Vec3::Y,
             crate::math::Vec2::new(20.0, 20.0),
-            &crate::geom::extent2d::Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+            &Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
         ));
-        with_notifications(&mut b, |b, notes| {
-            local_operation(&mut k, b, &[top], vec![raised], notes)
-        })
-        .unwrap();
-        assert_eq!(bp1::faces(&b, None).unwrap().len(), 6);
-        let e = calculate_bounding_box(&k, &mut b, BoundingBoxOptions::default()).unwrap();
-        let near = |a: f64, b: f64| (a - b).abs() < 1e-3;
-        assert!(
-            near(e.max_at(2), 80.0) && near(e.min_at(2), 0.0) && near(e.max_at(0), 20.0),
-            "{e:?}"
-        );
+        let why = refused_unchanged_or_returned(&mut k, &mut b, &[top], vec![raised]);
+        assert_eq!(why, Some(unsound_check(3, 61)));
     }
 
     /// The volume and whether the body is a manifold solid, with the cached topology
@@ -1249,5 +1423,457 @@ mod tests {
             })
             .sum();
         assert!((v - want).abs() <= 1e-9 * want, "{v} vs {want}");
+    }
+
+    /// `b`'s `faces` given `surfaces`: the offset refusal (`Some`), `b` then exactly as it
+    /// came in (its `Debug` form, every surface's cache included, the same before and
+    /// after), or `None` when the body is returned. What a returned body is, each test
+    /// asserts itself.
+    fn refused_unchanged_or_returned(
+        k: &mut Kernel,
+        b: &mut Brep,
+        faces: &[FaceId],
+        surfaces: Vec<Surface>,
+    ) -> Option<OffsetFailure> {
+        let before = format!("{b:?}");
+        let r = with_notifications(b, |b, notes| local_operation(k, b, faces, surfaces, notes));
+        let e = r.err()?;
+        assert_eq!(e.kind(), crate::error::ErrorKind::Unsupported, "{e}");
+        let Some(crate::error::Reason::Offset(why)) = e.failure().map(|f| &f.reason) else {
+            panic!("not an offset refusal: {e}");
+        };
+        assert!(
+            format!("{b:?}") == before,
+            "refused ({why:?}), but the input changed"
+        );
+        Some(*why)
+    }
+
+    /// A refusal leaves everything as it came in: `b` in its `Debug` form, the caches its
+    /// surfaces had built before the call included (none dropped, none added), and the
+    /// caller's notification records and attributes. Refused by the gate after the offset
+    /// ran (a cylinder given a wider coaxial one) and by the reach before anything is built
+    /// (a side moved off its round); `b` carries an attribute of its own, lent to the
+    /// offset, and the caller's store one of the caller's.
+    #[test]
+    fn a_refusal_leaves_the_input_its_caches_and_the_callers_stores_as_they_were() {
+        use crate::geom::attribute::{Attribute, Behavior};
+        use crate::primitive::api_primitives as ap;
+        type Make = fn(&mut Kernel) -> (Brep, FaceId, Surface);
+        let cases: [(&str, Make); 2] = [
+            ("gate", |k| {
+                let b = ap::create_cylinder(k, Point3::ZERO, 1.0, 2.0).unwrap();
+                let face = curved_face(&b);
+                let s = ap::create_cylinder_surface(k, Point3::new(0.0, 0.0, -1.0), 1.5, 4.0);
+                (b, face, Surface::from(s.unwrap()))
+            }),
+            ("reach", |k| {
+                let b = cube_rounded_r5(k);
+                let side = face_on_x(k, &b, 20.0);
+                let s = Plane::from_normal(Vec3::new(20.1, 0.0, 0.0), Vec3::X);
+                (b, side, Surface::from(s))
+            }),
+        ];
+        for (name, make) in cases {
+            let mut k = Kernel::default();
+            let (mut b, face, s) = make(&mut k);
+            b.add_attribute(EntityRef::Face(face), Attribute::long(7, 1, Behavior::Copy))
+                .unwrap();
+            // caches built on `b`'s surfaces before the call (the copy shares their slots)
+            validation::soundness(&mut k, &mut b.clone_standing_for_self().unwrap()).unwrap();
+            let before = format!("{b:?}");
+            let (r, stores) = with_notifications(&mut b, |b, notes| {
+                let h = notes
+                    .attributes
+                    .insert(Attribute::long(9, 2, Behavior::Copy))
+                    .unwrap();
+                notes
+                    .attributes
+                    .add_attribute(ObjectKey(1 << 62), h)
+                    .unwrap();
+                let stores = (format!("{:?}", notes.records), notes.attributes.clone());
+                let r = local_operation(&mut k, b, &[face], vec![s], notes);
+                let after = (format!("{:?}", notes.records), notes.attributes.clone());
+                (r, (stores, after))
+            });
+            let e = r.expect_err(name);
+            assert!(
+                matches!(
+                    e.failure().map(|f| &f.reason),
+                    Some(crate::error::Reason::Offset(
+                        OffsetFailure::Unsound { .. } | OffsetFailure::FacesApart { .. }
+                    ))
+                ),
+                "{name}: {e}"
+            );
+            assert!(format!("{b:?}") == before, "{name}: the input changed");
+            assert!(stores.0 .0 == stores.1 .0, "{name}: the records changed");
+            assert!(stores.0 .1 == stores.1 .1, "{name}: the attributes changed");
+        }
+    }
+
+    /// The gate checks the owners against the body's naming, not against the owners the
+    /// geometry records itself: an edge's curve owned under an identity no edge has
+    /// fails `standing`'s owner test, where `soundness` (each geometry's recorded owner
+    /// taken as right) cannot see it.
+    #[test]
+    fn the_gate_checks_curve_owners_against_the_bodys_naming() {
+        let mut k = Kernel::default();
+        let mut b = create_box(&mut k, Point3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let measure = |k: &mut Kernel, b: &Brep| {
+            let mut copy = b.clone_standing_for_self().unwrap();
+            let standing = validation::standing(k, &mut copy).unwrap();
+            let mut copy = b.clone_standing_for_self().unwrap();
+            (
+                standing.check,
+                validation::soundness(k, &mut copy).unwrap().check,
+            )
+        };
+        let (clean, clean_own) = measure(&mut k, &b);
+        assert!(
+            clean.is_valid() && clean_own.is_valid(),
+            "{:?}",
+            clean.lines()
+        );
+        // an edge's identity no edge of the body has
+        let mut wrong = b.owner_identity(EntityRef::Edge(b.edges().ids().next().unwrap()));
+        wrong.key = ObjectKey(wrong.key.0 ^ (1 << 40));
+        let e0 = b.edges().ids().next().unwrap();
+        let curve = b.edge_mut(e0).unwrap().curve.as_mut().unwrap();
+        let _ = curve.set_owner(Some(wrong), None);
+        let (named, own) = measure(&mut k, &b);
+        assert!(
+            !named.failures_beyond(&clean).is_empty(),
+            "{:?}",
+            named.lines()
+        );
+        assert!(
+            own.failures_beyond(&clean_own).is_empty(),
+            "{:?}",
+            own.lines()
+        );
+    }
+
+    /// A body whose pointer check fails is not checked further (`AssertValid` is skipped):
+    /// the gate refuses it even where its input failed the pointer check alike, rather
+    /// than finding nothing beyond the input's failures.
+    #[test]
+    fn the_gate_refuses_a_body_whose_geometry_it_cannot_check() {
+        let mut k = Kernel::default();
+        let mut b = create_box(&mut k, Point3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let e = b.edges().ids().next().unwrap();
+        b.edge_mut(e).unwrap().curve = None;
+        let input =
+            validation::standing(&mut k, &mut b.clone_standing_for_self().unwrap()).unwrap();
+        assert!(
+            input.check.assert_valid.is_none(),
+            "{:?}",
+            input.check.lines()
+        );
+        let e = refuse_unsound(&mut k, &b, &input).unwrap_err();
+        assert!(
+            matches!(
+                e.failure().map(|f| &f.reason),
+                Some(crate::error::Reason::Offset(OffsetFailure::Unsound {
+                    what: crate::error::offset::Unsoundness::GeometryUnchecked
+                }))
+            ),
+            "{e}"
+        );
+    }
+
+    /// Review finding 5: a torus face meets itself across seams both ways round; a cylinder
+    /// is closed one way only, so one seam would have no edge: refused before anything
+    /// changes.
+    #[test]
+    fn a_torus_given_a_cylinder_is_refused_as_a_seam_opened() {
+        use crate::primitive::api_primitives as ap;
+        let mut k = Kernel::default();
+        let mut b = ap::create_torus(&mut k, Point3::ZERO, 3.0, 1.0).unwrap();
+        let face = curved_face(&b);
+        let s = Surface::from(
+            ap::create_cylinder_surface(&k, Point3::new(0.0, 0.0, -2.0), 3.5, 4.0).unwrap(),
+        );
+        let why = refused_unchanged_or_returned(&mut k, &mut b, &[face], vec![s]);
+        assert!(
+            matches!(why, Some(OffsetFailure::SeamOpened { face: f }) if f == face),
+            "{why:?}"
+        );
+    }
+
+    /// Review finding 5: a cylinder's side given a coaxial cylinder of another radius (its
+    /// ends' planes then meet the new side in circles the old edges are not on): the body
+    /// built is not sound: refused, the first new failure an edge's curve owner (#61) for the
+    /// wider, a vertex an edge is not on (#82) for the narrower.
+    #[test]
+    fn a_cylinder_given_a_coaxial_cylinder_of_another_radius_is_refused_as_not_sound() {
+        use crate::primitive::api_primitives as ap;
+        for (radius, want) in [
+            (1.5, Some(unsound_check(3, 61))),
+            (0.5, Some(unsound_check(3, 82))),
+        ] {
+            let mut k = Kernel::default();
+            let mut b = ap::create_cylinder(&mut k, Point3::ZERO, 1.0, 2.0).unwrap();
+            let face = curved_face(&b);
+            let s = Surface::from(
+                ap::create_cylinder_surface(&k, Point3::new(0.0, 0.0, -1.0), radius, 4.0).unwrap(),
+            );
+            let why = refused_unchanged_or_returned(&mut k, &mut b, &[face], vec![s]);
+            assert_eq!(why, want, "{radius}");
+        }
+    }
+
+    /// Review finding 5: a 10 mm cube's vertical edge rounded r 2, the round given a
+    /// coaxial cylinder of another radius: refused as not sound, or sound.
+    #[test]
+    fn a_round_given_a_coaxial_cylinder_is_refused_as_not_sound_or_apart() {
+        use crate::blend::fillet_executive::api::fillet_edges;
+        use crate::primitive::api_primitives as ap;
+        use crate::topology::{edge, vertex};
+        for radius in [2.3, 2.05, 1.8] {
+            let mut k = Kernel::default();
+            let mut b = create_box(&mut k, Point3::ZERO, 10.0, 10.0, 10.0).unwrap();
+            let e = b
+                .edges()
+                .ids()
+                .find(|&e| {
+                    let (s, t) = edge::start_end_vertices(&b, e).unwrap();
+                    [s, t].into_iter().flatten().all(|v| {
+                        let p = vertex::point(&b, v).unwrap();
+                        p.x == 10.0 && p.y == 10.0
+                    })
+                })
+                .unwrap();
+            fillet_edges(&mut k, &mut b, &[e], 2.0, 1, 1, 1.0).unwrap();
+            let round = curved_face(&b);
+            let s = Surface::from(
+                ap::create_cylinder_surface(&k, Point3::new(8.0, 8.0, -1.0), radius, 12.0).unwrap(),
+            );
+            let why = refused_unchanged_or_sound(&mut k, &mut b, &[round], vec![s]);
+            assert!(
+                matches!(why, None | Some(OffsetFailure::Unsound { .. })),
+                "{radius}: {why:?}"
+            );
+        }
+    }
+
+    /// gen0091 of the difftest unit with the default fixes: the pyramid's side moved past
+    /// its apex needs the four-face vertex split (opt-in), without which every end merges
+    /// into one vertex grown to cover the split: not sound, refused.
+    #[test]
+    fn a_pyramid_side_moved_past_its_apex_is_refused_without_the_four_face_split() {
+        let mut k = Kernel::default();
+        let mut b = bicubic_pyramid(&mut k);
+        let all = bp1::faces(&b, None).unwrap();
+        let plane_of = |b: &Brep, k: &Kernel, f: FaceId, d: f64| {
+            let s = face_ops::surface(b, f).unwrap().unwrap();
+            let uv = b.face(f).unwrap().uv_domain.evaluate(0.5, 0.5);
+            let p = s.evaluate_point(k, uv).unwrap();
+            let n = s.evaluate_normal(k, uv, Side::Left, Side::Left).unwrap();
+            let n = if n.dot(p - Vec3::new(0.0, 0.0, 25.0)) > 0.0 {
+                n
+            } else {
+                n * -1.0
+            };
+            Surface::from(Plane::from_normal(p + n * d, n))
+        };
+        // faces: the base, then the sides along y = -y0, x = x0, y = y0, x = -x0
+        let surfaces = vec![
+            plane_of(&b, &k, all[2], 0.0),
+            plane_of(&b, &k, all[1], 0.407_738_046_172_282_6),
+        ];
+        let why = refused_unchanged_or_returned(&mut k, &mut b, &[all[2], all[1]], surfaces);
+        assert_eq!(why, Some(unsound_check(2, 61)));
+    }
+
+    /// A 20 mm cube of bilinear B-spline faces whose bottom (z = 0) carries a defect of its
+    /// own: its u knot 0.5 twice, over the degree, the middle control points doubled so the
+    /// face is whole, and placed off the middle so that the patch is not a plane
+    /// parametrised by length. Its two edges along x, its iso lines, keep the knot: they
+    /// fail `SmBSplineCurve` test 2 (an internal knot of multiplicity above the degree).
+    fn cube_with_a_defective_bottom(k: &mut Kernel) -> Brep {
+        use crate::nurbs::b_spline_surface::BSplineSurface;
+        use crate::nurbs::math::{CPoint, NOW};
+        use crate::nurbs::srf_basic::Surface as Net;
+        use crate::topology::brep::p2::ArenaNotifyState;
+        use crate::topology::brep::p8::{create_face_from_surface, FaceBuildEnv};
+        let c = |x: f64, y: f64, z: f64| CPoint::new(x, y, z, NOW);
+        let bilinear = |a: Point3, b: Point3, d: Point3| {
+            // corners a, a + (b - a), a + (d - a), rows along b - a
+            let e = b + (d - a);
+            let net = vec![
+                vec![c(a.x, a.y, a.z), c(d.x, d.y, d.z)],
+                vec![c(b.x, b.y, b.z), c(e.x, e.y, e.z)],
+            ];
+            let knots = vec![0.0, 0.0, 1.0, 1.0];
+            let n = Net::new(net, 1, 1, knots.clone(), knots).unwrap();
+            Surface::from(BSplineSurface::from_gw_nurb(&n))
+        };
+        let p = Point3::new;
+        let s = 20.0;
+        let bottom = {
+            let row = |x: f64| vec![c(x, 0.0, 0.0), c(x, s, 0.0)];
+            let net = vec![row(0.0), row(5.0), row(5.0), row(s)];
+            let n = Net::new(
+                net,
+                1,
+                1,
+                vec![0.0, 0.0, 0.5, 0.5, 1.0, 1.0],
+                vec![0.0, 0.0, 1.0, 1.0],
+            )
+            .unwrap();
+            Surface::from(BSplineSurface::from_gw_nurb(&n))
+        };
+        let surfaces = vec![
+            bottom,
+            bilinear(p(0.0, 0.0, s), p(s, 0.0, s), p(0.0, s, s)),
+            bilinear(p(0.0, 0.0, 0.0), p(s, 0.0, 0.0), p(0.0, 0.0, s)),
+            bilinear(p(0.0, s, 0.0), p(s, s, 0.0), p(0.0, s, s)),
+            bilinear(p(0.0, 0.0, 0.0), p(0.0, s, 0.0), p(0.0, 0.0, s)),
+            bilinear(p(s, 0.0, 0.0), p(s, s, 0.0), p(s, 0.0, s)),
+        ];
+        let mut b = crate::topology::brep::p3::new_brep(
+            k,
+            crate::geom::tol::USE_DEFAULT,
+            crate::geom::tol::USE_DEFAULT,
+        )
+        .unwrap();
+        {
+            let mut state = ArenaNotifyState::new(&b);
+            let mut env = state.env(None);
+            let mut marks = crate::topology::topology_traverser::Marks::default();
+            let this_face = |f: FaceId| crate::topology::loopuse::notify_ref(EntityRef::Face(f));
+            let mut fenv = FaceBuildEnv {
+                env: &mut env,
+                marks: &mut marks,
+                this_face: &this_face,
+            };
+            let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+            for s in surfaces {
+                create_face_from_surface(k, &mut b, Some(s), &domain, &mut fenv).unwrap();
+            }
+        }
+        p5::stitch_and_orient(k, &mut b, &p5::StitchAndOrientOptions::default()).unwrap();
+        b.refresh_cached_topology();
+        b
+    }
+
+    /// The failure classes of `b`'s check ([`validation::soundness`], on a copy).
+    fn failure_classes(k: &mut Kernel, b: &Brep) -> BTreeMap<FailureClass, usize> {
+        let mut copy = b.clone_standing_for_self().unwrap();
+        validation::soundness(k, &mut copy)
+            .unwrap()
+            .check
+            .failure_classes()
+    }
+
+    /// The gate holds the operation to what it adds: a cube whose bottom fails its check
+    /// on its own, its top raised by 5, is returned (the bottom untouched, its failure
+    /// the input's), a manifold solid of the raised volume whose check has no failure
+    /// class beyond the input's.
+    #[test]
+    fn a_failure_the_input_has_on_an_untouched_face_is_not_the_operations() {
+        let mut k = Kernel::default();
+        let mut b = cube_with_a_defective_bottom(&mut k);
+        let had = failure_classes(&mut k, &b);
+        assert_eq!(
+            had.get(&FailureClass::Report {
+                reporting_type: crate::geom::assert_array::labels::B_SPLINE_CURVE_TYPE,
+                list_index: 0,
+                test_index: 2,
+                owner_type: crate::geom::assert_array::labels::B_SPLINE_CURVE_TYPE,
+            }),
+            Some(&2),
+            "{had:?}"
+        );
+        let (v0, manifold) = volume_and_manifold(&k, &mut b);
+        assert!(manifold && (v0 - 8000.0).abs() <= 1e-9 * 8000.0, "{v0}");
+        let top = box_top(&k, &b);
+        let raised = Surface::from(Plane::from_normal(Vec3::new(0.0, 0.0, 25.0), Vec3::Z));
+        with_notifications(&mut b, |b, notes| {
+            local_operation(&mut k, b, &[top], vec![raised], notes)
+        })
+        .unwrap();
+        let (v, manifold) = volume_and_manifold(&k, &mut b);
+        assert!(manifold && (v - 10000.0).abs() <= 1e-9 * 10000.0, "{v}");
+        let has = failure_classes(&mut k, &b);
+        assert!(
+            has.iter().all(|(c, n)| had.get(c).is_some_and(|m| n <= m)),
+            "{has:?} vs {had:?}"
+        );
+    }
+
+    /// The same cube, its top given a roof with a ridge: a degree-1 patch whose interior
+    /// knot is a crease. The body built on it fails tests the input did not (at the time
+    /// of writing four lines, the first `SmBrep` test 61, at the moved top's edges): the
+    /// operation's, refused as a check failure beyond the input's, the cube as it came in
+    /// with the input's own failures.
+    #[test]
+    fn a_new_failure_on_a_moved_face_of_a_defective_input_is_refused() {
+        use crate::nurbs::b_spline_surface::BSplineSurface;
+        use crate::nurbs::math::{CPoint, NOW};
+        use crate::nurbs::srf_basic::Surface as Net;
+        let mut k = Kernel::default();
+        let mut b = cube_with_a_defective_bottom(&mut k);
+        let had = failure_classes(&mut k, &b);
+        assert!(!had.is_empty());
+        let top = box_top(&k, &b);
+        let row = |x: f64, z: f64| vec![CPoint::new(x, 0.0, z, NOW), CPoint::new(x, 20.0, z, NOW)];
+        let net = vec![row(0.0, 25.0), row(10.0, 27.0), row(20.0, 25.0)];
+        let roof = Net::new(
+            net,
+            1,
+            1,
+            vec![0.0, 0.0, 0.5, 1.0, 1.0],
+            vec![0.0, 0.0, 1.0, 1.0],
+        )
+        .unwrap();
+        let roof = Surface::from(BSplineSurface::from_gw_nurb(&roof));
+        let why = refused_unchanged_or_returned(&mut k, &mut b, &[top], vec![roof]);
+        assert_eq!(why, Some(unsound_check(4, 61)));
+        assert_eq!(failure_classes(&mut k, &b), had);
+    }
+
+    /// [`BrepCheck::failures_beyond`](validation::BrepCheck::failures_beyond) counts per
+    /// class: a class the input has as many lines of is not listed, one more line of it
+    /// is, and a class the input lacks is.
+    #[test]
+    fn failures_beyond_counts_lines_per_class() {
+        use crate::geom::assert_array::labels::SURFACE_TYPE;
+        use crate::geom::assert_array::{AssertArray, AssertReport, ObjectKey, ReportSpec};
+        // (each report about its own surface: the array keeps one of equal reports)
+        let report = |test_index: u64, owner: u64| {
+            AssertReport::new(ReportSpec {
+                test_index,
+                test_class: SURFACE_TYPE,
+                owner: Some(ObjectKey(owner)),
+                owner_type: SURFACE_TYPE,
+                ..ReportSpec::default()
+            })
+            .unwrap()
+        };
+        let check = |tests: &[u64]| {
+            let mut reports = AssertArray::new();
+            for (owner, &t) in (0..).zip(tests) {
+                assert!(reports.add_unique_delete_duplicate(report(t, owner)));
+            }
+            validation::BrepCheck {
+                pointers_status: crate::error::SM_SUCCESS,
+                pointer_reports: AssertArray::new(),
+                assert_valid: Some(tests.is_empty()),
+                reports,
+            }
+        };
+        let input = check(&[4, 4, 6]);
+        assert!(check(&[4, 6]).failures_beyond(&input).is_empty());
+        assert!(check(&[4, 4, 6]).failures_beyond(&input).is_empty());
+        let more = check(&[4, 4, 4, 6]).failures_beyond(&input);
+        assert_eq!(more.len(), 1);
+        assert_eq!(more.first().map(|&(_, n)| n), Some(1));
+        let other = check(&[5]).failures_beyond(&input);
+        assert!(matches!(
+            other.as_slice(),
+            [(FailureClass::Report { test_index: 5, .. }, 1)]
+        ));
     }
 }
