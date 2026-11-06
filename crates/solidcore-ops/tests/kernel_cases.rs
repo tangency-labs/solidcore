@@ -220,23 +220,36 @@ fn picked(p: &Value) -> Result<Vec<usize>, Stop> {
     Ok(out)
 }
 
+/// Looks up the record order once; an unrepresentable result is unsupported, not a refusal.
+fn ensure_order(slot: &mut Slot, op: &str) -> Result<Order, Stop> {
+    ensure_order_with(slot, op, Body::to_record)
+}
+
+fn ensure_order_with(
+    slot: &mut Slot,
+    op: &str,
+    export: impl FnOnce(&Body) -> solidcore_ops::Result<(Record, Order)>,
+) -> Result<Order, Stop> {
+    if slot.order.is_none() {
+        // a body an operation made: its record order is the one its record is written in
+        let (_, order) = export(&slot.body).map_err(|e| match e {
+            solidcore_ops::Error::Unsupported(why) => {
+                Stop::Unsupported(format!("{op}: to_record: {why}"))
+            }
+            e => Stop::Fail(format!("{op}: to_record: {e}")),
+        })?;
+        slot.order = Some(order);
+    }
+    slot.order
+        .clone()
+        .ok_or_else(|| Stop::Fail(format!("{op}: no record order")))
+}
+
 /// The picked faces' record indices, and the record order they are taken through: an operation
 /// takes record indices with the body's [`Order`].
 fn faces(slot: &mut Slot, pick: &Value) -> Result<(Vec<usize>, Order), Stop> {
     let record = picked(pick)?;
-    if slot.order.is_none() {
-        // a body an operation made: its record order is the one its record is written in
-        let (_, order) = slot
-            .body
-            .to_record()
-            .map_err(|e| Stop::Unsupported(format!("to_record for a pick: {e}")))?;
-        slot.order = Some(order);
-    }
-    let order = slot
-        .order
-        .clone()
-        .ok_or_else(|| Stop::Fail("no record order".to_owned()))?;
-    Ok((record, order))
+    Ok((record, ensure_order(slot, "pick")?))
 }
 
 /// A traced profile: its curves as the operation takes them (`line`, `arc`, `nurbs`).
@@ -444,18 +457,11 @@ fn call_with_copy(
                 .iter()
                 .map(split_tool)
                 .collect::<Result<Vec<_>, _>>()?;
-            if s.order.is_none() {
-                let (_, order) = s
-                    .body
-                    .to_record()
-                    .map_err(|e| Stop::Fail(format!("order before split_faces: {e}")))?;
-                s.order = Some(order);
-            }
-            let order = s.order.as_ref().unwrap();
+            let order = ensure_order(&mut s, "split_faces")?;
             if picked.iter().any(|&i| order.faces.get(i).is_none()) {
                 return Err(bad("face outside record order"));
             }
-            match split_faces(&s.body, order, &picked, &tools) {
+            match split_faces(&s.body, &order, &picked, &tools) {
                 Ok(Some((body, _))) => made(Ok(body)),
                 Ok(None) => Err("tools do not split any selected face".to_owned()),
                 Err(e) => Err(e.to_string()),
@@ -874,6 +880,53 @@ fn run_case_with_records(
         Ok(deviation)
     } else {
         Err(Stop::Fail(diffs.join(", ")))
+    }
+}
+
+#[test]
+fn record_order_lookup_keeps_cached_selection_order_and_operand() {
+    let body = Arc::new(solidcore_ops::make_box([0.0; 3], [10.0, 20.0, 30.0]).unwrap());
+    let (before, expected) = body.to_record().unwrap();
+    let mut slot = Slot { body, order: None };
+    let exported = ensure_order(&mut slot, "split_faces").unwrap();
+    assert_eq!(exported.faces, expected.faces);
+    assert_eq!(exported.edges, expected.edges);
+    assert_eq!(exported.vertices, expected.vertices);
+    slot.order.as_mut().unwrap().faces.rotate_left(2);
+    let expected = slot.order.clone().unwrap();
+    let cached = ensure_order_with(&mut slot, "pick", |_| {
+        panic!("a cached record order must not be exported again")
+    })
+    .unwrap();
+    assert_eq!(cached.faces, expected.faces);
+    assert_eq!(cached.edges, expected.edges);
+    assert_eq!(cached.vertices, expected.vertices);
+    assert_eq!(slot.body.to_record().unwrap().0, before);
+}
+
+#[test]
+fn record_order_lookup_distinguishes_unsupported_from_failed_preparation() {
+    let body = Arc::new(solidcore_ops::make_box([0.0; 3], [10.0; 3]).unwrap());
+    let before = body.to_record().unwrap().0;
+    for error in [
+        solidcore_ops::Error::Unsupported("unrepresentable result"),
+        solidcore_ops::Error::Argument,
+    ] {
+        let unsupported = matches!(error, solidcore_ops::Error::Unsupported(_));
+        let mut slot = Slot {
+            body: body.clone(),
+            order: None,
+        };
+        let result = ensure_order_with(&mut slot, "split_faces", |_| Err(error));
+        match result {
+            Err(Stop::Unsupported(why)) if unsupported => {
+                assert!(why.contains("split_faces") && why.contains("unrepresentable result"));
+            }
+            Err(Stop::Fail(why)) if !unsupported => assert!(why.contains("split_faces")),
+            other => panic!("wrong order-lookup classification: {other:?}"),
+        }
+        assert!(slot.order.is_none());
+        assert_eq!(slot.body.to_record().unwrap().0, before);
     }
 }
 
