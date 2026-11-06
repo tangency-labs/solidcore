@@ -1,18 +1,16 @@
 //! Runner for unit `topology.brep_data`: reading serialized B-reps, curves and
 //! surfaces (`SmBrepData`).
 //!
-//! C++: `solidcore_ffi::units::topology_brep_data` (upstream
-//! `source/SMLib/src/SmBrepData.cpp`). Rust: `solidcore::topology::brep_data`.
+//! Ported from upstream `source/SMLib/src/SmBrepData.cpp`; checked against its golden.
+//! Rust: `solidcore::topology::brep_data`.
 //!
 //! A case is one read (`mode`: `db` = `ReadFromDB`, `file` = `ReadFromFile`, `curve` =
 //! `ReadCurveFromDB`, `surface` = `ReadSurfaceFromDB`) of an ASCII (`text`) or binary
 //! (`data`) stream, or an upstream test file (`path`, optionally without its first
-//! `skip_lines` lines), or a construction (`construct`). Both sides dump the result
-//! in the layout documented in the FFI module: integers go to `ints`, doubles to
-//! `dbls` (subnormals as 0) and bit for bit to `dbl_bits`, and `kinds` records the
-//! interleaving. Statuses are upstream `SmStatus` values (`0` = success); a Rust
-//! `InvalidInput` maps to `-1` (the C++ guard keeps such inputs away from upstream,
-//! so it never matches).
+//! `skip_lines` lines), or a construction (`construct`). The runner dumps the result:
+//! integers go to `ints`, doubles to `dbls` (subnormals as 0) and bit for bit to
+//! `dbl_bits`, and `kinds` records the interleaving. Statuses are upstream `SmStatus` values (`0` = success); a Rust
+//! `InvalidInput` maps to `-1`.
 //!
 //! Generated cases build random B-rep, curve and surface streams in both formats for
 //! database versions 29 to 50 (every branch: attributes or not, the version 31 / 32 /
@@ -32,8 +30,6 @@ use solidcore::topology::brep_data::{
 };
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::{curve::curve::Curve, surface::surface::Surface, Kernel, SolidError};
-use solidcore_ffi::units::topology_brep_data::{self as ffi, Item, Mode, Request};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -41,6 +37,30 @@ use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 2000;
+
+/// What a case does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// `SmBrepData::ReadFromDB`.
+    ReadDb,
+    /// `SmBrepData::ReadFromFile`.
+    ReadFile,
+    /// `SmBrepData::ReadCurveFromDB`.
+    ReadCurve,
+    /// `SmBrepData::ReadSurfaceFromDB`.
+    ReadSurface,
+    /// `SmBrepData(bManifold, eDSType)`, `SetHealerVersion`, `GetHealerVersion`.
+    Construct,
+}
+
+/// One output item.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Item {
+    /// An integer.
+    Int(i64),
+    /// A double.
+    Dbl(f64),
+}
 
 /// `topology.brep_data` runner.
 pub struct Runner;
@@ -134,25 +154,6 @@ fn to_output(items: &[Item]) -> Output {
         .values("dbls", dbls)
         .ints("dbl_bits", bits)
         .ints("kinds", kinds)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let req = Request {
-        mode: mode_of(i)?,
-        binary: i.binary,
-        version: i.version,
-        dim: i.dim,
-        persist: i.persist,
-        source: i.source,
-        pre: i.pre,
-        data: bytes_of(i)?,
-        upstream_file: i.path.is_some(),
-    };
-    match ffi::run(&req) {
-        Ok(items) => Ok(to_output(&items)),
-        Err(e @ FfiError::InvalidArgument(_)) => Err(harness(format!("ffi rejected: {e}"))),
-        Err(e) => Ok(Output::err(e.to_string())),
-    }
 }
 
 // ---- the Rust side --------------------------------------------------------------------
@@ -558,10 +559,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
