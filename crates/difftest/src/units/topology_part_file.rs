@@ -3,13 +3,15 @@
 //! with `--unit topology.part_file`; `--green` does not include it.
 //!
 //! One case per upstream part file under `upstream/TestFiles/pt_TestFiles` (the `.smp`
-//! files and the `.smb` files that start with `//[Output Summary]`). Both sides read the
-//! file and dump, as `out`: the stand-alone curves (type, dimension, natural interval),
+//! files and the `.smb` files that start with `//[Output Summary]`). The runner reads the
+//! file and dumps, as `out`: the stand-alone curves (type, dimension, natural interval),
 //! the surfaces (type, natural UV domain), the Boolean tree nodes and per B-rep its
-//! tolerance, manifold-solid flag and region, shell, face, loop, edge and vertex counts
-//! (layout in `solidcore_ffi::units::topology_part_file`). A read failure is compared
-//! as a status only. The B-reps go through `MakeTopologyFromData`, so a case defers
-//! wherever that path still reaches an unported call.
+//! tolerance, manifold-solid flag and region, shell, face, loop, edge and vertex counts.
+//! A read failure is recorded as a status only. The B-reps go through
+//! `MakeTopologyFromData`, so a case defers wherever that path still reaches an unported
+//! call.
+//!
+//! Ported from upstream `SmBrepData::ReadPartFromFile`; checked against its golden.
 
 use std::path::Path;
 
@@ -25,13 +27,12 @@ use solidcore::topology::database_io::FileType;
 use solidcore::topology::face::p2 as fl;
 use solidcore::topology::part_file::{read_part_from_file, Part, PartEnv};
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::topology_part_file as ffi;
 
 use crate::case::{repo_root, CaseContext};
 use crate::fixtures::UPSTREAM_TEST_FILES;
 use crate::{Case, CaseSource, HarnessError, Output, UnitDiff};
 
-/// Status output of a failed read (compared on both sides).
+/// Status output of a failed read.
 const READ_FAILED: &str = "read failed";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,7 +41,7 @@ struct Inputs {
     file: String,
 }
 
-/// Differential runner for `SmBrepData::ReadPartFromFile`.
+/// Runner for `SmBrepData::ReadPartFromFile`.
 pub struct Runner;
 
 fn path_of(rel: &str) -> String {
@@ -157,21 +158,6 @@ fn rust(rel: &str) -> Result<Output, HarnessError> {
     })
 }
 
-fn cpp(rel: &str) -> Result<Output, HarnessError> {
-    let v = ffi::run(&path_of(rel)).map_err(|e| HarnessError::new(format!("c++: {e}")))?;
-    Ok(match v.first() {
-        Some(&0.0) => Output::new().values("out", v),
-        st => {
-            // (the status only goes to stderr: both sides' errors compare as READ_FAILED)
-            eprintln!(
-                "topology.part_file: c++ {rel}: status {st:?}, {} values",
-                v.len()
-            );
-            Output::err(READ_FAILED)
-        }
-    })
-}
-
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.part_file"
@@ -187,11 +173,6 @@ impl UnitDiff for Runner {
                 inputs: serde_json::to_value(Inputs { file: rel }).unwrap_or(Value::Null),
             })
             .collect())
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        cpp(&i.file)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
