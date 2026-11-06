@@ -624,9 +624,8 @@ impl OffsetExecutive {
     /// # Errors
     ///
     /// Those of [`super::reach::extension_reach`] and
-    /// [`super::reach::local_extension_reach`] (in a local operation, its refusals of
-    /// faces that meet nowhere near an edge, or whose meeting is not bounded, unless
-    /// `Kernel::fixes.local_operation_step_walls` closes such gaps with walls).
+    /// [`super::reach::local_extension_reach`] (in a local operation, its refusal of a
+    /// face beside a move whose reach has no certified bound).
     pub(super) fn record_extension_reach(
         &mut self,
         kernel: &Kernel,
@@ -670,7 +669,6 @@ impl OffsetExecutive {
                 &moved,
                 &kept,
                 self.tangency_tol_radians,
-                kernel.fixes.local_operation_step_walls,
             )?
             // A new edge must cross each neighbouring surface's boundary, not sit on it:
             // the mate and the intersection identify points within the body's tolerance,
@@ -678,7 +676,7 @@ impl OffsetExecutive {
             // boundary, and the extension reaches at least that far. With nothing moved
             // beside the face (a face given the plane through its own edges), this floor
             // is the only margin (the offset branch's is the offset's size).
-            .map_or(0.0, |(reach, shift)| (reach + shift).max(original.tolerance()))
+            .map_or(0.0, |r| (r.reach + r.shift).max(original.tolerance()))
         };
         self.extension_reaches.insert(face, reach);
         let (primary, mate) = crate::topology::face::p2::faceuses(original, face)?;
