@@ -4,14 +4,21 @@
 //! Each round ends on its section 8 from the vertex, so the six section ends lie on the
 //! setback planes x = 52, y = 32 and z = 12, and the body is convex: its volume lies in the
 //! bounds the kernel case `ladder/07-fillets/013-corner-setback` derives in closed form.
+//! The corner's patch meets each round tangentially, and every edge lies within the
+//! kernel's 4e-5 of its faces.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)] // test helpers
 
 use solidcore::blend::fillet_executive::session::FilletSession;
 use solidcore::mass::integrator::properties::brep_volume_default;
 use solidcore::math::Point3;
+use solidcore::nurbs::knots::Side;
 use solidcore::primitive::api_primitives::create_box;
-use solidcore::query::api_queries::{brep_bounding_box, brep_is_manifold_solid};
+use solidcore::query::api_queries::{
+    brep_bounding_box, brep_is_manifold_solid, surface_closest_point,
+};
+use solidcore::surface::surface::{Surface, SurfaceKind};
 use solidcore::topology::brep::p5::{stitch_and_orient, StitchAndOrientOptions};
+use solidcore::topology::face::p2 as face;
 use solidcore::topology::{edge, vertex, Brep};
 use solidcore::Kernel;
 
@@ -99,4 +106,57 @@ fn the_set_back_box_is_convex_and_inside_its_bounds() {
         (47_271.975_7..=47_384.893_5).contains(&volume),
         "volume {volume}"
     );
+}
+
+/// The largest angle (degrees) between the normals of an edge's two faces, sampled along
+/// it, over the edges where a face is not a plane and the faces meet within 45 degrees (the
+/// rounds' and the patch's seams).
+fn max_seam_angle(k: &Kernel, b: &Brep) -> f64 {
+    let mut worst: f64 = 0.0;
+    for e in b.edges().ids() {
+        let faces = edge::faces(b, e, None).unwrap();
+        let [f1, f2] = faces[..] else { continue };
+        let (s1, s2) = (
+            face::surface(b, f1).unwrap().unwrap(),
+            face::surface(b, f2).unwrap().unwrap(),
+        );
+        if matches!(s1.kind(), SurfaceKind::Plane(_)) && matches!(s2.kind(), SurfaceKind::Plane(_))
+        {
+            continue;
+        }
+        let c = edge::curve(b, e).unwrap().unwrap();
+        let iv = edge::interval(b, e).unwrap();
+        let mut along: f64 = 0.0;
+        for i in 0..=20 {
+            let p = c
+                .evaluate_point(k, iv.min() + iv.length() * f64::from(i) / 20.0)
+                .unwrap();
+            let normal = |s: &Surface| {
+                let uv = surface_closest_point(k, s, p).unwrap().uvs[0];
+                s.evaluate_normal(k, uv, Side::Left, Side::Left).unwrap()
+            };
+            let (n1, n2) = (normal(s1), normal(s2));
+            along = along.max(n1.cross(n2).length().atan2(n1.dot(n2).abs()).to_degrees());
+        }
+        // a round ending square on a box face far from the corner is no seam
+        if along < 45.0 {
+            worst = worst.max(along);
+        }
+    }
+    worst
+}
+
+#[test]
+fn the_patch_meets_the_rounds_tangentially_within_tolerance() {
+    let (k, mut b) = build();
+    b.refresh_cached_topology();
+    assert!(solidcore::topology::integrity::check(&b).is_ok());
+    let seam = max_seam_angle(&k, &b);
+    assert!(seam < 0.01, "seam {seam} degrees");
+    let tol = b
+        .edges()
+        .ids()
+        .map(|e| edge::tolerance(&b, e).unwrap())
+        .fold(0.0, f64::max);
+    assert!(tol <= 4.0e-5 * (1.0 + 1e-9), "edge tolerance {tol}");
 }
