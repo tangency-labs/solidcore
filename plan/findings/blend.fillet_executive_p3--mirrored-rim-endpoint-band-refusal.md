@@ -50,8 +50,8 @@ these closed forms at relative 1e-9, topology counts, manifold status and Level2
 integrity. Each starts from a fresh input before any measurement/check warms it.
 
 Literature read: Patrikalakis, Maekawa and Cho, *Shape Interrogation for Computer
-Aided Design and Manufacturing*, §11.2.1 (offset derivative `1+κd`) and §5.1
-(point projection with an orthogonality condition for an interior minimum):
+Aided Design and Manufacturing*, §11.2.1 (offset derivative `1+κd`) and §5.4.3
+(point/procedural-curve minimization, including separate endpoint checks):
 https://web.mit.edu/hyperbook/Patrikalakis-Maekawa-Cho/node219.html and
 https://web.mit.edu/hyperbook/Patrikalakis-Maekawa-Cho/node69.html.
 A constrained boundary minimum is distinct from the interior closest-point
@@ -61,3 +61,49 @@ of curve parameterization. These sources do not prescribe this specific fix.
 Validation results belong in the PR description. The captured input and regression
 are `crates/solidcore/tests/data/issue_2903_shelled_box_rim.smb` and
 `crates/solidcore/tests/issue_2903_mirrored_shell_rim.rs`.
+
+
+## Second design and operation corpus
+
+The application Kernel APIs also reconstruct `typical/filleted-shelled-box` after its
+height changes from 30 to 33: centered 70×50, outer R6 vertical rounds, then top-open
+inward shell 2, leaving inner R4 corners. The original matrix size, measured from
+the original display polylines, remains 0.627. This is a geometry control for an
+edit, not a test of application timeline naming/reference resolution.
+
+The captured edited operand has 19 faces, 48 edges and 32 vertices. On pristine
+main, two mirrored corners refuse both round and chamfer; corrected Core builds all
+four, with 27 faces, 64 edges and 40 vertices, manifold status and Level2 checks.
+Its base volume is `(70*50−4*A*6²)*33−(66*46−4*A*4²)*31`; use the same top-rim
+removal formulas with `L=192+8π`. No floor-round term is present. Expected round
+volume is 20771.58921103918 and chamfer volume 20747.043401874635 mm³.
+
+The four `fillets/2903-{original,edited}-rim-{round,chamfer}` corpus entries replay
+these ordinary operations through the unchanged public ops runner. All four refuse
+with no room on pristine main; all four build with this correction, with maximum
+relative volume deviation 7.9e-12. Counts and expected volumes are analytic; no
+reference result or known-failure entry is repinned. Each includes its actual
+corrected-operation render. The native symmetry test additionally exercises every
+mirrored seed, each on a fresh input.
+
+
+## Additional archived-operand controls
+
+A cached headless CLI identified as application source
+`74e059674d32744b51f69a6ea7298ea29322fad9` evaluated `59-enclosure-base`,
+`sensor_enclosure` and `pi-case`, plus the latter after its first driving parameter
+`board_w` changed from 85 to 93.5 mm. Its kernel revision is unverified: these are
+additional geometry controls, not the exact application-pin reproduction above.
+The cache's official record decoder, structural validation and built-record
+validation accept the extracted operands; Core's full integrity check also passes.
+
+Replaying the same records on pristine main and this correction, all four mirror
+seeds of each round/chamfer use the same tangent contour. Enclosure and Sensor Case
+each move from six successes and two no-room refusals to eight successes. Pi's
+original and edited operands already pass all eight operations on pristine main:
+they do not reproduce its reported timeline failure. All 32 corrected controls
+pass full integrity checks and retain identical mirrored topology. Per contour and
+operation, mirrored volumes spread by at most 5.7e-14 relative. These measurements
+are consistency checks, not new expected-volume goldens or proof that every reported
+application action is fixed. In particular, Pi's actual failing timeline action
+still needs reproduction or verification by the application matrix.

@@ -10,6 +10,14 @@
 //! gives volume L*area +/- 2*pi*`first_moment`. A round's removed section has area
 //! (1-pi/4)*r^2 and first moment (5/6-pi/4)*r^3. A chamfer's are d^2/2 and d^3/6.
 //! The floor adds material on the inward side; the rim removes it outward.
+//!
+//! A second capture uses the application Kernel APIs to construct
+//! `typical/filleted-shelled-box` after its height changes from 30 to 33: a centered
+//! 70x50 extrusion, outer vertical R6 rounds, then a top-open inward shell of 2
+//! (inner vertical R4). Its inner contour
+//! has L = 192 + 8*pi. The matrix's unchanged blend size is 0.627, derived from
+//! the original display polylines. This tests the resulting geometry, not timeline
+//! reference resolution. No floor round is present in this second capture.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -36,6 +44,14 @@ use solidcore::topology::topology::NotifyRecords;
 use solidcore::{Brep, Kernel, Vec3};
 
 fn input() -> (Kernel, Brep) {
+    input_from_bytes(include_bytes!("data/issue_2903_shelled_box_rim.smb"))
+}
+
+fn edited_input() -> (Kernel, Brep) {
+    input_from_bytes(include_bytes!("data/issue_2903_edited_shelled_box_rim.smb"))
+}
+
+fn input_from_bytes(bytes: &[u8]) -> (Kernel, Brep) {
     let mut k = Kernel {
         fixes: UpstreamFixes::all(),
         ..Kernel::default()
@@ -51,7 +67,7 @@ fn input() -> (Kernel, Brep) {
         records: &mut records,
         next_key: 1 << 50,
     };
-    let bytes = include_bytes!("data/issue_2903_shelled_box_rim.smb").to_vec();
+    let bytes = bytes.to_vec();
     let b = read_brep_from_file(&mut k, Some(bytes), true, false, &mut env).unwrap();
     (k, b)
 }
@@ -195,4 +211,74 @@ fn a_round_builds_the_same_rim_from_all_four_mirror_seeds() {
 #[test]
 fn a_chamfer_builds_the_same_rim_from_all_four_mirror_seeds() {
     mirrors(Kind::Chamfer);
+}
+
+fn edited_base_volume() -> f64 {
+    let area = 1.0 - PI / 4.0;
+    // Rounded outer area times full height, less rounded cavity area times depth.
+    (70.0 * 50.0 - 4.0 * area * 6.0 * 6.0) * 33.0 - (66.0 * 46.0 - 4.0 * area * 4.0 * 4.0) * 31.0
+}
+
+#[test]
+fn captured_edited_operand_is_valid_and_has_its_closed_form_volume() {
+    let (mut k, mut b) = edited_input();
+    assert_eq!(
+        (
+            b.face_list().len(),
+            b.edge_list().len(),
+            b.vertex_list().len()
+        ),
+        (19, 48, 32)
+    );
+    assert!(is_manifold_solid(&b).unwrap());
+    let check = check_brep(&mut k, &mut b, CheckLevel::Level2).unwrap();
+    assert!(check.is_valid(), "{:?}", check.lines());
+    volume_is(&k, &mut b, edited_base_volume());
+}
+
+fn edited_mirrors(kind: Kind) {
+    let size: f64 = 0.627;
+    let length = 192.0 + 8.0 * PI;
+    let removed = match kind {
+        Kind::Round => {
+            length * (1.0 - PI / 4.0) * size * size
+                + 2.0 * PI * (5.0 / 6.0 - PI / 4.0) * size * size * size
+        }
+        Kind::Chamfer => length * size * size / 2.0 + PI * size * size * size / 3.0,
+    };
+    // Inner R4 corners are centered at (+/-29, +/-19).
+    let diagonal = 4.0 / 2.0_f64.sqrt();
+    let mut refused = Vec::new();
+    for (sx, sy) in [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)] {
+        let point = Vec3::new(sx * (29.0 + diagonal), sy * (19.0 + diagonal), 33.0);
+        // Load a fresh operand before the operation; do not measure or check it first.
+        let (mut k, mut b) = edited_input();
+        if let Err(e) = rim(&mut k, &mut b, point, kind, size) {
+            refused.push(format!("{kind:?} at {point:?}: {e}"));
+            continue;
+        }
+        assert_eq!(
+            (
+                b.face_list().len(),
+                b.edge_list().len(),
+                b.vertex_list().len()
+            ),
+            (27, 64, 40)
+        );
+        assert!(is_manifold_solid(&b).unwrap());
+        let check = check_brep(&mut k, &mut b, CheckLevel::Level2).unwrap();
+        assert!(check.is_valid(), "{point:?}: {:?}", check.lines());
+        volume_is(&k, &mut b, edited_base_volume() - removed);
+    }
+    assert!(refused.is_empty(), "{}", refused.join("\n"));
+}
+
+#[test]
+fn a_round_builds_the_edited_rim_from_all_four_mirror_seeds() {
+    edited_mirrors(Kind::Round);
+}
+
+#[test]
+fn a_chamfer_builds_the_edited_rim_from_all_four_mirror_seeds() {
+    edited_mirrors(Kind::Chamfer);
 }
