@@ -1,32 +1,32 @@
-//! Runner for unit `topology.edgeuse_p3`. C++: `solidcore_ffi::units::topology_edgeuse_p3`.
-//! Rust: `solidcore::topology::edgeuse::p3`.
+//! Runner for unit `topology.edgeuse_p3`. Ported from upstream `SmEdgeuse.cpp` (the shim
+//! `harness/cpp/shim/topology_edgeuse_p3.cpp` was the reference); checked against its
+//! golden. Rust: `solidcore::topology::edgeuse::p3`.
 //!
 //! The B-reps are those of unit `topology.edgeuse_p1` (upstream `.smb` files, wire edges,
-//! faces from B-spline surfaces and real `SmPlane`s, the wire network of `prog_test`
+//! faces from B-spline surfaces and planes, the wire network of `prog_test`
 //! `my_test_topology`), plus the `Fillet/` files of the fillet executive sweeps
-//! (`own_reader_fillet.json`, e.g. `sphere_diff_3cylinders.smb`): the C++ side builds a
-//! real `SmBrep` per call, the Rust side builds a non-file source itself and reads an
-//! `.smb` file with the Rust reader ([`crate::own_builder::build_any`]), renumbered
-//! into the shim's traversal order, so no C++ export (graph, gap cache, cache tree
-//! states or geometry types) reaches the Rust side, and the ported functions run on
-//! both. Edge use arguments are selectors taken modulo the edge use count.
+//! (`own_reader_fillet.json`, e.g. `sphere_diff_3cylinders.smb`): the runner builds a
+//! non-file source itself and reads an `.smb` file with the Rust reader
+//! ([`crate::own_builder::build_any`]), renumbered into the shim's traversal order, and
+//! runs the ported functions on it. Edge use arguments are selectors taken modulo the
+//! edge use count.
 //!
 //! `CreateUVTrimCurve` and every path that has to make a UV trim curve run
 //! `SmSurface::DropCurve` (the plane override or the general drop, unit
-//! `intersect.surface_drop_lib_p3`) and are compared with the paths with existing UV
+//! `intersect.surface_drop_lib_p3`) and are recorded with the paths with existing UV
 //! trim curves, the 3D evaluation, the null dereferences and the wire edge uses; the
 //! cases that reach a unit not ported yet (the face's `CreateUVTrimCurves`, B-rep
-//! makers, surface kinds, the curve classifier) are deferred. The state compared after an op is that of
+//! makers, surface kinds, the curve classifier) are deferred. The state recorded after an op is that of
 //! `topology.edgeuse_p2`'s `put_eu_state` for the edge use and its mate, the edge's
 //! interval and tolerance, then the full records of the edge use's and its mate's UV trim
 //! curves ([`crate::util::trim_curve`]: type, degree, control points, weights, knots,
 //! interval and samples, a failed sample as its status); `CreateUVTrimCurve`'s result
-//! curve is compared with the same record. Each side computes its own maximum
-//! edge/face gap cache (the reader's healer, then the shim's `init_gaps` walk), so
-//! `GetOrCreateUVTrimCurve` compares cached distances too.
+//! curve is recorded the same way. The maximum edge/face gap cache is computed (the
+//! reader's healer, then the shim's `init_gaps` walk), so `GetOrCreateUVTrimCurve`
+//! records cached distances too.
 //! `EvaluateBinormal` builds the face's trimmed surface cache; on the tiny adversarial
-//! surfaces that tree grows to about 2 million nodes on both sides (2 014 255 in the C++
-//! for the `1e-4`-scale faces), below the port's `MAX_SUBDIVISION_NODES` bound; a case
+//! surfaces that tree grows to about 2 million nodes (2 014 255 upstream for the
+//! `1e-4`-scale faces), below the port's `MAX_SUBDIVISION_NODES` bound; a case
 //! past that bound would be deferred to `surface.surface_cache_p3`.
 
 use serde::{Deserialize, Serialize};
@@ -39,13 +39,12 @@ use solidcore::topology::edgeuse::p1 as eu1;
 use solidcore::topology::edgeuse::p3 as eu3;
 use solidcore::topology::{Brep, EdgeuseId, ObjectHandle};
 use solidcore::{SolidError, Vec3};
-use solidcore_ffi::units::topology_edgeuse_p1 as ffi1;
-use solidcore_ffi::units::topology_edgeuse_p3::{self as ffi, Op};
 
 use super::topology_edgeuse_p1::{
     brep_block_of, domain, gen_brep, gen_surface, harness, path_of, sel, BrepIn, SrfIn, FILES,
 };
 use super::topology_edgeuse_p2::{flag, inexact_geometry, put_eu_state, Setup};
+use crate::cases::topology_entities::block_magnitudes_ok;
 use crate::util::trim_curve::put_trim_curve;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -110,16 +109,15 @@ impl OpIn {
 
 /// Build the Rust scene independently: a non-file source with the Rust kernel's
 /// builders, an `.smb` file with the Rust reader ([`crate::own_builder::build_any`]),
-/// both renumbered into the shim's traversal order, so no C++ state reaches the Rust
-/// side.
+/// both renumbered into the shim's traversal order.
 fn setup(i: &Inputs) -> Result<Result<Setup, Output>, HarnessError> {
     use crate::own_builder::{build_any, counts, failed_output, Built, Conventions};
     let block = brep_block_of(Some(&i.brep), i.validate_only, i.init_gaps)?;
-    // an input the FFI refuses is a harness error on both sides: building a face on a
-    // surface with a coordinate above 1e150 does not return upstream (HANG-29, nightly
-    // fuzz00246/00273/00280), so the Rust port does not build it either
-    solidcore_ffi::units::topology_edgeuse_p2::check_block_magnitudes(&block)
-        .map_err(|e| harness(e.to_string()))?;
+    // a block value above 1e150 is refused (HANG-29, nightly fuzz00246/00273/00280):
+    // building a face on such a surface does not return upstream and spins in the port
+    if !block_magnitudes_ok(&block) {
+        return Err(harness("B-rep value above 1e150 (HANG-29)"));
+    }
     let mut k = Kernel::default();
     let conv = &Conventions::EDGEUSE_GRAPH;
     match build_any(&mut k, &i.brep, i.validate_only, i.init_gaps, conv)? {
@@ -139,69 +137,6 @@ fn setup(i: &Inputs) -> Result<Result<Setup, Output>, HarnessError> {
         }
         Built::Failed(e) => Ok(Err(failed_output(&e))),
     }
-}
-
-// ---- C++ side ---------------------------------------------------------------------------
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let path = path_of(Some(&i.brep))?;
-    let block = brep_block_of(Some(&i.brep), i.validate_only, i.init_gaps)?;
-    let prepared = ffi::PreparedBrep::new(&path, &block)
-        .map_err(|e| harness(format!("c++ export: {e}")))?;
-    let Some(counts) = ffi1::counts(prepared.export()) else {
-        let status = prepared.export().get(1).copied().unwrap_or(0.0);
-        return Ok(Output::err(format!("brep_build_status_{status}")));
-    };
-    let selected = sel(i.op.eu(), counts[6]);
-    if selected < 0 {
-        return Ok(Output::err("no_entity_of_that_kind"));
-    }
-    // Native preparation needs counts, not a Rust import of native geometry.
-    let mut input = vec![selected as f64];
-    let op = match &i.op {
-        OpIn::Create {
-            want_dev, has_fail, sample_lift, ..
-        } => {
-            input.extend([flag(*want_dev), flag(*has_fail), flag(*sample_lift)]);
-            Op::Create
-        }
-        OpIn::Binormal {
-            frac,
-            use_3d,
-            want_uv_vector,
-            ..
-        } => {
-            input.extend([*frac, flag(*use_3d), flag(*want_uv_vector)]);
-            Op::Binormal
-        }
-        OpIn::Normalized {
-            t,
-            parameter_space,
-            want_deriv,
-            ok_make,
-            ..
-        } => {
-            input.extend([
-                *t,
-                flag(*parameter_space),
-                flag(*want_deriv),
-                flag(*ok_make),
-            ]);
-            Op::Normalized
-        }
-        OpIn::GetOrCreate {
-            ok_make,
-            want_dist,
-            want_dev,
-            ..
-        } => {
-            input.extend([flag(*ok_make), flag(*want_dist), flag(*want_dev)]);
-            Op::GetOrCreate
-        }
-    };
-    let out = ffi::eval_prepared(op, &prepared, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    let body = out.get(1..).ok_or_else(|| harness("c++: empty output"))?;
-    Ok(output_of(body))
 }
 
 /// The output of an op body (after the build status), as both sides build it.
@@ -581,10 +516,6 @@ impl UnitDiff for Runner {
         "topology.edgeuse_p3"
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse::<Inputs>()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         run_rust(&case.parse::<Inputs>()?)
     }
@@ -641,20 +572,12 @@ mod tests {
     }
 
     /// HANG-29: building the UV trim curve never returns upstream for a control point
-    /// of `-1e300`; both sides refuse the block with the same message. The same face
-    /// at the bound (`-1e150`) still runs on both sides and agrees.
+    /// of `-1e300`; the block is refused. The same face at the bound (`-1e150`) runs.
     #[test]
-    fn huge_block_value_is_refused_on_both_sides() {
-        let i = huge_net_case(-1e300);
-        let c = run_cpp(&i).unwrap_err().to_string();
-        let r = run_rust(&i).unwrap_err().to_string();
-        assert!(c.contains("B-rep value above 1e150 (HANG-29)"), "{c}");
+    fn huge_block_value_is_refused() {
+        let r = run_rust(&huge_net_case(-1e300)).unwrap_err().to_string();
         assert!(r.contains("B-rep value above 1e150 (HANG-29)"), "{r}");
-
-        let i = huge_net_case(-1e150);
-        let (c, r) = (run_cpp(&i).unwrap(), run_rust(&i).unwrap());
-        let d = crate::compare(&c, &r, Runner.abs_floors());
-        assert!(d.mismatches.is_empty(), "{:?}", d.mismatches);
+        assert!(run_rust(&huge_net_case(-1e150)).is_ok());
     }
 
     #[test]
@@ -665,16 +588,14 @@ mod tests {
             "ok_make": false, "want_dist": true, "want_dev": false
         }))
         .unwrap();
-        let cpp = run_cpp(&i).unwrap();
         let rust = run_rust(&i).unwrap();
-        assert!(crate::compare::compare(&cpp, &rust, &[]).pass());
         let mut s = setup(&i).unwrap().unwrap();
         assert!(eu1::uv_trim_curve(&s.brep, s.eu).unwrap().0.is_some());
         let cached = s.brep.edgeuse_mut(s.eu).unwrap();
         assert!(cached.max_edge_face_gap.is_init());
         cached.max_edge_face_gap.gap_3d += 0.125;
         let changed = output_of(&run_rust_op(&i.op, &mut s.brep, s.eu).unwrap());
-        assert!(!crate::compare::compare(&cpp, &changed, &[]).pass());
+        assert!(!crate::compare::compare(&rust, &changed, &[]).pass());
         assert_ne!(changed.values["state"][0], -2.0);
     }
 

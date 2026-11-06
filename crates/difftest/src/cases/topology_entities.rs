@@ -99,3 +99,19 @@ impl<'a> Reader<'a> {
         self.at == self.input.len()
     }
 }
+
+/// The largest magnitude a B-rep block value may have (HANG-29): building a face on a
+/// surface with a coordinate above it does not return upstream, and the port spins in the
+/// same builds for tens of seconds (nightly fuzz cases).
+pub const MAX_BLOCK_MAGNITUDE: f64 = 1.0e150;
+
+/// Whether every value of the B-rep block `block` is at most [`MAX_BLOCK_MAGNITUDE`] in
+/// magnitude (`f64::MAX`, the `NOZ` / `NOW` markers, and non-finite values are left to the
+/// block's own checks).
+#[must_use]
+pub fn block_magnitudes_ok(block: &[f64]) -> bool {
+    !block.iter().any(|v| {
+        let a = v.abs();
+        a > MAX_BLOCK_MAGNITUDE && a < f64::MAX
+    })
+}
