@@ -855,6 +855,25 @@ impl OffsetExecutive {
                     marked.insert(required(eu::mate(original, across)?, OP_EXTENDED)?);
                 }
             }
+            let shell_faces_list = self.shell_faces().to_vec();
+            let tan_tol = self.tangency_tol_degrees();
+            let is_inset = self.inset();
+            let is_shell_tangent =
+                |k: &Kernel, orig: &mut Brep, eu: EdgeuseId, rad: EdgeuseId| -> Result<bool> {
+                    if !is_inset || shell_faces_list.is_empty() {
+                        return Ok(false);
+                    }
+                    let f1 = eu::face(orig, eu)?;
+                    let f2 = eu::face(orig, rad)?;
+                    let in1 = f1.is_some_and(|f| shell_faces_list.contains(&f));
+                    let in2 = f2.is_some_and(|f| shell_faces_list.contains(&f));
+                    if in1 == in2 {
+                        return Ok(false);
+                    }
+                    let tan = eu2::is_tangent_sector(k, orig, eu, tan_tol, false, true)?;
+                    Ok(tan)
+                };
+
             if self.extend_convex_edges() {
                 for &edgeuse in &mapped {
                     kernel.check_cancelled(OP_EXTENDED)?;
@@ -869,6 +888,9 @@ impl OffsetExecutive {
                     let Some(radial) = select_radial(original, radial, &mapped, &marked)? else {
                         continue;
                     };
+                    if is_shell_tangent(kernel, original, edgeuse, radial)? {
+                        continue;
+                    }
                     if eu2::is_tangent_sector(
                         kernel,
                         original,
@@ -894,6 +916,7 @@ impl OffsetExecutive {
                 }
             }
 
+            let mut deferred_shell_tangents = Vec::new();
             for &edgeuse in &mapped {
                 kernel.check_cancelled(OP_EXTENDED)?;
                 let mut radial = required(eu::radial(original, edgeuse)?, OP_EXTENDED)?;
@@ -901,8 +924,7 @@ impl OffsetExecutive {
                 if self.radial_face_collapsed(original, radial)? {
                     continue;
                 }
-                marked.insert(edgeuse);
-                if marked.contains(&radial) {
+                if marked.contains(&edgeuse) || marked.contains(&radial) {
                     continue;
                 }
                 let edge = required(eu::edge(original, edgeuse)?, OP_EXTENDED)?;
@@ -912,6 +934,28 @@ impl OffsetExecutive {
                     };
                     radial = selected;
                 }
+                if is_shell_tangent(kernel, original, edgeuse, radial)? {
+                    deferred_shell_tangents.push((edgeuse, radial));
+                    continue;
+                }
+                marked.insert(edgeuse);
+                self.mapped_edge_prefix(
+                    kernel,
+                    original,
+                    edgeuse,
+                    radial,
+                    mark_type,
+                    &marked,
+                    notifications,
+                )?;
+            }
+
+            for (edgeuse, radial) in deferred_shell_tangents {
+                kernel.check_cancelled(OP_EXTENDED)?;
+                if marked.contains(&edgeuse) || marked.contains(&radial) {
+                    continue;
+                }
+                marked.insert(edgeuse);
                 self.mapped_edge_prefix(
                     kernel,
                     original,
@@ -1073,11 +1117,6 @@ impl OffsetExecutive {
             // refresh regions, set void flags by infinite-region identity, then
             // transfer result ownership and clear the executive temporary.
             if kernel.fixes.offset_stitch_at_body_tolerance {
-                // Opt-in (WR-455, #855; tangency-labs/smlib@601d804): one pass at the body's
-                // tolerance. `StitchIntoSolid` doubles its tolerance until no lamina edge is
-                // left, but the lamina edges a merge leaves are the rims of the cut-off
-                // pieces `MakeManifold` removes next; escalating, it welds two of them into
-                // one edge of a far larger tolerance. (SER: a failure propagates.)
                 let mut callback = DefaultStitchCallback::new();
                 let mut one_pass = Stitch::new(&mut callback, result.tolerance(), true, false);
                 one_pass.fast_edge_compare = true;
@@ -1393,7 +1432,6 @@ impl OffsetExecutive {
         if extended && self.inset() {
             faceuse = required(eu::faceuse_mate(original, faceuse)?, operation)?;
         }
-        // cpp:498–506: copied rounded faces do not apply inset.
         self.relate_faceuse(faceuse, new_face);
         self.map_edgeuses_with_kernel_context(
             kernel,
