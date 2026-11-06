@@ -4,8 +4,10 @@
 //! #2400 are retired ([`retired`]): corners of the 1x1 and 2x2 classes, `AdjustTangentCorner`
 //! (every corner's is the base class's success now) and `TestAndConvertBigRadFillet`.
 //!
-//! C++: `solidcore_ffi::units::blend_fillet_corner_p3` (upstream
-//! `source/SMLib/src/SmFilletCorner.cpp`). Rust: `solidcore::blend::fillet_corner::p3`.
+//! Ported from upstream `source/SMLib/src/SmFilletCorner.cpp`; checked against its golden.
+//! Rust: `solidcore::blend::fillet_corner::p3`. The corner generator redraws until the
+//! reference wrapper's input contract holds ([`corner_contract`]) and the case builds
+//! ([`corner_builds`]), as it redrew on the wrapper's refusals.
 //!
 //! Two kinds of case:
 //!
@@ -69,19 +71,38 @@ use solidcore::surface::surface::{Surface, SurfaceKind};
 use solidcore::topology::edgeuse::p1 as eu1;
 use solidcore::topology::{Brep, EdgeuseId, FaceId, VertexId};
 use solidcore::SolidError;
-use solidcore_ffi::units::blend_fillet_corner_p3::{self as ffi, Op};
-use solidcore_ffi::units::topology_edgeuse_p1 as ffi1;
 
 use super::blend_fillet_geom_p1::{
     gen_model, push_model, status, Crv, EdgeIn, EuIn, GeomIn, Model, RustModel, Srf, VertexIn,
 };
 use super::topology_edgeuse_p1::{
-    brep_block_of, gen_brep, import_with_types, path_of, sel, BrepIn, ImportTypes, FILES,
+    gen_brep, sel, BrepIn, ImportTypes, FILES,
 };
 use crate::case::CaseContext;
+use crate::cases::blend;
 use crate::runner::default_cases;
 use crate::util::flag;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// The corner operation run by [`corner`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Op {
+    /// `SmFilletCorner::CalcCornerGeom`.
+    CalcGeom = 0,
+    /// The virtual `CreateCornerPatch`.
+    Patch = 1,
+    /// The virtual `AdjustTopology`.
+    AdjustTopology = 2,
+    /// The virtual `AdjustTangentCorner`.
+    AdjustTangent = 3,
+    /// `SmFilletCorner::UpdateSplitFace(orig, split)` (unit `blend.fillet_corner_p2`).
+    UpdateSplitFace = 4,
+    /// `SmFilletExecutive::TestAndConvertBigRadFillet`.
+    BigRad = 6,
+}
+
+/// The most solvers a corner case puts on the model's geometries.
+const MAX_GEOM_SOLVERS: usize = 8;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 400;
@@ -279,8 +300,6 @@ fn retired(case: &Case) -> bool {
 /// The B-rep of a `create` case on both sides: the shim's export, its Rust import, the
 /// vertex and the filleted edge uses.
 struct CreateSetup {
-    path: String,
-    block: Vec<f64>,
     brep: Brep,
     types: ImportTypes,
     vertex: VertexId,
@@ -292,48 +311,29 @@ fn eu_vertex(b: &Brep, eu: EdgeuseId) -> Option<VertexId> {
     b.vertexuse(vu).ok()?.vertex
 }
 
-/// The case's B-rep and its resolved selectors. With `own` (the Rust side) the B-rep is
-/// read by the Rust reader or built by the Rust kernel in the shim's traversal order
-/// ([`crate::own_reader::brep_in_order`]); else (the C++ side, to resolve its
-/// selectors) it is imported from the C++ export.
+/// The case's B-rep and its resolved selectors: the B-rep read by the Rust reader or
+/// built by the Rust kernel in the shim's traversal order
+/// ([`crate::own_reader::brep_in_order`]).
 fn create_setup(
     brep: &BrepIn,
     validate_only: bool,
     init_gaps: bool,
     eu: i64,
     more: &[i64],
-    own: bool,
 ) -> Result<Result<CreateSetup, Output>, HarnessError> {
-    let path = path_of(Some(brep))?;
-    let block = brep_block_of(Some(brep), validate_only, init_gaps)?;
-    let (c, built) = if own {
-        use crate::own_builder::{counts, failed_output, Built, Conventions};
-        let conv = &Conventions::EDGEUSE_GRAPH;
-        let k = &mut Kernel::default();
-        match crate::own_reader::brep_in_order(k, brep, validate_only, init_gaps, conv)? {
-            Built::Brep(b) => (counts(&b), Ok(*b)),
-            Built::Failed(e) => return Ok(Err(failed_output(&e))),
-        }
-    } else {
-        let ex = crate::export_memo::export("topology_edgeuse_p1", &[&path], &block, || {
-            ffi1::eval(ffi1::Op::Export, &path, &block)
-        })
-        .map_err(|e| harness(format!("c++ export: {e}")))?;
-        let Some(c) = ffi1::counts(&ex) else {
-            let st = ex.get(1).copied().unwrap_or(0.0);
-            return Ok(Err(Output::err(format!("brep_build_status_{st}"))));
-        };
-        (c, Err(ex))
+    use crate::own_builder::{counts, failed_output, Built, Conventions};
+    let conv = &Conventions::EDGEUSE_GRAPH;
+    let k = &mut Kernel::default();
+    let (c, b) = match crate::own_reader::brep_in_order(k, brep, validate_only, init_gaps, conv)? {
+        Built::Brep(b) => (counts(&b), *b),
+        Built::Failed(e) => return Ok(Err(failed_output(&e))),
     };
     let n_eu = c.get(6).copied().unwrap_or(0);
     let s = sel(eu, n_eu);
     if s < 0 {
         return Ok(Err(Output::err("no_edge_use")));
     }
-    let (b, types) = match built {
-        Ok(b) => (b, ImportTypes::default()),
-        Err(ex) => import_with_types(&ex)?,
-    };
+    let types = ImportTypes::default();
     let start = EdgeuseId::from_index(u32::try_from(s).map_err(|_| harness("index"))?);
     let Some(vertex) = eu_vertex(&b, start) else {
         return Ok(Err(Output::err("start_edge_use_without_vertex")));
@@ -355,8 +355,6 @@ fn create_setup(
         }
     }
     Ok(Ok(CreateSetup {
-        path,
-        block,
         brep: b,
         types,
         vertex,
@@ -420,30 +418,6 @@ fn create_output(rec: &[f64]) -> Result<Output, HarnessError> {
         return Err(harness("trailing values"));
     }
     Ok(out)
-}
-
-fn create_cpp(
-    brep: &BrepIn,
-    validate_only: bool,
-    init_gaps: bool,
-    eu: i64,
-    more: &[i64],
-    solvers: &[SolverIn],
-) -> Result<Output, HarnessError> {
-    let s = match create_setup(brep, validate_only, init_gaps, eu, more, false)? {
-        Ok(s) => s,
-        Err(o) => return Ok(o),
-    };
-    let mut input = s.block.clone();
-    input.push(f64::from(s.vertex.index()));
-    input.push(s.eus.len() as f64);
-    for (i, eu) in s.eus.iter().enumerate() {
-        let sv = solver_of(solvers, i)?;
-        input.extend([f64::from(eu.index()), sv.approx, sv.tang, f64::from(sv.fsg)]);
-    }
-    let out = ffi::create(&s.path, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    let body = out.get(1..).ok_or_else(|| harness("c++: empty output"))?;
-    create_output(body)
 }
 
 fn fsg_of(kind: u8) -> FilletSurfaceGenerator {
@@ -514,7 +488,7 @@ fn create_rust(
     more: &[i64],
     solvers: &[SolverIn],
 ) -> Result<Output, HarnessError> {
-    let mut s = match create_setup(brep, validate_only, init_gaps, eu, more, true)? {
+    let mut s = match create_setup(brep, validate_only, init_gaps, eu, more)? {
         Ok(s) => s,
         Err(o) => return Ok(o),
     };
@@ -746,48 +720,119 @@ fn corner_output(rec: &[f64]) -> Result<Output, HarnessError> {
         .values("model", model))
 }
 
-fn corner_cpp(
-    op: CornerOp,
-    model: &Model,
-    c: &CornerIn,
-    gs: &[Option<SolverIn>],
-) -> Result<Output, HarnessError> {
-    corner_cpp_gs(op.ffi(), &[], model, c, gs)
-}
-
-/// The C++ side of a corner case running `op`, whose input is the corner's followed by
-/// `tail` (unit `blend.fillet_corner_p2`'s operations).
-pub(super) fn corner_cpp_op(
-    op: Op,
-    tail: &[f64],
-    model: &Model,
-    c: &CornerIn,
-) -> Result<Output, HarnessError> {
-    corner_cpp_gs(op, tail, model, c, &[])
-}
-
-/// [`corner_cpp_op`] with solvers on the model's geometries.
-fn corner_cpp_gs(
-    op: Op,
-    tail: &[f64],
-    model: &Model,
-    c: &CornerIn,
-    gs: &[Option<SolverIn>],
-) -> Result<Output, HarnessError> {
-    let mut input = corner_input_with(model, c, gs)?;
-    input.extend_from_slice(tail);
-    let flat = match ffi::corner(op, &input) {
-        Ok(flat) => flat,
-        // the shim's UB-166 refusal of a surface whose constructed v knots crash the
-        // surface cache (only for the ops that build one)
-        Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_ARG))
-            if op == Op::UpdateSplitFace =>
-        {
-            return Ok(Output::rejected("shim_rejected_args (UB-166)"));
+/// The reference wrapper's input contract for a corner operation `op` (any but
+/// `BigRad`) on the corner input `input` ([`corner_input_with`] and the op's tail;
+/// `crates/solidcore-ffi/src/units/blend_fillet_corner_p3.rs`): `blend.fillet_geom_p1`'s
+/// block within [`blend::MAX_MAGNITUDE`], then the corner's kind and vertex, edge uses of
+/// target wire edges, fillet vertices and edges, flags, intersection points (their
+/// surfaces a target face, `-1` or a plane `1000` / `1001`), original faces, line edges,
+/// arc edges (radius above `1e-12`, a degree domain in `[-360, 360]` of length in
+/// `(1e-12, 360 + 1e-12]`) and solvers, every index inside the block.
+pub(super) fn corner_contract(op: Op, input: &[f64]) -> bool {
+    let mut rd = blend::Reader::new(input, blend::MAX_MAGNITUDE);
+    let args = |rd: &mut blend::Reader<'_>| -> Option<()> {
+        let b = blend::block(rd)?;
+        if op == Op::BigRad {
+            return None;
         }
-        Err(e) => return Err(harness(e.to_string())),
+        let eu_list = |rd: &mut blend::Reader<'_>| -> Option<()> {
+            rd.flag()?;
+            let n = rd.index(blend::MAX_LIST)?;
+            for _ in 0..n {
+                rd.some_index(b.nt)?;
+                rd.index(1)?;
+            }
+            Some(())
+        };
+        rd.index(10)?; // kind
+        let v_edge = rd.opt_index(b.nt)?;
+        let v_sub = rd.index(1)?;
+        if v_edge.is_none() && v_sub != 0 {
+            return None;
+        }
+        eu_list(rd)?;
+        eu_list(rd)?;
+        let nv = rd.index(blend::MAX_LIST)?;
+        for _ in 0..nv {
+            rd.some_index(b.nv())?;
+        }
+        let ne = rd.index(blend::MAX_LIST)?;
+        for _ in 0..ne {
+            rd.some_index(b.ne())?;
+        }
+        for _ in 0..6 {
+            rd.flag()?;
+        }
+        rd.finites(3)?;
+        let nt = rd.index(blend::MAX_LIST)?;
+        for _ in 0..nt {
+            rd.some_index(b.ne())?;
+            rd.index(1)?;
+            rd.finites(5)?;
+            for _ in 0..2 {
+                let v = rd.num()?;
+                let face = v.fract() == 0.0 && v >= 0.0 && v < b.nf as f64;
+                if !(v == -1.0 || v == 1000.0 || v == 1001.0 || face) {
+                    return None;
+                }
+            }
+        }
+        let no = rd.index(blend::MAX_LIST)?;
+        for _ in 0..no {
+            rd.some_index(b.ne())?;
+            rd.some_index(b.nf)?;
+        }
+        let nl = rd.index(blend::MAX_LIST)?;
+        for _ in 0..nl {
+            rd.some_index(b.ne())?;
+        }
+        let na = rd.index(blend::MAX_LIST)?;
+        for _ in 0..na {
+            rd.some_index(b.ne())?;
+            rd.finites(3)?;
+            if rd.finite()? <= 1.0e-12 {
+                return None;
+            }
+            let d = rd.finites(2)?;
+            if let [d0, d1] = d[..] {
+                if !(-360.0..=360.0).contains(&d0)
+                    || !(-360.0..=360.0).contains(&d1)
+                    || d1 - d0 <= 1.0e-12
+                    || d1 - d0 > 360.0 + 1.0e-12
+                {
+                    return None;
+                }
+            }
+        }
+        let ns = rd.index(MAX_GEOM_SOLVERS)?;
+        for _ in 0..ns {
+            rd.finites(2)?;
+            rd.index(3)?;
+        }
+        if ns > 0 {
+            for _ in 0..b.ng() {
+                rd.opt_index(ns)?;
+            }
+        }
+        if op == Op::UpdateSplitFace {
+            for _ in 0..2 {
+                rd.some_index(b.nf)?;
+            }
+        }
+        Some(())
     };
-    corner_output(&flat)
+    args(&mut rd).is_some() && rd.done()
+}
+
+/// The reference wrapper's refusal of a corner case it cannot build: the model's block
+/// must build as the case builds it, and every line edge must have a B-spline curve to
+/// replace by its line.
+pub(super) fn corner_builds(model: &Model, c: &CornerIn) -> bool {
+    RustModel::build(model).is_ok()
+        && c
+            .line_edges
+            .iter()
+            .all(|&e| model.edges.get(e).is_some_and(|e| e.curve.is_some()))
 }
 
 fn corner_rust(
@@ -1795,25 +1840,6 @@ fn gen_corner_model(rng: &mut Rng) -> Inputs {
 
 // ---- runner ----------------------------------------------------------------------------
 
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match i {
-        Inputs::Create {
-            brep,
-            validate_only,
-            init_gaps,
-            eu,
-            more,
-            solvers,
-        } => create_cpp(brep, *validate_only, *init_gaps, *eu, more, solvers),
-        Inputs::Corner {
-            op,
-            model,
-            corner,
-            geom_solvers,
-        } => corner_cpp(*op, model, corner, geom_solvers),
-    }
-}
-
 fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
     match i {
         Inputs::Create {
@@ -1830,8 +1856,9 @@ fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
             corner,
             geom_solvers,
         } => {
-            ffi::validate_corner(&corner_input_with(model, corner, geom_solvers)?)
-                .map_err(|e| harness(e.to_string()))?;
+            if !corner_contract(Op::CalcGeom, &corner_input_with(model, corner, geom_solvers)?) {
+                return Err(harness("input outside the contract"));
+            }
             corner_rust(k, *op, model, corner, geom_solvers)
         }
     }
@@ -1852,24 +1879,20 @@ impl UnitDiff for Runner {
         "blend.fillet_corner_p3"
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse::<Inputs>()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let k = &Kernel::default();
         rust(k, &case.parse::<Inputs>()?)
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        // keep inputs the FFI accepts
+        // keep inputs that keep the contract
         for _ in 0..32 {
             let inputs = if rng.chance(0.5) {
                 gen_create(rng)
             } else {
                 gen_corner(rng)
             };
-            // keep corner inputs the shim builds (its model block rejects some tiny
+            // keep corner inputs the case builds (the model block rejects some tiny
             // geometry, as blend.fillet_geom_p1's does)
             let ok = match &inputs {
                 Inputs::Corner {
@@ -1878,7 +1901,8 @@ impl UnitDiff for Runner {
                     corner,
                     geom_solvers,
                 } => corner_input_with(model, corner, geom_solvers)
-                    .is_ok_and(|v| ffi::corner(op.ffi(), &v).is_ok()),
+                    .is_ok_and(|v| corner_contract(op.ffi(), &v))
+                    && corner_builds(model, corner),
                 Inputs::Create { .. } => true,
             };
             if ok {
