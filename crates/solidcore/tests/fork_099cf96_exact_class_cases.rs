@@ -63,7 +63,9 @@
     clippy::indexing_slicing
 )] // test helpers
 
+use solidcore::blend::blend_corner::end::RUNS_ON_ACROSS_SEAM;
 use solidcore::blend::fillet_executive::api::fillet_edges;
+use solidcore::blend::fillet_executive::session::FilletSession;
 use solidcore::boolean::api_brep::{boolean_difference, boolean_union};
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::axis2_placement::Axis2Placement;
@@ -672,6 +674,8 @@ fn the_pipes_join_only_with_wr77() {
 /// each wrong surface kind are refused, and the fork's marks on it don't hold.
 /// The ball's rim with one of its two edges picked, as the case was before #2441: the half
 /// rim's round would end at the sphere's seam, and a round does not end at a seam (#2864).
+/// The session, driven as `fillet_edges` drives it, says that is why (the 1001 is the status
+/// `fillet_edges` returns, checked by `holds`).
 #[test]
 fn the_ball_s_half_rim_is_refused() {
     let mut case = cases()
@@ -682,6 +686,20 @@ fn the_ball_s_half_rim_is_refused() {
     for kernel in [solidcraft_kernel, solidcraft_before_definitions] {
         let got = grade(&case, &mut kernel());
         assert!(holds(Mark::Status1001, &got), "{got:?}");
+
+        let mut k = kernel();
+        let mut b = sphere_plane(&mut k).unwrap();
+        let e = pick(&k, &b, case.points[0]).unwrap();
+        let mut s = FilletSession::new(&mut k, &mut b).unwrap();
+        let r = s
+            .prepare_constant_radius_edges(&mut k, &[e], case.r, 1, 1, 1.0)
+            .and_then(|()| s.do_fillet(&mut k));
+        assert!(r.is_err(), "the half rim's round refused");
+        assert_eq!(
+            s.error_info().comment,
+            RUNS_ON_ACROSS_SEAM,
+            "refused at the seam"
+        );
     }
 }
 
