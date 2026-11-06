@@ -1,10 +1,5 @@
 [
   {
-    "case": "fillets/11991-round-cylinder-edge-ending-on-a-round-tangent-line",
-    "issue": "solidcore#2843",
-    "reason": "round status 1001 where the cylinder's end lies on the round's tangent line; builds at x = 5.001"
-  },
-  {
     "case": "fillets/12034-round-loft-square-to-circle-circular-rim",
     "issue": "solidcore#2844",
     "reason": "the round of the loft's circular rim is not a closed solid"
