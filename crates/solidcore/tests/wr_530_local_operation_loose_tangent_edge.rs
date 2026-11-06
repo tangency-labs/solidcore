@@ -5,7 +5,7 @@
 //! edge between it and the round is dropped across the 1 mm gap between them. Upstream
 //! ignores that ("will be fixed later") and returns a body with an edge as loose as the
 //! gap; with `local_operation_refuses_loose_tangent_edges` the local operation is
-//! refused.
+//! refused, and without it its final gate refuses the loose body as not sound.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -100,8 +100,22 @@ fn wr_530_moved_boss_wall_beside_its_round_is_refused() {
     }
 }
 
-/// Without the opt-in the local operation returns a body, as upstream does.
+/// Without the opt-in upstream returns the body with the edge as loose as the gap; the
+/// local operation's final gate refuses it as not sound (its check: the edge's tolerance
+/// against the B-rep's), the part as it came in.
 #[test]
-fn wr_530_without_the_opt_in_the_local_operation_succeeds() {
-    move_wall(false).unwrap();
+fn wr_530_without_the_opt_in_the_loose_body_is_refused_as_not_sound() {
+    use solidcore::error::offset::{OffsetFailure, Unsoundness};
+    use solidcore::error::Reason;
+    let e = move_wall(false).unwrap_err();
+    assert!(
+        matches!(
+            e.failure().map(|f| &f.reason),
+            Some(Reason::Offset(OffsetFailure::Unsound {
+                what: Unsoundness::Check { .. }
+            }))
+        ),
+        "{e}"
+    );
+    assert_eq!(e.sm_status(), Some(SM_ERR));
 }
