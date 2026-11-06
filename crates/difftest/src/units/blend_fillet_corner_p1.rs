@@ -2,8 +2,8 @@
 //! `SmFilletCorner.cpp` and the `SmFilletCorner` methods the unit owns, on main's
 //! `FilletCorner` record (`blend::fillet_corner::p3`).
 //!
-//! C++: `solidcore_ffi::units::blend_fillet_corner_p1` (the shim compiles
-//! `source/SMLib/src/SmFilletCorner.cpp`). Rust: `solidcore::blend::fillet_corner::p1`.
+//! Ported from upstream `source/SMLib/src/SmFilletCorner.cpp`; checked against its golden.
+//! Rust: `solidcore::blend::fillet_corner::p1`.
 //!
 //! Two kinds of case:
 //!
@@ -55,16 +55,14 @@ use solidcore::surface::surface::{Surface, SurfaceKind};
 use solidcore::topology::edgeuse::p1 as eu1;
 use solidcore::topology::{edge, Brep, EdgeId, EdgeuseId, VertexId};
 use solidcore::SolidError;
-use solidcore_ffi::units::blend_fillet_corner_p1::{self as ffi, CornerOp as FfiCornerOp, Op};
 
 use super::blend_fillet_geom_p1::{
-    curve_of as model_curve_of, gen_curve as model_gen_curve, gen_model, push_model,
-    status as model_status, Crv, Model, RustModel, Srf,
+    curve_of as model_curve_of, gen_curve as model_gen_curve, gen_model, status as model_status, Crv, Model, RustModel, Srf,
 };
 
 use super::topology_edgeuse_p1::{
-    brep_block_of, bspline_of, domain, flag, gen_brep, gen_curve, gen_surface, harness,
-    path_of, push_curve, push_surface, sel, surface_of, BrepIn, CrvIn,
+    bspline_of, domain, flag, gen_brep, gen_curve, gen_surface, harness,
+    sel, surface_of, BrepIn, CrvIn,
     ImportTypes, SrfIn,
 };
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -234,26 +232,6 @@ enum CornerMethod {
     Insert,
     /// `MakeConstantRadiusFillet` with a solver per model geometry.
     ConstRad,
-}
-
-impl CornerMethod {
-    const fn ffi(self) -> FfiCornerOp {
-        match self {
-            Self::Peek => FfiCornerOp::Peek,
-            Self::Solvers => FfiCornerOp::Solvers,
-            Self::ExtSurface => FfiCornerOp::ExtSurface,
-            Self::Reinit => FfiCornerOp::Reinit,
-            Self::Squeeze => FfiCornerOp::Squeeze,
-            Self::RailRail => FfiCornerOp::RailRail,
-            Self::VertGeom => FfiCornerOp::VertGeom,
-            Self::EdgeGeom => FfiCornerOp::EdgeGeom,
-            Self::FixDegeneracy => FfiCornerOp::FixDegeneracy,
-            Self::EndPatch => FfiCornerOp::EndPatch,
-            Self::MakeFace => FfiCornerOp::MakeFace,
-            Self::Insert => FfiCornerOp::Insert,
-            Self::ConstRad => FfiCornerOp::ConstRad,
-        }
-    }
 }
 
 /// An edge use of the model's target wire edge `e`: `0` its primary edge use, `1` the
@@ -471,17 +449,6 @@ fn put_surface(o: &mut Vec<f64>, s: &Surface) -> Result<(), HarnessError> {
     Ok(())
 }
 
-/// A C++ `status [surface block]` record as an output.
-fn cpp_surface(out: &[f64]) -> Result<Output, HarnessError> {
-    let st = *out.first().ok_or_else(|| harness("empty output"))?;
-    let o = Output::new().values("status", vec![st]);
-    Ok(if st == 0.0 {
-        o.values("surface", out.get(1..).unwrap_or_default().to_vec())
-    } else {
-        o
-    })
-}
-
 /// A Rust surface result as an output.
 fn rust_surface(r: solidcore::Result<Surface>) -> Result<Output, HarnessError> {
     match r {
@@ -494,12 +461,6 @@ fn rust_surface(r: solidcore::Result<Surface>) -> Result<Output, HarnessError> {
         }
         Err(e) => Ok(rust_err(&e)),
     }
-}
-
-fn surface_args(s: &SrfIn) -> Result<Vec<f64>, HarnessError> {
-    let mut v = Vec::new();
-    push_surface(&mut v, s)?;
-    Ok(v)
 }
 
 fn closure_of(code: i64) -> Result<SurfParamType, HarnessError> {
@@ -518,8 +479,6 @@ fn closure_of(code: i64) -> Result<SurfParamType, HarnessError> {
 /// The built B-rep of a topology case on both sides and the resolved graph indices of the
 /// op's arguments (`-1` = NULL).
 pub(super) struct Topo {
-    pub(super) path: String,
-    pub(super) block: Vec<f64>,
     pub(super) brep: Brep,
     pub(super) types: ImportTypes,
     pub(super) args: Vec<i64>,
@@ -558,8 +517,6 @@ fn topo(i: &Inputs, own: bool) -> Result<Result<Topo, Output>, HarnessError> {
     else {
         return Err(harness("not a topology case"));
     };
-    let path = path_of(Some(brep))?;
-    let block = brep_block_of(Some(brep), false, false)?;
     // the Rust side's B-rep is read or built by the Rust kernel, never imported
     // (`crate::own_reader::edgeuse_case`)
     let (c, b, types) = match crate::own_reader::edgeuse_case(brep, false, false, own)? {
@@ -663,8 +620,6 @@ fn topo(i: &Inputs, own: bool) -> Result<Result<Topo, Output>, HarnessError> {
         _ => return Err(harness("not a topology case")),
     };
     Ok(Ok(Topo {
-        path,
-        block,
         brep: b,
         types,
         args,
@@ -749,94 +704,6 @@ fn opt<T>(i: i64, f: impl Fn(u32) -> T) -> Result<Option<T>, HarnessError> {
 }
 
 // ---- C++ side ---------------------------------------------------------------------------
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let call = |op: Op, path: &str, input: &[f64]| {
-        ffi::eval(op, path, input).map_err(|e| harness(format!("c++: {e}")))
-    };
-    match i {
-        Inputs::Planar { points, tol } => {
-            let mut v = vec![points.len() as f64];
-            for p in points {
-                v.extend(p);
-            }
-            v.push(*tol);
-            cpp_surface(&call(Op::Planar, "", &v)?)
-        }
-        Inputs::Revolution { curves, major, tol } => {
-            let mut v = vec![curves.len() as f64];
-            for c in curves {
-                push_curve(&mut v, c)?;
-            }
-            v.extend([*major as f64, *tol]);
-            cpp_surface(&call(Op::Revolution, "", &v)?)
-        }
-        Inputs::FilletRadius {
-            p1,
-            n1,
-            p2,
-            n2,
-            orient,
-        } => {
-            let mut v = Vec::new();
-            for a in [p1, n1, p2, n2] {
-                v.extend(a);
-            }
-            v.push(*orient);
-            Ok(Output::new().values("radius_span", call(Op::FilletRadius, "", &v)?))
-        }
-        Inputs::SeamOut {
-            surface,
-            uv,
-            tol,
-            closure,
-        } => {
-            let mut v = surface_args(surface)?;
-            v.extend([uv[0], uv[1], *tol, *closure as f64]);
-            Ok(Output::new().values("seam", call(Op::SeamOut, "", &v)?))
-        }
-        Inputs::Closure { surface, dom } => {
-            let mut v = surface_args(surface)?;
-            v.extend(dom);
-            Ok(Output::new().values("closure", call(Op::Closure, "", &v)?))
-        }
-        Inputs::Corner { .. } => corner_cpp(i),
-        _ => {
-            let t = match topo(i, false)? {
-                Ok(t) => t,
-                Err(o) => return Ok(o),
-            };
-            let (op, tail): (Op, Vec<f64>) = match i {
-                Inputs::G1 { tol, .. } => (Op::G1, vec![*tol]),
-                Inputs::FaceByTwo { .. } => (Op::FaceByTwo, vec![]),
-                Inputs::Tangential { tol, .. } => (Op::Tangential, vec![*tol]),
-                Inputs::Nx1 { .. } => (Op::Nx1Degeneracy, vec![]),
-                _ => (Op::Concavity, vec![]),
-            };
-            let mut v = t.block.clone();
-            v.extend(t.args.iter().map(|&a| a as f64));
-            v.extend(tail);
-            let out = call(op, &t.path, &v)?;
-            let Some((&head, rest)) = out.split_first() else {
-                return Err(harness("empty topology output"));
-            };
-            if head != 0.0 {
-                let st = rest.first().copied().unwrap_or(0.0);
-                return Ok(Output::err(format!("brep_build_status_{st}")));
-            }
-            if rest.first().copied() == Some(-2.0) {
-                return Ok(Output::err("refused"));
-            }
-            let key = match op {
-                Op::G1 => "g1",
-                Op::FaceByTwo => "face",
-                Op::Nx1Degeneracy => "ret",
-                _ => "flag",
-            };
-            Ok(Output::new().values(key, rest.to_vec()))
-        }
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------------
 
@@ -1385,10 +1252,6 @@ impl UnitDiff for Runner {
         "blend.fillet_corner_p1"
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse::<Inputs>()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         run_rust(&case.parse::<Inputs>()?)
     }
@@ -1416,20 +1279,6 @@ impl UnitDiff for Runner {
 }
 
 // ---- the SmFilletCorner methods on the pseudo-B-rep model --------------------------------
-
-/// "Upstream would dereference null" (or free an object twice): the shim refused.
-const CORNER_REFUSED: f64 = -2.0;
-/// The shim did not run upstream (the Rust side defers).
-const CORNER_NOT_RUN: f64 = -3.0;
-
-fn push_eus(o: &mut Vec<f64>, l: Option<&Vec<EuSel>>) {
-    o.push(flag(l.is_some()));
-    let l = l.map_or(&[][..], Vec::as_slice);
-    o.push(l.len() as f64);
-    for [e, w] in l {
-        o.extend([*e as f64, *w as f64]);
-    }
-}
 
 /// The corner-method record of an output: `kind`, `model`, `corner`, the method's input.
 struct CornerCase<'a> {
@@ -1482,89 +1331,6 @@ fn corner_case(i: &Inputs) -> Result<CornerCase<'_>, HarnessError> {
         surfaces,
         fsgs,
     })
-}
-
-fn corner_input(c: &CornerCase<'_>) -> Result<Vec<f64>, HarnessError> {
-    let ci = c.corner;
-    let mut o = Vec::new();
-    push_model(&mut o, c.model)?;
-    o.extend([ci.kind as f64, ci.v_edge as f64, ci.v_sub as f64]);
-    push_eus(&mut o, ci.solver.as_ref());
-    push_eus(&mut o, ci.all.as_ref());
-    o.push(ci.verts.len() as f64);
-    o.extend(ci.verts.iter().map(|&v| v as f64));
-    o.push(ci.edges.len() as f64);
-    o.extend(ci.edges.iter().map(|&e| e as f64));
-    o.extend([
-        flag(ci.bevel),
-        flag(ci.blending),
-        flag(ci.chamfer),
-        flag(ci.degenerate),
-        flag(ci.ext),
-        flag(ci.adjusted),
-    ]);
-    o.extend([ci.setback, ci.tol, ci.tan]);
-    o.push(ci.orig_faces.len() as f64);
-    for [e, f] in &ci.orig_faces {
-        o.extend([*e as f64, *f as f64]);
-    }
-    match c.method {
-        CornerMethod::Peek => {
-            let p = c.peek;
-            o.extend([
-                p.set_bevel as f64,
-                p.set_const_rad as f64,
-                p.set_chamfer as f64,
-                p.add_vertex as f64,
-                p.set_g1 as f64,
-                p.set_status as f64,
-                flag(p.prefill),
-                p.kinds.len() as f64,
-            ]);
-            o.extend(p.kinds.iter().copied());
-        }
-        CornerMethod::Solvers => {
-            o.push(c.solvers.len() as f64);
-            for r in c.solvers {
-                o.extend([r.e as f64, r.which as f64, r.approx, r.tang]);
-            }
-            o.push(c.query as f64);
-        }
-        CornerMethod::ExtSurface => {
-            o.push(c.adds.len() as f64);
-            for a in c.adds {
-                o.extend([a.face as f64, a.s]);
-            }
-            o.push(c.queries.len() as f64);
-            o.extend(c.queries.iter().map(|&f| f as f64));
-        }
-        CornerMethod::Reinit
-        | CornerMethod::VertGeom
-        | CornerMethod::EdgeGeom
-        | CornerMethod::EndPatch => {}
-        CornerMethod::Squeeze => o.push(c.squeeze as f64),
-        CornerMethod::RailRail => {
-            let crv = c.curve.ok_or_else(|| harness("rail_rail: no curve"))?;
-            super::blend_fillet_geom_p1::push_crv(&mut o, crv);
-        }
-        CornerMethod::FixDegeneracy => {
-            o.push(c.topo.len() as f64);
-            o.extend(c.topo.iter().map(|&e| e as f64));
-        }
-        CornerMethod::MakeFace | CornerMethod::Insert => {
-            o.push(c.surfaces.len() as f64);
-            for srf in c.surfaces {
-                super::blend_fillet_geom_p1::push_srf(&mut o, srf)?;
-            }
-        }
-        CornerMethod::ConstRad => {
-            o.push(c.fsgs.len() as f64);
-            for f in c.fsgs {
-                o.extend([f.kind as f64, f.scale, f64::from(f.continuity)]);
-            }
-        }
-    }
-    Ok(o)
 }
 
 /// Splits a degeneracy record: `ret`, the remaining topology edges, the corner members,
@@ -1878,41 +1644,6 @@ fn const_rad_output(rec: &[f64]) -> Result<Output, HarnessError> {
     let mut out = vec![st];
     out.extend(rec.get(at..).ok_or_else(|| harness("record too short"))?);
     Ok(squeeze_output(&out)?.values("surface", surface))
-}
-
-fn corner_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let c = corner_case(i)?;
-    let input = corner_input(&c)?;
-    let out = ffi::corner(c.method.ffi(), &input).map_err(|e| harness(format!("c++: {e}")))?;
-    let Some((&head, rest)) = out.split_first() else {
-        return Err(harness("empty corner output"));
-    };
-    if head == CORNER_REFUSED {
-        return Ok(Output::err("refused"));
-    }
-    if head == CORNER_NOT_RUN {
-        return Ok(Output::err("not_run_by_cpp"));
-    }
-    if head != 0.0 {
-        return Err(harness(format!("unexpected corner record head {head}")));
-    }
-    Ok(match c.method {
-        CornerMethod::Peek => Output::new().values("peek", rest.to_vec()),
-        CornerMethod::Solvers => Output::new().values("solvers", rest.to_vec()),
-        CornerMethod::ExtSurface => Output::new()
-            .int("n_domains", rest.len() as i64)
-            .values("domains", rest.to_vec()),
-        CornerMethod::Reinit => Output::new().values("model", rest.to_vec()),
-        CornerMethod::Squeeze
-        | CornerMethod::VertGeom
-        | CornerMethod::EdgeGeom
-        | CornerMethod::EndPatch
-        | CornerMethod::MakeFace => squeeze_output(rest)?,
-        CornerMethod::Insert => insert_output(rest)?,
-        CornerMethod::RailRail => Output::new().values("ret", rest.to_vec()),
-        CornerMethod::FixDegeneracy => degeneracy_output(rest)?,
-        CornerMethod::ConstRad => const_rad_output(rest)?,
-    })
 }
 
 /// A Rust error of a corner method: deferred for `Unported`, `refused` for a null
