@@ -338,7 +338,7 @@
   },
   {
    "name": "ubolt_leg_from_inside_the_ring_end",
-   "note": "#10966: the reporter's script at its own place, the torus centred at (115.5, 67.881, 50), the box (70, 22.381, 40) 91 x 45.5 x 20 cutting the half with y < 67.881, and the leg of diameter 10 and height 64.381 along -y from (80, 68.381, 50), 0.5 mm inside the ring's end, so it overlaps the ring by 0.5 mm. Over that overlap the straight leg leaves the curving tube on its outer side by up to 0.5^2/(2*35.5) = 0.0035 mm (at the leg's top and bottom), a sliver of 0.0053 mm^3, and its wall meets the tube along a curve that touches the cut circle tangentially. On SolidCraft 0.29.0 (truck) the join fails after 51 s: 'step 3 (solid.cylinder): boolean Union: the operation failed: no result'.",
+   "note": "#10966: the reporter's script at its own place, the torus centred at (115.5, 67.881, 50), the box (70, 22.381, 40) 91 x 45.5 x 20 cutting the half with y < 67.881, and the leg of diameter 10 and height 64.381 along -y from (80, 68.381, 50), 0.5 mm inside the ring's end, so it overlaps the ring by 0.5 mm. Over that overlap the straight leg leaves the curving tube on its outer side by up to 0.5^2/(2*35.5) = 0.0035 mm (at the leg's top and bottom), a sliver of 0.0053 mm^3. Its wall crosses the tube along two curves near its top and bottom (z = 50 +- 5) that start on the cut circle, where the leg's wall and the tube touch tangentially. On SolidCraft 0.29.0 (truck) the join fails after 51 s: 'step 3 (solid.cylinder): boolean Union: the operation failed: no result'.",
    "steps": [
     {
      "op": "revolve",
