@@ -115,22 +115,19 @@ pub enum OffsetFailure {
     /// cause says why). The edge's offsets cannot be mated on it.
     ExactCurveUncut,
     /// In a local operation, the new surfaces of `face` and of its neighbour across an
-    /// edge meet nowhere near the edge (proved on their exact equations: a plane parallel
-    /// to its tangent neighbour and apart, or curving away from it), so no extension of
-    /// either makes them meet there and the edge cannot be found again. Refused before
-    /// anything changes, unless the step walls between parallel faces are asked for
-    /// (`Kernel::fixes.local_operation_step_walls`), which close such a gap with a wall.
+    /// edge meet nowhere near the edge, so no extension of either makes them meet there
+    /// and the edge cannot be found again. (The reach,
+    /// [`crate::offset::offset_executive::reach::local_extension_reach`], no longer refuses
+    /// it: it lists such edges in `LocalReach::apart`, where a step's wall closes the gap
+    /// or the edge's offset fails.)
     FacesApart {
         /// The face, of the operation's input.
         face: FaceId,
     },
-    /// In a local operation, the new surfaces of `face` and of its neighbour across an
-    /// edge are tangent there (within the tangency tolerance) and apart (beyond the B-rep
-    /// tolerance), and are not both of exact classes whose meeting can be found exactly
-    /// (one a plane, the other a plane, cylinder, cone or sphere): where they meet, if at
-    /// all, is set by how they curve away from each other, which is not bounded here, so
-    /// how far the surfaces must be extended is not known. Refused before anything
-    /// changes, unless the step walls are asked for (as [`Self::FacesApart`]).
+    /// In a local operation, a surface beside an edge or at a vertex of `face` moves, and
+    /// the surfaces there are not all of kinds whose meetings have a certified bound
+    /// (exact planes, `local_extension_reach`): how far the surfaces must be extended is
+    /// not known. Refused before anything changes.
     ReachUncertified {
         /// The face, of the operation's input.
         face: FaceId,
