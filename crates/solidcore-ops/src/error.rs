@@ -54,11 +54,83 @@ pub enum Error {
         /// The corner's index among the call's corners.
         corner: usize,
     },
+    /// The rounds would leave a face whose boundary crosses itself (rounds overlapping where
+    /// a wall is thinner than both): the points where it does, and the largest size that
+    /// leaves no crossing, when the kernel finds it.
+    RoundsCross {
+        /// Points where a face's boundary crosses itself.
+        at: Vec<[f64; 3]>,
+        /// The largest size that leaves no crossing.
+        fit: Option<f64>,
+    },
+    /// A band's room is not known at an end of the edge: a face's side there leans away from
+    /// the edge (how far its far end lies past the plane square to the edge), or is not
+    /// straight (no lean). The vertex is a record index.
+    TaperEndUnsupported {
+        /// The edge's vertex at that end.
+        vertex: usize,
+        /// The side's lean past the square, when the side is straight.
+        lean: Option<f64>,
+    },
+    /// The faces of the edge close to a point at both its ends: no band fits there.
+    FacesCloseAtBothEnds,
+    /// A variable round's radius is larger than its band's room at a station of the edge:
+    /// the station (from the start the call named) and the largest radius proved to fit there.
+    RoomRunsOut {
+        /// The station, a fraction of the way along the edge.
+        at: f64,
+        /// The largest radius proved to fit there.
+        largest: f64,
+    },
     /// The kernel reported success but the operation did nothing: a blend that made no face, a
     /// face move or draft that moved no face.
     NoEffect,
     /// The answer is not exact in the input's geometry.
     NotExact,
+    /// A planar profile the kernel refuses, and why (`solidcore::prism::profile::check_regions`).
+    Profile(solidcore::prism::profile::ProfileRefusal),
+    /// The geometry has no value where one is needed (the kernel's `Degenerate`): a normal
+    /// at a pole or an apex, a zero-length vector, a collapsed edge.
+    Degenerate,
+    /// The kernel is unsure whether a region is material, and the answer depends on it (a
+    /// point's class, mass properties): refused, never read as material or void. The
+    /// region, by its kernel id's index.
+    UnsureRegion {
+        /// The kernel region's id index.
+        region: u32,
+    },
+    /// A drafted extrusion's corner its rule cannot close (the kernel's taper refusal): why, and
+    /// where when the kernel's point is finite. Not a blend's [`Error::CornerRefused`], which
+    /// names a corner of a fillet's call that is not set back.
+    DraftCornerRefused {
+        /// Why.
+        why: crate::sweep::CornerRefusal,
+        /// The corner's point.
+        at: Option<[f64; 3]>,
+    },
+    /// A sweep path the kernel leaves undecided for every exact shape it is read as (a
+    /// comparison within its rounding bound of the path tolerance): the first such piece of the
+    /// path and its comparison.
+    PathUndecided {
+        /// The piece's index in the path.
+        piece: usize,
+        /// The comparison.
+        check: crate::sweep::PathCheck,
+    },
+    /// A sweep path whose pieces `join` and `join + 1` are not proved to meet to the path gap; for
+    /// the last join (`join + 1` the path's length), its end and its start, neither proved to meet
+    /// (closed) nor proved apart (open).
+    PathGap {
+        /// The join's index: after piece `join`.
+        join: usize,
+    },
+    /// An extension that cannot run as far as asked (a weight of the extended surface would
+    /// vanish, a pole, an apex or a full turn is reached, or its length there cannot be
+    /// measured to the kernel's stop): the longest distance proved to work, when there is one.
+    TooFar {
+        /// The longest distance that works.
+        largest: Option<f64>,
+    },
     /// The kernel found its own state inconsistent part way through a call, or was called
     /// before the preparation it needs.
     Exception,
@@ -73,6 +145,65 @@ pub enum Error {
     /// A step the kernel has not ported yet, refused rather than built another way: what is
     /// missing.
     Unported(&'static str),
+    /// An edge that has no blend (the kernel's `BlendRefusal::EdgeNotBlendable`): its index
+    /// and why.
+    EdgeNotBlendable {
+        /// The edge's index.
+        edge: usize,
+        /// Why it has no blend.
+        reason: Unblendable,
+    },
+    /// A blend that cannot end where its edge runs on tangentially into an edge not blended
+    /// with it (the kernel's `BlendRefusal::ContinuesInto`): blending that edge too, its
+    /// tangent chain ([`crate::blend::tangent_chain`]), runs the blend on.
+    ContinuesInto {
+        /// The blended edge's index.
+        edge: usize,
+        /// The index of the edge it runs on into.
+        continues_into: usize,
+    },
+    /// A round too small to change the part (the kernel's `BlendRefusal::RoundTooSmall`): it
+    /// lies within the edge's tolerance of the edge.
+    RoundTooSmall {
+        /// The edge's index.
+        edge: usize,
+        /// The least turn of its faces' normals across it, radians.
+        turn: f64,
+        /// The edge's tolerance.
+        tolerance: f64,
+        /// The least radius that rounds it.
+        smallest: f64,
+    },
+    /// A corner's setback that stops short of where the rails of the rounds beside an edge
+    /// cross it (the kernel's `BlendRefusal::SetbackTooShort`).
+    SetbackTooShort {
+        /// The corner's vertex index.
+        vertex: usize,
+        /// The least setback.
+        least: f64,
+    },
+    /// A corner's setback that does not fit on its edges (the kernel's
+    /// `BlendRefusal::SetbackTooLong`): one below `largest` fits.
+    SetbackTooLong {
+        /// The corner's vertex index.
+        vertex: usize,
+        /// The bound below which a setback fits.
+        largest: f64,
+    },
+}
+
+/// Why an edge has no blend ([`Error::EdgeNotBlendable`]), as the kernel names it
+/// (`NotBlendable`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unblendable {
+    /// Its faces meet tangentially all along it: nothing to round.
+    Smooth,
+    /// It is not between two faces.
+    NotTwoFaces,
+    /// Its faces are tangent, or folded back on each other, where the blend is set up.
+    Tangent,
+    /// The side to blend cannot be told.
+    Ambiguous,
 }
 
 /// Why a blend has no room, as the kernel names its refusal (`NoRoomReason`).
@@ -135,8 +266,52 @@ impl std::fmt::Display for Error {
                 write!(f, "a blend corner of this kind is not supported yet")
             }
             Error::CornerRefused { corner } => write!(f, "corner {corner} is not set back"),
+            Error::RoundsCross { at, fit } => write!(
+                f,
+                "the rounds leave a face whose boundary crosses itself at {at:?} (largest {fit:?})"
+            ),
+            Error::TaperEndUnsupported { vertex, lean } => write!(
+                f,
+                "the band's room is not known at vertex {vertex} (its side leans {lean:?})"
+            ),
+            Error::FacesCloseAtBothEnds => {
+                write!(f, "the faces close to a point at both ends of the edge")
+            }
+            Error::RoomRunsOut { at, largest } => write!(
+                f,
+                "the room runs out at {at} along the edge (largest radius there {largest})"
+            ),
             Error::NoEffect => write!(f, "the operation did nothing"),
             Error::NotExact => write!(f, "not exact in the input's geometry"),
+            Error::Profile(r) => write!(
+                f,
+                "planar profile refused: {}",
+                match r {
+                    solidcore::prism::profile::ProfileRefusal::Budget =>
+                        "a loop not closed, empty, or past the segment budget",
+                    solidcore::prism::profile::ProfileRefusal::LineOrArc =>
+                        "lines and circular arcs must be finite and of some length",
+                    solidcore::prism::profile::ProfileRefusal::FreeForm =>
+                        "free-form segments must be finite and of some length",
+                }
+            ),
+            Error::Degenerate => write!(f, "degenerate geometry where a value is needed"),
+            Error::UnsureRegion { region } => {
+                write!(f, "unsure whether region {region} is material")
+            }
+            Error::DraftCornerRefused { why, at } => {
+                write!(f, "the draft corner at {at:?} is refused: {why:?}")
+            }
+            Error::PathUndecided { piece, check } => write!(
+                f,
+                "the sweep path is undecided at piece {piece} ({check:?})"
+            ),
+            Error::PathGap { join } => write!(
+                f,
+                "the sweep path's pieces {join} and {} do not meet",
+                join.saturating_add(1)
+            ),
+            Error::TooFar { largest } => write!(f, "too far to extend (largest {largest:?})"),
             Error::Exception => write!(f, "solidcore raised an internal exception"),
             Error::Cancelled => write!(f, "cancelled"),
             Error::Reentered => write!(
@@ -147,6 +322,26 @@ impl std::fmt::Display for Error {
             Error::Internal(e) => write!(f, "solidcore failed internally in {e}"),
             Error::Unsupported(what) | Error::Unported(what) => {
                 write!(f, "not supported yet: {what}")
+            }
+            Error::EdgeNotBlendable { edge, reason } => {
+                write!(f, "edge {edge} has no blend ({reason:?})")
+            }
+            Error::ContinuesInto {
+                edge,
+                continues_into,
+            } => write!(
+                f,
+                "the blend of edge {edge} cannot end where it runs on into edge {continues_into}"
+            ),
+            Error::RoundTooSmall { edge, smallest, .. } => write!(
+                f,
+                "the round of edge {edge} is too small to change the part: the smallest is {smallest}"
+            ),
+            Error::SetbackTooShort { vertex, least } => {
+                write!(f, "the setback at vertex {vertex} is shorter than {least}")
+            }
+            Error::SetbackTooLong { vertex, largest } => {
+                write!(f, "the setback at vertex {vertex} does not fit: below {largest} fits")
             }
         }
     }
@@ -166,7 +361,11 @@ pub(crate) fn status(e: SolidError) -> Error {
     match e {
         SolidError::InvalidInput { .. } => Error::Status(SM_ERR_INVALID_INPUT),
         SolidError::NotConverged { .. } => Error::Status(SM_ERR_NOT_CONVERGING),
-        SolidError::NotFound { .. } | SolidError::Degenerate { .. } => Error::Status(SM_ERR),
+        SolidError::NotFound { .. } => Error::Status(SM_ERR),
+        SolidError::Degenerate { .. } => Error::Degenerate,
+        SolidError::UnsureRegion { region, .. } => Error::UnsureRegion {
+            region: region.index(),
+        },
         SolidError::Unsupported { reason, .. } => Error::Unsupported(reason),
         SolidError::Unported { upstream, .. } => Error::Unported(upstream),
         SolidError::Cancelled { .. } => Error::Cancelled,

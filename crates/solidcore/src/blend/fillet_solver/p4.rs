@@ -427,6 +427,7 @@ impl FilletSolver {
         solvers: GeometrySolvers<'a>,
         error_info: Option<&'a mut ErrorInfo<SolverErrorObject>>,
     ) -> Result<()> {
+        crate::profile::profile_scope!(k, "blend::solver::calc_fillet_geom");
         let mut cx = Cx {
             k,
             target,
@@ -458,11 +459,9 @@ impl FilletSolver {
             }
         }
 
-        // From smlib#82 (WR-697, `fillet_blend_corner`): at an end its corner does not
-        // blend, a trace that stops short of the edge's end runs on to it first
-        if cx.k.fixes.fillet_blend_corner {
-            c2_trace_to_edge_ends(ops, &mut cx, &mut st)?;
-        }
+        // From smlib#82 (WR-697): at an end its corner does not blend, a trace that stops
+        // short of the edge's end runs on to it first
+        c2_trace_to_edge_ends(ops, &mut cx, &mut st)?;
 
         // :1872-1920 no points; drop near-duplicate end points
         c2_clean_ends(ops, &mut cx, &mut st)?;
@@ -792,15 +791,20 @@ fn c1_collect_points(
 
     // Now, compute 'through points' from all internal G1 knots
     // (the size is re-read every iteration, as upstream's GetSize())
+    // SolidCraft (the fork's 6eecf04, under `fillet_gn_section_generator`): the corners of
+    // the radius law are through points too, after the G1 knots, so the trace has a point
+    // where the fillet turns (a failed one fails the trace, as a G1 knot's does).
+    let corner_knots = ops.radius_corner_parameters(cx.k)?;
     let mut k = 0;
-    while k < ops.solver().g1_knots.len() {
+    while k < ops.solver().g1_knots.len() + corner_knots.len() {
         // get position and tangent at G1 knot (status checked, values unused)
-        let knot = ops
-            .solver()
-            .g1_knots
-            .get(k)
-            .copied()
-            .ok_or_else(|| invalid("G1 knot index out of range"))?;
+        let knot = match ops.solver().g1_knots.get(k) {
+            Some(&knot) => knot,
+            None => corner_knots
+                .get(k - ops.solver().g1_knots.len())
+                .copied()
+                .ok_or_else(|| invalid("G1 knot index out of range"))?,
+        };
         st.edge_curve.evaluate(cx.k, knot, 1, true, false)?;
 
         // guess point: GetSurface(0) point nearest to the end of the binormal (half
@@ -1325,6 +1329,7 @@ fn c2_sort_points(
     use crate::geom::geom_utility::p1::line_closest_point;
     use crate::geom::global_solver::{SolutionRequested, SolverOperation};
     use crate::math::{BIG_DOUBLE, EFF_ZERO};
+    crate::profile::profile_scope!(cx.k, "blend::solver::sort_points");
 
     // UVPos(lWhichSurf) (upstream indexes past the pair for other values)
     let srf = c2_srf_index(which_surf)?;
@@ -1434,7 +1439,7 @@ fn c2_offset_point_ignored(
     .unwrap_or(Vec3::UNDEF))
 }
 
-/// From smlib#82 (the fork's cc0e23f, 47b5471; WR-697, `fillet_blend_corner`): a rail
+/// From smlib#82 (the fork's cc0e23f, 47b5471; WR-697): a rail
 /// ends where its corner's event needs it, so at an end whose corner does not blend (the
 /// trace is extended there: `m_bExtendBefore` at the edge's start, `m_bExtendAfter` at
 /// its end, set from the corners by `SetExtensionFlags`) the trace runs to the edge's own
@@ -2008,6 +2013,7 @@ fn c3_trace_setup(
     cx: &mut Cx<'_>,
     st: &mut CalcState,
 ) -> Result<[Surface; 2]> {
+    crate::profile::profile_scope!(cx.k, "blend::solver::trace_setup");
     // get fillet baseSurface domains
     let mut domain1 = st.base_surfaces[0].natural_uv_domain_if_built();
     let mut domain2 = st.base_surfaces[1].natural_uv_domain_if_built();
@@ -2505,6 +2511,7 @@ fn c4_trace(
     fi: &mut TraceIntersector<'_>,
 ) -> Result<()> {
     use super::p1::FilStatus;
+    crate::profile::profile_scope!(cx.k, "blend::solver::trace");
 
     // ULONG lMaxLoopCount = 10; ULONG lLoopCount = 0; (:2081-2082)
     let max_loop_count: u32 = 10;
@@ -2515,6 +2522,7 @@ fn c4_trace(
     loop {
         cx.k.check_cancelled(OP)?;
         loop_count += 1;
+        crate::profile::profile_count!(cx.k, TracePasses, 1);
         if loop_count > max_loop_count {
             // Either too many self-intersections or other
             // suspicious situations might have happened
@@ -2638,6 +2646,7 @@ fn c4_cusp_recovery(
     use super::p1::FilStatus;
     use crate::curve::curve::p1::GlobalPointSolveOptions;
     use crate::geom::global_solver::{SolutionRequested, SolverOperation};
+    crate::profile::profile_scope!(cx.k, "blend::solver::cusp_recovery");
 
     fi.set_self_intersect(true);
 
@@ -2911,6 +2920,7 @@ fn c5_post_process(
     cx: &mut Cx<'_>,
     st: &mut CalcState,
 ) -> Result<()> {
+    crate::profile::profile_scope!(cx.k, "blend::solver::post_process");
     // when just one filletGeom was created (no selfIntersections), see if we are
     // required to split FG
     if ops.solver().fillet_geoms.len() == 1 && st.split_original_fillet {
@@ -3723,23 +3733,17 @@ fn c6_compute_point_values(
         )?;
         let mut found_forw = flags.found_answer;
 
-        // :3619 bigger step in the small-step case; upstream passes `dStep` again, not
-        // `dBigStep` (ported as written, WR-456), into the same `sStepForw`. With
-        // `fixes.fillet_point_bigger_step_retry` the retry solves with the bigger step.
+        // :3619 bigger step in the small-step case, into the same `sStepForw`; upstream
+        // passes `dStep` again, not `dBigStep`, and so repeats the failed solve (WR-456)
         if !found_forw && step < 1.0e-4 {
             let big_step = 1.0e-3;
             let mut big = big_step;
-            let retry_step = if k.fixes.fillet_point_bigger_step_retry {
-                &mut big
-            } else {
-                &mut step
-            };
             step_solve(
                 ops,
                 k,
                 brep.as_deref_mut(),
                 point,
-                retry_step,
+                &mut big,
                 uv_domain1,
                 uv_domain2,
                 &mut flags,
@@ -4087,30 +4091,24 @@ mod tests_c6 {
         }
     }
 
-    /// WR-456 (#1181): after a failed small forward step the retry steps by the bigger
-    /// step with the fix, and by the small one again as upstream does without it.
+    /// WR-456 (#1181, #2338): after a failed small forward step (1e-5) the retry steps by
+    /// the bigger step (1e-3), not by the small one again as upstream does.
     #[test]
-    fn bigger_step_retry_uses_the_bigger_step_with_the_fix() {
+    fn bigger_step_retry_uses_the_bigger_step() {
         let (a, b) = (xy(0.0), xz());
-        let mut moves = Vec::new();
-        for fixed in [false, true] {
-            let mut k = Kernel::default();
-            k.fixes.fillet_point_bigger_step_retry = fixed;
-            let mut ops = Probe {
-                inner: Variable(solver(&k, &a, &b)),
-                guesses: Vec::new(),
-            };
-            let mut p = TsectPnt::new();
-            let r = run(&mut ops, &k, 1.0, &mut p, None);
-            assert!(ops.guesses.len() >= 2, "{r:?} {:?}", ops.guesses);
-            // how far each of the first two guesses lies from the point's uv
-            let from = |g: &[f64]| (g[0] - 0.5).hypot(g[1] - 0.25);
-            let (first, retry) = (from(&ops.guesses[0]), from(&ops.guesses[1]));
-            assert!(first > 0.0 && first < 1.0e-4, "{first}");
-            moves.push(retry / first);
-        }
-        assert!((moves[0] - 1.0).abs() < 1.0e-9, "{moves:?}");
-        assert!((moves[1] - 100.0).abs() < 1.0e-6, "{moves:?}");
+        let k = Kernel::default();
+        let mut ops = Probe {
+            inner: Variable(solver(&k, &a, &b)),
+            guesses: Vec::new(),
+        };
+        let mut p = TsectPnt::new();
+        let r = run(&mut ops, &k, 1.0, &mut p, None);
+        assert!(ops.guesses.len() >= 2, "{r:?} {:?}", ops.guesses);
+        // how far each of the first two guesses lies from the point's uv
+        let from = |g: &[f64]| (g[0] - 0.5).hypot(g[1] - 0.25);
+        let (first, retry) = (from(&ops.guesses[0]), from(&ops.guesses[1]));
+        assert!(first > 0.0 && first < 1.0e-4, "{first}");
+        assert!((retry / first - 100.0).abs() < 1.0e-6, "{}", retry / first);
     }
 
     /// #1173 (ND-3): the first finite-difference guess lies one step from the point. With the
@@ -4666,6 +4664,21 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
         self.ops.offset_radii_can_change()
     }
 
+    /// The solver's virtual `GetRadiusCornerParameters` (the fork's 6eecf04).
+    fn radius_corner_parameters(&mut self, k: &Kernel) -> Result<Vec<f64>> {
+        self.ops.radius_corner_parameters(k)
+    }
+
+    /// The solver's virtual `IsAtRadiusCorner` (the fork's 6eecf04).
+    fn is_at_radius_corner(&mut self, k: &Kernel, point: &TsectPnt) -> bool {
+        self.ops.is_at_radius_corner(k, point)
+    }
+
+    /// The solver's virtual `GetRadiusParameter` (the fork's 6eecf04).
+    fn radius_parameter(&mut self, k: &Kernel, point: &TsectPnt) -> Option<f64> {
+        self.ops.radius_parameter(k, point)
+    }
+
     /// `GetSurface(rail)->Evaluate1stDerivatives(uv, TRUE, TRUE, ..)` on the solver's
     /// own offset surface (a base extension the evaluation makes is kept, as
     /// upstream's `const` evaluators store it), as `ComputeSurfaceValues` evaluates it.
@@ -4784,6 +4797,7 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
                     law: v.fillet_law().clone(),
                     interval: v.fillet_law_interval(),
                     reverse: v.fillet_law_orientation(),
+                    span: None,
                 }),
                 None => None,
             }
@@ -4815,20 +4829,23 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
             ang_tol_rad: this_ang_tol_rad,
             law,
         };
-        generator
-            .create_surface_replacing_uv(
-                k,
-                approx_tol_3d,
-                solver_type,
-                Some(center_line),
-                curve1,
-                curve2,
-                points,
-                [&sur0, &sur1],
-                [uv1, uv2],
-                Some(&ball),
-            )
-            .map(Some)
+        let (surface, kept) = generator.create_surface_replacing_uv(
+            k,
+            approx_tol_3d,
+            solver_type,
+            Some(center_line),
+            curve1,
+            curve2,
+            points,
+            [&sur0, &sur1],
+            [uv1, uv2],
+            Some(&ball),
+        )?;
+        // the fork's `rFilletSolver.AddLawCornerPieces` (7babe17)
+        if let Some(kept) = kept {
+            self.ops.solver_mut().law_corner_pieces.push(kept);
+        }
+        Ok(Some(surface))
     }
 
     fn set_fillet_surface(

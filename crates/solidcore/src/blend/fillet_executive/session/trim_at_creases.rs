@@ -38,9 +38,7 @@
 //!   rounded 2.001: the crease runs 2.5e-7 inside the bottom edge). Without it the caller subtracts the round, as before.
 //! - **Open setbacks and each round's side (the fork's ef57570, ce748fa; smlib#125).** An
 //!   open G1 setback corner's spring curves are imprinted with the sheet's boundary and its
-//!   hole's `3 n` edges stay free; a concave round's sheet lies in the void it fills. Only
-//!   `fixes.fillet_blend_corner` builds such corners, and only with it is a round's side
-//!   read: without it every round takes material off, as before.
+//!   hole's `3 n` edges stay free; a concave round's sheet lies in the void it fills.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -333,43 +331,7 @@ impl FilletSession<'_> {
         k: &mut Kernel,
         edit: impl FnOnce(&mut Kernel, &mut Brep, &mut NotifyEnv<'_>, BrepIdentity<'_>) -> Result<R>,
     ) -> Result<R> {
-        let serial = self.objects.target_serial;
-        let key_of = |entity| p3::topology_ref(serial, entity);
-        let keys = |object| match object {
-            CacheObject::Brep => key_of(EntityRef::Brep(BrepId::from_index(0))),
-            CacheObject::Other(owner) => owner,
-            object => crate::topology::brep::p2::caller_cache_key(&key_of, object),
-        };
-        let owner_of = |_: ObjectRef| None;
-        let identity = BrepIdentity {
-            brep_id: BrepId::from_index(
-                u32::try_from(serial)
-                    .map_err(|_| invalid("target body identity exceeds query domain"))?,
-            ),
-            keys: &keys,
-            owner_of: &owner_of,
-        };
-        let SessionObjects {
-            target,
-            notification_records,
-            attributes,
-            ..
-        } = &mut self.objects;
-        if k.context.issued_brep_serial(target.notify_identity_slot()) != Some(serial) {
-            return Err(invalid(
-                "target body belongs to another notification context",
-            ));
-        }
-        crate::geom::context::Context::with_notification_context(k, |k, context| {
-            p3::seed_records(notification_records, target, &key_of);
-            let mut env = NotifyEnv {
-                records: notification_records,
-                attributes,
-                context: Some(context),
-                key_of: &key_of,
-            };
-            edit(k, target, &mut env, identity)
-        })?
+        with_target_env_of(&mut self.objects, k, edit)
     }
 
     /// WR-706: whether the lamina edge `e` of `sheet` is a side of a section's flat face
@@ -449,6 +411,7 @@ impl FilletSession<'_> {
     /// The refusals as `SM_ERR`; those of the steps.
     #[allow(clippy::too_many_lines)] // one fork routine
     pub(super) fn trim_at_creases(&mut self, k: &mut Kernel) -> Result<()> {
+        crate::profile::profile_scope!(k, "blend::session::trim_at_creases");
         if self.objects.intermediate.is_none() {
             return Err(SolidError::null_pointer(OP));
         }
@@ -597,8 +560,9 @@ impl FilletSession<'_> {
             }
         }
 
-        // the target is trimmed in place; a failed trim puts it back as it was
-        let kept = (*self.objects.target).clone();
+        // the target is trimmed in place; a failed trim puts it back as it was, from a
+        // snapshot that keeps its geometry's owners (#2715: a clone's surfaces have none)
+        let kept = self.objects.target.snapshot()?;
         let trimmed = self.trim_sheet_into(
             k,
             sheet,
@@ -614,7 +578,7 @@ impl FilletSession<'_> {
             self.note_refusal(refused);
         }
         if trimmed.is_err() {
-            *self.objects.target = kept;
+            self.objects.target.restore(kept);
         }
         trimmed
     }
@@ -678,20 +642,18 @@ impl FilletSession<'_> {
         }
         let mut kept_rounds: BTreeSet<usize> = BTreeSet::new();
 
-        // each round's side of the body (the fork's ce748fa, with `fillet_blend_corner`): a
+        // each round's side of the body (the fork's ce748fa): a
         // convex blend's sheet lies in the material it takes off, a concave blend's (an open
         // setback corner's concave rounds) in the void it fills. A sheet face of no round (a
         // corner's) takes the blends' one side.
         let mut adds = vec![false; solvers.len()];
         let (mut any_adds, mut any_takes) = (false, false);
-        if k.fixes.fillet_blend_corner {
-            for (a, &e) in adds.iter_mut().zip(blended_edges) {
-                *a = is_concave_edge(k, self.objects.target, e)?;
-                if *a {
-                    any_adds = true;
-                } else {
-                    any_takes = true;
-                }
+        for (a, &e) in adds.iter_mut().zip(blended_edges) {
+            *a = is_concave_edge(k, self.objects.target, e)?;
+            if *a {
+                any_adds = true;
+            } else {
+                any_takes = true;
             }
         }
         let (open_springs, open_free) = self.open_setback_springs()?;
@@ -1340,4 +1302,50 @@ impl FilletSession<'_> {
             )
         })
     }
+}
+
+/// [`FilletSession`]'s target edit through its notifications, on its objects alone (for
+/// the session's other steps, which hold other fields of the session meanwhile).
+pub(super) fn with_target_env_of<R>(
+    objects: &mut SessionObjects<'_>,
+    k: &mut Kernel,
+    edit: impl FnOnce(&mut Kernel, &mut Brep, &mut NotifyEnv<'_>, BrepIdentity<'_>) -> Result<R>,
+) -> Result<R> {
+    let serial = objects.target_serial;
+    let key_of = |entity| p3::topology_ref(serial, entity);
+    let keys = |object| match object {
+        CacheObject::Brep => key_of(EntityRef::Brep(BrepId::from_index(0))),
+        CacheObject::Other(owner) => owner,
+        object => crate::topology::brep::p2::caller_cache_key(&key_of, object),
+    };
+    let owner_of = |_: ObjectRef| None;
+    let identity = BrepIdentity {
+        brep_id: BrepId::from_index(
+            u32::try_from(serial)
+                .map_err(|_| invalid("target body identity exceeds query domain"))?,
+        ),
+        keys: &keys,
+        owner_of: &owner_of,
+    };
+    let SessionObjects {
+        target,
+        notification_records,
+        attributes,
+        ..
+    } = objects;
+    if k.context.issued_brep_serial(target.notify_identity_slot()) != Some(serial) {
+        return Err(invalid(
+            "target body belongs to another notification context",
+        ));
+    }
+    crate::geom::context::Context::with_notification_context(k, |k, context| {
+        p3::seed_records(notification_records, target, &key_of);
+        let mut env = NotifyEnv {
+            records: notification_records,
+            attributes,
+            context: Some(context),
+            key_of: &key_of,
+        };
+        edit(k, target, &mut env, identity)
+    })?
 }

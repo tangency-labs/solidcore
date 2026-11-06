@@ -58,13 +58,24 @@ fn pick(k: &Kernel, b: &Brep, p: [f64; 3]) -> EdgeId {
 }
 
 fn volume_of(k: &Kernel, b: &mut Brep) -> f64 {
+    volume_at(k, b, 1e-7)
+}
+
+/// `SmApiBrepComputeVolume` at `accuracy`.
+fn volume_at(k: &Kernel, b: &mut Brep, accuracy: f64) -> f64 {
     let store = AttributeStore::default();
     let attrs = PropertyAttributes {
         store: &store,
         key_of: &|_| ObjectKey(0),
     };
-    brep_volume(k, b, 1e-7, &attrs).unwrap()
+    brep_volume(k, b, accuracy, &attrs).unwrap()
 }
+
+/// The accuracy of a volume compared only with another's, the body as built and as
+/// reopened: both integrate S at the same accuracy, so they agree to rounding at any
+/// accuracy where the reopened S is the built one's, and differ by the volume between the
+/// two where it is not.
+const SAME_VOLUME_ACCURACY: f64 = 1e-5;
 
 /// The fork's values for one body.
 struct Fork {
@@ -481,13 +492,13 @@ fn a_boolean_cuts_a_reopened_round_on_its_definition() {
     use solidcore::primitive::api_primitives::create_cylinder;
     let mut k = kernel(true);
     let built = chamfered_box(&mut k);
-    let mut open = built.clone();
+    let mut open = built.clone_standing_for_self().unwrap();
     let rounds = reopen(&k, &mut open);
     let mut results = Vec::new();
     for body in [built, open] {
         let tool = create_cylinder(&mut k, Point3::new(20.0, 1.0, -5.0), 1.5, 10.0).unwrap();
         let mut cut = boolean_difference(&mut k, body, tool).unwrap();
-        let v = volume_of(&k, &mut cut);
+        let v = volume_at(&k, &mut cut, SAME_VOLUME_ACCURACY);
         results.push((cut, v));
     }
     let (n0, _) = edges_on_s(&k, &results[0].0, &rounds);
@@ -564,12 +575,12 @@ fn an_offset_of_a_reopened_round_stands_off_its_definition() {
     );
 }
 
-/// #2388, contract 5, known failing: the offset of a round is not built on S. Its offset
-/// face's surface is an offset surface of the round's net B (`TurnToNURBS` slices a blend
-/// to its net, fork 0136260), so the offset stands 0.5 off B, within the bound ε of S,
-/// not off S. This test fails once the offset's base is the round by its definition.
+/// #2388, contract 5: the offset of a round is built on S. Its offset face's surface is an
+/// offset surface of the round by its definition (the procedural blend extended exactly
+/// past its sides, its across length measured with an honest rounding bound), not of the
+/// round's net B (`TurnToNURBS` slices a blend to its net, fork 0136260).
 #[test]
-fn known_failing_the_offset_of_a_round_is_the_offset_of_its_net() {
+fn the_offset_of_a_round_is_the_offset_of_its_definition() {
     let mut k = kernel(true);
     let (offset, walls) = offset_rounds(&mut k);
     assert_eq!(walls.len(), 2, "the rounds' offsets");
@@ -578,10 +589,10 @@ fn known_failing_the_offset_of_a_round_is_the_offset_of_its_net() {
         let SurfaceKind::OffsetSurface(o) = s.kind() else {
             panic!("not an offset surface: {}", s.type_code());
         };
-        assert!(
-            matches!(o.base_surface().kind(), SurfaceKind::BSpline(_)),
-            "the offset's base is now {} (fixed? update this test)",
-            o.base_surface().type_code()
+        assert_eq!(
+            o.base_surface().type_code(),
+            PROCEDURAL_BLEND_TYPE,
+            "the offset's base is not the round by its definition"
         );
     }
 }
@@ -653,7 +664,7 @@ fn a_plane_section_of_a_round_is_within_its_tolerance() {
 fn distance_and_volume_of_a_reopened_round_are_its_definition_s() {
     let mut k = kernel(true);
     let built = chamfered_box(&mut k);
-    let mut open = built.clone();
+    let mut open = built.clone_standing_for_self().unwrap();
     let rounds = reopen(&k, &mut open);
     for (f, s) in &rounds {
         let tol = open.face(*f).unwrap().tolerance;
@@ -743,7 +754,7 @@ fn s_to_net(k: &Kernel, s: &Surface) -> f64 {
 /// 2.2e-16). A cylinder cut through it leaves edges on S within their own tolerance and
 /// measurably off B; a point 1 off S's middle is 1 from the round by the closest point
 /// query and not 1 from B; the reopened body's volume is the built one's (the volume
-/// integrates S; at its accuracy, 1e-7 of the volume, B's distance does not show).
+/// integrates S; at its accuracy, 1e-5 of the volume, B's distance does not show).
 #[test]
 fn a_reopened_round_measurably_off_its_net_is_the_operand_on_s() {
     use solidcore::boolean::api_brep::boolean_difference;
@@ -751,7 +762,7 @@ fn a_reopened_round_measurably_off_its_net_is_the_operand_on_s() {
     let rounding = 1e3 * 60.0 * f64::EPSILON;
     let mut k = kernel(true);
     let built = tilted_pipe(&mut k);
-    let mut open = built.clone();
+    let mut open = built.clone_standing_for_self().unwrap();
     let rounds = reopen(&k, &mut open);
     assert_eq!(rounds.len(), 1, "the root round");
     let (f, s) = &rounds[0];
@@ -784,7 +795,8 @@ fn a_reopened_round_measurably_off_its_net_is_the_operand_on_s() {
 
     // boolean: a cylinder through the round
     let tool = create_cylinder(&mut k, Point3::new(30.0, 30.5, 0.0), 1.5, 30.0).unwrap();
-    let cut = boolean_difference(&mut k, open.clone(), tool).unwrap();
+    let operand = solidcore::topology::brep::p3::brep_copy(&mut k, &open).unwrap();
+    let cut = boolean_difference(&mut k, operand, tool).unwrap();
     let (n, worst) = edges_on_s(&k, &cut, &rounds);
     assert!(n > 0, "no edge on the round");
     assert!(worst <= 1.0, "an edge {worst} of its tolerance off S");
@@ -808,7 +820,10 @@ fn a_reopened_round_measurably_off_its_net_is_the_operand_on_s() {
 
     // volume
     let mut built = built;
-    let (v0, v1) = (volume_of(&k, &mut built), volume_of(&k, &mut open));
+    let (v0, v1) = (
+        volume_at(&k, &mut built, SAME_VOLUME_ACCURACY),
+        volume_at(&k, &mut open, SAME_VOLUME_ACCURACY),
+    );
     assert!((v0 - v1).abs() <= 1e-12 * v0, "volumes {v0} and {v1}");
 }
 
@@ -889,11 +904,14 @@ fn a_round_on_a_reopened_round_lies_on_it() {
         if let SurfaceKind::ProceduralBlend(pb) = s.kind() {
             // the round's tolerance is above the reopened round's bound: its net answers
             // all but the definition's own work (recorded 53 evaluations, 10 solves of one
-            // Newton step, of 150 948)
+            // Newton step, of 150 948), and the session's question (`round_too_small`)
+            // whether the round changes the part, which reads the faces' normals across the
+            // edge on the reopened round's definition: one evaluation and one solve more
+            // (65 and 13 measured with it, 64 and 12 before it)
             assert!(pb.bound() < 1e-8, "the bound {:e}", pb.bound());
             assert!(
-                counts.evaluations <= 64
-                    && counts.solves <= 12
+                counts.evaluations <= 65
+                    && counts.solves <= 13
                     && counts.most_newton_steps <= 1
                     && counts.evaluations * 1000 <= counts.net_evaluations,
                 "{counts:?}"

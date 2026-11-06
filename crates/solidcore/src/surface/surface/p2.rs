@@ -21,7 +21,6 @@
 //! | [`Surface::owner`]                                | `GetOwner`                                       |
 //! | [`Surface::copy`], [`Surface::copy_and_add_analytics`] | `Copy`, `CopyAndAddAnalytics`               |
 //! | [`Surface::adjust_step_uv_domain`]                | `AdjustSTEPUVDomain`                             |
-//! | [`Surface::create_extended_surface`], [`Surface::create_extended_surface_dir`] | `CreateExtendedSurface` (both) |
 //! | [`Surface::drop_point_fast`]                      | `DropPointFast`                                  |
 //! | [`Surface::evaluate`], [`Surface::evaluate_point`] | `Evaluate`, `EvaluatePoint`                     |
 //! | [`Surface::natural_uv_domain_if_built`], [`Surface::step_uv_domain`] | `GetNaturalUVDomain`, `GetSTEPUVDomain` |
@@ -100,9 +99,10 @@
 //!   caller (upstream deletes the object the caller holds).
 //! - **Nesting.** [`MAX_GEOMETRY_NESTING`] (32, the database reader's bound; upstream
 //!   fixtures nest at most 3) bounds wrapper geometry across curves, surfaces and
-//!   volumes. Every wrapper constructor and setter checks its inner geometry with the
-//!   non-recursive `check_geometry_nesting`, so the recursive dispatch below, `Clone`
-//!   and `Drop` stay bounded (no limit upstream). 32 rather than 64 because a 64-deep
+//!   volumes, including deep-cloned retained-definition surfaces. Wrapper checks and
+//!   B-rep snapshots use the non-recursive `check_geometry_nesting` before recursive
+//!   copying (no limit upstream). Off-snapshot infallible clones still rely on their
+//!   callers' nesting invariants. 32 rather than 64 because a 64-deep
 //!   offset chain overflows the 1 MiB wasm32 stack unoptimised (`topology::database_io`,
 //!   "Stack use").
 //! - **Owner tolerance.** A surface holds only an owner handle, never its B-rep, so the
@@ -239,6 +239,7 @@
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use super::p1::ignored_surface_result;
 use crate::curve::curve::p3::PointSolveOptions;
 use crate::curve::curve::p7::PropertyAnalysisOptions;
 use crate::curve::curve::p8::CurveIntersectOptions;
@@ -645,10 +646,12 @@ impl Surface {
     /// This includes trim curves, curve-on-surface children and volume chains, not only
     /// the surface basis.
     pub(crate) fn check_evaluation_copy_depth(&self, initial_depth: usize) -> Result<()> {
-        // These variants own no nested geometry. Preserve the depth-limit error
+        // These stored variants own no nested geometry when no definition is retained.
+        // Preserve the depth-limit error
         // through the general walker, but avoid its stack allocation for leaves.
         if initial_depth <= MAX_GEOMETRY_NESTING
-            && matches!(self.kind(), SurfaceKind::BSpline(_) | SurfaceKind::Plane(_))
+            && self.definition.is_none()
+            && matches!(&self.kind, SurfaceKind::BSpline(_) | SurfaceKind::Plane(_))
         {
             return Ok(());
         }
@@ -766,60 +769,93 @@ pub(crate) fn check_geometry_nesting(
         }
         let mut push = |geometry| pending.push((geometry, depth + 1));
         match geometry {
-            Geometry::Surface(surface) => match surface.kind() {
-                SurfaceKind::BSpline(_) | SurfaceKind::BallPatch(_) | SurfaceKind::Plane(_) => {}
-                SurfaceKind::ProceduralBlend(p) => {
-                    for support in p.supports() {
-                        push(Geometry::Surface(support));
+            Geometry::Surface(surface) => {
+                use crate::surface::procedural_blend::corner::CornerDefinition;
+
+                if let Some(definition) = &surface.definition {
+                    match definition.as_ref() {
+                        KeptDefinition::Round(round) => {
+                            for support in &round.supports {
+                                push(Geometry::Surface(support));
+                            }
+                        }
+                        KeptDefinition::Corner(corner) => match corner {
+                            CornerDefinition::Swept(swept) => {
+                                push(Geometry::Surface(&swept.common));
+                            }
+                            CornerDefinition::End(end) => {
+                                push(Geometry::Surface(&end.support));
+                            }
+                            CornerDefinition::Mixed(mixed) => {
+                                for blend in &mixed.blends {
+                                    push(Geometry::Surface(blend));
+                                }
+                                push(Geometry::Surface(&mixed.common));
+                            }
+                            // Clone shares a Setback's fill instead of cloning its surfaces; a
+                            // Ball holds a sphere and B-spline boundary curves, nothing nested.
+                            CornerDefinition::Setback(_) | CornerDefinition::Ball(_) => {}
+                        },
+                        KeptDefinition::Sweep(_) => {}
+                        KeptDefinition::Draft(draft) => push(Geometry::Surface(&draft.source)),
                     }
                 }
-                SurfaceKind::Cone(s) => {
-                    if let Some(c) = s.rev().gen_curve() {
-                        push(Geometry::Curve(c));
+                match &surface.kind {
+                    SurfaceKind::BSpline(_) | SurfaceKind::BallPatch(_) | SurfaceKind::Plane(_) => {
+                    }
+                    SurfaceKind::ProceduralBlend(p) => {
+                        for support in p.supports() {
+                            push(Geometry::Surface(support));
+                        }
+                    }
+                    SurfaceKind::Cone(s) => {
+                        if let Some(c) = s.rev().gen_curve() {
+                            push(Geometry::Curve(c));
+                        }
+                    }
+                    SurfaceKind::Sphere(s) => {
+                        if let Some(c) = s.base().gen_curve() {
+                            push(Geometry::Curve(c));
+                        }
+                    }
+                    SurfaceKind::Torus(s) => {
+                        if let Some(c) = s.base().gen_curve() {
+                            push(Geometry::Curve(c));
+                        }
+                    }
+                    SurfaceKind::SurfOfRevolution(s) => {
+                        if let Some(c) = s.gen_curve() {
+                            push(Geometry::Curve(c));
+                        }
+                    }
+                    SurfaceKind::SurfOfExtrusion(s) => {
+                        if let Some(c) = s.gen_curve() {
+                            push(Geometry::Curve(c));
+                        }
+                    }
+                    SurfaceKind::Step(s) => {
+                        if let Some(s) = s.surface() {
+                            push(Geometry::Surface(s));
+                        }
+                    }
+                    SurfaceKind::CurveBounded(s) => {
+                        for c in s.boundaries_3d().iter().chain(s.boundaries_uv()) {
+                            push(Geometry::Curve(c));
+                        }
+                        push(Geometry::Surface(s.basis()));
+                    }
+                    SurfaceKind::SrfInVolume(s) => {
+                        push(Geometry::Volume(s.volume()));
+                        push(Geometry::Surface(s.surface()));
+                    }
+                    SurfaceKind::OffsetSurface(s) => {
+                        push(Geometry::Surface(s.base_surface()));
+                        if let Some(e) = s.extended_base_surface() {
+                            push(Geometry::Surface(e));
+                        }
                     }
                 }
-                SurfaceKind::Sphere(s) => {
-                    if let Some(c) = s.base().gen_curve() {
-                        push(Geometry::Curve(c));
-                    }
-                }
-                SurfaceKind::Torus(s) => {
-                    if let Some(c) = s.base().gen_curve() {
-                        push(Geometry::Curve(c));
-                    }
-                }
-                SurfaceKind::SurfOfRevolution(s) => {
-                    if let Some(c) = s.gen_curve() {
-                        push(Geometry::Curve(c));
-                    }
-                }
-                SurfaceKind::SurfOfExtrusion(s) => {
-                    if let Some(c) = s.gen_curve() {
-                        push(Geometry::Curve(c));
-                    }
-                }
-                SurfaceKind::Step(s) => {
-                    if let Some(s) = s.surface() {
-                        push(Geometry::Surface(s));
-                    }
-                }
-                SurfaceKind::CurveBounded(s) => {
-                    for c in s.boundaries_3d().iter().chain(s.boundaries_uv()) {
-                        push(Geometry::Curve(c));
-                    }
-                    push(Geometry::Surface(s.basis()));
-                }
-                SurfaceKind::SrfInVolume(s) => {
-                    push(Geometry::Volume(s.volume()));
-                    push(Geometry::Surface(s.surface()));
-                }
-                SurfaceKind::OffsetSurface(s) => {
-                    push(Geometry::Surface(s.base_surface()));
-                    if let Some(e) = s.extended_base_surface() {
-                        push(Geometry::Surface(e));
-                    }
-                }
-            },
+            }
             Geometry::Curve(curve) => match curve.kind() {
                 CurveKind::Projected(c) => push(Geometry::Curve(c.curve())),
                 CurveKind::Iso(c) => push(Geometry::Surface(c.surface())),
@@ -1199,6 +1235,9 @@ impl Surface {
             Some(KeptDefinition::Corner(corner)) => {
                 return Some(BlendRef::Corner { corner, net: self })
             }
+            Some(KeptDefinition::Draft(draft)) => {
+                return Some(BlendRef::Draft { draft, net: self })
+            }
             Some(KeptDefinition::Sweep(_)) | None => {}
         }
         match self.kind() {
@@ -1252,6 +1291,17 @@ impl Surface {
     /// Keeps `corner` as the definition of this surface, a blend corner's face (#2488).
     pub(crate) fn set_corner_definition(&mut self, corner: CornerDefinition) {
         self.definition = Some(Box::new(KeptDefinition::Corner(corner)));
+    }
+
+    /// Keeps `draft` as the definition of this surface, a drafted face's
+    /// ([`crate::offset::draft`]).
+    pub(crate) fn set_draft_definition(&mut self, draft: crate::offset::draft::DraftDefinition) {
+        self.definition = Some(Box::new(KeptDefinition::Draft(draft)));
+    }
+
+    /// Drops any definition this surface keeps.
+    pub(crate) fn clear_definition(&mut self) {
+        self.definition = None;
     }
 
     /// This surface's definition carried onto `piece`, a piece, extension or copy of it
@@ -2173,10 +2223,15 @@ impl Surface {
             // SmCone::Evaluate: its only failure is the inherited NURB evaluation, which
             // leaves what that evaluation wrote (no STEP position correction follows)
             SurfaceKind::Cone(c) => {
-                match self.evaluate(k, uv, highest_u_deriv, highest_v_deriv, flags) {
-                    Ok(d) => Ok(Some(d)),
-                    Err(e) if e.is_unported() => Err(e),
-                    Err(_) => c.rev().base().evaluate_ignoring_status(
+                match ignored_surface_result(self.evaluate(
+                    k,
+                    uv,
+                    highest_u_deriv,
+                    highest_v_deriv,
+                    flags,
+                ))? {
+                    Some(d) => Ok(Some(d)),
+                    None => c.rev().base().evaluate_ignoring_status(
                         uv,
                         highest_u_deriv,
                         highest_v_deriv,
@@ -2305,11 +2360,8 @@ impl Surface {
     pub fn degree_with_nurb(&self, k: &Kernel, param: SurfParamType) -> Result<usize> {
         match self.kind() {
             SurfaceKind::SurfOfExtrusion(s) if s.base().gw_nurb().is_none() => {
-                match s.base_with_nurb(k) {
-                    Ok(base) => Ok(base.degree(param)),
-                    Err(e) if e.is_unported() => Err(e),
-                    Err(_) => Ok(0), // FS
-                }
+                Ok(ignored_surface_result(s.base_with_nurb(k))?
+                    .map_or(0, |base| base.degree(param)))
             }
             _ => {
                 if self.revolution_nurb_missing() {
@@ -2599,10 +2651,9 @@ impl Surface {
         match self.kind() {
             SurfaceKind::Step(s) => s.knots_with_nurb(k, param, ivl),
             SurfaceKind::SurfOfExtrusion(s) if s.base().gw_nurb().is_none() => {
-                match s.base_with_nurb(k) {
-                    Ok(b) => b.knots(param, ivl),
-                    Err(e) if e.is_unported() => Err(e),
-                    Err(_) => self.knots(param, ivl),
+                match ignored_surface_result(s.base_with_nurb(k))? {
+                    Some(b) => b.knots(param, ivl),
+                    None => self.knots(param, ivl),
                 }
             }
             _ => self.knots(param, ivl),
@@ -3743,249 +3794,15 @@ impl Surface {
         }
     }
 
-    /// The surface extended by `dist` on every side (`CreateExtendedSurface`; the
-    /// kernel is the context the new surface is constructed in).
-    ///
-    /// # Errors
-    ///
-    /// Those of the kind's override (the base default is `SM_ERR`).
-    pub fn create_extended_surface(
-        &self,
-        k: &Kernel,
-        dist: f64,
-        extension_continuity: ContinuityType,
-    ) -> Result<Self> {
-        let made = self.create_extended_surface_of_kind(k, dist, extension_continuity)?;
-        Ok(self.carry_exact_round_on_extension(made, extension_continuity))
-    }
-
-    /// An exact round's definition carried onto `extension`, this surface extended by the
-    /// same NURBS pieces continued (`CInfinity`, #2487): the analytic class continued, still
-    /// on S. Another continuity (a ruled `G1R` extension) leaves S, so it carries none, and
-    /// so does a corner's face (#2488), whose net continued leaves its patch's definition.
-    fn carry_exact_round_on_extension(
-        &self,
-        extension: Self,
-        extension_continuity: ContinuityType,
-    ) -> Self {
-        let round = matches!(self.definition.as_deref(), Some(KeptDefinition::Round(_)));
-        if round && extension_continuity == ContinuityType::CInfinity {
-            self.carry_definition(extension)
+    /// An exact round's definition carried onto `continuation`, this surface's own NURBS
+    /// net continued Natural (`surface::extend`'s analytic kinds): the analytic class
+    /// continued, still on S (#2487). A corner's face (#2488), whose net continued leaves its
+    /// patch's definition, carries none.
+    pub(crate) fn carry_round_on_continuation(&self, continuation: Self) -> Self {
+        if matches!(self.definition.as_deref(), Some(KeptDefinition::Round(_))) {
+            self.carry_definition(continuation)
         } else {
-            extension
-        }
-    }
-
-    /// [`Surface::create_extended_surface`] of the kind alone.
-    fn create_extended_surface_of_kind(
-        &self,
-        k: &Kernel,
-        dist: f64,
-        extension_continuity: ContinuityType,
-    ) -> Result<Self> {
-        match self.kind_with_nurb(k)? {
-            SurfaceKind::BSpline(s) => Ok(Self::from(s.create_extended_surface(
-                k,
-                dist,
-                extension_continuity,
-            )?)),
-            // (the fork's SmBallPatch inherits SmBSplineSurface's: the net extended, a
-            // plain B-spline)
-            SurfaceKind::BallPatch(s) => Ok(Self::from(s.net().create_extended_surface(
-                k,
-                dist,
-                extension_continuity,
-            )?)),
-            // SmBSplineSurface's: the net extended, its singularity and closure tests
-            // (virtual, on the blend) taking the definition's points
-            SurfaceKind::ProceduralBlend(pb) => {
-                Ok(Self::from(pb.net().create_extended_surface_dispatched(
-                    SurfParamType::Both,
-                    dist,
-                    extension_continuity,
-                    &|uv| {
-                        self.is_singularity(k, uv, EFF_ZERO, false)
-                            .map(|r| (r.singular, r.direction))
-                    },
-                    &|domain, param| self.is_closed(k, domain, param, None, false).map(|r| r.0),
-                )?))
-            }
-            SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) | SurfaceKind::SrfInVolume(_) => {
-                base_create_extended_surface()
-            }
-            SurfaceKind::Plane(s) => Ok(Self::from(
-                s.create_extended_surface(dist, extension_continuity)?,
-            )),
-            SurfaceKind::Sphere(s) => Ok(Self::from(
-                s.base().base().create_extended_surface_dispatched(
-                    SurfParamType::Both,
-                    dist,
-                    extension_continuity,
-                    &|uv| {
-                        self.is_singularity(k, uv, EFF_ZERO, false)
-                            .map(|r| (r.singular, r.direction))
-                    },
-                    &|domain, param| self.is_closed(k, domain, param, None, false).map(|r| r.0),
-                )?,
-            )),
-            SurfaceKind::Torus(s) => Ok(Self::from(
-                s.base().base().create_extended_surface_dispatched(
-                    SurfParamType::Both,
-                    dist,
-                    extension_continuity,
-                    &|uv| {
-                        self.is_singularity(k, uv, EFF_ZERO, false)
-                            .map(|r| (r.singular, r.direction))
-                    },
-                    &|domain, param| self.is_closed(k, domain, param, None, false).map(|r| r.0),
-                )?,
-            )),
-            SurfaceKind::Cone(s) => Ok(Self::from(
-                s.rev().base().create_extended_surface_dispatched(
-                    SurfParamType::Both,
-                    dist,
-                    extension_continuity,
-                    &|uv| {
-                        self.is_singularity(k, uv, EFF_ZERO, false)
-                            .map(|r| (r.singular, r.direction))
-                    },
-                    &|domain, param| self.is_closed(k, domain, param, None, false).map(|r| r.0),
-                )?,
-            )),
-            SurfaceKind::OffsetSurface(s) => {
-                s.create_extended_surface(k, dist, extension_continuity)
-            }
-            SurfaceKind::SurfOfRevolution(s) => Ok(Self::from(s.base().create_extended_surface(
-                k,
-                dist,
-                extension_continuity,
-            )?)),
-            // (`GetOrCreateGwNurbPointer` makes a recognised extrusion's NURB)
-            SurfaceKind::SurfOfExtrusion(s) => Ok(Self::from(
-                s.base_with_nurb(k)?
-                    .create_extended_surface(k, dist, extension_continuity)?,
-            )),
-        }
-    }
-
-    /// The surface extended by `dist` in `ext_direction` (`CreateExtendedSurface`
-    /// with a direction; the kernel is the context the new surface is constructed in).
-    ///
-    /// # Errors
-    ///
-    /// Those of the kind's override (the base default is `SM_ERR`).
-    pub fn create_extended_surface_dir(
-        &self,
-        k: &Kernel,
-        ext_direction: SurfParamType,
-        dist: f64,
-        extension_continuity: ContinuityType,
-    ) -> Result<Self> {
-        let made =
-            self.create_extended_surface_dir_of_kind(k, ext_direction, dist, extension_continuity)?;
-        Ok(self.carry_exact_round_on_extension(made, extension_continuity))
-    }
-
-    /// [`Surface::create_extended_surface_dir`] of the kind alone.
-    fn create_extended_surface_dir_of_kind(
-        &self,
-        k: &Kernel,
-        ext_direction: SurfParamType,
-        dist: f64,
-        extension_continuity: ContinuityType,
-    ) -> Result<Self> {
-        match self.kind_with_nurb(k)? {
-            SurfaceKind::BSpline(s) => Ok(Self::from(s.create_extended_surface_dir(
-                k,
-                ext_direction,
-                dist,
-                extension_continuity,
-            )?)),
-            // (the fork's SmBallPatch inherits SmBSplineSurface's: the net extended)
-            SurfaceKind::BallPatch(s) => Ok(Self::from(s.net().create_extended_surface_dir(
-                k,
-                ext_direction,
-                dist,
-                extension_continuity,
-            )?)),
-            // SmBSplineSurface's: the net extended, its singularity and closure tests
-            // (virtual, on the blend) taking the definition's points
-            SurfaceKind::ProceduralBlend(pb) => {
-                Ok(Self::from(pb.net().create_extended_surface_dispatched(
-                    ext_direction,
-                    dist,
-                    extension_continuity,
-                    &|uv| {
-                        self.is_singularity(k, uv, EFF_ZERO, false)
-                            .map(|r| (r.singular, r.direction))
-                    },
-                    &|domain, param| self.is_closed(k, domain, param, None, false).map(|r| r.0),
-                )?))
-            }
-            SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) | SurfaceKind::SrfInVolume(_) => {
-                base_create_extended_surface()
-            }
-            SurfaceKind::Plane(s) => Ok(Self::from(s.create_extended_surface_dir(
-                ext_direction,
-                dist,
-                extension_continuity,
-            )?)),
-            SurfaceKind::Sphere(s) => Ok(Self::from(
-                s.base().base().create_extended_surface_dispatched(
-                    ext_direction,
-                    dist,
-                    extension_continuity,
-                    &|uv| {
-                        self.is_singularity(k, uv, EFF_ZERO, false)
-                            .map(|r| (r.singular, r.direction))
-                    },
-                    &|domain, param| self.is_closed(k, domain, param, None, false).map(|r| r.0),
-                )?,
-            )),
-            SurfaceKind::Torus(s) => Ok(Self::from(
-                s.base().base().create_extended_surface_dispatched(
-                    ext_direction,
-                    dist,
-                    extension_continuity,
-                    &|uv| {
-                        self.is_singularity(k, uv, EFF_ZERO, false)
-                            .map(|r| (r.singular, r.direction))
-                    },
-                    &|domain, param| self.is_closed(k, domain, param, None, false).map(|r| r.0),
-                )?,
-            )),
-            SurfaceKind::Cone(s) => Ok(Self::from(
-                s.rev().base().create_extended_surface_dispatched(
-                    ext_direction,
-                    dist,
-                    extension_continuity,
-                    &|uv| {
-                        self.is_singularity(k, uv, EFF_ZERO, false)
-                            .map(|r| (r.singular, r.direction))
-                    },
-                    &|domain, param| self.is_closed(k, domain, param, None, false).map(|r| r.0),
-                )?,
-            )),
-            SurfaceKind::OffsetSurface(s) => {
-                s.create_extended_surface_dir(k, ext_direction, dist, extension_continuity)
-            }
-            SurfaceKind::SurfOfRevolution(s) => {
-                Ok(Self::from(s.base().create_extended_surface_dir(
-                    k,
-                    ext_direction,
-                    dist,
-                    extension_continuity,
-                )?))
-            }
-            // (`GetOrCreateGwNurbPointer` makes a recognised extrusion's NURB)
-            SurfaceKind::SurfOfExtrusion(s) => Ok(Self::from(
-                s.base_with_nurb(k)?.create_extended_surface_dir(
-                    k,
-                    ext_direction,
-                    dist,
-                    extension_continuity,
-                )?,
-            )),
+            continuation
         }
     }
 
@@ -4047,11 +3864,8 @@ impl Surface {
             {
                 Ok(Self::from(ProceduralBlend::read_from_db(k, db, version)?))
             }
-            // the fork's SmBallPatch (f8e6709), read only with its flag: the pinned reader
-            // refuses the type
-            BALL_PATCH_TYPE if k.fixes.fillet_blend_corner => {
-                Ok(Self::from(BallPatch::read_from_db(db, version)?))
-            }
+            // the fork's SmBallPatch (f8e6709), which the pinned reader refuses
+            BALL_PATCH_TYPE => Ok(Self::from(BallPatch::read_from_db(db, version)?)),
             _ => Err(SolidError::sm_err(OP_READ)),
         }
     }
@@ -5095,11 +4909,6 @@ pub const fn base_adjust_step_uv_domain() -> Result<()> {
     Err(base_err())
 }
 
-/// `SmSurface::CreateExtendedSurface` (both overloads): `SM_ERR`.
-pub const fn base_create_extended_surface() -> Result<Surface> {
-    Err(base_err())
-}
-
 /// `SmSurface::DropPointFast`: `SM_ERR`.
 pub const fn base_drop_point_fast<O>() -> Result<SolutionArray<O>> {
     Err(base_err())
@@ -5634,10 +5443,7 @@ impl<'s> SurfaceEval<'s> {
         let (status, derivs) = eval_second_derivatives_with_output(k, surface, self.uv, flags);
         // Upstream Evaluate writes this array even when zero-tangent correction
         // ultimately fails. Its accessors still read the partially written values.
-        if let Err(error) = status {
-            if error.is_unported() {
-                return Err(error);
-            }
+        if ignored_surface_result(status)?.is_none() {
             for (i, row) in self.pvv.iter_mut().enumerate() {
                 for (j, slot) in row.iter_mut().enumerate() {
                     if i + j <= 2 {
@@ -7167,7 +6973,7 @@ pub fn drop_vectors(du: Vec3, dv: Vec3, vectors: &[Vec3]) -> Result<Vec<Vec2>> {
                 *slot = uv;
                 ok = true;
             }
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => {
                 ok = false;
                 break;
@@ -7769,7 +7575,10 @@ impl<O: SolutionObject> LsiGlobalSolver<'_, '_, O> {
             // WR-663, tangency-labs/smlib 21dcf69)
             let hit = match surf_box.intersect_line(point_on_line, self.line_vector) {
                 Ok(h) => h,
-                Err(e) if self.kernel.fixes.query_statuses_pass_on && !e.is_unported() => {
+                Err(e)
+                    if self.kernel.fixes.query_statuses_pass_on
+                        && !e.is_unported_or_cancelled() =>
+                {
                     return Ok(true);
                 }
                 Err(e) => return Err(e),
@@ -7986,6 +7795,54 @@ mod tests {
                 assert_eq!(leaf.is_ok(), depth <= MAX_GEOMETRY_NESTING);
             }
         }
+    }
+
+    #[test]
+    fn retained_end_definition_obeys_geometry_depth_limit() {
+        use crate::surface::procedural_blend::corner::{CornerDefinition, EndDefinition};
+
+        for mut root in [
+            bilinear(),
+            Surface::from(Plane::from_normal(Vec3::ZERO, Vec3::Z)),
+        ] {
+            root.definition = Some(Box::new(KeptDefinition::Corner(CornerDefinition::End(
+                EndDefinition {
+                    support: Box::new(Surface::from(Plane::from_normal(Vec3::ZERO, Vec3::Z))),
+                    boundary: Vec::new(),
+                },
+            ))));
+            assert!(root
+                .check_evaluation_copy_depth(MAX_GEOMETRY_NESTING - 1)
+                .is_ok());
+            assert!(matches!(
+                root.check_evaluation_copy_depth(MAX_GEOMETRY_NESTING),
+                Err(SolidError::InvalidInput { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn retained_swept_definition_obeys_geometry_depth_limit() {
+        use crate::surface::procedural_blend::corner::{CornerDefinition, SweptDefinition};
+
+        let mut root = bilinear();
+        root.definition = Some(Box::new(KeptDefinition::Corner(CornerDefinition::Swept(
+            SweptDefinition {
+                common: Box::new(Surface::from(Plane::from_normal(Vec3::ZERO, Vec3::Z))),
+                axis_point: Vec3::ZERO,
+                axis: Vec3::Z,
+                centres: [Vec3::X, Vec3::Y],
+                radius: 1.0,
+                tol: 1e-6,
+            },
+        ))));
+        assert!(root
+            .check_evaluation_copy_depth(MAX_GEOMETRY_NESTING - 1)
+            .is_ok());
+        assert!(matches!(
+            root.check_evaluation_copy_depth(MAX_GEOMETRY_NESTING),
+            Err(SolidError::InvalidInput { .. })
+        ));
     }
 
     #[test]

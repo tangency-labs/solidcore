@@ -258,6 +258,18 @@ pub enum SolidError {
         iterations: u32,
     },
 
+    /// A region whose side the kernel is unsure of (`SmRegion::IsVoid`'s `UNSURE`), where
+    /// the answer depends on whether it is material: refused, never read as material or
+    /// void. Not upstream (upstream's `TRUE` test reads `UNSURE` as void); its
+    /// [`SolidError::sm_status`] is `None`.
+    #[error("{operation}: unsure whether region {} is material", .region.index())]
+    UnsureRegion {
+        /// Operation that needed the region's side.
+        operation: &'static str,
+        /// The region.
+        region: RegionId,
+    },
+
     /// The operation is not supported for this combination of inputs
     /// (e.g. a geometry type upstream does not handle).
     #[error("{operation}: unsupported: {reason}")]
@@ -361,6 +373,50 @@ pub enum SolidError {
     /// [`SolidError::sm_status`], never shown). See [`Failure`] and the module docs.
     #[error("{0}")]
     Failed(Box<Failure>),
+
+    /// A blend refused on one of its edges or corners, with what an application words it
+    /// with ([`crate::blend::blend_refusal::BlendRefusal`]): an edge with no blend, a round
+    /// too small to change the part, a blend that cannot end where its edge runs on
+    /// tangentially, a setback too short or too long. `code` is the status the refusal
+    /// stood for before it was typed (`SM_ERR_INVALID_INPUT` for an edge with no blend,
+    /// `SM_ERR` for the others), so [`SolidError::sm_status`] is unchanged.
+    #[error("{operation}: upstream status {code}: refused ({refusal:?})")]
+    BlendRefused {
+        /// Operation that refused.
+        operation: &'static str,
+        /// Upstream `SmStatus` value.
+        code: i32,
+        /// What was refused, and why.
+        refusal: crate::blend::blend_refusal::BlendRefusal,
+    },
+
+    /// A round refused for the room it leaves or takes, with what the refusal found
+    /// ([`crate::blend::round_room::RoundRefusal`]): rounds whose result crosses a face's
+    /// boundary over itself, or a variable round along a straight edge between planes whose
+    /// band does not fit its faces. Not upstream (SolidCraft's checks, made the kernel's).
+    /// `code` is the status (`SM_ERR`) so [`SolidError::sm_status`] reads as an ordinary
+    /// failure.
+    #[error("{operation}: upstream status {code}: refused ({refusal:?})")]
+    RoundRefused {
+        /// Operation that refused.
+        operation: &'static str,
+        /// Upstream `SmStatus` value (`SM_ERR`).
+        code: i32,
+        /// Why, and what it found.
+        refusal: crate::blend::round_room::RoundRefusal,
+    },
+
+    /// A surface extension refused (not upstream: [`crate::surface::extend`]), naming the
+    /// longest distance that works when there is one.
+    #[error("{operation}: extension refused ({refusal:?}){}", fmt_size(*.distance))]
+    ExtendRefused {
+        /// Operation that refused.
+        operation: &'static str,
+        /// Why.
+        refusal: crate::surface::extend::ExtendRefusal,
+        /// The longest distance across the side that works, when there is one.
+        distance: Option<f64>,
+    },
 
     /// The operation needs an upstream routine whose unit is not ported yet (a
     /// plan back-edge). Returned instead of panicking or faking a result; every
@@ -745,6 +801,9 @@ pub enum ErrorKind {
     OffsetLoopsCross = 202,
     /// An offset would move a vertex to or past the other end of its edge.
     OffsetEdgeVanishes = 203,
+    /// An offset face's offset collapses onto a line or point: the distance is a radius
+    /// of curvature of the face on that side (a round inset by its radius).
+    OffsetCollapses = 204,
 }
 
 impl ErrorKind {
@@ -793,6 +852,7 @@ impl ErrorKind {
             Self::OffsetWallsTouch => "offset_walls_touch",
             Self::OffsetLoopsCross => "offset_loops_cross",
             Self::OffsetEdgeVanishes => "offset_edge_vanishes",
+            Self::OffsetCollapses => "offset_collapses",
         }
     }
 
@@ -817,6 +877,14 @@ impl core::fmt::Display for ErrorKind {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(self.name())
     }
+}
+
+/// The largest size (a distance) that works, as a refusal's message ends with it, when there
+/// is one.
+fn fmt_size(size: Option<f64>) -> String {
+    size.map_or_else(String::new, |s| {
+        format!("; the largest size that works is {s}")
+    })
 }
 
 impl SolidError {
@@ -889,7 +957,10 @@ impl SolidError {
     #[must_use]
     pub const fn sm_status(&self) -> Option<i32> {
         match self {
-            Self::Upstream { code, .. } | Self::FilletRefused { code, .. } => Some(*code),
+            Self::Upstream { code, .. }
+            | Self::FilletRefused { code, .. }
+            | Self::BlendRefused { code, .. }
+            | Self::RoundRefused { code, .. } => Some(*code),
             Self::Failed(f) => Some(f.status),
             Self::Nlib { .. } => Some(SM_ERR),
             Self::InvalidInput { .. }
@@ -901,6 +972,8 @@ impl SolidError {
             | Self::PreparationRequired { .. }
             | Self::Cancelled { .. }
             | Self::FaceTrimsUnavailable { .. }
+            | Self::UnsureRegion { .. }
+            | Self::ExtendRefused { .. }
             | Self::Unported { .. } => None,
         }
     }
@@ -959,7 +1032,10 @@ impl SolidError {
             Self::NotFound { .. } => ErrorKind::NotFound,
             Self::Degenerate { .. } => ErrorKind::Degenerate,
             Self::NotConverged { .. } => ErrorKind::NotConverged,
-            Self::Unsupported { .. } => ErrorKind::Unsupported,
+            // a region the kernel cannot classify, or a side it cannot extend: unsupported
+            Self::Unsupported { .. } | Self::UnsureRegion { .. } | Self::ExtendRefused { .. } => {
+                ErrorKind::Unsupported
+            }
             Self::FaceTrimsUnavailable { .. } => ErrorKind::FaceTrimsUnavailable,
             Self::Upstream { code, .. } => ErrorKind::of_status(*code),
             Self::Nlib { code, .. } => match code {
@@ -970,6 +1046,9 @@ impl SolidError {
             Self::PreparationRequired { .. } => ErrorKind::PreparationRequired,
             Self::Cancelled { .. } => ErrorKind::Cancelled,
             Self::FilletRefused { .. } => ErrorKind::FilletTooLarge,
+            Self::BlendRefused { code, .. } | Self::RoundRefused { code, .. } => {
+                ErrorKind::of_status(*code)
+            }
             Self::Failed(f) => f.kind(),
             Self::Unported { .. } => ErrorKind::Unported,
         }
@@ -1038,9 +1117,13 @@ impl SolidError {
             | Self::Degenerate { operation, .. }
             | Self::NotConverged { operation, .. }
             | Self::Unsupported { operation, .. }
+            | Self::UnsureRegion { operation, .. }
             | Self::PortInvariant { operation, .. }
             | Self::Upstream { operation, .. }
             | Self::FilletRefused { operation, .. }
+            | Self::BlendRefused { operation, .. }
+            | Self::RoundRefused { operation, .. }
+            | Self::ExtendRefused { operation, .. }
             | Self::Nlib { operation, .. }
             | Self::PreparationRequired { operation }
             | Self::FaceTrimsUnavailable { operation, .. }
@@ -1057,17 +1140,21 @@ impl SolidError {
             Self::NotFound { entity, .. } | Self::FaceTrimsUnavailable { entity, .. } => {
                 Some(*entity)
             }
+            Self::UnsureRegion { region, .. } => Some(EntityRef::Region(*region)),
             Self::Degenerate { entity, .. }
             | Self::Upstream { entity, .. }
             | Self::FilletRefused { entity, .. } => *entity,
+            Self::BlendRefused { refusal, .. } => Some(refusal.entity()),
             Self::Failed(f) => f.entity,
             Self::InvalidInput { .. }
             | Self::NotConverged { .. }
             | Self::Unsupported { .. }
             | Self::PortInvariant { .. }
+            | Self::ExtendRefused { .. }
             | Self::Nlib { .. }
             | Self::Unported { .. }
             | Self::Cancelled { .. }
+            | Self::RoundRefused { .. }
             | Self::PreparationRequired { .. } => None,
         }
     }

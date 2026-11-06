@@ -38,6 +38,8 @@ use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
 use solidcore::math::{Point2, Point3, Vec3, BIG_DOUBLE};
 use solidcore::nurbs::knots::Side;
 use solidcore::primitive::api_primitives::{create_box, create_cylinder};
+#[path = "support/profile.rs"]
+mod profile;
 use solidcore::query::api_queries::{get_edges, get_faces};
 use solidcore::surface::procedural_blend::{ProceduralBlend, PROCEDURAL_BLEND_TYPE};
 use solidcore::surface::surface::p4::NoObject;
@@ -51,12 +53,12 @@ use solidcore::topology::geometry_write::write_surface;
 use solidcore::topology::{edge, vertex, EdgeId, FaceId};
 use solidcore::{Brep, Kernel, SolidError};
 
-/// Every fix but `geometric_g2_continuity`, with or without `fillet_blend_corner`.
-fn all_fixes(blend: bool) -> Kernel {
+/// Every fix but `geometric_g2_continuity`.
+fn all_fixes() -> Kernel {
     let mut k = Kernel::default();
     let mut f = UpstreamFixes::default();
     for &name in UpstreamFixes::NAMES {
-        if name != "geometric_g2_continuity" && (blend || name != "fillet_blend_corner") {
+        if name != "geometric_g2_continuity" {
             *f.flag_mut(name).unwrap() = true;
         }
     }
@@ -118,15 +120,16 @@ fn round(k: &mut Kernel, b: &mut Brep, at: [f64; 3], r: f64) -> Result<(), Strin
     Ok(())
 }
 
+/// `SmApiBrepComputeVolume` at 1e-9: the volume the r 0.25 round removes, a difference of
+/// two of these, lies 4e-3 inside the bound it is checked to, and at 1e-9 it lands within
+/// 4e-9 of its value at 1e-12 (measured).
 fn volume(k: &Kernel, b: &mut Brep) -> f64 {
     let store = AttributeStore::default();
     let attrs = PropertyAttributes {
         store: &store,
         key_of: &|_| ObjectKey(0),
     };
-    brep_volume(k, b, 1e-12, &attrs)
-        .or_else(|_| brep_volume(k, b, 1e-9, &attrs))
-        .unwrap()
+    brep_volume(k, b, 1e-9, &attrs).unwrap()
 }
 
 fn clean(k: &mut Kernel, b: &mut Brep) {
@@ -612,7 +615,7 @@ fn round_rail(k: &Kernel, b: &Brep, t: &TopEnd, seam: EdgeId, r: f64) -> (EdgeId
 /// (18e96f1) refuses it, `SMLIB_ERR_NO_ROOM` with no size.
 #[test]
 fn the_middle_edge_r0_25_rolls_over_onto_the_top_face_before_its_end() {
-    let mut k = all_fixes(true);
+    let mut k = all_fixes();
     // (built twice, not cloned: a cloned body's surfaces have no owning faces)
     let mut b = front_rounded(&mut k);
     let mut before = front_rounded(&mut k);
@@ -636,19 +639,11 @@ fn the_middle_edge_r0_25_rolls_over_onto_the_top_face_before_its_end() {
 /// At r 1 the rolled stretch is four times as long (0.096): it builds the same way.
 #[test]
 fn the_middle_edge_r1_rolls_over_onto_the_top_face_before_its_end() {
-    let mut k = all_fixes(true);
+    let mut k = all_fixes();
     let mut b = front_rounded(&mut k);
     round(&mut k, &mut b, MIDDLE, 1.0).unwrap();
     clean(&mut k, &mut b);
     check_top_end(&k, &b, 1.0, EXACT_TOL);
-}
-
-/// Without `fillet_blend_corner` the middle edge's round is the pinned one's: refused.
-#[test]
-fn without_the_blend_corner_the_middle_edge_is_refused() {
-    let mut k = all_fixes(false);
-    let mut b = front_rounded(&mut k);
-    assert!(round(&mut k, &mut b, MIDDLE, 0.25).is_err());
 }
 
 /// With `fillet_round_as_definition` (every fix here) the round on each side of the seam is
@@ -659,7 +654,7 @@ fn without_the_blend_corner_the_middle_edge_is_refused() {
 #[test]
 fn the_rounds_by_their_definitions_round_trip() {
     let r = 0.25;
-    let mut k = all_fixes(true);
+    let mut k = all_fixes();
     let mut b = front_rounded(&mut k);
     round(&mut k, &mut b, MIDDLE, r).unwrap();
     let mut kinds = Vec::new();
@@ -716,7 +711,7 @@ fn the_rounds_by_their_definitions_round_trip() {
 /// less the fit margin (a thousand of the edge's tolerances), not a bare 1001.
 #[test]
 fn the_middle_edge_at_the_front_round_s_radius_is_refused_as_a_collapsed_offset() {
-    let mut k = all_fixes(true);
+    let mut k = all_fixes();
     let mut b = front_rounded(&mut k);
     let e = pick(&k, &b, MIDDLE);
     let fit = 2.0 - 1000.0 * edge::tolerance(&b, e).unwrap();
@@ -753,7 +748,7 @@ fn the_middle_edge_at_the_front_round_s_radius_is_refused_as_a_collapsed_offset(
 /// 1e-8; 1.9e-9 just short of 42/23 and 4.2e-9 at 1.96).
 #[test]
 fn the_middle_edge_r1_75_rolls_over_onto_the_top_face_before_its_end() {
-    let mut k = all_fixes(true);
+    let mut k = all_fixes();
     let mut b = front_rounded(&mut k);
     round(&mut k, &mut b, MIDDLE, 1.75).unwrap();
     clean(&mut k, &mut b);
@@ -768,7 +763,7 @@ fn the_middle_edge_r1_75_rolls_over_onto_the_top_face_before_its_end() {
 #[test]
 fn the_middle_edge_just_short_of_r_42_23_rolls_over_onto_the_top_face_before_its_end() {
     let r = 42.0 / 23.0 - 1e-3;
-    let mut k = all_fixes(true);
+    let mut k = all_fixes();
     let mut b = front_rounded(&mut k);
     round(&mut k, &mut b, MIDDLE, r).unwrap();
     clean(&mut k, &mut b);
@@ -780,11 +775,12 @@ fn the_middle_edge_just_short_of_r_42_23_rolls_over_onto_the_top_face_before_its
 /// at T long before and rolls on the top face to P.
 #[test]
 fn the_size_the_collapsed_offset_names_builds() {
-    let mut k = all_fixes(true);
+    let mut k = all_fixes();
     let mut b = front_rounded(&mut k);
     let e = pick(&k, &b, MIDDLE);
     let fit = 2.0 - 1000.0 * edge::tolerance(&b, e).unwrap();
     round(&mut k, &mut b, MIDDLE, fit).unwrap();
     clean(&mut k, &mut b);
     check_top_end(&k, &b, fit, 1e-8);
+    profile::write_profile(&k);
 }

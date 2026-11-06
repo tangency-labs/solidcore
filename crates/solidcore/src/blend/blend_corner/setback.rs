@@ -25,7 +25,7 @@
 //! |------------------------------|-------------------------------------------------------|
 //! | [`SetbackCorner`]            | `SmBlendCorner`'s `m_vSetBacks`, `m_lFillOrder`, `m_bConvexSetBack`, `m_bSetBackOverflows`, `m_pFill` |
 //! | [`SetBackFill`], [`set_back_fill_of`] | `SmFilletExecutive::SetBackFill`, `GetSetBackFill` |
-//! | [`SetbackRefusal`]           | `SetBackNotBuilt`, the corner's `NoteError` and `NoteFitSetBack` |
+//! | [`SetbackRefusal`]           | `SetBackNotBuilt`, the corner's `NoteError` and `NoteFitSetBack` (its `refusal` as data: solidcore's) |
 //! | [`classify_setback`]         | `SmBlendCorner::ClassifySetBack`                      |
 //! | [`make_setback_topology`]    | `SmBlendCorner::MakeSetBackTopology`                  |
 //! | [`build_setback_fill`]       | `SmBlendCorner::BuildSetBackFill`                     |
@@ -49,8 +49,7 @@
 //! ([`FilletCorner::setback`]) from its creation (`SetFillOrder`) until its patches are
 //! faces. The fork's corner notes its refusal on the executive itself; here it is returned
 //! ([`SetbackRefusal`]) and the session notes it. The executive's set-back fills
-//! (`m_vSetBackFills`) are the session's, passed in. Opt-in:
-//! `Kernel::fixes.fillet_blend_corner` (WR-697). No recursion. Beside curved faces
+//! (`m_vSetBackFills`) are the session's, passed in (WR-697). No recursion. Beside curved faces
 //! (solidcore#2343, built in solidcore from the fork's work in progress at 37c9e1d, no fork
 //! commit; with `Kernel::fixes.fillet_setback_beside_curved_faces` too): the curved faces
 //! are found apart from `corner_planes` (`corner_quadrics`); the
@@ -65,6 +64,7 @@ use std::sync::Arc;
 use crate::blend::blend_corner::ball::{solver_of_edgeuse_or_mate, BallSolvers};
 use crate::blend::blend_corner::swept::fmt_g;
 use crate::blend::blend_corner::{BlendCorner, BlendCornerEvent};
+use crate::blend::blend_refusal::BlendRefusal;
 use crate::blend::blend_setback::{
     bisect_thousandths, certified_scale, containment, distances, fill_hole_counted,
     fill_hole_probe, Edge, Face, FaceKind, Fill, FillStats, Probe, Round,
@@ -206,8 +206,7 @@ pub fn builds_setback(corner: &FilletCorner) -> bool {
 /// Not the fork's (solidcore-native, WR-697 addendum `setback-asked-not-built-refused`; the
 /// fork refuses this only in its capi): whether a setback set on the made `corner`
 /// (`SetSetBackDist`, its [`FilletCorner::set_back_dist`]) would be dropped, the corner
-/// building none ([`builds_setback`]). With `Kernel::fixes.fillet_blend_corner` the session
-/// refuses it ([`SETBACK_NOT_BUILT`], `CornerUnsupported`) instead of building the corner
+/// building none ([`builds_setback`]). The session refuses it ([`SETBACK_NOT_BUILT`], `CornerUnsupported`) instead of building the corner
 /// without it, and refuses a `SetSetBackFill` request at such a corner when the corners are
 /// made. An N x N corner is never refused, as before the port: it builds the setback set on
 /// it, and ignores a `SetSetBackFill` request (which only the Setback reads).
@@ -237,6 +236,10 @@ pub struct SetbackRefusal {
     pub comment: String,
     /// `NoteFitSetBack(dSetBack)`: `Some` where the corner notes one.
     pub fit_setback: Option<f64>,
+    /// Not the fork's: the refusal as data, where it is one of a setback asked for that
+    /// stops short of the rails' crossing or does not fit on the corner's edges
+    /// ([`BlendRefusal::SetbackTooShort`], [`BlendRefusal::SetbackTooLong`]).
+    pub refusal: Option<BlendRefusal>,
 }
 
 impl SetbackRefusal {
@@ -246,7 +249,14 @@ impl SetbackRefusal {
             error: FilletErrorType::CornerUnsupported,
             comment: why.into(),
             fit_setback: None,
+            refusal: None,
         }
+    }
+
+    /// This refusal carrying `refusal` as data.
+    const fn typed(mut self, refusal: BlendRefusal) -> Self {
+        self.refusal = Some(refusal);
+        self
     }
 
     /// `NoteError(.., SM_FILERR_NO_ROOM, cWhy)`.
@@ -255,6 +265,7 @@ impl SetbackRefusal {
             error: FilletErrorType::NoRoom,
             comment: why.into(),
             fit_setback,
+            refusal: None,
         }
     }
 }
@@ -1141,7 +1152,11 @@ pub fn make_setback_topology(
                     fmt_g(largest)
                 ),
                 None,
-            )));
+            )
+            .typed(BlendRefusal::SetbackTooLong {
+                vertex: vtx,
+                largest,
+            })));
         }
         if short {
             let mut most = 0.0;
@@ -1152,7 +1167,11 @@ pub fn make_setback_topology(
                 "Fillet Error: a setback of {} stops short of where the rails of the rounds beside an edge cross it, {} from the vertex",
                 fmt_g(a.setback),
                 fmt_g(most)
-            ))));
+            ))
+            .typed(BlendRefusal::SetbackTooShort {
+                vertex: vtx,
+                least: most,
+            })));
         }
         corner.ease_dist = a.ease;
     }
@@ -1779,7 +1798,7 @@ pub fn build_setback_fill<S: SetbackSolvers>(
     let worst = if open {
         None
     } else {
-        let worst = containment(&fill, &planes.planes, convex)?;
+        let worst = containment(k, &fill, &planes.planes, convex, tol)?;
         if worst == f64::INFINITY {
             return Ok(Err(SetbackRefusal::not_built(
                 "Fillet Error: the setback corner's fill is not certified to stay on the material's side of its curved faces",

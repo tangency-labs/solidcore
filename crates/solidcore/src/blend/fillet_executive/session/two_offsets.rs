@@ -7,12 +7,16 @@
 //! |------|----------|
 //! | [`FilletSession::prepare_per_edge_two_offsets`] | `SetFilletParameters` setup with `SmConstantRadiusFS::pdOptSecondRadius` |
 //! | [`FilletSession::prepare_chamfers`] | not upstream (#2486): chamfers by their sizes, kept in their definitions |
+//! | [`FilletSession::prepare_chamfers_along`] | not upstream: the same, each first size along a face the caller names |
 //!
 //! Deviations: explicit generator descriptors replace cross-section type codes.
-//! List sizes and live edges are checked before changing session state. No recursion.
+//! List sizes and live edges are checked before changing session state. A knife edge's
+//! chamfer of equal distances has no wedge for its definition: it is the linear section on the
+//! ball of radius the distance (#2793's rig cases). No recursion.
 
 use super::{FilletBody, FilletObject, FilletSession, FilletSurfaceGenerator};
 use crate::blend::fillet_executive::p2::FilletParametersAccess;
+use crate::blend::fillet_solver::p5::is_knife_edge;
 use crate::surface::procedural_blend::chamfer::{ChamferDefinition, ChamferSize};
 use crate::topology::{edge, EdgeId};
 use crate::{EntityRef, Kernel, Result, SolidError};
@@ -92,7 +96,7 @@ impl FilletSession<'_> {
             None
         };
         for (index, &id) in edges.iter().enumerate() {
-            let edgeuse = self.blend_edgeuse(k, id)?.ok_or_else(invalid)?;
+            let edgeuse = self.blendable_edgeuse(k, id)?;
             let approx_tol = 4.0 * edge::tolerance(self.target(), id)?;
             let solver = self.new_constant_radius_solver_with_second(
                 k,
@@ -129,27 +133,89 @@ impl FilletSession<'_> {
     /// # Errors
     ///
     /// Those of [`Self::prepare_per_edge_two_offsets`]; native invalid input for an edge
-    /// without a blend edge use or its mate, faces that do not make a wedge there (tangent
-    /// or folded back), sizes that are not finite and positive, an angle past the wedge's
-    /// room, or two distances that fold on it (one at most the other's `cos(wedge)`).
+    /// without a blend edge use or its mate, faces that do not make a wedge there (tangent,
+    /// or folded back other than a knife edge chamfered at equal distances, which is the chord
+    /// between the contacts of the ball of radius the distance), sizes that are not finite and
+    /// positive, an angle past the wedge's room, or two distances that fold on it (one at most
+    /// the other's `cos(wedge)`).
     pub fn prepare_chamfers(
         &mut self,
         k: &Kernel,
         edges: &[EdgeId],
         sizes: &[ChamferSize],
     ) -> Result<()> {
+        self.prepare_chamfers_along(k, edges, sizes, &[])
+            .map(|_| ())
+    }
+
+    /// [`Self::prepare_chamfers`], with each edge's first size along the face `along` names
+    /// (empty: support 1 for every edge; else one face per edge, either face of its edge),
+    /// and the offsets each edge's solver was given, `[support 1, support 2]` per edge. A
+    /// size along support 2 is kept as it was asked when it is two distances (swapped onto
+    /// the supports); a distance and an angle to support 2 is kept as its two setbacks at the
+    /// wedge, as no size names an angle to support 2. Not upstream (solidcore's).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Self::prepare_chamfers`]; native invalid input for `along` neither empty
+    /// nor one face per edge, or a face that is neither of its edge's.
+    pub fn prepare_chamfers_along(
+        &mut self,
+        k: &Kernel,
+        edges: &[EdgeId],
+        sizes: &[ChamferSize],
+        along: &[crate::topology::FaceId],
+    ) -> Result<Vec<[f64; 2]>> {
         use crate::topology::edgeuse::p1 as eu1;
         use crate::topology::edgeuse::p3::{evaluate_binormal, BinormalOptions};
-        if edges.is_empty() || !(sizes.len() == 1 || sizes.len() == edges.len()) {
+        if edges.is_empty()
+            || !(sizes.len() == 1 || sizes.len() == edges.len())
+            || !(along.is_empty() || along.len() == edges.len())
+        {
             return Err(invalid());
         }
         let mut chamfers = Vec::new();
         let mut first = Vec::new();
         let mut second = Vec::new();
         for (index, &id) in edges.iter().enumerate() {
-            let u0 = self.blend_edgeuse(k, id)?.ok_or_else(invalid)?;
+            let u0 = self.blendable_edgeuse(k, id)?;
             let target: &mut crate::Brep = &mut *self.objects.target;
             let u1 = eu1::radial(target, u0)?.ok_or_else(invalid)?;
+            // the support the first size is along: 1 unless `along` names support 2's face
+            let on_second = match along.get(index) {
+                None => false,
+                Some(&face) => {
+                    let face_of = |u| -> Result<Option<crate::topology::FaceId>> {
+                        Ok(match eu1::faceuse(target, u)? {
+                            Some(fu) => target.faceuse(fu)?.face,
+                            None => None,
+                        })
+                    };
+                    if face_of(u0)? == Some(face) {
+                        false
+                    } else if face_of(u1)? == Some(face) {
+                        true
+                    } else {
+                        return Err(invalid());
+                    }
+                }
+            };
+            // a knife edge has no wedge: equal distances are the chord between the contacts of
+            // the ball of that radius, kept as the linear section on those offsets; other
+            // sizes have no such chord
+            let tol = k.tolerances.ang_tol_deg * (crate::math::PI / 180.0);
+            if is_knife_edge(k, target, id, tol)? {
+                let ChamferSize::Distances([d, d2]) = value(sizes, index)? else {
+                    return Err(invalid());
+                };
+                if !(d == d2 && d.is_finite() && d > 0.0) {
+                    return Err(invalid());
+                }
+                first.push(d);
+                second.push(d);
+                chamfers.push(None);
+                continue;
+            }
             let t = target
                 .edge(id)
                 .map_err(|_| invalid())?
@@ -162,14 +228,29 @@ impl FilletSession<'_> {
             let b1 = evaluate_binormal(k, target, u1, t, false, &o)?
                 .binormal
                 .unitize()?;
+            // clamp: constant bounds, the lower below the upper (cannot panic)
             let wedge = b0.dot(b1).clamp(-1.0, 1.0).acos();
-            let chamfer =
+            let asked =
                 ChamferDefinition::new(value(sizes, index)?, wedge).map_err(|_| invalid())?;
+            let chamfer = if on_second {
+                let [a, b] = asked.setbacks();
+                let size = match asked.size {
+                    ChamferSize::Distances(_) | ChamferSize::DistanceAngle { .. } => {
+                        ChamferSize::Distances([b, a])
+                    }
+                    // a chord's setbacks are equal: the same along either face
+                    chord @ ChamferSize::Chord(_) => chord,
+                };
+                ChamferDefinition::new(size, wedge).map_err(|_| invalid())?
+            } else {
+                asked
+            };
             let [r1, r2] = chamfer.offsets().map_err(|_| invalid())?;
             first.push(r1);
             second.push(r2);
-            chamfers.push(chamfer);
+            chamfers.push(Some(chamfer));
         }
+        let offsets: Vec<[f64; 2]> = first.iter().zip(&second).map(|(&a, &b)| [a, b]).collect();
         let solvers_before = self.objects.solvers.len();
         self.prepare_per_edge_two_offsets(
             k,
@@ -187,9 +268,9 @@ impl FilletSession<'_> {
         }
         for (i, chamfer) in made.into_iter().zip(chamfers) {
             if let Some(Some(solver)) = self.objects.solvers.get_mut(i) {
-                solver.base_mut().chamfer = Some(chamfer);
+                solver.base_mut().chamfer = chamfer;
             }
         }
-        Ok(())
+        Ok(offsets)
     }
 }

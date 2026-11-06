@@ -854,9 +854,8 @@ pub struct FilletVertex {
     pub status: FilStatus,
     /// `m_cpCorner`: the corner this vertex belongs to.
     pub corner: Option<FilletCornerId>,
-    /// `m_bTangentEnd` (the fork's tangency-labs/smlib@856b54e, under WR-600's
-    /// `fillet_nx1_tangent_side_edge_same_convexity`): a rail's tangent end, where it
-    /// crosses a tangent seam into the end face. Always `false` without the fix.
+    /// `m_bTangentEnd` (the fork's tangency-labs/smlib@856b54e, WR-600): a rail's tangent
+    /// end, where it crosses a tangent seam into the end face.
     pub tangent_end: bool,
 }
 
@@ -1543,7 +1542,7 @@ impl FilletGeom {
 /// The pseudo B-rep holding the fillet edges and vertices (`SmFilletBrep`), with the
 /// fillet members of its topology records and the fillet geometries referenced from
 /// them.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FilletBrep {
     /// The topology records (`SmBrep`).
     brep: Brep,

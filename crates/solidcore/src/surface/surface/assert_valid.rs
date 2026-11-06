@@ -36,6 +36,9 @@
 //! | `wrapped` (private module)            | `SmOffsetSurface::AssertValid`, `SmSrfInVolume::AssertValid` |
 //!
 //! Deviations:
+//! - **Closed control nets (#2683).** Both monotonicity walks compare their last
+//!   direction with their first, completing the cycle upstream leaves open. The
+//!   rounding-aware walk also closes across steps that carry no direction (WR-737).
 //! - **Levels.** `level` is the `SmAssertTestLevel` value (`SM_LEVEL_0` .. `SM_LEVEL_2`,
 //!   [`LEVEL_GIVEN`]). As the release build's report macros do, a test runs when
 //!   `level >= ` its test level and `pTestRequests` is ignored; [`LEVEL_GIVEN`] skips
@@ -144,6 +147,7 @@ use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use crate::nurbs::knots::Side;
+use crate::nurbs::math::{gamma, UNIT};
 use crate::surface::cone::Cone;
 use crate::surface::plane::Plane;
 use crate::surface::sphere::Sphere;
@@ -1094,6 +1098,9 @@ pub fn has_degenerate_control_point_row(b: &BSplineSurface, tol: f64) -> Result<
 /// neighbouring differences (coincident pairs skipped). As upstream, a failing column
 /// clears the row flag.
 ///
+/// Closed rows and columns compare the final difference with the closing difference
+/// as well (#2683); upstream omits that last turn.
+///
 /// A pair counts as coincident below an absolute `SM_EFF_ZERO`, as upstream. Test #5 of
 /// `AssertValid` takes [`grid_has_non_monotonic_points_to_rounding`] instead, which counts
 /// a step within the rounding of the two points it is between; this entry point is left
@@ -1135,6 +1142,8 @@ pub fn grid_has_non_monotonic_points(
 /// over too, so a reversal across a step of rounding would go unseen. A step within
 /// rounding carries no direction, so it is passed over instead and the last one that had a
 /// direction is kept (#2560).
+/// For a closed line this includes the comparison between the last and first steps
+/// carrying a direction, across any coincident steps at the seam (#2683).
 ///
 /// # Errors
 ///
@@ -1148,35 +1157,24 @@ pub fn grid_has_non_monotonic_points_to_rounding(
     grid_non_monotonic(points, row_size, closed_col, closed_row, Zero::Rounding)
 }
 
-/// `u`, the unit roundoff of `f64`.
-const UNIT_ROUNDOFF: f64 = f64::EPSILON / 2.0;
-
-/// `gamma_k = k u / (1 - k u)`: the relative error bound of `k` rounded operations in a
-/// chain (Higham, the standard model).
-fn gamma(k: usize) -> f64 {
-    #[allow(clippy::cast_precision_loss)]
-    let ku = k as f64 * UNIT_ROUNDOFF;
-    ku / (1.0 - ku)
-}
-
 /// A bound on the rounding of the step from `p0` to `p1`, both Euclidean control points of
 /// a net: within it the step is no step.
 ///
 /// The bound is the one the pole classifier of the layer split certifies, `eval::collapse`
-/// of tangency-labs/solidcore#2629 (`crates/solidcore/src/eval/collapse.rs`, not on main
-/// yet): `Hom::euclid` returns each Euclidean point `P = x / w` with a bound
+/// (`crates/solidcore/src/eval/collapse.rs`); both use the shared `u` and `gamma_k` from
+/// [`crate::nurbs::math`]:
+/// `Hom::euclid` returns each Euclidean point `P = x / w` with a bound
 /// `e = (sqrt(3) ex + |P| ew) / (|w| - ew) + 2 u |P|` on its rounding, from the error
 /// `(ex, ew)` of the homogeneous point it comes from, and a step is zero when
 /// `|P1 - P0| <= e0 + e1 + gamma_3 (|P0| + |P1|)`, the last term covering the subtraction.
 /// A net read off a surface (`GetControlPointNet`) divides the stored homogeneous points,
-/// which are exact as stored, so `ex = ew = 0` and `e = 2 u |P|` per point. The weight is
+/// which are exact as stored, so `ex = ew = 0` and `e = 2 u |P|` per point: the
+/// homogeneous half of `Hom::euclid` has nothing to contribute here. The weight is
 /// in the bound through `|P| = |x| / |w|`, which a bound on the coordinates alone misses
 /// (a sphere's pole rows carry `w = sqrt(2) / 2`).
-///
-/// Once #2629 is in, this is `collapse::gamma` and `Hom` (#2560).
 fn step_within_rounding(p0: Point3, p1: Point3) -> f64 {
     let (l0, l1) = (p0.length(), p1.length());
-    2.0 * UNIT_ROUNDOFF * (l0 + l1) + gamma(3) * (l0 + l1)
+    2.0 * UNIT * (l0 + l1) + gamma(3) * (l0 + l1)
 }
 
 /// How the monotonicity pass recognises a step too short to carry a direction, and what
@@ -1252,6 +1250,7 @@ fn grid_non_monotonic(
         // get first point pair difference
         let mut vec0 = at(j1)? - at(j0)?;
         let mut zero0 = zero.is_zero(vec0, at(j0)?, at(j1)?);
+        let mut first_direction = (!zero0).then_some(vec0);
 
         // next row start
         idx += row_size;
@@ -1265,6 +1264,11 @@ fn grid_non_monotonic(
 
             // skip coincident control points
             if zero0 || zero1 {
+                // A directionless closing step must not prevent the rounding walk
+                // from closing against the first real direction it encounters.
+                if !zero.carries_forward() && !zero1 && first_direction.is_none() {
+                    first_direction = Some(vec1);
+                }
                 // a step that carries no direction does not become the difference the
                 // next step is compared against unless `zero` carries it forward
                 // (upstream does, and a reversal across it goes unseen); until a step
@@ -1289,6 +1293,9 @@ fn grid_non_monotonic(
             j1 += 1;
             j0 = j1 - 1;
         }
+        if closed_row && !zero0 && first_direction.is_some_and(|first| turns_back(first, vec0)) {
+            monotonic_row = false;
+        }
         ii += 1;
     }
 
@@ -1306,6 +1313,7 @@ fn grid_non_monotonic(
         // get first point pair difference
         let mut vec0 = at(i1)? - at(i0)?;
         let mut zero0 = zero.is_zero(vec0, at(i0)?, at(i1)?);
+        let mut first_direction = (!zero0).then_some(vec0);
 
         // next col start
         idx += 1;
@@ -1319,6 +1327,9 @@ fn grid_non_monotonic(
 
             // skip coincident control points (as in the row pass above)
             if zero0 || zero1 {
+                if !zero.carries_forward() && !zero1 && first_direction.is_none() {
+                    first_direction = Some(vec1);
+                }
                 if zero.carries_forward() || zero0 {
                     vec0 = vec1;
                     zero0 = zero1;
@@ -1339,6 +1350,9 @@ fn grid_non_monotonic(
             zero0 = zero1;
             i1 += row_size;
             i0 = i1 - row_size;
+        }
+        if closed_col && !zero0 && first_direction.is_some_and(|first| turns_back(first, vec0)) {
+            monotonic_row = false;
         }
         jj += 1;
     }
@@ -1591,6 +1605,17 @@ fn rev_of(s: &Surface) -> Result<&SurfOfRevolution> {
         SurfaceKind::SurfOfRevolution(sr) => Ok(sr),
         _ => Err(invalid("not a surface of revolution")),
     }
+}
+
+/// The tolerance on a cone generator's line scale against `1/cos(half angle)`, the half
+/// angle in radians. The cone keeps its half angle in degrees, so `1/cos` of it carries the
+/// angle's own rounding: a few ulps of the angle, times `d(1/cos)/d(angle) = sin/cos^2`.
+/// That is far below the relative `EFF_ZERO` until the cone is nearly flat (half angle near
+/// 90 degrees, where cos is tiny), and then it is the larger term.
+fn generator_scale_tolerance(line_scale: f64, half_angle: f64) -> f64 {
+    let angle_rounding = 4.0 * f64::EPSILON * half_angle.abs();
+    let conditioning = half_angle.sin().abs() / (half_angle.cos() * half_angle.cos());
+    (1.0 + line_scale) * EFF_ZERO + conditioning * angle_rounding
 }
 
 fn cone_of(s: &Surface) -> Result<&Cone> {
@@ -2244,13 +2269,17 @@ fn cone_assert_valid(k: &Kernel, s: &Surface, r: &mut Reporter<'_>) -> Result<bo
     rtn &= r.report(CLASS, 4, 0, line.is_some(), UNDEF, UNDEF)?;
     if let Some(line) = line {
         let line_scale = line.line_scale();
-        let cone_scale = 1.0 / (cone.semi_angle_deg() * (PI / 180.0)).cos();
-        let tol = (1.0 + line_scale) * EFF_ZERO;
+        let half_angle = cone.semi_angle_deg() * (PI / 180.0);
+        let cone_scale = 1.0 / half_angle.cos();
+        let tol = generator_scale_tolerance(line_scale, half_angle);
+        // A tolerance at least as large as the scale it checks means the stored angle no
+        // longer fixes even the magnitude of `1/cos` (it may have rounded to 90 degrees), so
+        // the comparison would accept any line scale: refuse instead.
         rtn &= r.report(
             CLASS,
             5,
             0,
-            are_same_to_tol(line_scale, cone_scale, tol),
+            tol < cone_scale && are_same_to_tol(line_scale, cone_scale, tol),
             tol,
             line_scale - cone_scale,
         )?;
@@ -3073,6 +3102,136 @@ mod tests {
         );
     }
 
+    /// Put the same closed line along rows and columns. The other direction has only
+    /// one step, so it cannot account for either result.
+    fn expect_closed_grid_line(line: &[Point3], absolute: bool, rounding: bool) {
+        for closed_col in [false, true] {
+            let lifted = |p: Point3| p + Vec3::new(0.0, 0.0, 10.0);
+            let points: Vec<_> = if closed_col {
+                line.iter().flat_map(|&p| [p, lifted(p)]).collect()
+            } else {
+                line.iter()
+                    .copied()
+                    .chain(line.iter().copied().map(lifted))
+                    .collect()
+            };
+            let row_size = if closed_col { 2 } else { line.len() };
+            assert_eq!(
+                grid_has_non_monotonic_points(&points, row_size, closed_col, !closed_col).unwrap(),
+                absolute,
+                "absolute criterion, closed_col={closed_col}, line={line:?}"
+            );
+            assert_eq!(
+                grid_has_non_monotonic_points_to_rounding(
+                    &points,
+                    row_size,
+                    closed_col,
+                    !closed_col
+                )
+                .unwrap(),
+                rounding,
+                "rounding criterion, closed_col={closed_col}, line={line:?}"
+            );
+        }
+    }
+
+    /// The only reversal is at (2, 0): the incoming step (1, 0) turns 180 degrees
+    /// against the closing step (-2, 0). Every other turn is at most 135 degrees.
+    #[test]
+    fn issue_2683_closed_seam_reversal_is_found_from_every_start() {
+        for base in [0.0, 1.0e5] {
+            let p = |x, y| Point3::new(base + x, y, 0.0);
+            let line = [p(0.0, 0.0), p(0.0, 1.0), p(1.0, 0.0), p(2.0, 0.0)];
+            for reverse in [false, true] {
+                let mut line = line.to_vec();
+                if reverse {
+                    line.reverse();
+                }
+                for _ in 0..line.len() {
+                    expect_closed_grid_line(&line, true, true);
+                    line.rotate_left(1);
+                }
+            }
+        }
+    }
+
+    /// A repeated seam carries no direction. The rounding walk must compare the
+    /// first and last real steps across it, even with repeated points at both ends.
+    #[test]
+    fn issue_2683_closed_seam_reversal_across_coincident_points_is_found() {
+        let p = |x, y| Point3::new(x, y, 0.0);
+        let coincident = vec![
+            p(0.0, 0.0),
+            p(0.0, 0.0),
+            p(-1.0, 0.0),
+            p(-1.0, 1.0),
+            p(-2.0, 0.0),
+            p(0.0, 0.0),
+            p(0.0, 0.0),
+        ];
+        let rounding = vec![
+            p(1.0e5, 0.0),
+            p(1.0e5 + 1.0e-11, 0.0),
+            p(1.0e5 - 1.0, 0.0),
+            p(1.0e5 - 1.0, 1.0),
+            p(1.0e5 - 2.0, 0.0),
+            p(1.0e5 - 1.0e-11, 0.0),
+            p(1.0e5, 0.0),
+        ];
+        for (line, absolute) in [(coincident, false), (rounding, true)] {
+            for reverse in [false, true] {
+                let mut line = line.clone();
+                if reverse {
+                    line.reverse();
+                }
+                for _ in 0..line.len() {
+                    // The absolute criterion still skips pairs adjacent to a zero step.
+                    expect_closed_grid_line(&line, absolute, true);
+                    line.rotate_left(1);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn issue_2683_open_line_does_not_gain_a_closing_step() {
+        let line = [O, Y, X, X * 2.0];
+        let lifted = |p: Point3| p + Vec3::new(0.0, 0.0, 10.0);
+        let rows: Vec<_> = line
+            .into_iter()
+            .chain(line.into_iter().map(lifted))
+            .collect();
+        let cols: Vec<_> = line.into_iter().flat_map(|p| [p, lifted(p)]).collect();
+        for (points, row_size) in [(rows, 4), (cols, 2)] {
+            assert!(!grid_has_non_monotonic_points(&points, row_size, false, false).unwrap());
+            assert!(
+                !grid_has_non_monotonic_points_to_rounding(&points, row_size, false, false)
+                    .unwrap()
+            );
+        }
+    }
+
+    /// Completing the cycle must still accept a square, an entirely collapsed line
+    /// and #2560's triangle whose closing step is only coordinate rounding.
+    #[test]
+    fn issue_2683_closed_lines_without_a_real_reversal_are_accepted() {
+        let p = |x, y| Point3::new(x, y, 0.0);
+        let square = vec![p(0.0, 0.0), p(0.0, 1.0), p(1.0, 1.0), p(1.0, 0.0)];
+        let collapsed = vec![p(1.0e5, 0.0); 4];
+        let noisy_seam = vec![
+            p(1.0e5, 0.0),
+            p(1.0e5 - 1.0, 0.0),
+            p(1.0e5 - 1.0, 1.0),
+            p(1.0e5 - 1.0e-11, 1.0e-13),
+        ];
+        for (mut line, absolute) in [(square, false), (collapsed, false), (noisy_seam, true)] {
+            for _ in 0..line.len() {
+                expect_closed_grid_line(&line, absolute, false);
+                line.rotate_left(1);
+            }
+        }
+    }
+
     #[test]
     fn plane_negative_scale() {
         let want = [(PLANE_TYPE, 3, "Scale", "m_vUVScale should be positive in X")];
@@ -3105,6 +3264,89 @@ mod tests {
             "SmBSplineSurface Control Net doubles back on itself probably making a self intersecting surface",
         );
         expect(&with_nurb(cone(-1.0)), 2, &[fold, radius, pole]);
+    }
+
+    /// A ring of radial width 2.65 a hair off flat (heights 1.3e-5 and 2.1e-5, a revolved
+    /// line a few 1e-4 degrees off perpendicular to the axis) is a cone of half angle about
+    /// 89.9997 degrees. Its generator scale, length/height, is right; only 1/cos of the
+    /// half angle in degrees is rounded, by more than a relative `EFF_ZERO` of a scale of 2e5.
+    #[test]
+    fn nearly_flat_cone_passes_the_generator_scale_check() {
+        for height in [1.3e-5, 2.1e-5] {
+            let s = Surface::from(Cone::new_bounded(
+                O,
+                X,
+                Y,
+                1.0,
+                1.0 + 2.65,
+                0.0,
+                360.0,
+                height,
+                false,
+                false,
+                false,
+            ));
+            assert_clean(&s);
+        }
+    }
+
+    /// Radial width 2.65e10 over height 1e-6: the line scale is 2.65e16 but the half angle rounds
+    /// to 90 degrees (1/cos 1.6e16), so the angle cannot represent the cone and test 5 refuses.
+    #[test]
+    fn cone_whose_angle_rounds_to_flat_is_refused() {
+        let s = Surface::from(Cone::new_bounded(
+            O,
+            X,
+            Y,
+            1.0,
+            1.0 + 2.65e10,
+            0.0,
+            360.0,
+            1e-6,
+            false,
+            false,
+            false,
+        ));
+        let (ok, failed) = failures(&s, 0);
+        assert!(
+            !ok && failed.iter().any(|f| (f.0, f.1) == (CONE_TYPE, 5)),
+            "{failed:?}"
+        );
+    }
+
+    /// Radial width 1000 over height 1000 * tan(1e-6 degrees): a consistent cone at 89.999999
+    /// degrees, where the propagated tolerance is about 1e-7 of the scale, not a refusal.
+    #[test]
+    fn consistent_cone_at_89_999999_degrees_is_accepted() {
+        let height = 1000.0 * (1e-6_f64).to_radians().tan();
+        let s = Surface::from(Cone::new_bounded(
+            O,
+            X,
+            Y,
+            1.0,
+            1.0 + 1000.0,
+            0.0,
+            360.0,
+            height,
+            false,
+            false,
+            false,
+        ));
+        assert_clean(&s);
+    }
+
+    #[test]
+    fn generator_scale_tolerance_still_refuses_a_wrong_scale() {
+        let half_angle = (2.65_f64).atan2(1.3e-5);
+        let scale = 1.0 / half_angle.cos();
+        let tol = generator_scale_tolerance(scale, half_angle);
+        // the rounding of the angle is covered ...
+        assert!(tol > 1e-6 && tol < 1e-4, "{tol}");
+        // ... a scale off by 1e-6 of itself, or by 1e-9 on a gentle cone, is not
+        assert!(scale * 1e-6 > tol);
+        let gentle = 0.3_f64;
+        let tol = generator_scale_tolerance(1.0 / gentle.cos(), gentle);
+        assert!(1e-9 > tol, "{tol}");
     }
 
     #[test]

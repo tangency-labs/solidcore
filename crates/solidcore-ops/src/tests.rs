@@ -359,6 +359,85 @@ fn a_copy_keeps_the_provenance_on_its_faces_and_edges() {
     }
 }
 
+#[test]
+fn a_copy_maps_record_order_through_renumbered_entities() {
+    all_fixes();
+    let b = make_box([0.0; 3], [1.0; 3]).unwrap();
+    let (_, order) = b.to_record().unwrap();
+    {
+        let mut src = b.lock();
+        for (i, &f) in order.faces.iter().enumerate() {
+            provenance::attach(&mut src, EntityRef::Face(f), Origin(vec![i])).unwrap();
+        }
+        for (i, &e) in order.edges.iter().enumerate() {
+            provenance::attach(&mut src, EntityRef::Edge(e), Origin(vec![100 + i])).unwrap();
+        }
+        for (i, &v) in order.vertices.iter().enumerate() {
+            provenance::attach(&mut src, EntityRef::Vertex(v), Origin(vec![200 + i])).unwrap();
+        }
+        let faces = src.face_list().iter().rev().copied().collect();
+        src.set_face_list(faces).unwrap();
+        let edges = src.edge_list().iter().rev().copied().collect();
+        src.set_edge_list(edges).unwrap();
+        let vertices = src.vertex_list().iter().rev().copied().collect();
+        src.set_vertex_list(vertices).unwrap();
+    }
+    let (copy, mapped) = b.copy_with_order(&order).unwrap();
+    assert_eq!(
+        [
+            mapped.faces.len(),
+            mapped.edges.len(),
+            mapped.vertices.len()
+        ],
+        [6, 12, 8]
+    );
+    assert!(order.faces.iter().zip(&mapped.faces).any(|(a, b)| a != b));
+    let (src, copy) = (b.lock(), copy.lock());
+    for (i, (&from, &to)) in order.faces.iter().zip(&mapped.faces).enumerate() {
+        assert_eq!(
+            provenance::read::<Origin>(&src, EntityRef::Face(from)),
+            Some(Origin(vec![i]))
+        );
+        assert_eq!(
+            provenance::read::<Origin>(&copy, EntityRef::Face(to)),
+            Some(Origin(vec![i]))
+        );
+    }
+    for (i, (&from, &to)) in order.edges.iter().zip(&mapped.edges).enumerate() {
+        assert_eq!(
+            provenance::read::<Origin>(&src, EntityRef::Edge(from)),
+            Some(Origin(vec![100 + i]))
+        );
+        assert_eq!(
+            provenance::read::<Origin>(&copy, EntityRef::Edge(to)),
+            Some(Origin(vec![100 + i]))
+        );
+    }
+    for (i, (&from, &to)) in order.vertices.iter().zip(&mapped.vertices).enumerate() {
+        assert_eq!(
+            provenance::read::<Origin>(&src, EntityRef::Vertex(from)),
+            Some(Origin(vec![200 + i]))
+        );
+        assert_eq!(
+            provenance::read::<Origin>(&copy, EntityRef::Vertex(to)),
+            Some(Origin(vec![200 + i]))
+        );
+    }
+}
+
+#[test]
+fn a_copy_refuses_an_order_entry_without_a_copy() {
+    all_fixes();
+    let b = make_box([0.0; 3], [1.0; 3]).unwrap();
+    let (_, mut order) = b.to_record().unwrap();
+    order
+        .faces
+        .push(solidcore::topology::FaceId::from_index(1_000_000));
+    assert!(matches!(b.copy_with_order(&order), Err(Error::Record(_))));
+    assert_eq!(b.counts().unwrap(), [6, 12, 8]);
+    assert!((b.volume(1e-9).unwrap() - 1.0).abs() <= 1e-9);
+}
+
 /// A slab cut out of a box's middle splits each side face in two: both pieces carry the side's
 /// data. A box joined to its neighbour along a face merges their coplanar sides: the merged face
 /// carries both. Faces the boolean finds lying on one another join theirs onto the survivor.
@@ -727,4 +806,35 @@ fn a_result_stated_solid_must_be_one() {
     .unwrap();
     assert_eq!(r, Err(Error::NotSolid));
     assert_eq!(b.to_smb(false).unwrap(), before);
+}
+
+/// A body goes to the record and back through ops with its order: record face, edge and vertex
+/// `i` is the kernel entity `Order` names, in both directions; a record the conversion refuses
+/// is the operation's refusal, as data.
+#[test]
+fn a_body_goes_to_the_record_and_back_in_record_order() {
+    all_fixes();
+    let b = make_cylinder([1.0, 2.0, 3.0], 4.0, 5.0).unwrap();
+    let (r, order) = b.to_record().unwrap();
+    assert_eq!(order.faces.len(), r.faces.len());
+    assert_eq!(order.edges.len(), r.edges.len());
+    assert_eq!(order.vertices.len(), r.vertices.len());
+    let (back, back_order) = Body::from_record(&r, true).unwrap();
+    assert_eq!(back.counts().unwrap(), b.counts().unwrap());
+    // record vertex i is the kernel vertex the order names, at the record's point
+    {
+        let kernel = back.lock();
+        for (i, v) in back_order.vertices.iter().enumerate() {
+            let p = kernel.vertex(*v).unwrap().point;
+            assert_eq!([p.x, p.y, p.z], r.vertices[i].point, "vertex {i}");
+        }
+    }
+    let (again, _) = back.to_record().unwrap();
+    assert_eq!(again, r);
+    let mut bad = r.clone();
+    bad.version = 3;
+    assert!(matches!(
+        Body::from_record(&bad, true),
+        Err(Error::Record(_))
+    ));
 }

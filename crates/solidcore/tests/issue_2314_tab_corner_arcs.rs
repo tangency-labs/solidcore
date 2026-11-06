@@ -16,10 +16,9 @@
 //! With the R25 rim as well, the rim's 7.958672926831696 (#2176) is added: its round ends on
 //! the tab's sides at y = sqrt(609) < 280/9, clear of both wedges.
 //!
-//! With `fillet_blend_corner` (WR-697, in this test's set of fixes) the fork's End at a
-//! smooth vertex (smlib#124, 41a39ec) ends each corner arc's round at its smooth vertices on
-//! the planes square to it, before WR-674's section ends are reached: the same wedges. The
-//! tests of the path without it turn the blend corner off.
+//! The fork's End at a smooth vertex (smlib#124, 41a39ec; WR-697) ends each corner arc's
+//! round at its smooth vertices on the planes square to it, before WR-674's section ends
+//! are reached: the same wedges.
 
 #![allow(
     clippy::unwrap_used,
@@ -54,15 +53,14 @@ const CORNER: [f64; 3] = [3.414_213_56, 32.525_324_7, 2.0];
 /// pins the fork's 7.958672926831696: 18e96f1 and 63c7962, `SmApiFilletEdges` r 0.5).
 const RIM_REMOVED: f64 = 7.958_672_926_831_696;
 
-/// Every opt-in fix on (as in the issue), with WR-706 and the blend corner (WR-697) as given.
-fn kernel_with(wr706: bool, blend_corner: bool) -> Kernel {
+/// Every opt-in fix on (as in the issue), with WR-706 as given.
+fn kernel(wr706: bool) -> Kernel {
     let mut k = Kernel::new(&KernelOptions::default());
     let mut f = UpstreamFixes::default();
     for &name in UpstreamFixes::NAMES {
         *f.flag_mut(name).unwrap() = true;
     }
     f.fillet_section_end_trim_at_creases = wr706;
-    f.fillet_blend_corner = blend_corner;
     k.fixes = f;
     k
 }
@@ -133,16 +131,7 @@ fn pappus() -> f64 {
 /// The fillet of the edges nearest `picks`: the volume it removes and the body's face count,
 /// the body checked sound.
 fn removed(wr706: bool, picks: &[[f64; 3]]) -> Result<(f64, usize), SolidError> {
-    removed_with(wr706, true, picks)
-}
-
-/// As [`removed`], with the blend corner (WR-697) as given.
-fn removed_with(
-    wr706: bool,
-    blend_corner: bool,
-    picks: &[[f64; 3]],
-) -> Result<(f64, usize), SolidError> {
-    let mut k = kernel_with(wr706, blend_corner);
+    let mut k = kernel(wr706);
     let mut b = plate(&mut k);
     let before = volume(&k, &mut b);
     let es: Vec<EdgeId> = picks.iter().map(|p| pick(&k, &b, *p)).collect();
@@ -184,8 +173,7 @@ fn both_corner_arcs_picked_the_other_way_round() {
     assert_eq!(faces, 14);
 }
 
-/// The pair is the sum of each arc alone, each the Pappus wedge. With
-/// `fillet_blend_corner` (in this test's set of fixes) each arc ends at its two smooth
+/// The pair is the sum of each arc alone, each the Pappus wedge. Each arc ends at its two smooth
 /// vertices on the planes square to it (the fork's End at a smooth vertex, smlib#124
 /// 41a39ec), not at WR-674's section ends: the fork at 18e96f1 and 63c7962 removes
 /// 0.159135839575356 for the arc at x > 0 and 0.159135839836381 for the one at x < 0.
@@ -193,20 +181,22 @@ fn both_corner_arcs_picked_the_other_way_round() {
 fn the_pair_is_the_sum_of_each_alone() {
     let (a, fa) = removed(true, &[CORNER]).unwrap();
     let (b, fb) = removed(true, &[CORNER_L]).unwrap();
-    // from the Pappus wedge: x > 0 1.12e-10 less, x < 0 6.0e-11 more (asserted a decade
+    // from the Pappus wedge: x > 0 1.15e-10 less, x < 0 5.5e-11 more (asserted a decade
     // above, so a later drift is caught)
     assert!((a - pappus()).abs() <= 1.2e-9, "x > 0 alone {a}");
     assert!((b - pappus()).abs() <= 6e-10, "x < 0 alone {b}");
     // pinned at the values measured here: the fork at 18e96f1 and 63c7962
     // (`SmApiFilletEdges`, r 0.5, section 1, continuity 1) removes 0.159135839575356 and
-    // 0.159135839836381; these lie 3.5e-11 and 5.4e-11 from it because of the
-    // solidcore-native exact spine
+    // 0.159135839836381; these lie 3.1e-11 and 5.9e-11 from it because of the
+    // solidcore-native exact spine. Since #2890 (precise properties integrate from the
+    // trims' base); they were 0.15913583961037148 and 0.15913583978226598, 1.12e-10 below
+    // and 6.0e-11 above the Pappus wedge
     assert!(
-        (a - 0.159_135_839_610_371_48).abs() <= 1e-12,
+        (a - 0.159_135_839_606_733_5).abs() <= 1e-12,
         "x > 0 alone {a}"
     );
     assert!(
-        (b - 0.159_135_839_782_265_98).abs() <= 1e-12,
+        (b - 0.159_135_839_777_263_75).abs() <= 1e-12,
         "x < 0 alone {b}"
     );
     assert_eq!((fa, fb), (11, 11));
@@ -225,16 +215,4 @@ fn rim_and_both_corner_arcs_round_together() {
         "removed {all}, rim + two wedges {expected}"
     );
     assert_eq!(faces, 15);
-}
-
-/// Without WR-706 (and without the blend corner, whose End at a smooth vertex ends the
-/// rounds before WR-674's section ends do) the subtraction still refuses the pair (it builds
-/// only a lone round with section ends), as before.
-#[test]
-fn without_the_fix_the_pair_is_refused() {
-    let err = removed_with(false, false, &[CORNER, CORNER_L]).unwrap_err();
-    assert!(
-        matches!(err, SolidError::Upstream { code: 1001, .. }),
-        "{err:?}"
-    );
 }

@@ -10,15 +10,22 @@ use solidcore::kernel::Kernel;
 
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::certified::Verdict;
-use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
+use solidcore::mass::integrator::properties::{brep_volume, no_unsure_region, PropertyAttributes};
+use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use solidcore::primitive::api_primitives as primitives;
-use solidcore::topology::brep::is_outward_solid;
 use solidcore::topology::brep::mirror::transform_matrix;
-use solidcore::topology::brep::p3::brep_copy;
-use solidcore::{Brep, Vec3};
+use solidcore::topology::brep::p3::{brep_copy, brep_copy_mapped};
+use solidcore::topology::brep::{is_outward_solid, is_outward_touching_solids};
+use solidcore::topology::face::p2 as face_p2;
+use solidcore::topology::FaceId;
+use solidcore::{Brep, EntityRef, Vec3};
+
+use solidcore_convert::brep::{to_kernel, to_record, Order, Unsupported};
+use solidcore_record::brep::Brep as Record;
 
 use crate::error::status;
 use crate::session::{measure_body, read_body, run, with_body};
+use crate::split::copies_of;
 use crate::{Error, Result};
 
 /// A kernel body, with its own lock: the kernel's operations take `&mut Brep`, even to measure.
@@ -69,6 +76,51 @@ impl Body {
         read_body("SmApiBrepCopy", self, brep_copy).map(Body::new)
     }
 
+    /// A deep copy with `order` mapped to the copy's own entity IDs. The ordering of each
+    /// vector is preserved, including an importer's order that differs from the body's lists.
+    /// No correspondence by numeric ID or list position is assumed.
+    ///
+    /// # Errors
+    /// Those of [`Self::copy`]; [`Error::Record`] when an entity in `order` has no copy.
+    pub fn copy_with_order(&self, order: &Order) -> Result<(Body, Order)> {
+        let (copy, order) = read_body("SmApiBrepCopy", self, |k, b| {
+            let (copy, map) = brep_copy_mapped(k, b)?;
+            let Some(faces) = copies_of(&map, &order.faces, EntityRef::Face, |e| match e {
+                EntityRef::Face(f) => Some(f),
+                _ => None,
+            }) else {
+                return Ok(Err(Error::Record(
+                    "copy record order names a face without a copy".to_owned(),
+                )));
+            };
+            let Some(edges) = copies_of(&map, &order.edges, EntityRef::Edge, |e| match e {
+                EntityRef::Edge(x) => Some(x),
+                _ => None,
+            }) else {
+                return Ok(Err(Error::Record(
+                    "copy record order names an edge without a copy".to_owned(),
+                )));
+            };
+            let Some(vertices) = copies_of(&map, &order.vertices, EntityRef::Vertex, |e| match e {
+                EntityRef::Vertex(v) => Some(v),
+                _ => None,
+            }) else {
+                return Ok(Err(Error::Record(
+                    "copy record order names a vertex without a copy".to_owned(),
+                )));
+            };
+            Ok(Ok((
+                copy,
+                Order {
+                    faces,
+                    edges,
+                    vertices,
+                },
+            )))
+        })??;
+        Ok((Body::new(copy), order))
+    }
+
     /// Moves this body by the affine `matrix` (`SmBrep::Transform(matrix, TRUE)`): rows 0-2 the
     /// images of x, y and z, row 3 the translation (`p' = p·A + t`), the fourth column
     /// `(0, 0, 0, 1)`. Reflections mirror it, a non-uniform scale or a shear turns its geometry
@@ -108,9 +160,11 @@ impl Body {
     /// contract takes it (ops passes it on as given).
     ///
     /// # Errors
-    /// The kernel's (an accuracy it refuses is its status).
+    /// [`Error::UnsureRegion`] for a region the kernel is unsure is material (never read as
+    /// void, a volume of 0); the kernel's (an accuracy it refuses is its status).
     pub fn volume(&self, relative_accuracy: f64) -> Result<f64> {
         measure_body("brep_volume", self, |k, b| {
+            no_unsure_region(b)?;
             let store = AttributeStore::default();
             let attrs = PropertyAttributes {
                 store: &store,
@@ -126,6 +180,74 @@ impl Body {
 /// more than this is refused as singular.
 pub const REGULAR_RATIO: f64 = 1e-9;
 
+/// A conversion's refusal as the operation's: the kernel's error by its type ([`status`]), the
+/// record's by what it is.
+fn refused(e: Unsupported) -> Error {
+    match e {
+        Unsupported::Kernel(e) => status(e),
+        Unsupported::Invalid(w) => Error::Record(w.to_owned()),
+        Unsupported::NotYet(w) => Error::Unsupported(w),
+    }
+}
+
+impl Body {
+    /// The record as a kernel body ([`to_kernel`]), and the kernel entity each record face,
+    /// edge and vertex is: picks and history name entities in record order, and [`Order`] takes
+    /// them to the kernel's. `trusted`: the record comes from a modeller that keeps the kernel's
+    /// rules, so the kernel's healer is skipped.
+    ///
+    /// # Errors
+    /// [`Error::Record`] for a record that fails its validation or the kernel's limits;
+    /// [`Error::Unsupported`] for what the conversion does not carry yet; the kernel's error by
+    /// its type.
+    pub fn from_record(record: &Record, trusted: bool) -> Result<(Body, Order)> {
+        let mut out = None;
+        let mut refusal = None;
+        let made = run("brep::to_kernel", |k| match to_kernel(k, record, trusted) {
+            Ok((b, order)) => {
+                out = Some(order);
+                Ok(Some(b))
+            }
+            Err(Unsupported::Kernel(e)) => Err(e),
+            Err(e) => {
+                refusal = Some(refused(e));
+                Ok(None)
+            }
+        });
+        if let Some(e) = refusal {
+            return Err(e);
+        }
+        match (made?, out) {
+            (Some(b), Some(order)) => Ok((Body::new(b), order)),
+            _ => Err(Error::Exception),
+        }
+    }
+
+    /// This body as the record in canonical order ([`to_record`]), and the kernel entity each
+    /// record face, edge and vertex is. The kernel gives every use on a face its UV trim first,
+    /// which is why the body is edited.
+    ///
+    /// # Errors
+    /// [`Error::Unsupported`] for what the record cannot carry (yet); [`Error::Record`] for
+    /// kernel data that does not make a valid record; the kernel's error by its type.
+    pub fn to_record(&self) -> Result<(Record, Order)> {
+        let mut out = None;
+        let mut refusal = None;
+        with_body("brep::to_record", self, |k, b| {
+            match to_record(k, b) {
+                Ok(made) => out = Some(made),
+                Err(Unsupported::Kernel(e)) => return Err(e),
+                Err(e) => refusal = Some(refused(e)),
+            }
+            Ok(())
+        })?;
+        if let Some(e) = refusal {
+            return Err(e);
+        }
+        out.ok_or(Error::Exception)
+    }
+}
+
 /// What an operation's result must be ([`finish`]), as its input says: a solid input must give
 /// a solid. Made from the input ([`Expect::of`]), never chosen by a caller; the two exceptions
 /// are an operation's own contract, stated by the operation: [`Expect::FACES`] for one with no
@@ -133,6 +255,8 @@ pub const REGULAR_RATIO: f64 = 1e-9;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Expect {
     solid: bool,
+    /// A solid result may be solids touching along edges or at vertices (a boolean's).
+    touching: bool,
 }
 
 impl Expect {
@@ -140,27 +264,39 @@ impl Expect {
     ///
     /// # Errors
     /// The kernel's, from the solid test.
-    #[allow(dead_code)] // the families' operations derive it from their inputs
     pub(crate) fn of(k: &mut Kernel, input: &mut Brep) -> solidcore::Result<Expect> {
         Ok(Expect {
             solid: is_outward_solid(k, input)?,
+            touching: false,
         })
     }
 
+    /// As [`Expect::of`], a solid's result allowed to be solids touching along edges or at
+    /// vertices (closed, `brep_is_closed_touching_solids`), as a boolean's may be.
+    pub(crate) fn touching(self) -> Expect {
+        Expect {
+            touching: true,
+            ..self
+        }
+    }
+
+    /// A result that must be a solid (an operation whose every input is one).
+    pub(crate) const SOLID: Expect = Expect {
+        solid: true,
+        touching: false,
+    };
+
     /// A result of an operation with no solid input (a primitive, a sheet's).
-    #[allow(dead_code)]
-    pub(crate) const FACES: Expect = Expect { solid: false };
+    pub(crate) const FACES: Expect = Expect {
+        solid: false,
+        touching: false,
+    };
 
     /// Whether a result must be a solid: closed, manifold, valid and facing out.
     #[must_use]
     pub(crate) const fn solid(self) -> bool {
         self.solid
     }
-
-    /// A result that must be a solid whatever its input, for an operation that makes one
-    /// from a sheet (a thickened sheet): the operation states it, as its own contract.
-    #[allow(dead_code)] // the families' operations that make a solid from a sheet
-    pub(crate) const SOLID: Expect = Expect { solid: true };
 }
 
 /// The result contract: a result has faces ([`Error::Empty`] if not), and a solid input gives a
@@ -168,7 +304,6 @@ impl Expect {
 ///
 /// # Errors
 /// The kernel's error from the solid test.
-#[allow(dead_code)] // the families' operations finish with it
 pub(crate) fn finish(
     k: &mut Kernel,
     mut b: Brep,
@@ -177,10 +312,68 @@ pub(crate) fn finish(
     if b.face_list().is_empty() {
         return Ok(Err(Error::Empty));
     }
-    if expect.solid && !is_outward_solid(k, &mut b)? {
+    let solid = |k: &mut Kernel, b: &mut Brep| {
+        if expect.touching {
+            is_outward_touching_solids(k, b)
+        } else {
+            is_outward_solid(k, b)
+        }
+    };
+    if expect.solid && !solid(k, &mut b)? {
         return Ok(Err(Error::NotSolid));
     }
     Ok(Ok(b))
+}
+
+/// Copies of each attribute `from` carries in `src`.
+fn attribute_copies(src: &Brep, from: EntityRef) -> Vec<solidcore::geom::attribute::Attribute> {
+    src.entity_attributes(from)
+        .into_iter()
+        .map(|(_, a)| a.make_copy())
+        .collect()
+}
+
+/// `to` (in `into`) takes a copy of each attribute of `from` (in `src`): a rebuilt entity
+/// stands for the one it replaces.
+///
+/// # Errors
+/// The kernel's, from adding an attribute.
+pub(crate) fn copy_attributes(
+    src: &Brep,
+    from: EntityRef,
+    into: &mut Brep,
+    to: EntityRef,
+) -> solidcore::Result<()> {
+    for a in attribute_copies(src, from) {
+        into.add_attribute(to, a)?;
+    }
+    Ok(())
+}
+
+/// [`copy_attributes`] within one body.
+///
+/// # Errors
+/// The kernel's, from adding an attribute.
+pub(crate) fn copy_attributes_within(
+    b: &mut Brep,
+    from: EntityRef,
+    to: EntityRef,
+) -> solidcore::Result<()> {
+    for a in attribute_copies(b, from) {
+        b.add_attribute(to, a)?;
+    }
+    Ok(())
+}
+
+/// The orientation of `f`'s upward faceuse.
+///
+/// # Errors
+/// The kernel's, for a face not in `b`.
+pub(crate) fn upward(b: &Brep, f: FaceId) -> solidcore::Result<Option<OrientType>> {
+    Ok(match face_p2::upward_faceuse(b, f)? {
+        Some(fu) => Some(b.faceuse(fu)?.orientation),
+        None => None,
+    })
 }
 
 fn point(p: [f64; 3]) -> Result<Vec3> {

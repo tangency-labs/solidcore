@@ -185,6 +185,17 @@ pub fn shell_vertices(b: &Brep, attribute: Option<&AttributeFilter<'_>>) -> Resu
 ///
 /// [`SolidError::NotFound`] for a dangling id.
 pub fn is_manifold_solid(b: &Brep) -> Result<bool> {
+    is_closed_where(b, edge::is_manifold)
+}
+
+/// [`is_manifold_solid`]'s walk with its edge test given: at least two regions, no shell
+/// vertices and `edge_ok` for every edge (not upstream: shared with the closed-body tests
+/// that allow other edges, `query::api_queries::brep_is_closed_touching_solids`).
+///
+/// # Errors
+///
+/// [`SolidError::NotFound`] for a dangling id; those of `edge_ok`.
+pub fn is_closed_where(b: &Brep, edge_ok: impl Fn(&Brep, EdgeId) -> Result<bool>) -> Result<bool> {
     if brep_regions(b)?.len() < 2 {
         return Ok(false);
     }
@@ -194,7 +205,7 @@ pub fn is_manifold_solid(b: &Brep) -> Result<bool> {
     }
 
     for e in brep_edges(b)? {
-        if !edge::is_manifold(b, e)? {
+        if !edge_ok(b, e)? {
             return Ok(false);
         }
     }
@@ -1784,8 +1795,33 @@ pub(crate) fn ray_fire_with_solver(
         TopologySolveOptions<'_>,
     ) -> Result<crate::geom::solution_array::SolutionArray<CacheObject>>,
 ) -> Result<RayFireResult> {
-    // get Brep BoundingBox and BoundingSphere
     let bbox = qbrep::calculate_bounding_box(k, &mut *b, BoundingBoxOptions::default())?;
+    ray_fire_with_bbox_and_solver(
+        k,
+        b,
+        bbox,
+        start,
+        direction,
+        ray_zone_tol_3d,
+        answer_limit,
+        solve,
+    )
+}
+
+pub(crate) fn ray_fire_with_bbox_and_solver(
+    k: &Kernel,
+    b: &mut Brep,
+    bbox: Extent3d,
+    start: Point3,
+    direction: Vec3,
+    ray_zone_tol_3d: f64,
+    answer_limit: Option<f64>,
+    solve: impl FnOnce(
+        &mut Brep,
+        Point3,
+        TopologySolveOptions<'_>,
+    ) -> Result<crate::geom::solution_array::SolutionArray<CacheObject>>,
+) -> Result<RayFireResult> {
     let sphere = bbox.sphere_bound();
     let radius = sphere.radius;
 
@@ -2876,7 +2912,13 @@ pub fn mate_lamina_edge_to_surface(
                 "negative surface extension distance",
             ));
         }
-        surf.create_extended_surface(k, ext_dist, ContinuityType::G1R)?
+        surf.extended_sides(
+            k,
+            &crate::surface::side::BoxSide::ALL,
+            crate::surface::extend::Continuity::Ruled,
+            ext_dist,
+        )?
+        .surface
     };
     let ext_domain = ext_surface.natural_uv_domain_with_nurb(k)?;
 

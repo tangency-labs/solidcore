@@ -10,7 +10,6 @@
 //! | [`FilletSession::set_curve_blend_self_intersection_handler`] | `SetSelfIntersectionHandler` (`SmMakeCurveBlendSIH`) |
 //! | [`FilletSession::fillet_corners`] | `GetFilletCorners` |
 //! | [`FilletSession::set_bevel_corner`] | `SetBevelCorner` |
-//! | `big_radius::test_and_convert_big_rad_fillet` (private) | `SmFilletExecutive::TestAndConvertBigRadFillet` |
 //! | [`FilletSession::prepare_variable_radius_edges`] | `SetFilletParameters` (same parameters on each edge) with `SM_FS_VARIABLE_RADIUS` |
 //! | [`FilletSession::preview_fillet_surfaces`] | `GetPreviewFilletSurfaces` |
 //!
@@ -25,10 +24,7 @@
 //! loads equivalent. An external custom/non-full-tree cache provider is not yet
 //! accepted; this is not an arbitrary warmed-cache parity claim.
 //! Live corner stages dispatch `NByOne`, `NByOneClosed`, `NByTwo` and `NxN` corners
-//! to the ported corner code (a closed corner's tangent split stays unported; its
-//! opening checks run live); the running corner of a topology adjustment is moved
-//! out of its slot for the call, so the big-radius conversion can reach the other
-//! corners. One vertex dispatch (`live_corner_vert_geom`) serves every corner kind;
+//! to the ported corner code. One vertex dispatch (`live_corner_vert_geom`) serves every corner kind;
 //! mate vertices nest through it, bounded by `MAX_MATE_DEPTH`. An Nx2 corner's
 //! vertex calculators receive every retained solver of the
 //! vertex's geometries (one indexed table upstream). Two geometries on one solver at a
@@ -40,7 +36,9 @@
 //! `SmTemporaryRadiusChange`, which only the solver it is applied to evaluates before
 //! the change is reverted, so the copies evaluate as the shared object does.
 //! This foundation supports solver construction/loading; it does not substitute a
-//! result for the remaining fillet execution stages. No recursion.
+//! result for the remaining fillet execution stages. Band checks recognize constrained
+//! closest-point endpoints within the existing solver tolerance in geometric space.
+//! No recursion.
 //! Attributes (issue #1462): upstream they live on the bodies' objects; here
 //! [`FilletSession::with_second_base`] moves the target's (and second base's) own
 //! attributes ([`Brep::add_attribute`]) into the session store under the bodies' issued
@@ -65,7 +63,7 @@ use super::p3::{
 use crate::blend::fillet_corner::p1::{EndRibDrop, LawIntervalSolvers};
 use crate::blend::fillet_corner::p3::{
     CornerFilletBrep, CornerPatchEnv, CornerSolverStore, ExecutiveErrorObject, FilletCorner,
-    FilletCornerKind, Nx2AdjustContext, TangentSplitEnv, TangentSplitOps,
+    FilletCornerKind, Nx2AdjustContext,
 };
 use crate::blend::fillet_geom::p1::{
     CornerLookup, FilletBrep, FilletCornerId, FilletCornerType, FilletSolverId, FilletVertexType,
@@ -97,7 +95,6 @@ use crate::topology::{Brep, EdgeId, EdgeuseId, FaceId, VertexId};
 
 pub mod ball_regular;
 pub mod band_cuts;
-mod big_radius;
 mod blend_face_log;
 mod classification;
 mod cliff_overflow;
@@ -105,9 +102,11 @@ mod concave_nxn;
 mod corner_marks;
 mod crossing_rails;
 mod ease;
+mod edge_refusals;
 pub(crate) mod finish;
 pub mod fit_size;
 mod keep_features;
+mod law_corners;
 mod original_merge;
 mod original_trim;
 mod outline_rims;
@@ -312,22 +311,28 @@ struct SessionObjects<'target> {
     self_intersection_handler: Option<MakeSurfaceBlendSih>,
     curve_blend_self_intersection_handler: Option<MakeCurveBlendSih>,
     /// The fork's `m_bSweptTurns` (`SetSweptTurns`; WR-697): a blend corner's Turn is
-    /// Swept, not Mitred. Read only with `Kernel::fixes.fillet_blend_corner`.
+    /// Swept, not Mitred.
     swept_turns: bool,
     /// The fork's `m_vSetBackVertices` (`AddSetBackVertex`; WR-697, 79d4763): the
-    /// vertices the caller sets back, where no Ball is built. Read only with
-    /// `Kernel::fixes.fillet_blend_corner`.
+    /// vertices the caller sets back, where no Ball is built.
     set_back_vertices: Vec<VertexId>,
     /// The fork's `m_vSetBackFills` (`SetSetBackFill`; smlib#104 61547af): the corners
-    /// asked to be set back, before the corners are made. Read only with
-    /// `Kernel::fixes.fillet_blend_corner`.
+    /// asked to be set back, before the corners are made.
     set_back_fills: Vec<crate::blend::blend_corner::setback::SetBackFill>,
+    /// The fork's `m_vRadiusCornerSurfaces` and `m_vRadiusCornerPieces` (6eecf04, 58d03ef):
+    /// the fillet surfaces noted before the merge where their radius law turns, which the
+    /// split after it finds again ([`law_corners`]).
+    radius_corner_surfaces: Vec<law_corners::RadiusCornerSurface>,
+    /// (not upstream) The last Setback refusal noted, as data, for `DoFilleting` to return
+    /// once its later steps have made it their own failure (`edge_refusals`).
+    setback_refusal: Option<crate::blend::blend_refusal::BlendRefusal>,
     /// (not upstream, #2489) The marks of the faces the session made, while
     /// `Kernel::blend_face_log` is on (`blend_face_log`).
     blend_face_marks: Vec<AttributeHandle>,
     /// The corner type of chamfers meeting at a vertex (`set_chamfer_corner`; WR-716).
     /// Read only with `Kernel::fixes.fillet_chamfer_corner`.
     chamfer_corner: crate::blend::blend_corner::BlendChamferCorner,
+    band_cut_cache: Option<band_cuts::BandCutCache>,
 }
 
 impl SessionObjects<'_> {
@@ -707,6 +712,18 @@ fn note_setback_refusal(
     );
 }
 
+/// The error of a refused Setback: its refusal as data where it has one
+/// ([`SolidError::BlendRefused`]), else `SM_ERR`; the status is `SM_ERR` either way.
+fn setback_refused(
+    operation: &'static str,
+    refusal: &crate::blend::blend_corner::setback::SetbackRefusal,
+) -> SolidError {
+    match refusal.refusal {
+        Some(typed) => typed.error(operation, crate::error::SM_ERR),
+        None => SolidError::sm_err(operation),
+    }
+}
+
 /// The session's solver slots as the corner-patch builders' solver store.
 struct SessionSolvers<'s>(&'s [Option<SolverObject>]);
 
@@ -873,7 +890,7 @@ fn live_corner_vert_geom(
 
 /// `SmFilletCorner::CalcCornerVertGeom` of the ordinary Nx1, closed Nx1, Nx2 and `NxN`
 /// corner `id` over the live session's objects (the corner sits in its slot of
-/// `corners`). Not upstream (#2406, `fixes.fillet_blend_corner`): at an End that can wait
+/// `corners`). Not upstream (#2406): at an End that can wait
 /// for its rails' rollover (`rolled_end`), a rail end its rail does not reach on the End's
 /// plane takes the rail's traced end for now
 /// ([`crate::blend::blend_corner::end::place_rolled_rail_end`]).
@@ -1010,102 +1027,6 @@ impl SplitCorners for SessionSplitCorners<'_> {
     }
 }
 
-/// The live objects the tangent-corner splits reach (`AdjustTangentCorner`): the
-/// session's concrete solvers and corner table, the running corner's slot holding a
-/// placeholder.
-struct SessionTangentSplit<'a> {
-    executive: &'a FilletExecutive<FilletObject>,
-    solvers: &'a mut [Option<SolverObject>],
-    corners: &'a mut Vec<FilletCorner>,
-    extended_surfaces: &'a BTreeMap<FaceId, Surface>,
-    id: FilletCornerId,
-}
-
-impl SessionTangentSplit<'_> {
-    fn slot(&mut self, id: FilletSolverId) -> Result<&mut SolverObject> {
-        self.solvers
-            .get_mut(id.0 as usize)
-            .and_then(Option::as_mut)
-            .ok_or_else(|| invalid("fillet geometry solver is not live"))
-    }
-}
-
-impl TangentSplitOps for SessionTangentSplit<'_> {
-    fn solver(&self, id: FilletSolverId) -> Result<&FilletSolver> {
-        self.solvers
-            .get(id.0 as usize)
-            .and_then(Option::as_ref)
-            .map(SolverObject::base)
-            .ok_or_else(|| invalid("fillet geometry solver is not live"))
-    }
-    fn solver_ops(&mut self, id: FilletSolverId) -> Result<&mut dyn FilletSolverOps> {
-        Ok(live_solver_ops(self.slot(id)?))
-    }
-    fn split_fillet_geom_at_side_edge(
-        &mut self,
-        k: &Kernel,
-        target: &mut Brep,
-        pseudo: &mut FilletBrep,
-        corner: &mut FilletCorner,
-        id: FilletSolverId,
-        fillet_geom: crate::blend::fillet_geom::p1::FilletGeomId,
-        split_vertexuse: crate::topology::VertexuseId,
-        which_end: usize,
-    ) -> Result<crate::blend::fillet_geom::p1::FilletGeomId> {
-        let this = self.id;
-        let executive = self.executive;
-        let solver = self
-            .solvers
-            .get_mut(id.0 as usize)
-            .and_then(Option::as_mut)
-            .ok_or_else(|| invalid("fillet geometry solver is not live"))?;
-        solver.base_mut().split_fillet_geom_at_side_edge(
-            k,
-            target,
-            pseudo,
-            fillet_geom,
-            split_vertexuse,
-            which_end,
-            &mut SessionSplitCorners {
-                executive,
-                corners: self.corners.as_mut_slice(),
-                this: Some((this, corner)),
-            },
-        )
-    }
-    fn calc_corner_vert_geom(
-        &mut self,
-        k: &Kernel,
-        target: &mut Brep,
-        pseudo: &mut FilletBrep,
-        corner: &mut FilletCorner,
-        _corner_id: Option<FilletCornerId>,
-    ) -> Result<()> {
-        // The corner goes back into its slot for the calculation (the vertex
-        // calculators find it through the corner table).
-        let index = self.id.0 as usize;
-        let slot = self
-            .corners
-            .get_mut(index)
-            .ok_or_else(|| invalid("corner is not live"))?;
-        std::mem::swap(slot, corner);
-        let result = live_corner_vertices_geom(
-            k,
-            target,
-            pseudo,
-            self.solvers,
-            self.corners,
-            self.extended_surfaces,
-            self.id,
-            false,
-        );
-        if let Some(slot) = self.corners.get_mut(index) {
-            std::mem::swap(slot, corner);
-        }
-        result
-    }
-}
-
 fn live_vertex_solvers<'s>(
     pseudo: &FilletBrep,
     solvers: &'s mut [Option<SolverObject>],
@@ -1144,11 +1065,8 @@ struct SessionNx2Adjust<'a> {
     pseudo: &'a mut FilletBrep,
     corner: FilletCornerId,
     solvers: &'a mut [Option<SolverObject>],
-    /// The corner slots, the running corner's holding a placeholder.
-    corners: &'a mut Vec<FilletCorner>,
     /// The executive's `m_vExtendedSurfacesMap`.
     extended_surfaces: &'a mut BTreeMap<FaceId, Surface>,
-    executive: &'a mut FilletExecutive<FilletObject>,
 }
 
 impl Nx2AdjustContext for SessionNx2Adjust<'_> {
@@ -1167,25 +1085,6 @@ impl Nx2AdjustContext for SessionNx2Adjust<'_> {
             self.pseudo,
             Some(self.corner),
             self.extended_surfaces,
-        )
-    }
-    fn test_and_convert_big_rad_fillet(
-        &mut self,
-        corner: &mut FilletCorner,
-        fg: crate::blend::fillet_geom::p1::FilletGeomId,
-    ) -> Result<bool> {
-        big_radius::test_and_convert_big_rad_fillet(
-            &mut big_radius::BigRadEnv {
-                k: self.k,
-                target: &mut *self.target,
-                pseudo: &mut *self.pseudo,
-                solvers: &mut *self.solvers,
-                corners: &mut *self.corners,
-                executive: &mut *self.executive,
-            },
-            self.corner,
-            corner,
-            fg,
         )
     }
 }
@@ -1638,8 +1537,11 @@ impl<'target> FilletSession<'target> {
                 swept_turns: false,
                 set_back_vertices: Vec::new(),
                 set_back_fills: Vec::new(),
+                radius_corner_surfaces: Vec::new(),
+                setback_refusal: None,
                 blend_face_marks: Vec::new(),
                 chamfer_corner: crate::blend::blend_corner::BlendChamferCorner::Mitre,
+                band_cut_cache: None,
             },
             _gn_scope: gn_scope,
         })
@@ -1815,6 +1717,7 @@ impl<'target> FilletSession<'target> {
         continuity: u32,
         thumbweight: f64,
     ) -> Result<()> {
+        crate::profile::profile_scope!(k, "blend::session::prepare");
         if edges.is_empty() {
             return Err(SolidError::Upstream {
                 operation: OP,
@@ -1827,12 +1730,13 @@ impl<'target> FilletSession<'target> {
             2 => FilletSurfaceGeneratorType::BlendCurve,
             _ => FilletSurfaceGeneratorType::Circular,
         };
+        self.refuse_rounds_too_small(k, edges, &[radius], &[xsect])?;
         let edges = edges
             .iter()
             .map(|id| FilletObject::Topology(FilletBody::Target, EntityRef::Edge(*id)))
             .collect::<Vec<_>>();
         self.executive.set_do_global_merge(true);
-        self.executive.set_fillet_parameters(
+        let prepared = self.executive.set_fillet_parameters(
             k,
             &mut self.objects,
             &FilletParameters {
@@ -1850,7 +1754,8 @@ impl<'target> FilletSession<'target> {
                 thumbweight,
                 second_radii: None,
             },
-        )
+        );
+        self.typed_unblendable(k, prepared)
     }
 
     /// `SetDoGlobalMerge(TRUE)` then the per-edge `SetFilletParameters` overload
@@ -1959,6 +1864,7 @@ impl<'target> FilletSession<'target> {
         continuity: u32,
         thumbweight: f64,
     ) -> Result<()> {
+        crate::profile::profile_scope!(k, "blend::session::prepare");
         if edges.is_empty() {
             return Err(SolidError::Upstream {
                 operation: OP,
@@ -1970,7 +1876,7 @@ impl<'target> FilletSession<'target> {
             .iter()
             .map(|id| FilletObject::Topology(FilletBody::Target, EntityRef::Edge(*id)))
             .collect::<Vec<_>>();
-        self.executive.set_fillet_parameters(
+        let prepared = self.executive.set_fillet_parameters(
             k,
             &mut self.objects,
             &FilletParameters {
@@ -1988,7 +1894,8 @@ impl<'target> FilletSession<'target> {
                 thumbweight,
                 second_radii: None,
             },
-        )
+        );
+        self.typed_unblendable(k, prepared)
     }
 
     #[allow(clippy::too_many_arguments)] // the native overload's parameters
@@ -2033,13 +1940,16 @@ impl<'target> FilletSession<'target> {
                 entity: None,
             });
         }
+        if radius_type == FilletSolverType::ConstRadius && second_radii.is_none() {
+            self.refuse_rounds_too_small(k, edges, radii, xsect_types)?;
+        }
         let radius_types = vec![radius_type; edges.len()];
         let edges = edges
             .iter()
             .map(|id| FilletObject::Topology(FilletBody::Target, EntityRef::Edge(*id)))
             .collect::<Vec<_>>();
         self.executive.set_do_global_merge(true);
-        self.executive.set_fillet_parameters(
+        let prepared = self.executive.set_fillet_parameters(
             k,
             &mut self.objects,
             &FilletParameters {
@@ -2057,7 +1967,8 @@ impl<'target> FilletSession<'target> {
                 thumbweight,
                 second_radii,
             },
-        )
+        );
+        self.typed_unblendable(k, prepared)
     }
 
     /// `SetDoGlobalMerge(TRUE)` then the same-parameters `SetFilletParameters`
@@ -2080,6 +1991,7 @@ impl<'target> FilletSession<'target> {
         xsect_type: u32,
         continuity: u32,
     ) -> Result<()> {
+        crate::profile::profile_scope!(k, "blend::session::prepare");
         if edges.is_empty() {
             return Err(SolidError::Upstream {
                 operation: OP,
@@ -2100,7 +2012,7 @@ impl<'target> FilletSession<'target> {
             .map(|id| FilletObject::Topology(FilletBody::Target, EntityRef::Edge(*id)))
             .collect::<Vec<_>>();
         self.executive.set_do_global_merge(true);
-        self.executive.set_fillet_parameters(
+        let prepared = self.executive.set_fillet_parameters(
             k,
             &mut self.objects,
             &FilletParameters {
@@ -2124,7 +2036,8 @@ impl<'target> FilletSession<'target> {
                 },
                 second_radii: None,
             },
-        )
+        );
+        self.typed_unblendable(k, prepared)
     }
 
     /// Create and retain the actual corners in native executive order.
@@ -2137,6 +2050,7 @@ impl<'target> FilletSession<'target> {
         k: &Kernel,
         error_info: Option<&mut ErrorInfo<FilletObject>>,
     ) -> Result<()> {
+        crate::profile::profile_scope!(k, "blend::session::create_corners");
         // solvers loaded since the last sync (`SetFilletParameters`) read the handler
         // during the corners' traces
         self.sync_self_intersection_handler();
@@ -2270,12 +2184,10 @@ impl<'target> FilletSession<'target> {
                 // every edge use is a solver's). A chamfer corner's rounds are not
                 // circular, so ClassifyBall finds no Ball there before any test that could
                 // fail.
-                if k.fixes.fillet_blend_corner
-                    && matches!(
-                        corner.kind,
-                        FilletCornerKind::ConvexNByN | FilletCornerKind::ConcaveNByN
-                    )
-                    && corner.all_eus.as_ref().map_or(0, Vec::len) >= 3
+                if matches!(
+                    corner.kind,
+                    FilletCornerKind::ConvexNByN | FilletCornerKind::ConcaveNByN
+                ) && corner.all_eus.as_ref().map_or(0, Vec::len) >= 3
                     && corner.solver_eus.as_ref().map_or(0, Vec::len)
                         == corner.all_eus.as_ref().map_or(0, Vec::len)
                     && !corner.chamfer
@@ -2332,8 +2244,7 @@ impl<'target> FilletSession<'target> {
                 // (SmBlendCorner::ClassifySetBack, in SmFilletCorner::Create's NxN case,
                 // after the Ball); a failed classification builds no corner. The others as
                 // before.
-                if k.fixes.fillet_blend_corner
-                    && corner.blend.is_none()
+                if corner.blend.is_none()
                     && matches!(
                         corner.kind,
                         FilletCornerKind::ConvexNByN | FilletCornerKind::ConcaveNByN
@@ -2390,8 +2301,7 @@ impl<'target> FilletSession<'target> {
                 // refused, decided from the request and the classification alone (the second
                 // door, SetSetBackDist on the made corner, is refused by `do_filleting` on
                 // the same `builds_setback`).
-                if k.fixes.fillet_blend_corner
-                    && crate::blend::blend_corner::setback::set_back_fill_of(
+                if crate::blend::blend_corner::setback::set_back_fill_of(
                         set_back_fills,
                         vertex,
                     )
@@ -2410,9 +2320,7 @@ impl<'target> FilletSession<'target> {
                 // The fork's (WR-697, e647dac): with GetSweptTurns() a blend corner's
                 // Turn is Swept, or refused with its reason (SmBlendCorner::Classify)
                 if let Some(blend) = corner.blend.as_mut().filter(|blend| {
-                    k.fixes.fillet_blend_corner
-                        && swept_turns
-                        && blend.event == crate::blend::blend_corner::BlendCornerEvent::Turn
+                    swept_turns && blend.event == crate::blend::blend_corner::BlendCornerEvent::Turn
                 }) {
                     blend.turn = crate::blend::blend_corner::BlendTurn::Swept;
                     let lookup = SweptSessionSolvers {
@@ -2639,8 +2547,11 @@ impl<'target> FilletSession<'target> {
         k: &mut Kernel,
         error_info: Option<&mut ErrorInfo<FilletObject>>,
     ) -> Result<()> {
-        self.executive
-            .create_fillet_brep(k, &mut self.objects, error_info)
+        let res = self
+            .executive
+            .create_fillet_brep(k, &mut self.objects, error_info);
+        self.objects.band_cut_cache = None;
+        res
     }
 
     /// `GetPreviewFilletSurfaces`: `CreateFilletCorners` (its default null error info),
@@ -2753,13 +2664,11 @@ impl<'target> FilletSession<'target> {
         &self.executive.error
     }
 
-    /// The fork's `SetSweptTurns` (smlib#79 step 4b; WR-697): with
-    /// `Kernel::fixes.fillet_blend_corner`, a blend corner's Turn (two rounds of one
+    /// The fork's `SetSweptTurns` (smlib#79 step 4b; WR-697): a blend corner's Turn (two rounds of one
     /// convexity that turn at a sharp side edge) is Swept, its corner face the rounds' end
     /// section revolved about the side edge (an exact torus), instead of Mitred; a Swept
     /// turn the blend corner does not build is refused with its reason. Set it before
-    /// [`Self::do_fillet`] (the corners are made there). Without the flag it changes
-    /// nothing.
+    /// [`Self::do_fillet`] (the corners are made there).
     pub fn set_swept_turns(&mut self, swept: bool) {
         self.objects.swept_turns = swept;
     }
@@ -2776,9 +2685,8 @@ impl<'target> FilletSession<'target> {
 
     /// The fork's `AddSetBackVertex` (smlib#79 step 4c; WR-697): the caller sets
     /// `vertex` back (its corner's setback distance, set after the corners are made), so
-    /// with `Kernel::fixes.fillet_blend_corner` no Ball is built there
-    /// (`IsSetBackVertex`, read by `SmBlendCorner::ClassifyBall`). Add it before
-    /// [`Self::do_fillet`]. Without the flag it changes nothing.
+    /// no Ball is built there (`IsSetBackVertex`, read by `SmBlendCorner::ClassifyBall`).
+    /// Add it before [`Self::do_fillet`].
     pub fn add_set_back_vertex(&mut self, vertex: VertexId) {
         self.objects.set_back_vertices.push(vertex);
     }
@@ -2787,7 +2695,7 @@ impl<'target> FilletSession<'target> {
     /// `setback` along each of its edges, with an ease `ease` before it (0: none): asked
     /// before [`Self::do_fillet`], which then makes that corner the blend corner's Setback
     /// (the vertex is no Ball, as one marked with [`Self::add_set_back_vertex`] is not),
-    /// filled by the setback split, where it can (with `Kernel::fixes.fillet_blend_corner`).
+    /// filled by the setback split, where it can.
     /// Left `open`, a G1 corner is the Setback's hole (its spring curves, no fill, ef57570);
     /// only a G2 corner (eased, or curvature-continuous sections) stays the fill's patches
     /// the caller removes. A corner asked for here that is not the Setback is refused
@@ -2807,8 +2715,7 @@ impl<'target> FilletSession<'target> {
 
     /// The fork's `GetFitSetBack` (smlib#104 f1d81f4): with a setback corner refused as too
     /// short for a convex fill (`FilletErrorType::NoRoom`), the least setback that builds
-    /// one: `> 0`, `0` when none does, `< 0` when not that cause. Only with
-    /// `fixes.fillet_blend_corner`.
+    /// one: `> 0`, `0` when none does, `< 0` when not that cause.
     #[must_use]
     pub fn fit_setback(&self) -> f64 {
         self.executive.fit_setback
@@ -2891,9 +2798,8 @@ impl<'target> FilletSession<'target> {
             .collect()
     }
 
-    /// `SmFilletCorner::SetSetBackDist` on one live corner. With
-    /// `Kernel::fixes.fillet_blend_corner`, a setback (`distance > 0`) set on a corner that
-    /// builds none (neither the blend corner's Setback nor an N x N corner,
+    /// `SmFilletCorner::SetSetBackDist` on one live corner. A setback (`distance > 0`) set on
+    /// a corner that builds none (neither the blend corner's Setback nor an N x N corner,
     /// `blend_corner::setback::builds_setback`) is refused by [`Self::do_filleting`]
     /// (`CornerUnsupported`) rather than built without it.
     ///
@@ -2971,51 +2877,21 @@ const OP_NOTE_OPEN_END: &str = "blend::fillet_executive::session::note_open_end"
 impl CornerEdgeAccess<FilletObject> for SessionObjects<'_> {
     fn edges_adjust_tangent(
         &mut self,
-        k: &mut Kernel,
+        _k: &mut Kernel,
         corner: FilletObject,
-        executive: &mut FilletExecutive<FilletObject>,
+        _executive: &mut FilletExecutive<FilletObject>,
     ) -> Result<()> {
         let FilletObject::Corner(id) = corner else {
             return Err(invalid("object is not a corner"));
         };
-        let SessionObjects {
-            target,
-            pseudo,
-            solvers,
-            corners,
-            extended_surfaces,
-            ..
-        } = self;
-        // The running corner is taken out of its slot while it adjusts; its own vertex
-        // calculation puts it back for the duration (TangentSplitOps).
-        let slot = corners
-            .get_mut(id.0 as usize)
+        // AdjustTangentCorner is the base class's SM_SUCCESS at every corner: the Nx2
+        // override (AdjustTwoBlendTangentCorner) went with the fork's smlib#113 (34288e5),
+        // the closed Nx1 corner's with caa67d0, and every two-blend corner is a blend
+        // corner, whose events adjust nothing (#2400)
+        self.corners
+            .get(id.0 as usize)
             .ok_or_else(|| invalid("corner is not live"))?;
-        let placeholder = FilletCorner::new(FilletCornerKind::Open, None, None, None, 0.0, 0.0);
-        let mut corner = std::mem::replace(slot, placeholder);
-        let mut ops = SessionTangentSplit {
-            executive,
-            solvers: solvers.as_mut_slice(),
-            corners,
-            extended_surfaces,
-            id,
-        };
-        let mut env = TangentSplitEnv {
-            k,
-            target,
-            pseudo,
-            corner: Some(id),
-            ops: &mut ops,
-        };
-        let result = corner.adjust_tangent_corner_with(
-            &mut env,
-            FilletCorner::adjust_tangent_corner_nx2,
-            FilletCorner::adjust_tangent_corner_nx1_closed,
-        );
-        if let Some(slot) = ops.corners.get_mut(id.0 as usize) {
-            *slot = corner;
-        }
-        result
+        Ok(())
     }
     fn edges_calculate(
         &mut self,
@@ -3031,6 +2907,7 @@ impl CornerEdgeAccess<FilletObject> for SessionObjects<'_> {
             pseudo,
             solvers,
             corners,
+            setback_refusal,
             extended_surfaces,
             set_back_fills,
             ..
@@ -3116,7 +2993,8 @@ impl CornerEdgeAccess<FilletObject> for SessionObjects<'_> {
             };
             if let Err(refusal) = refused {
                 note_setback_refusal(executive, target, corner.filleted_vertex(), &refusal);
-                return Err(SolidError::sm_err("SmBlendCorner::BuildSetBackFill"));
+                *setback_refusal = refusal.refusal;
+                return Err(setback_refused("SmBlendCorner::BuildSetBackFill", &refusal));
             }
         }
         // The fork's (WR-697, 6fd0411, 6e79de5): a Mixed corner's edges and its two faces'
@@ -3171,10 +3049,9 @@ impl CornerEdgeAccess<FilletObject> for SessionObjects<'_> {
             });
             Ok(())
         };
-        if k.fixes.fillet_blend_corner
-            && corner
-                .blend
-                .is_some_and(crate::blend::blend_corner::BlendCorner::is_end)
+        if corner
+            .blend
+            .is_some_and(crate::blend::blend_corner::BlendCorner::is_end)
         {
             // The fork's SmBlendCorner::CalcEndEdgeGeom (53c47b8, 41a39ec): an End's edges,
             // its rail past its side edge refused naming the radius that reaches it
@@ -3771,7 +3648,13 @@ impl BrepCreationAccess<FilletObject> for SessionObjects<'_> {
         if crate::blend::fillet_solver::p5::is_concave_edge(k, self.target, edge)? {
             return Ok(None);
         }
-        let Some(cut) = band_cuts::band_cuts_the_part(k, self.target, current)? else {
+        let Some(cut) = band_cuts::band_cuts_the_part_cached(
+            k,
+            self.target,
+            current,
+            &mut self.band_cut_cache,
+        )?
+        else {
             return Ok(None);
         };
         let chamfer = current.base().fsg.as_ref().is_some_and(|fsg| {
@@ -3810,7 +3693,13 @@ impl BrepCreationAccess<FilletObject> for SessionObjects<'_> {
         if crate::blend::fillet_solver::p5::is_concave_edge(k, self.target, edge)? {
             return Ok(None);
         }
-        let Some(cut) = band_cuts::band_breaks_through_the_part(k, self.target, current)? else {
+        let Some(cut) = band_cuts::band_breaks_through_the_part_cached(
+            k,
+            self.target,
+            current,
+            &mut self.band_cut_cache,
+        )?
+        else {
             return Ok(None);
         };
         let chamfer = current.base().fsg.as_ref().is_some_and(|fsg| {
@@ -3925,25 +3814,23 @@ impl BrepCreationAccess<FilletObject> for SessionObjects<'_> {
         k: &mut Kernel,
         solver: FilletObject,
         radius: Option<f64>,
-    ) -> Result<Option<f64>> {
+    ) -> Result<Option<crate::blend::fillet_exact::CollapsedOffset>> {
         let FilletObject::Solver(id) = solver else {
             return Err(invalid("object is not a solver"));
         };
         // the other blends' edges, where a chain runs on into the next round (#2403's ball
-        // triangle, built only under `fillet_blend_corner`)
+        // triangle)
         let mut joined = Vec::new();
-        if k.fixes.fillet_blend_corner {
-            for (index, other) in self.solvers.iter_mut().enumerate() {
-                let Some(other) = other.as_mut() else {
-                    continue;
-                };
-                if index == id.0 as usize {
-                    continue;
-                }
-                if let Some(use0) = ball_regular::ops_of(other).solver().edgeuse(0)? {
-                    if let Some(e) = crate::topology::edgeuse::p1::edge(self.target, use0)? {
-                        joined.push(e);
-                    }
+        for (index, other) in self.solvers.iter_mut().enumerate() {
+            let Some(other) = other.as_mut() else {
+                continue;
+            };
+            if index == id.0 as usize {
+                continue;
+            }
+            if let Some(use0) = ball_regular::ops_of(other).solver().edgeuse(0)? {
+                if let Some(e) = crate::topology::edgeuse::p1::edge(self.target, use0)? {
+                    joined.push(e);
                 }
             }
         }
@@ -3962,6 +3849,30 @@ impl BrepCreationAccess<FilletObject> for SessionObjects<'_> {
             self.target,
             radius,
             &joined,
+        )
+    }
+
+    fn creation_rail_below_resolution(
+        &mut self,
+        k: &mut Kernel,
+        solver: FilletObject,
+    ) -> Result<Option<crate::blend::fillet_exact::RailBelowResolution>> {
+        let FilletObject::Solver(id) = solver else {
+            return Err(invalid("object is not a solver"));
+        };
+        let current = self
+            .solvers
+            .get_mut(id.0 as usize)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| invalid("solver is not live in this session"))?;
+        let (rolls, law) = ball_regular::rolls_a_ball(current);
+        if !rolls || law {
+            return Ok(None);
+        }
+        crate::blend::fillet_exact::rail_below_resolution(
+            ball_regular::ops_of(current),
+            k,
+            self.target,
         )
     }
 
@@ -5346,6 +5257,8 @@ impl SolverGeometryAccess<FilletObject> for SessionObjects<'_> {
                     .clone()
                     .ok_or_else(|| invalid("filleted edge without curve"))?;
                 let edge_ivl_b = self.target.edge(edge_b)?.interval;
+                let edge_start_b = edge_curve_b.evaluate_point(k, edge_ivl_b.min())?;
+                let edge_end_b = edge_curve_b.evaluate_point(k, edge_ivl_b.max())?;
                 let (Some(rails_a), Some(rails_b)) = (rails.get(a), rails.get(b)) else {
                     continue;
                 };
@@ -5404,6 +5317,17 @@ impl SolverGeometryAccess<FilletObject> for SessionObjects<'_> {
                                 continue; // beside the band, not across it
                             }
                             let e = edge_curve_b.evaluate_point(k, t)?;
+                            // A constrained closest point can return an endpoint one
+                            // parameter ulp inside the interval. It is still beside
+                            // the band: testing only t would extend the band's chord
+                            // across the face and falsely catch a distant rail (#2903).
+                            // Use the existing solver tolerance in geometric space,
+                            // independent of the edge curve's parameterization.
+                            if (e - edge_start_b).length() <= tol
+                                || (e - edge_end_b).length() <= tol
+                            {
+                                continue;
+                            }
                             let r = curve_b.evaluate_point(k, on_rail.parameter)?;
                             let mut chord = e - r;
                             let width = chord.length();
@@ -6285,6 +6209,7 @@ impl SessionObjects<'_> {
             solvers,
             corners,
             set_back_fills,
+            setback_refusal,
             ..
         } = self;
         let corner = corners
@@ -6309,11 +6234,15 @@ impl SessionObjects<'_> {
         };
         if let Err(refusal) = refused {
             note_setback_refusal(executive, target, corner.filleted_vertex(), &refusal);
-            return Err(SolidError::sm_err("SmBlendCorner::MakeSetBackTopology"));
+            *setback_refusal = refusal.refusal;
+            return Err(setback_refused(
+                "SmBlendCorner::MakeSetBackTopology",
+                &refusal,
+            ));
         }
         Ok(())
     }
-    /// `MakeCornerTopology` of a 1x1, 2x2, 4x3, open or degenerate corner, with the
+    /// `MakeCornerTopology` of a 4x3, open or degenerate corner, with the
     /// solvers of its edge uses (`GetFilletSolverOfEdgeuse`) resolved first.
     fn make_end_corner_topology(
         &mut self,
@@ -6365,12 +6294,10 @@ impl SessionObjects<'_> {
             all_eu_solvers,
         };
         match corner.kind.corner_type() {
-            FilletCornerType::OneByOne => corner.make_1x1_corner_topology(env),
-            FilletCornerType::TwoByTwo => corner.make_2x2_corner_topology(env),
             FilletCornerType::FourByThree => corner.make_4x3_corner_topology(env),
             FilletCornerType::Open => corner.make_open_corner_topology(env),
             FilletCornerType::Degenerate => corner.make_degenerate_corner_topology(env),
-            _ => Err(invalid("not a 1x1, 2x2, 4x3, open or degenerate corner")),
+            _ => Err(invalid("not a 4x3, open or degenerate corner")),
         }
     }
     fn make_3x2_mixed_corner_topology(
@@ -6565,15 +6492,15 @@ impl CornerVertexAccess<FilletObject> for SessionObjects<'_> {
             FilletCornerType::ThreeByTwoMixed => {
                 self.make_3x2_mixed_corner_topology(k, id, executive)
             }
-            FilletCornerType::OneByOne
-            | FilletCornerType::TwoByTwo
-            | FilletCornerType::FourByThree
+            FilletCornerType::FourByThree
             | FilletCornerType::Open
             | FilletCornerType::Degenerate => self.make_end_corner_topology(k, id, executive),
-            // Abstract upstream (pure virtual): no corner object has these types.
-            FilletCornerType::Unknown | FilletCornerType::NByN => {
-                Err(invalid("abstract corner type has no MakeCornerTopology"))
-            }
+            // Abstract upstream (pure virtual): no corner object has these types; nor the 1x1
+            // and 2x2 corners', whose classes the blend corner's Join replaced (#2400).
+            FilletCornerType::Unknown
+            | FilletCornerType::NByN
+            | FilletCornerType::OneByOne
+            | FilletCornerType::TwoByTwo => Err(invalid("no corner object has this type")),
         }
     }
     fn vertices_error_info(
@@ -6679,7 +6606,7 @@ impl CornerVertexAccess<FilletObject> for SessionObjects<'_> {
         };
         // Not the fork's (#2406): an End at a smooth vertex that can wait for its rails'
         // rollover (the rollover follows the corners' edges, not in a cliff overflow)
-        let rolled_end = k.fixes.fillet_blend_corner && {
+        let rolled_end = {
             let rolls_over = executive.options.classification && !executive.cliff_overflow;
             let SessionObjects {
                 target,
@@ -6754,7 +6681,7 @@ impl CornerAdjustmentAccess<FilletObject> for SessionObjects<'_> {
         &mut self,
         k: &mut Kernel,
         corner: FilletObject,
-        executive: &mut FilletExecutive<FilletObject>,
+        _executive: &mut FilletExecutive<FilletObject>,
     ) -> Result<()> {
         let FilletObject::Corner(id) = corner else {
             return Err(invalid("object is not a corner"));
@@ -6767,24 +6694,18 @@ impl CornerAdjustmentAccess<FilletObject> for SessionObjects<'_> {
             extended_surfaces,
             ..
         } = self;
-        // The running corner is taken out of its slot so that the big-radius
-        // conversion can reach the other corners (and add one) meanwhile.
-        let slot = corners
+        let corner = corners
             .get_mut(id.0 as usize)
             .ok_or_else(|| invalid("corner is not live"))?;
-        let placeholder = FilletCorner::new(FilletCornerKind::Open, None, None, None, 0.0, 0.0);
-        let mut corner = std::mem::replace(slot, placeholder);
         let mut context = SessionNx2Adjust {
             k,
             target,
             pseudo,
             corner: id,
             solvers: solvers.as_mut_slice(),
-            corners,
             extended_surfaces,
-            executive,
         };
-        let result = corner.adjust_topology_with(
+        corner.adjust_topology_with(
             &mut context,
             FilletCorner::adjust_topology_nx2_with,
             // SmFilletConcaveNxNCorner inherits SmFilletConvexNxNCorner::AdjustTopology.
@@ -6804,11 +6725,7 @@ impl CornerAdjustmentAccess<FilletObject> for SessionObjects<'_> {
                     },
                 )
             },
-        );
-        if let Some(slot) = corners.get_mut(id.0 as usize) {
-            *slot = corner;
-        }
-        result
+        )
     }
 }
 

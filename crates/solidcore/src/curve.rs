@@ -16,6 +16,7 @@
 //!   returns [`SolidError::InvalidInput`] above the bound; below it results are
 //!   unchanged.
 
+pub mod arc;
 pub mod composite_curve;
 pub mod conic;
 pub mod crv_in_volume;
@@ -24,12 +25,14 @@ pub mod crv_on_surf;
 pub mod curve;
 pub mod curve_cache;
 pub mod ellipse;
+pub mod from_parameters;
 pub mod hermite_curve;
 pub mod hyperbola;
 pub mod iso_curve;
 pub mod line;
 pub mod offset_curve;
 pub mod parabola;
+pub mod path;
 pub mod projected_curve;
 pub mod step_edge;
 pub mod tangent_field;
