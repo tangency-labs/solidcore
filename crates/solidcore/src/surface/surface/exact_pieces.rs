@@ -1206,7 +1206,7 @@ mod tests {
     /// operation sequence replayed in IEEE doubles gives that bound to the bit. The
     /// lift's true distance is the rounding of the control points `1/3` and `2/3`, under
     /// `1e-16`.
-    const EXACT_LIFT_ROUNDING: f64 = 1.125_378_658_707_068_1e-13;
+    const EXACT_LIFT_ROUNDING: f64 = 1.1253786587070681e-13;
 
     #[test]
     fn an_exact_lift_is_bounded_by_rounding() {
