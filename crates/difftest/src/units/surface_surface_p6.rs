@@ -37,7 +37,7 @@ use solidcore::nurbs::b_spline_curve::BSplineCurve;
 use solidcore::nurbs::b_spline_surface::{BSplineSurface, BSplineSurfaceForm, SurfParamType};
 use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use solidcore::nurbs::crv_basic::Curve;
-use solidcore::nurbs::math::{CPoint, NOW};
+use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::nurbs::srf_basic::Surface as NlSurface;
 use solidcore::surface::curve_bounded_surface::CurveBoundedSurface;
 use solidcore::surface::plane::Plane;
@@ -50,6 +50,7 @@ use solidcore::surface::surface::Surface;
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::contract;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -763,6 +764,290 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     }
 }
 
+// ---- input contract -----------------------------------------------------------------
+
+/// The largest control point index.
+const MAX_INDEX: usize = 32;
+/// The largest degree.
+const MAX_DEGREE: usize = 5;
+/// The largest magnitude of a coordinate, knot or scalar.
+const MAX_COORD: f64 = 1e6;
+/// `SM_TT_DIR_TO_REFERENCE_CURVE`.
+const TT_DIR_TO_REFERENCE_CURVE: u8 = 3;
+/// The solver operations `sm_SCLocalSolve` supports: minimise, maximise, normalise and
+/// the signed directed minimum (the last).
+const SCLS_OPS: [u8; 4] = [3, 4, 5, 9];
+const SO_SIGNED_MIN: u8 = 9;
+
+fn fin(v: f64) -> bool {
+    contract::finite(v, MAX_COORD)
+}
+
+fn vec3(v: &[f64; 3]) -> bool {
+    contract::vec3(v, MAX_COORD)
+}
+
+fn nonzero3(v: &[f64; 3]) -> bool {
+    contract::nonzero3(v, MAX_COORD)
+}
+
+/// Whether control points are of one rationality with weights in `[1e-3, 1e3]` and
+/// coordinates within range, 3D-stored unless `planar`.
+fn points(pts: &[[f64; 4]], planar: bool) -> bool {
+    let rat = pts.first().is_some_and(|p| p[3] != NOW);
+    pts.iter().all(|&[x, y, z, w]| {
+        (z != NOZ || planar)
+            && (w != NOW) == rat
+            && (!rat || (1e-3..=1e3).contains(&w))
+            && [x, y, if z == NOZ { 0.0 } else { z }]
+                .iter()
+                .all(|&c| fin(c))
+    })
+}
+
+/// The distance of `p` from the axis through `o` along `a`.
+fn dist_to_axis(p: [f64; 3], o: [f64; 3], a: [f64; 3]) -> f64 {
+    let d = [p[0] - o[0], p[1] - o[1], p[2] - o[2]];
+    let la = contract::len_sq(a).sqrt();
+    let c = [
+        d[1] * a[2] - d[2] * a[1],
+        d[2] * a[0] - d[0] * a[2],
+        d[0] * a[1] - d[1] * a[0],
+    ];
+    contract::len_sq(c).sqrt() / la
+}
+
+/// The natural domain (`None` when unbounded) and whether it is a plain B-spline or
+/// sphere, of a resolved surface that keeps the contract: a B-spline within the size
+/// bounds with [`points`] and clamped knots, a plane with a non-zero normal, a curve
+/// bounded surface over one of those (not nested), a revolution of a generator at least
+/// `1e-3` long not lying on its non-zero axis, or the sphere.
+fn surface_kind(s: &SrfIn, nested: bool) -> Option<(Option<[f64; 4]>, bool)> {
+    match s {
+        SrfIn::Sphere {} => Some((Some([0.0, 0.0, 1.0, 1.0]), true)),
+        SrfIn::Sms(_) => None,
+        SrfIn::Revolution { a, b, p, axis, .. } => {
+            let len = contract::len_sq([b[0] - a[0], b[1] - a[1], b[2] - a[2]]).sqrt();
+            let ok = vec3(a) && vec3(b) && vec3(p) && nonzero3(axis) && len >= 1e-3;
+            let on_axis = dist_to_axis(*a, *p, *axis) < 1e-3 && dist_to_axis(*b, *p, *axis) < 1e-3;
+            (ok && !on_axis).then_some((None, false))
+        }
+        SrfIn::Bounded { basis, .. } => {
+            if nested {
+                return None;
+            }
+            let (dom, plain) = surface_kind(basis, true)?;
+            (dom.is_some() || !plain).then_some((dom, false))
+        }
+        SrfIn::Plane { o, n } => (vec3(o) && nonzero3(n)).then_some((None, false)),
+        SrfIn::Bspline(b) => {
+            let n = b.net.len().checked_sub(1)?;
+            let cols = b.net.first()?.len();
+            let m = cols.checked_sub(1)?;
+            let ok = b.form <= 11
+                && n <= MAX_INDEX
+                && m <= MAX_INDEX
+                && (1..=n.min(MAX_DEGREE)).contains(&b.p)
+                && (1..=m.min(MAX_DEGREE)).contains(&b.q)
+                && b.u.len() == n + b.p + 2
+                && b.v.len() == m + b.q + 2
+                && b.net.iter().all(|row| row.len() == cols && points(row, false))
+                && b.u.iter().chain(&b.v).all(|&k| fin(k));
+            if !ok {
+                return None;
+            }
+            let (u0, u1) = contract::clamped(&b.u, b.p)?;
+            let (v0, v1) = contract::clamped(&b.v, b.q)?;
+            Some((Some([u0, v0, u1, v1]), true))
+        }
+    }
+}
+
+/// The parameter range of a curve the contract admits.
+enum Range {
+    /// A line segment (any interval within `1e4`).
+    Line,
+    /// A B-spline's knot range.
+    Knots(f64, f64),
+}
+
+/// The [`Range`] of a curve that keeps the contract: a line at least `1e-6` long, or a 2D
+/// or 3D B-spline within the size bounds with [`points`] and clamped knots.
+fn curve_kind(c: &CrvIn) -> Option<Range> {
+    match c {
+        CrvIn::Line { a, b } => {
+            let len = contract::len_sq([b[0] - a[0], b[1] - a[1], b[2] - a[2]]).sqrt();
+            (vec3(a) && vec3(b) && len >= 1e-6).then_some(Range::Line)
+        }
+        CrvIn::Bspline { dim, cpts, p, u } => {
+            let n = cpts.len().checked_sub(1)?;
+            let ok = (2..=3).contains(dim)
+                && n <= MAX_INDEX
+                && (1..=n.min(MAX_DEGREE)).contains(p)
+                && u.len() == n + p + 2
+                && points(cpts, *dim == 2)
+                && u.iter().all(|&k| fin(k));
+            if !ok {
+                return None;
+            }
+            contract::clamped(u, *p).map(|(a, b)| Range::Knots(a, b))
+        }
+    }
+}
+
+/// A [`curve_kind`] and an ordered interval inside its range (within `1e4` for a line).
+fn curve_and_interval(c: &CrvIn, [x, y]: [f64; 2]) -> bool {
+    let Some(range) = curve_kind(c) else {
+        return false;
+    };
+    fin(x)
+        && fin(y)
+        && x < y
+        && match range {
+            Range::Knots(a, b) => x >= a && y <= b,
+            Range::Line => x.abs() <= 1e4 && y.abs() <= 1e4,
+        }
+}
+
+/// A finite parameter point within one domain length of `dom` (within `1e4` without one).
+fn uv_near([u, v]: [f64; 2], dom: Option<[f64; 4]>) -> bool {
+    fin(u)
+        && fin(v)
+        && match dom {
+            Some([u0, v0, u1, v1]) => {
+                let (du, dv) = (u1 - u0, v1 - v0);
+                u >= u0 - du && u <= u1 + du && v >= v0 - dv && v <= v1 + dv
+            }
+            None => u.abs() <= 1e4 && v.abs() <= 1e4,
+        }
+}
+
+/// A finite ordered domain inside `dom` (within `1e4` without one).
+fn domain_in(d: &[f64; 4], dom: Option<[f64; 4]>) -> bool {
+    let [a, b, c, e] = *d;
+    d.iter().all(|&x| fin(x))
+        && a < c
+        && b < e
+        && match dom {
+            Some([u0, v0, u1, v1]) => a >= u0 && c <= u1 && b >= v0 && e <= v1,
+            None => d.iter().all(|x| x.abs() <= 1e4),
+        }
+}
+
+/// A solution of a type up to 4 with at most `max_vars` parameters and finite values.
+fn solution(s: &SolIn, max_vars: usize) -> bool {
+    s.ty <= 4
+        && s.nvars <= max_vars
+        && fin(s.value)
+        && fin(s.end_value)
+        && s.start.iter().chain(&s.end).all(|&x| fin(x))
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/surface_surface_p6.rs`, `validate`): a
+/// [`surface_kind`] and the op's parameters (enumerators in range, domains inside the
+/// surface's, parameters near it, a [`curve_and_interval`], positive tolerances, up to
+/// [`MAX_SAMPLES`] samples with angles and lengths within `1e4`, a reference curve for
+/// `SM_TT_DIR_TO_REFERENCE_CURVE` (upstream dereferences it unchecked), solution counts
+/// within the objects' parameters, and for `scls` a B-spline surface and a solver
+/// operation `sm_SCLocalSolve` supports, the signed one with a vector).
+fn keeps_contract(i: &Inputs) -> bool {
+    let Some((dom, plain)) = resolve(&i.surface)
+        .ok()
+        .and_then(|s| surface_kind(&s, false))
+    else {
+        return false;
+    };
+    match &i.op {
+        OpIn::Cont { param } => *param <= 1,
+        OpIn::Trim { dom: d, side, .. } => domain_in(d, dom) && *side <= 4,
+        OpIn::Sample {
+            n,
+            tt,
+            vals,
+            reference,
+            curve,
+            ivl,
+            ..
+        } => {
+            *n <= MAX_SAMPLES
+                && *tt <= 8
+                && vals.iter().all(|&a| fin(a) && a.abs() <= 1e4)
+                && match reference {
+                    Some(r) => curve_kind(r).is_some(),
+                    None => *tt != TT_DIR_TO_REFERENCE_CURVE,
+                }
+                && curve_and_interval(curve, *ivl)
+        }
+        OpIn::Lci {
+            dom: d,
+            curve,
+            ivl,
+            tol,
+            guess_uv,
+            guess_t,
+        } => {
+            domain_in(d, dom)
+                && curve_and_interval(curve, *ivl)
+                && fin(*tol)
+                && *tol > 0.0
+                && uv_near(*guess_uv, dom)
+                && fin(*guess_t)
+                && guess_t.abs() <= 1e4
+        }
+        OpIn::Scc {
+            dom: d,
+            curve,
+            ivl,
+            tol,
+            ..
+        } => domain_in(d, dom) && curve_and_interval(curve, *ivl) && fin(*tol) && *tol > 0.0,
+        OpIn::Classify { curve, sol } => curve_kind(curve).is_some() && solution(sol, 3),
+        OpIn::Ssid {
+            other,
+            tol,
+            sol1,
+            sol2,
+        } => {
+            resolve(other)
+                .ok()
+                .and_then(|s| surface_kind(&s, false))
+                .is_some()
+                && fin(*tol)
+                && *tol >= 0.0
+                && solution(sol1, 4)
+                && solution(sol2, 4)
+        }
+        OpIn::Scls {
+            dom: d,
+            uc,
+            vc,
+            sbox,
+            cbox,
+            curve,
+            ivl,
+            tc,
+            tol,
+            vec,
+            sop,
+            ..
+        } => {
+            let Some(sd) = dom.filter(|_| plain) else {
+                return false;
+            };
+            domain_in(d, Some(sd))
+                && uc.iter().chain(vc).chain(tc).all(|&c| c <= 13)
+                && sbox.iter().chain(&cbox.unwrap_or([0.0; 6])).all(|&x| fin(x))
+                && curve_and_interval(curve, *ivl)
+                && fin(*tol)
+                && *tol > 0.0
+                && vec3(&vec.unwrap_or([0.0; 3]))
+                && SCLS_OPS.contains(sop)
+                && (*sop != SO_SIGNED_MIN || vec.is_some())
+        }
+    }
+}
+
 // ---- generator --------------------------------------------------------------------
 
 fn gen_knots(rng: &mut Rng, p: usize, n: usize, kink: bool) -> Vec<f64> {
@@ -1274,6 +1559,9 @@ impl UnitDiff for Runner {
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         for _ in 0..64 {
             let i = gen_case(rng);
+            if !keeps_contract(&i) {
+                continue;
+            }
             if let Err(Fail::Harness(_)) = rust_run(&i) {
                 continue;
             }
