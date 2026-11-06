@@ -15,6 +15,7 @@
 //! | [`OffsetFailure::DistanceUnresolved`]  | `SM_ERR_INVALID_INPUT` (solidcore-native) |
 //! | [`OffsetFailure::ToleranceUnresolved`] | `SM_ERR_INVALID_INPUT` (solidcore-native, WR-749) |
 //! | [`OffsetFailure::SeamOpened`]          | `SM_ERR` (solidcore-native)               |
+//! | [`OffsetFailure::ExactCurveUncut`]     | `SM_ERR` (solidcore-native)               |
 //!
 //! Deviations: not upstream. Entity ids are those of the operation's input B-rep.
 
@@ -112,6 +113,12 @@ pub enum OffsetFailure {
         /// The face, of the operation's input.
         face: FaceId,
     },
+    /// The extended surfaces of the faces beside an edge meet on an exact curve (an
+    /// analytic special case's line or conic) that could not be cut into its pieces inside
+    /// both extended domains with their UV curves
+    /// ([`crate::surface::surface::SurfaceIntersection::clip_exact_curves`]; the failure's
+    /// cause says why). The edge's offsets cannot be mated on it.
+    ExactCurveUncut,
 }
 
 /// How loops of an offset face touch without crossing ([`OffsetFailure::WallsTouch`]).
@@ -167,7 +174,9 @@ impl OffsetFailure {
             Self::EdgeVanishes { edge, face } => edge
                 .map(EntityRef::Edge)
                 .or_else(|| face.map(EntityRef::Face)),
-            Self::DistanceUnresolved { .. } | Self::ToleranceUnresolved { .. } => None,
+            Self::ExactCurveUncut
+            | Self::DistanceUnresolved { .. }
+            | Self::ToleranceUnresolved { .. } => None,
         }
     }
 
@@ -177,7 +186,8 @@ impl OffsetFailure {
             Self::Folds { .. }
             | Self::NotCertified { .. }
             | Self::Collapses { .. }
-            | Self::SeamOpened { .. } => SM_ERR,
+            | Self::SeamOpened { .. }
+            | Self::ExactCurveUncut => SM_ERR,
             Self::WallsTouch { .. } => SM_ERR_OFFSET_WALLS_TOUCH,
             Self::LoopsCross { .. } => SM_ERR_BAD_INTERSECTIONS,
             Self::EdgeVanishes { .. } => SM_ERR_OFFSET_EDGE_VANISHES,
@@ -196,7 +206,7 @@ impl OffsetFailure {
             Self::WallsTouch { .. } => ErrorKind::OffsetWallsTouch,
             Self::LoopsCross { .. } => ErrorKind::OffsetLoopsCross,
             Self::EdgeVanishes { .. } => ErrorKind::OffsetEdgeVanishes,
-            Self::SeamOpened { .. } => ErrorKind::Unsupported,
+            Self::SeamOpened { .. } | Self::ExactCurveUncut => ErrorKind::Unsupported,
             Self::DistanceUnresolved { .. } | Self::ToleranceUnresolved { .. } => {
                 ErrorKind::InvalidInput
             }
@@ -337,6 +347,11 @@ impl core::fmt::Display for OffsetFailure {
                 "face {} meets itself across a seam and is given a surface that is not \
                  closed: the seam has no edge on an open surface",
                 face.index()
+            ),
+            Self::ExactCurveUncut => f.write_str(
+                "the extended faces beside an edge meet on an exact curve that could not be \
+                 cut into its pieces with their UV curves, so the edge's offsets cannot be \
+                 mated",
             ),
             Self::ToleranceUnresolved { tolerance } => write!(
                 f,

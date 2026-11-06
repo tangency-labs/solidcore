@@ -1450,7 +1450,6 @@ impl<'s> SurfaceDropCurve<'s> {
                             .unwrap_or(Vec3::ZERO);
                         let curve_end = ignored(iso_curve.evaluate_point(k, iso_ivl.max()))?
                             .unwrap_or(Vec3::ZERO);
-
                         let iso_u_ivl = Extent1d::from_min_max(
                             min2(curve_start.x, curve_end.x),
                             max2(curve_start.x, curve_end.x),
@@ -1466,8 +1465,19 @@ impl<'s> SurfaceDropCurve<'s> {
                             let next = index2(&solutions, kk)?;
 
                             // If the point drops to the curve, remove it from solutions to check
-                            if iso_u_ivl.contains_value(next.x, 0.0)
-                                && iso_v_ivl.contains_value(next.y, 0.0)
+                            // (not upstream: or its image across the seam does, the same
+                            // point of the curve, whose iso curve would be this one again:
+                            // upstream traces it a second time)
+                            let on_iso = |uv: Point2| {
+                                iso_u_ivl.contains_value(uv.x, 0.0)
+                                    && iso_v_ivl.contains_value(uv.y, 0.0)
+                            };
+                            let across = if on_iso(next) {
+                                None
+                            } else {
+                                is_on_seam(k, surface, next)?
+                            };
+                            if on_iso(next) || across.is_some_and(|uvs| uvs.into_iter().any(on_iso))
                             {
                                 solutions.remove(kk);
                             } else {
