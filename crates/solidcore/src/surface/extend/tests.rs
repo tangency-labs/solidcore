@@ -1487,3 +1487,104 @@ fn a_ball_patch_extends_its_own_net_on_its_sphere_up_to_its_caps() {
         assert!((out.radius() - r).abs() == 0.0 && out.centre() == c);
     }
 }
+
+/// A small plane far from the origin extended far, keeping its parameters: the end cap of a
+/// bar at (147..152, -25.5, 846..852), 5.83 mm square, turned 2 degrees about x by a draft,
+/// extended 547.405 past every side by the draft's local operation (its placement and net as
+/// SolidCraft's draft hands them over). Its net lies on the plane to its rounding, about 1e-13
+/// at this size, and the continuation carries that out about 190 times each way: the
+/// extended net is 6.4e-11 off the plane, where the rounding of the check alone is 8e-12. It
+/// is the plane's own net continued, on the plane within what the source's residual grows
+/// to, and is extended, not refused as not exact.
+#[test]
+fn a_small_tilted_plane_far_from_the_origin_extends_far_on_its_plane() {
+    use crate::surface::implicit::{continuation_lies_on, AnalyticSupport, Implicit};
+    let kk = k();
+    let origin = Vec3::new(152.33308696865228, -25.520154849846044, 852.1498844507267);
+    let x_axis = Vec3::new(0.0, 0.03489949670250011, -0.9993908270190959);
+    let y_axis = Vec3::new(-1.0, 1.9539925233402755e-14, 0.0);
+    let (lu, lv) = (5.830273937304582, 5.830273937304639);
+    let rows = [
+        vec![
+            [
+                152.33308696865228,
+                -25.520154849846044,
+                852.1498844507267,
+                1.0,
+            ],
+            [
+                146.50281303134764,
+                -25.52015484984593,
+                852.1498844507267,
+                1.0,
+            ],
+        ],
+        vec![
+            [
+                152.33308696865228,
+                -25.316681223796408,
+                846.323162158776,
+                1.0,
+            ],
+            [
+                146.50281303134764,
+                -25.316681223796287,
+                846.323162158776,
+                1.0,
+            ],
+        ],
+    ];
+    let SurfaceKind::BSpline(form) =
+        spline(&rows, 1, 1, &[0.0, 0.0, lu, lu], &[0.0, 0.0, lv, lv], false)
+            .kind()
+            .clone()
+    else {
+        unreachable!()
+    };
+    let p = Surface::from(Plane::from_stored(
+        Axis2Placement::from_stored(origin, x_axis, y_axis),
+        Vec2::new(1.0000000000000169, 1.0),
+        Extent2d::from_bounds(0.0, 0.0, lu, lv),
+        form.clone(),
+    ));
+    let on = AnalyticSupport::check(&kk, &p).unwrap().implicit();
+    let Implicit::Plane { origin, normal } = on else {
+        panic!("not a plane: {on:?}");
+    };
+    let d = 547.4052982921842;
+    let e = p
+        .extended_sides_keeping_parameters(&kk, &BoxSide::ALL, Continuity::Ruled, d)
+        .unwrap();
+    assert!(
+        e.sides
+            .iter()
+            .all(|x| matches!(x, SideExtension::Extended(_))),
+        "{:?}",
+        e.sides
+    );
+    let SurfaceKind::BSpline(grown) = e.surface.kind() else {
+        panic!("not a B-spline: {:?}", e.surface.kind());
+    };
+    // every control point on the plane, measured directly: within the bound the
+    // continuation allows, and far below any modelling tolerance
+    for c in grown.gw_nurb().unwrap().cpts().iter().flatten() {
+        let off = normal.dot(Vec3::new(c.x, c.y, c.z) - origin);
+        assert!(off.abs() <= 1e-9, "{c:?}: {off}");
+    }
+    // the check still refuses a continuation 1e-5 off the plane at a far corner (it allows
+    // 2.2e-7 here: the source's residual, 6.1e-12, grown 3.6e4 times)
+    assert!(continuation_lies_on(&form, grown, &on).unwrap());
+    let mut net = grown.gw_nurb().unwrap().cpts();
+    let c = &mut net[0][0];
+    let moved = Vec3::new(c.x, c.y, c.z) + normal * 1e-5;
+    *c = CPoint::new(moved.x, moved.y, moved.z, NOW);
+    let g = grown.gw_nurb().unwrap();
+    let off = Net::new(net, 1, 1, g.u_knots().to_vec(), g.v_knots().to_vec()).unwrap();
+    assert!(!continuation_lies_on(&form, &BSplineSurface::from_gw_nurb(&off), &on).unwrap());
+    for a in e.sides {
+        let SideExtension::Extended(a) = a else {
+            unreachable!()
+        };
+        assert!((a.enclosure.mid() - d).abs() <= 1e-9 * d, "{a:?}");
+    }
+}
