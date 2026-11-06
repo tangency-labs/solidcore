@@ -148,7 +148,7 @@ fn blend(
         prepared
             .and_then(|()| s.create_corners(k, None))
             .and_then(|()| s.do_filleting(k, None))
-            .map_err(|_| (s.error_info().code, s.error_info().comment.to_string()))
+            .map_err(|_| (s.error_info().code, s.error_info().comment.clone()))
     };
     done?;
     stitch_and_orient(k, b, &StitchAndOrientOptions::default()).unwrap();
@@ -494,7 +494,7 @@ fn block_cylinder_arc_piece_is_refused_at_the_seam() {
         "the piece ends at the seam: {ends:?}"
     );
     let r = blend(&mut k, &mut b, Kind::Round, &[at_pick], 2.0);
-    assert_eq!(r.unwrap_err().1, RUNS_ON_ACROSS_SEAM, "refused at the seam, not capped");
+    assert_eq!(r.unwrap_err().1, RUNS_ON_ACROSS_SEAM, "not capped");
 }
 
 /// tangency-labs/solidcore#2679 (the blend corner): fillets/1207 with the r3 round's end
