@@ -1,24 +1,18 @@
-//! Runner for unit `topology.vertex`. C++: `solidcore_ffi::units::topology_vertex`.
+//! Runner for unit `topology.vertex`. Ported from upstream `SmVertex.cpp` (the shim
+//! `harness/cpp/shim/topology_vertex.cpp` was the reference); checked against its golden.
 //! Rust: `solidcore::topology::vertex`.
 //!
-//! The C++ side builds a real `SmBrep` per call, as the `topology.vertexuse` runner
-//! does: read from an upstream `.smb` test file (optionally rebuilding its UV trim
-//! curves), a wire edge from a B-spline curve (`CreateWireEdgeFromCurve`), a face from a
-//! B-spline surface or a plane (`CreateFaceFromSurface`), or the wire network of
-//! `prog_test` `my_test_topology`, or a chain of wire edges. The Rust side builds every
-//! non-file source itself ([`crate::own_builder`] under this shim's [`CONVENTIONS`], a
-//! chain by [`build_chain`]) and reads an `.smb` file with the Rust reader
+//! The case's B-rep is one of the reference shim's sources, as for `topology.vertexuse`:
+//! read from an upstream `.smb` test file (optionally rebuilding its UV trim curves), a
+//! wire edge from a B-spline curve (`CreateWireEdgeFromCurve`), a face from a B-spline
+//! surface or a plane (`CreateFaceFromSurface`), the wire network of `prog_test`
+//! `my_test_topology`, or a chain of wire edges. The runner builds every non-file source
+//! itself ([`crate::own_builder`] under this shim's [`CONVENTIONS`], a chain by
+//! [`build_chain`]) and reads an `.smb` file with the Rust reader
 //! ([`crate::own_reader::file_in_order`]), both renumbered into the shim's traversal
-//! order: no C++ export reaches the Rust side. It runs the ported functions on that
-//! B-rep; their results are compared as traversal indices, flags, statuses and values.
-//! `init_gaps` has the C++ side compute the cached gaps before the op, so that cached
-//! gaps and their resets are observable. The C++ side resolves its selectors on the
-//! import of the shim's export ([`import`]): a B-rep whose edges share a curve object, or
-//! whose edge curves are not B-splines or lines, is a harness error there. An analytic
-//! face surface (cone, sphere, ...) travels in that export exactly as its upstream
-//! database record when that record is lossless (`sc_analytic_export.h`, read by
-//! [`crate::util::read_exact_surface`]); any other `SmBSplineSurface` subclass only as
-//! its B-spline part, which the Rust side, reading the file itself, never sees.
+//! order. It runs the ported functions on that B-rep; their results are recorded as
+//! traversal indices, flags, statuses and values. `init_gaps` computes the cached gaps
+//! before the op, so that cached gaps and their resets are observable.
 //!
 //! The vertex selector is taken modulo the vertex count (so generated cases need no
 //! counts); other selectors likewise, `-1` selecting null.
@@ -27,35 +21,22 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use solidcore::curve::curve::p2::{BSPLINE_CURVE_TYPE, LINE_TYPE};
 use solidcore::curve::curve::Curve as SmCurve;
 use solidcore::curve::line::Line;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::geom::object::{NotifyOperation, ObjectRef};
-use solidcore::geom::solution_array::ObjectKind;
-use solidcore::geom::vector2d::Point2;
 use solidcore::geom::vector3d::Vec3;
 use solidcore::kernel::Kernel;
-use solidcore::nurbs::b_spline_curve::BSplineCurve;
-use solidcore::nurbs::b_spline_surface::{BSplineSurface, BSplineSurfaceForm};
-use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
-use solidcore::nurbs::crv_basic::Curve;
-use solidcore::nurbs::math::{CPoint, NOW, NOZ};
-use solidcore::nurbs::srf_basic::Surface as NlSurface;
+use solidcore::nurbs::math::{NOW, NOZ};
 use solidcore::query::poly::PolyVertexId;
-use solidcore::surface::surface::p2::DropCurveFail;
-use solidcore::surface::surface::Surface;
-use solidcore::topology::brep_cache::{arena_identity, CacheObject};
 use solidcore::topology::topology::Topology;
 use solidcore::topology::vertex::{self as vx, corner, VertexGap};
 use solidcore::topology::{
-    Brep, Edge, EdgeId, Edgeuse, EdgeuseId, EdgeuseOwner, Face, FaceId, Faceuse, FaceuseId, Loop,
-    LoopId, Loopuse, LoopuseId, LoopuseStart, ObjectHandle, Region, RegionId, Shell, ShellId,
-    Vertex, VertexId, Vertexuse, VertexuseId, VertexuseOwner,
+    Brep, EdgeId, EdgeuseId, FaceId, FaceuseId, LoopId, LoopuseId, RegionId, ShellId, VertexId,
+    VertexuseId, VertexuseOwner,
 };
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::topology_vertex::{self as ffi, Op};
 
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -66,11 +47,6 @@ fn harness(msg: impl Into<String>) -> HarnessError {
     HarnessError::new(msg)
 }
 
-/// `SmTopoTypes.h` codes.
-const SHELL_TYPE: i64 = 16013;
-const LOOPUSE_TYPE: i64 = 16004;
-const EDGEUSE_TYPE: i64 = 16005;
-const VERTEXUSE_TYPE: i64 = 16006;
 
 /// The type codes `IsKindOf` is asked about (as the shim's `KIND_TYPES`).
 const KIND_TYPES: [i64; 9] = [
@@ -264,76 +240,6 @@ struct Inputs {
 
 // ---- encoding ---------------------------------------------------------------------------
 
-fn push_curve(v: &mut Vec<f64>, c: &CrvIn) -> Result<(), HarnessError> {
-    let n = c
-        .cpts
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("curve without points"))?;
-    let m =
-        c.u.len()
-            .checked_sub(1)
-            .ok_or_else(|| harness("curve without knots"))?;
-    v.extend([c.dim as f64, n as f64, c.p as f64, m as f64]);
-    for p in &c.cpts {
-        v.extend(p);
-    }
-    v.extend(&c.u);
-    Ok(())
-}
-
-fn push_surface(v: &mut Vec<f64>, s: &SrfIn) -> Result<(), HarnessError> {
-    match s {
-        SrfIn::Plane { o, n } => {
-            v.push(1.0);
-            v.extend(o);
-            v.extend(n);
-        }
-        SrfIn::Bspline(b) => {
-            let n = b
-                .net
-                .len()
-                .checked_sub(1)
-                .ok_or_else(|| harness("empty net"))?;
-            let m = b
-                .net
-                .first()
-                .and_then(|r| r.len().checked_sub(1))
-                .ok_or_else(|| harness("empty net row"))?;
-            if b.net.iter().any(|r| r.len() != m + 1) {
-                return Err(harness("ragged net"));
-            }
-            let mu =
-                b.u.len()
-                    .checked_sub(1)
-                    .ok_or_else(|| harness("surface without u knots"))?;
-            let mv =
-                b.v.len()
-                    .checked_sub(1)
-                    .ok_or_else(|| harness("surface without v knots"))?;
-            v.extend([
-                0.0,
-                f64::from(u8::from(b.oob)),
-                f64::from(b.form),
-                n as f64,
-                m as f64,
-                b.p as f64,
-                b.q as f64,
-                mu as f64,
-                mv as f64,
-            ]);
-            for row in &b.net {
-                for p in row {
-                    v.extend(p);
-                }
-            }
-            v.extend(&b.u);
-            v.extend(&b.v);
-        }
-    }
-    Ok(())
-}
-
 fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
 }
@@ -349,56 +255,6 @@ fn path_of(b: &BrepIn) -> Result<String, HarnessError> {
     }
 }
 
-/// The B-rep block.
-fn brep_block(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut v = Vec::new();
-    match &i.brep {
-        BrepIn::File { rebuild, .. } => {
-            v.push(0.0);
-            v.push(flag(*rebuild));
-        }
-        BrepIn::Wire { curve, t0, t1 } => {
-            v.push(1.0);
-            push_curve(&mut v, curve)?;
-            v.extend([*t0, *t1]);
-        }
-        BrepIn::Face { surface, dom } => {
-            v.push(2.0);
-            push_surface(&mut v, surface)?;
-            v.extend(dom);
-        }
-        BrepIn::Network => v.push(3.0),
-        BrepIn::Chain { closed, segs } => {
-            v.extend([4.0, flag(*closed), segs.len() as f64]);
-            for sg in segs {
-                match sg {
-                    SegIn::Line {
-                        a,
-                        b,
-                        smline,
-                        ivl,
-                        rev,
-                    } => {
-                        v.push(0.0);
-                        v.extend(a);
-                        v.extend(b);
-                        let [t0, t1] = ivl.unwrap_or([0.0, 1.0]);
-                        v.extend([flag(*smline), flag(ivl.is_some()), t0, t1, flag(*rev)]);
-                    }
-                    SegIn::Curve { curve, rev } => {
-                        v.push(1.0);
-                        push_curve(&mut v, curve)?;
-                        v.push(flag(*rev));
-                    }
-                }
-            }
-        }
-    }
-    v.push(flag(i.validate_only));
-    v.push(flag(i.init_gaps));
-    Ok(v)
-}
-
 /// Resolves a selector modulo `n` (`-1` and an empty kind select null).
 fn sel(s: i64, n: usize) -> i64 {
     if s < 0 || n == 0 {
@@ -408,517 +264,7 @@ fn sel(s: i64, n: usize) -> i64 {
     }
 }
 
-/// The C++ export of the case's B-rep.
-fn export(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let path = path_of(&i.brep)?;
-    let block = brep_block(i)?;
-    crate::export_memo::export("topology_vertex", &[&path], &block, || {
-        ffi::eval(Op::Export, &path, &block)
-    })
-    .map_err(|e| harness(format!("c++ export: {e}")))
-}
-
-/// A build failure as an operation error.
-fn build_failure(export: &[f64]) -> Output {
-    Output::err(format!(
-        "brep_build_status_{}",
-        export.get(1).copied().unwrap_or(0.0)
-    ))
-}
-
-fn ints(v: &[f64]) -> Vec<i64> {
-    v.iter().map(|&x| x as i64).collect()
-}
-
 // ---- import -----------------------------------------------------------------------------
-
-struct Rd<'a> {
-    v: &'a [f64],
-    at: usize,
-    /// The type of the first face surface held only as its B-spline part.
-    inexact: Option<i64>,
-}
-
-impl Rd<'_> {
-    fn num(&mut self) -> Result<f64, HarnessError> {
-        let x = self
-            .v
-            .get(self.at)
-            .copied()
-            .ok_or_else(|| harness("export too short"))?;
-        self.at += 1;
-        Ok(x)
-    }
-    fn idx(&mut self) -> Result<i64, HarnessError> {
-        Ok(self.num()? as i64)
-    }
-    fn usize(&mut self) -> Result<usize, HarnessError> {
-        usize::try_from(self.idx()?).map_err(|_| harness("negative count"))
-    }
-    fn list(&mut self) -> Result<Vec<i64>, HarnessError> {
-        let n = self.usize()?;
-        (0..n).map(|_| self.idx()).collect()
-    }
-}
-
-fn opt<T>(i: i64, f: impl Fn(u32) -> T) -> Result<Option<T>, HarnessError> {
-    match i {
-        -1 => Ok(None),
-        x if x >= 0 => Ok(Some(f(
-            u32::try_from(x).map_err(|_| harness("index overflow"))?
-        ))),
-        x => Err(harness(format!("unregistered pointer ({x}) in export"))),
-    }
-}
-
-fn orient_of(code: i64) -> Result<OrientType, HarnessError> {
-    match code {
-        0 => Ok(OrientType::Unknown),
-        1 => Ok(OrientType::Same),
-        2 => Ok(OrientType::Opposite),
-        x => Err(harness(format!("bad orientation {x}"))),
-    }
-}
-
-/// An exported curve block (`None` for `-1`). A B-spline or line is rebuilt exactly;
-/// another `SmBSplineCurve` kind is an error (a UV trim curve when `uv`, else an edge
-/// curve).
-fn read_curve(rd: &mut Rd<'_>, uv: bool) -> Result<Option<SmCurve>, HarnessError> {
-    let ty = rd.num()?;
-    if ty == -1.0 {
-        return Ok(None);
-    }
-    if ty < 0.0 {
-        return Err(harness("export: a curve is not an SmBSplineCurve"));
-    }
-    let ty = ty as i64;
-    let dim = rd.num()? as u64;
-    let has_nurb = rd.num()? != 0.0;
-    let base = if has_nurb {
-        let n = rd.usize()?;
-        let p = rd.usize()?;
-        let m = rd.usize()?;
-        let mut pw = Vec::new();
-        for _ in 0..=n {
-            pw.push(CPoint::new(rd.num()?, rd.num()?, rd.num()?, rd.num()?));
-        }
-        let mut u = Vec::new();
-        for _ in 0..=m {
-            u.push(rd.num()?);
-        }
-        let cur = Curve::new(pw, p, u).map_err(|e| harness(format!("export curve: {e}")))?;
-        BSplineCurve::from_nurb(cur, dim, false)
-    } else {
-        BSplineCurve::new(dim)
-    };
-    if ty == LINE_TYPE {
-        let point = Vec3::new(rd.num()?, rd.num()?, rd.num()?);
-        let vector = Vec3::new(rd.num()?, rd.num()?, rd.num()?);
-        let a = rd.num()?;
-        let b = rd.num()?;
-        let scale = rd.num()?;
-        let inside_out = rd.num()? != 0.0;
-        let dom = Extent1d::from_raw(a, b);
-        return Ok(Some(SmCurve::from(Line::from_parts(
-            base, point, vector, dom, scale, inside_out,
-        ))));
-    }
-    if ty != BSPLINE_CURVE_TYPE {
-        // edge curves are evaluated here: only exactly rebuilt kinds
-        let what = if uv { "UV trim" } else { "edge" };
-        return Err(harness(format!("export: {what} curve of type {ty}")));
-    }
-    Ok(Some(SmCurve::from(base)))
-}
-
-/// A face's surface block: an exact analytic head (`2 ...`,
-/// [`crate::util::read_exact_surface`]) and the regular block after it, or the regular
-/// block alone. A surface rebuilt exactly does not mark the B-rep inexact.
-fn read_face_surface(rd: &mut Rd<'_>) -> Result<Option<Surface>, HarnessError> {
-    if rd.v.get(rd.at) != Some(&2.0) {
-        return read_surface(rd);
-    }
-    rd.at += 1;
-    let exact = crate::util::read_exact_surface(&mut || rd.num())?;
-    let before = rd.inexact;
-    let fallback = read_surface(rd)?;
-    match exact {
-        Some(s) => {
-            crate::util::check_exact_base(&s, fallback.as_ref())?;
-            rd.inexact = before;
-            Ok(Some(s))
-        }
-        None => Ok(fallback),
-    }
-}
-
-fn read_surface(rd: &mut Rd<'_>) -> Result<Option<Surface>, HarnessError> {
-    let kind = rd.num()?;
-    if kind == -1.0 {
-        return Ok(None);
-    }
-    if kind == 3.0 {
-        // an SmPlane with its frame, UV scale and analytic domain
-        let mut v = [0.0; 15];
-        for x in &mut v {
-            *x = rd.num()?;
-        }
-        let [ox, oy, oz, xx, xy, xz, yx, yy, yz, su, sv, u0, v0, u1, v1] = v;
-        return Ok(Some(Surface::from(solidcore::surface::plane::Plane::new(
-            Vec3::new(ox, oy, oz),
-            Vec3::new(xx, xy, xz),
-            Vec3::new(yx, yy, yz),
-            solidcore::Vec2::new(su, sv),
-            &solidcore::geom::extent2d::Extent2d::from_bounds(u0, v0, u1, v1),
-        ))));
-    }
-    if kind == 4.0 {
-        // a subclass held as its B-spline part: the Rust surface is a stand-in
-        let ty = rd.num()? as i64;
-        rd.inexact.get_or_insert(ty);
-    } else if kind != 0.0 {
-        return Err(harness("export: a surface is not a B-spline"));
-    }
-    let oob = rd.num()? != 0.0;
-    let form = rd.num()?;
-    let n = rd.usize()?;
-    let m = rd.usize()?;
-    let p = rd.usize()?;
-    let q = rd.usize()?;
-    let r = rd.usize()?;
-    let s = rd.usize()?;
-    let mut net = Vec::new();
-    for _ in 0..=n {
-        let mut row = Vec::new();
-        for _ in 0..=m {
-            row.push(CPoint::new(rd.num()?, rd.num()?, rd.num()?, rd.num()?));
-        }
-        net.push(row);
-    }
-    let u = (0..=r).map(|_| rd.num()).collect::<Result<Vec<_>, _>>()?;
-    let v = (0..=s).map(|_| rd.num()).collect::<Result<Vec<_>, _>>()?;
-    let nl =
-        NlSurface::new(net, p, q, u, v).map_err(|e| harness(format!("export surface: {e}")))?;
-    let mut b = BSplineSurface::from_nurb(nl, false);
-    *b.out_of_bounds_enabled_mut() = oob;
-    let form =
-        BSplineSurfaceForm::from_code(form as u64).ok_or_else(|| harness("bad surface form"))?;
-    b.set_b_spline_surface_form(form);
-    Ok(Some(Surface::from(b)))
-}
-
-/// Builds the Rust B-rep from the shim's export (see the module docs).
-fn import(ex: &[f64]) -> Result<(Brep, Option<i64>), HarnessError> {
-    let c = ffi::counts(ex).ok_or_else(|| harness("import of a failed build"))?;
-    let [n_r, n_s, n_fu, n_f, n_lu, n_l, n_eu, n_e, n_vu, n_v] = c;
-    let mut rd = Rd { v: ex, at: 1, inexact: None };
-    let validate_only = rd.num()? != 0.0;
-    rd.at = 12;
-
-    // Region shell lists, shell types and face-use lists as exported (void flags
-    // are not exported and stay 0); wire/vertex shell heads are set after import.
-    let mut regions = Vec::new();
-    for _ in 0..n_r {
-        let in_brep = rd.num()? != 0.0;
-        let shells = super::topology_vertexuse::region_shell_list(rd.list()?)?;
-        regions.push(Region {
-            in_brep,
-            shells,
-            ..Region::default()
-        });
-    }
-    let mut shells = Vec::new();
-    for _ in 0..n_s {
-        let region = opt(rd.idx()?, RegionId::from_index)?;
-        let (shell_type, members) =
-            super::topology_vertexuse::shell_members(rd.idx()?, rd.list()?)?;
-        shells.push(Shell {
-            faces: Vec::new(),
-            region,
-            shell_type,
-            members,
-        });
-    }
-    let mut faceuses = Vec::new();
-    for _ in 0..n_fu {
-        let shell = opt(rd.idx()?, ShellId::from_index)?;
-        let face = opt(rd.idx()?, FaceId::from_index)?;
-        let mate = opt(rd.idx()?, FaceuseId::from_index)?;
-        let orientation = orient_of(rd.idx()?)?;
-        let loopuses = rd
-            .list()?
-            .into_iter()
-            .map(|x| opt(x, LoopuseId::from_index)?.ok_or_else(|| harness("null loop use")))
-            .collect::<Result<Vec<_>, _>>()?;
-        faceuses.push(Faceuse {
-            shell,
-            face,
-            mate,
-            orientation,
-            loopuses,
-            sibling_links: None,
-        });
-    }
-    let mut surfaces = Vec::new();
-    for _ in 0..n_f {
-        let surface = read_face_surface(&mut rd)?;
-        // `GetUVDomain` and `GetTolerance`
-        let (u0, v0, u1, v1) = (rd.num()?, rd.num()?, rd.num()?, rd.num()?);
-        let tolerance = rd.num()?;
-        // `GetUpwardFaceuse` (`m_pFU`)
-        let faceuse = opt(rd.idx()?, FaceuseId::from_index)?;
-        surfaces.push((surface, faceuse, solidcore::geom::extent2d::Extent2d::from_bounds(u0, v0, u1, v1), tolerance));
-    }
-    let mut loopuses = Vec::new();
-    for _ in 0..n_lu {
-        let faceuse = opt(rd.idx()?, FaceuseId::from_index)?;
-        let loop_ = opt(rd.idx()?, LoopId::from_index)?;
-        let mate = opt(rd.idx()?, LoopuseId::from_index)?;
-        let ty = rd.idx()?;
-        let start = rd.idx()?;
-        let start = match ty {
-            EDGEUSE_TYPE => LoopuseStart::Edgeuse(opt(start, EdgeuseId::from_index)?),
-            VERTEXUSE_TYPE => LoopuseStart::Vertexuse(opt(start, VertexuseId::from_index)?),
-            _ => LoopuseStart::Unknown,
-        };
-        let orientation = orient_of(rd.idx()?)?;
-        loopuses.push(Loopuse {
-            faceuse,
-            loop_,
-            mate,
-            start,
-            orientation,
-        });
-    }
-    let mut loop_lus = Vec::new();
-    for _ in 0..n_l {
-        loop_lus.push(opt(rd.idx()?, LoopuseId::from_index)?);
-    }
-    let mut edgeuses = Vec::new();
-    for _ in 0..n_eu {
-        let edge = opt(rd.idx()?, EdgeId::from_index)?;
-        let ty = rd.idx()?;
-        let sorlu = rd.idx()?;
-        let owner = match ty {
-            LOOPUSE_TYPE => EdgeuseOwner::Loopuse(opt(sorlu, LoopuseId::from_index)?),
-            SHELL_TYPE => EdgeuseOwner::Shell(opt(sorlu, ShellId::from_index)?),
-            _ => EdgeuseOwner::Unknown,
-        };
-        let cw = opt(rd.idx()?, EdgeuseId::from_index)?;
-        let ccw = opt(rd.idx()?, EdgeuseId::from_index)?;
-        let vertexuse = opt(rd.idx()?, VertexuseId::from_index)?;
-        let orientation = orient_of(rd.idx()?)?;
-        let uv_trim_curve = read_curve(&mut rd, true)?;
-        rd.idx()?; // the curve's owner: the holding edge use
-        let has_fail = rd.num()? != 0.0;
-        let fail_status = rd.idx()?;
-        let fail_brep = rd.num()? != 0.0;
-        let ef_init = rd.num()? != 0.0;
-        let ccw_init = rd.num()? != 0.0;
-        let mut r = Edgeuse {
-            edge,
-            owner,
-            ccw,
-            cw,
-            vertexuse,
-            orientation,
-            uv_trim_curve,
-            ..Edgeuse::default()
-        };
-        let me =
-            EdgeuseId::from_index(u32::try_from(edgeuses.len()).map_err(|_| harness("overflow"))?);
-        if has_fail {
-            let f = DropCurveFail::<ObjectHandle> {
-                fail_status: i32::try_from(fail_status).map_err(|_| harness("fail status"))?,
-                brep: fail_brep.then_some(ObjectHandle {
-                    kind: ObjectKind::Other,
-                    key: ObjectKey(0),
-                }),
-                ..DropCurveFail::default()
-            };
-            r.drop_curve_fail = Some(Box::new(f));
-        }
-        if ef_init {
-            // the gap value itself is never compared here
-            r.max_edge_face_gap.set_edgeuse(Some(me));
-        }
-        if ccw_init {
-            r.edge_ccw_edge_gap.edgeuse0 = Some(me);
-            r.edge_ccw_edge_gap.edgeuse1 = ccw.or(Some(me));
-        }
-        edgeuses.push(r);
-    }
-    let mut edges = Vec::new();
-    for e in 0..n_e {
-        // the curve's identity: two edges sharing one curve object cannot be represented
-        let cid = rd.idx()?;
-        if cid >= 0 && cid as usize != e {
-            return Err(harness(format!(
-                "export: edges {cid} and {e} share a curve"
-            )));
-        }
-        let tolerance = rd.num()?;
-        let a = rd.num()?;
-        let b = rd.num()?;
-        let list = rd
-            .list()?
-            .into_iter()
-            .map(|x| opt(x, EdgeuseId::from_index)?.ok_or_else(|| harness("null edge use")))
-            .collect::<Result<Vec<_>, _>>()?;
-        let curve = read_curve(&mut rd, false)?;
-        let interval = Extent1d::from_raw(a, b);
-        edges.push((tolerance, interval, list, curve));
-    }
-    let mut vertexuses = Vec::new();
-    for _ in 0..n_vu {
-        let vertex = opt(rd.idx()?, VertexId::from_index)?;
-        let ty = rd.idx()?;
-        let own = rd.idx()?;
-        let owner = match ty {
-            EDGEUSE_TYPE => VertexuseOwner::Edgeuse(opt(own, EdgeuseId::from_index)?),
-            LOOPUSE_TYPE => VertexuseOwner::Loopuse(opt(own, LoopuseId::from_index)?),
-            SHELL_TYPE => VertexuseOwner::Shell(opt(own, ShellId::from_index)?),
-            _ => VertexuseOwner::Unknown,
-        };
-        let mut r = Vertexuse {
-            vertex,
-            owner,
-            ..Vertexuse::default()
-        };
-        r.vertex_edge_gap.vertexuse = opt(rd.idx()?, VertexuseId::from_index)?;
-        r.vertex_edge_gap.gap_3d = rd.num()?;
-        r.vertex_edge_gap.edge_t = rd.num()?;
-        r.vertex_face_gap.vertexuse = opt(rd.idx()?, VertexuseId::from_index)?;
-        r.vertex_face_gap.gap_3d = rd.num()?;
-        r.vertex_face_gap.face_uv = Point2::new(rd.num()?, rd.num()?);
-        r.uv_point = Point2::new(rd.num()?, rd.num()?);
-        vertexuses.push(r);
-    }
-    let mut vertices = Vec::new();
-    for _ in 0..n_v {
-        let point = Vec3::new(rd.num()?, rd.num()?, rd.num()?);
-        let tolerance = rd.num()?;
-        if rd.num()? != 0.0 {
-            return Err(harness("export: a vertex has a poly vertex"));
-        }
-        let list = rd
-            .list()?
-            .into_iter()
-            .map(|x| opt(x, VertexuseId::from_index)?.ok_or_else(|| harness("null vertex use")))
-            .collect::<Result<Vec<_>, _>>()?;
-        vertices.push(Vertex {
-            point,
-            tolerance,
-            vertexuses: list,
-            poly_vertex: None,
-        });
-    }
-    let infinite_region = super::topology_vertexuse::read_shell_state(
-        ex,
-        &mut rd.at,
-        &mut regions,
-        &mut shells,
-        &mut vertices,
-        &mut faceuses,
-    )?;
-    if rd.at != ex.len() {
-        return Err(harness("export: trailing data"));
-    }
-
-    // assemble (skeleton fields filled minimally)
-    let mut b = Brep::new();
-    b.set_validate_only(validate_only);
-    b.set_infinite_region_record(infinite_region);
-    for r in regions {
-        b.add_region_record(r).map_err(|e| harness(e.to_string()))?;
-    }
-    let face_shell = |f: usize| -> ShellId {
-        faceuses
-            .iter()
-            .find(|fu| fu.face == Some(FaceId::from_index(f as u32)) && fu.shell.is_some())
-            .and_then(|fu| fu.shell)
-            .unwrap_or(ShellId::from_index(0))
-    };
-    let face_shells: Vec<ShellId> = (0..n_f).map(face_shell).collect();
-    for (i, mut s) in shells.into_iter().enumerate() {
-        s.faces = face_shells
-            .iter()
-            .enumerate()
-            .filter(|(_, sh)| sh.index() as usize == i)
-            .map(|(f, _)| FaceId::from_index(f as u32))
-            .collect();
-        b.add_shell_record(s).map_err(|e| harness(e.to_string()))?;
-    }
-    for (f, (mut surface, faceuse, uv_domain, tolerance)) in surfaces.into_iter().enumerate() {
-        let shell = face_shells.get(f).copied().unwrap_or(ShellId::from_index(0));
-        // `SmFace::SetSurface` owns the surface (`GetOwner() == face`): its solvers read
-        // the face tolerance through it (`LocalPointSolve_1`'s loose tolerance, which
-        // decides a seam jump), under the arena identity of [`CONVENTIONS`]
-        if let Some(s) = surface.as_mut() {
-            s.set_owner(Some(arena_identity(CacheObject::Face(FaceId::from_index(f as u32)))));
-        }
-        // The rectangular-trim flag is not exported (`SmFace()` default); the UV domain and
-        // tolerance are (the vertex/face gaps solve against them).
-        b.add_face_record(Face {
-            surface,
-            faceuse,
-            uv_domain,
-            tolerance,
-            ..Face::new(shell)
-        })
-        .map_err(|e| harness(e.to_string()))?;
-    }
-    for lu in &loop_lus {
-        let face = lu
-            .and_then(|x| loopuses.get(x.index() as usize))
-            .and_then(|l| l.faceuse)
-            .and_then(|fu| faceuses.get(fu.index() as usize))
-            .and_then(|fu| fu.face)
-            .unwrap_or(FaceId::from_index(0));
-        b.add_loop_record(Loop {
-            face,
-            edges: Vec::new(),
-            loopuse: *lu,
-        })
-        .map_err(|e| harness(e.to_string()))?;
-    }
-    for (tolerance, interval, list, curve) in edges {
-        let vertex_of = |eu: Option<&EdgeuseId>| -> Option<VertexId> {
-            let vu = edgeuses.get(eu?.index() as usize)?.vertexuse?;
-            vertexuses.get(vu.index() as usize)?.vertex
-        };
-        let v0 = vertex_of(list.first()).unwrap_or(VertexId::from_index(0));
-        let v1 = vertex_of(list.get(1)).unwrap_or(v0);
-        b.add_edge_record(Edge {
-            vertices: [v0, v1],
-            edgeuses: list,
-            interval,
-            tolerance,
-            curve,
-        })
-        .map_err(|e| harness(e.to_string()))?;
-    }
-    for v in vertices {
-        b.add_vertex_record(v).map_err(|e| harness(e.to_string()))?;
-    }
-    for fu in faceuses {
-        b.add_faceuse_record(fu)
-            .map_err(|e| harness(e.to_string()))?;
-    }
-    for lu in loopuses {
-        b.add_loopuse_record(lu)
-            .map_err(|e| harness(e.to_string()))?;
-    }
-    for eu in edgeuses {
-        b.add_edgeuse_record(eu)
-            .map_err(|e| harness(e.to_string()))?;
-    }
-    for vu in vertexuses {
-        b.add_vertexuse_record(vu)
-            .map_err(|e| harness(e.to_string()))?;
-    }
-    Ok((b, rd.inexact))
-}
 
 fn id<I: Copy>(o: Option<I>, f: impl Fn(I) -> u32) -> i64 {
     o.map_or(-1, |x| i64::from(f(x)))
@@ -1383,95 +729,6 @@ fn resolve(op: &OpIn, c: [usize; 10], b: &Brep) -> Result<OpIn, Box<Output>> {
             poly,
         },
     })
-}
-
-/// The op arguments after the B-rep block (resolved selectors).
-fn op_args(op: &OpIn) -> (Op, Vec<f64>) {
-    let f = |x: i64| x as f64;
-    match op {
-        OpIn::Query { v } => (Op::Query, vec![f(*v)]),
-        OpIn::Connected { v, ty, index } => (Op::Connected, vec![f(*v), f(*ty), f(*index)]),
-        OpIn::VuOfFace { v, face } => (Op::VuOfFace, vec![f(*v), f(*face)]),
-        OpIn::VusOfFace { v, face, ty, index } => {
-            (Op::VusOfFace, vec![f(*v), f(*face), f(*ty), f(*index)])
-        }
-        OpIn::VusOfEdge { v, edge, ty, index } => {
-            (Op::VusOfEdge, vec![f(*v), f(*edge), f(*ty), f(*index)])
-        }
-        OpIn::CommonEdges { v, other, face } => (Op::CommonEdges, vec![f(*v), f(*other), f(*face)]),
-        OpIn::ShellInRegion { v, region } => (Op::ShellInRegion, vec![f(*v), f(*region)]),
-        OpIn::Tangent { v, e1, e2, tol_deg } => {
-            (Op::Tangent, vec![f(*v), f(*e1), f(*e2), *tol_deg])
-        }
-        OpIn::Topological { v } => (Op::Topological, vec![f(*v)]),
-        OpIn::OnPole { v } => (Op::OnPole, vec![f(*v)]),
-        OpIn::Gaps {
-            v,
-            want_array,
-            has_tol,
-            tol,
-        } => (
-            Op::Gaps,
-            vec![f(*v), flag(*want_array), flag(*has_tol), *tol],
-        ),
-        OpIn::Notify { v, operation } => (Op::Notify, vec![f(*v), f64::from(*operation)]),
-        OpIn::SetPoint { v, p } => (Op::SetPoint, vec![f(*v), p[0], p[1], p[2]]),
-        OpIn::SetTolerance {
-            v,
-            tol,
-            only_if_larger,
-            cascade,
-        } => (
-            Op::SetTolerance,
-            vec![f(*v), *tol, flag(*only_if_larger), flag(*cascade)],
-        ),
-        OpIn::RefreshTolerance { v, nested } => (Op::RefreshTolerance, vec![f(*v), flag(*nested)]),
-        OpIn::Exact { v, exact, poly } => (Op::Exact, vec![f(*v), flag(*exact), flag(*poly)]),
-        OpIn::Corner { v, d } => {
-            let m = d.unwrap_or([0.0; 3]);
-            (
-                Op::Corner,
-                vec![f(*v), flag(d.is_some()), m[0], m[1], m[2]],
-            )
-        }
-    }
-}
-
-/// The output key of an op (the values are compared as built by both sides).
-fn output(op: &OpIn, body: &[f64]) -> Output {
-    match op {
-        OpIn::Query { .. }
-        | OpIn::Connected { .. }
-        | OpIn::VuOfFace { .. }
-        | OpIn::VusOfFace { .. }
-        | OpIn::VusOfEdge { .. }
-        | OpIn::CommonEdges { .. }
-        | OpIn::ShellInRegion { .. }
-        | OpIn::Tangent { .. }
-        | OpIn::Exact { .. } => Output::new().ints("q", ints(body)),
-        _ => Output::new().values("state", body.to_vec()),
-    }
-}
-
-// ---- C++ side ---------------------------------------------------------------------------
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let ex = export(i)?;
-    let Some(c) = ffi::counts(&ex) else {
-        return Ok(build_failure(&ex));
-    };
-    let (b, _) = import(&ex)?;
-    let op = match resolve(&i.op, c, &b) {
-        Ok(op) => op,
-        Err(o) => return Ok(*o),
-    };
-    let (code, args) = op_args(&op);
-    let mut input = brep_block(i)?;
-    input.extend(args);
-    let path = path_of(&i.brep)?;
-    let out = ffi::eval(code, &path, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    let body = out.get(1..).ok_or_else(|| harness("c++: empty output"))?;
-    Ok(output(&op, body))
 }
 
 // ---- Rust side --------------------------------------------------------------------------
@@ -2188,13 +1445,6 @@ fn gen_op(rng: &mut Rng) -> OpIn {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.vertex"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        if super::topology_face_p4::level0::is_level0(case) {
-            return super::topology_face_p4::level0::run_cpp(case);
-        }
-        run_cpp(&case.parse::<Inputs>()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
