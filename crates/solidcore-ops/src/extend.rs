@@ -207,13 +207,17 @@ pub fn extend_sheet(
                 "an edge that is not all of one side of the box",
             )));
         };
-        let extended = match surf.extended_by_distance(k, &dom, grow, how, distance) {
-            Ok(e) => e,
+        // a distance below the side's resolution is no extension: the surface as it is, each
+        // side its own
+        let (grown, mapped) = match surf.extended_by_distance(k, &dom, grow, how, distance) {
+            Ok(Some(e)) => {
+                let mapped = BoxSide::ALL.map(|s| e.side_of(s));
+                (e.surface, mapped)
+            }
+            Ok(None) => (surf.copy(k)?, BoxSide::ALL),
             Err(e) if e.is_unported() || e.is_cancelled() => return Err(e),
             Err(e) => return Ok(Err(refused(e))),
         };
-        let mapped = BoxSide::ALL.map(|s| extended.side_of(s));
-        let grown = extended.surface;
         let grown_eval = grown.copy(k)?;
         let (mut r, nf) = sheet_on(k, grown, b.tolerance())?;
         // the face and each side stand for the face and side they continue
