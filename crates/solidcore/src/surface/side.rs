@@ -264,7 +264,7 @@ fn knot_window(kv: &[f64], a: f64, b: f64, margin: usize) -> (f64, f64) {
 /// `(t - u_i) / (u_(i+q-j+1) - u_i)` from the knots `u_(s-q+1) .. u_(s+q)` only.
 fn extraction_window(kv: &[f64], t: f64, q: usize) -> (f64, f64) {
     let s = kv.iter().rposition(|&x| x <= t).unwrap_or(0);
-    let (lo, hi) = (s.saturating_sub(q), s.saturating_add(q));
+    let (lo, hi) = ((s + 1).saturating_sub(q), s.saturating_add(q));
     let window: Vec<f64> = kv
         .iter()
         .enumerate()
@@ -335,13 +335,17 @@ fn support_meets(k: &[f64], deg: usize, lo: f64, hi: f64) -> std::ops::RangeIncl
 }
 
 impl Rounding {
-    /// [`Rounding::of`] for the pieces of the iso at `fixed` (constant v for `along_u`)
-    /// over `[from, to]` alone: the knots read are only those near them. Knot insertion and
-    /// the Bezier decomposition are local: a segment's points are combinations whose
-    /// coefficients take the knots from its start's segment's start to `p` past its end
-    /// (`(t - u_i) / (u_(i+p) - u_i)`, i from the segment's start index), and the iso's
-    /// extraction at `fixed` the knots within `q` of it. A span far from the pieces (a sliver
-    /// at the net's other end) does not touch them.
+    /// The rounding of making the Bezier pieces of the iso at `fixed` (constant v for
+    /// `along_u`) over `[from, to]` alone (`docs/definitions-and-certificates.md` §7, point 5:
+    /// every bound includes the rounding of the operations it counts, sized on the piece's own
+    /// support). Knot insertion and the Bezier decomposition are strictly local: Boehm
+    /// insertion at `fixed` in span `[u_s, u_(s+1))` of degree `dq` reads only the knots
+    /// `u_(s-dq+1) .. u_(s+dq)` ([`extraction_window`]) and control points whose basis support
+    /// holds `fixed`, while decomposing and cutting over `[a, b]` of degree `dp` read only the
+    /// knots of [`decomposed_window`] and control points whose basis support meets `[a, b]`
+    /// ([`support_meets`]). Knots and control points outside those windows (such as a huge
+    /// exterior extension span at the net's other end) enter zero arithmetic operations that
+    /// form the pieces, so excluding them drops no rounding term from the enclosure.
     fn local(
         form: &BSplineSurface,
         along_u: bool,
@@ -374,34 +378,7 @@ impl Rounding {
         Self::with_ratio_in(nurb, ratio, op, &keep)
     }
 
-    fn of(form: &BSplineSurface, extra: &[f64], op: &'static str) -> Result<Self> {
-        let nurb = form.gw_nurb().ok_or_else(|| SolidError::sm_err(op))?;
-        let (mut kmax, mut smin) = (0.0_f64, f64::INFINITY);
-        for kv in [nurb.u_knots(), nurb.v_knots()] {
-            for (&a, &b) in kv.iter().zip(kv.iter().skip(1)) {
-                kmax = kmax.max(a.abs()).max(b.abs());
-                if b > a {
-                    smin = smin.min(b - a);
-                }
-            }
-        }
-        for &x in extra {
-            kmax = kmax.max(x.abs());
-        }
-        Self::with_ratio(nurb, kmax / smin, op)
-    }
-
-    /// The rounding of a net whose coefficients' knots and parameters are at most `ratio`
-    /// times the least span they divide by (`K / S`).
-    fn with_ratio(
-        nurb: &crate::nurbs::srf_basic::Surface,
-        ratio: f64,
-        op: &'static str,
-    ) -> Result<Self> {
-        Self::with_ratio_in(nurb, ratio, op, &|_, _| true)
-    }
-
-    /// [`Rounding::with_ratio`] over the control points `keep` names (`[i along u][j along
+    /// [`Rounding::with_ratio_in`] over the control points `keep` names (`[i along u][j along
     /// v]`): the pieces' points are combinations of those alone.
     fn with_ratio_in(
         nurb: &crate::nurbs::srf_basic::Surface,
@@ -697,7 +674,7 @@ impl Surface {
         };
         let mid = 0.5 * (from + to);
         let fixed = side.at(dom);
-        let rounding = Rounding::of(&form, &[fixed, from, to], OP_DIAMETER)?;
+        let rounding = Rounding::local(&form, !side.is_u(), fixed, from, to, OP_DIAMETER)?;
         let mut pieces = Vec::new();
         let mut levels = 0;
         for (a, b) in [(from, mid), (mid, to)] {
@@ -1157,5 +1134,46 @@ mod tests {
                 "w {w}: {a:?} {b:?}"
             );
         }
+    }
+
+    /// Issue #3000: Boehm extraction at `t = u_s` of degree `q` forms coefficients from
+    /// `u_(s-q+1) .. u_(s+q)` only (`lo = (s + 1).saturating_sub(q)`). When an adjacent
+    /// exterior extension span `[u_(s-q), u_s]` has a huge knot `u_(s-q) = -1e16`, `u_(s-q)`
+    /// is outside that window; an off-by-one `s - q` start pulls `-1e16` into `kmax` and blows
+    /// `side_diameter`'s rounding past the side's width, clamping `lower` to `0.0`.
+    #[test]
+    fn extraction_window_excludes_adjacent_exterior_knot_and_keeps_side_uncollapsed() {
+        let kv = [-1e16, -1e16, 0.0, 1.0, 1.0];
+        let (kmax, smin) = extraction_window(&kv, 0.0, 1);
+        assert_eq!((kmax, smin), (1.0, 1.0));
+        // Mutation check: starting at `s - q` (index 1) instead of `s - q + 1` (index 2)
+        // includes `kv[1] = -1e16` and inflates `kmax / smin` by 1e16.
+        let s = kv.iter().rposition(|&x| x <= 0.0).unwrap();
+        let off_by_one_lo = s.saturating_sub(1);
+        assert_eq!(kv[off_by_one_lo].abs(), 1e16);
+
+        // End-to-end on `side_diameter` at `u = 0.0` of face box `[0, 1] x [0, 1]`, with an
+        // exterior extension span `[-1e16, 0]` of unit-width rows in `y`:
+        let rows = vec![
+            vec![
+                CPoint::new(-1.0, 0.0, 0.0, NOW),
+                CPoint::new(-1.0, 1.0, 0.0, NOW),
+            ],
+            vec![
+                CPoint::new(0.0, 0.0, 0.0, NOW),
+                CPoint::new(0.0, 1.0, 0.0, NOW),
+            ],
+            vec![
+                CPoint::new(1.0, 0.0, 0.0, NOW),
+                CPoint::new(1.0, 1.0, 0.0, NOW),
+            ],
+        ];
+        let net = Net::new(rows, 1, 1, kv.to_vec(), vec![0.0, 0.0, 1.0, 1.0]).unwrap();
+        let surf = Surface::from(BSplineSurface::from_gw_nurb(&net));
+        let face_dom = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        let b = surf.side_diameter(&k(), &face_dom, BoxSide::UMin).unwrap();
+        holds(b, 1.0);
+        assert!(b.lower > 1.0 - 1e-11, "side falsely collapsed: {b:?}");
+        assert!(b.upper < 1.0 + 1e-11, "rounding blew up: {b:?}");
     }
 }
