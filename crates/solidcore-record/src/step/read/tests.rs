@@ -1242,3 +1242,210 @@ fn surface_refusals_say_why() {
         Err("#4: expected AXIS1_PLACEMENT, found AXIS2_PLACEMENT_3D".into())
     );
 }
+
+/// A B-spline of degree p needs at least p + 1 control points, and at least 2 (ISO 10303-42
+/// `constraints_param_b_spline`: `up_cp >= degree`). The multiplicities of these sum to
+/// n + p + 1, so only the count refuses them (jyviko on #2607).
+#[test]
+fn a_bspline_has_more_control_points_than_its_degree() {
+    for (data, id) in [
+        // Degree 3, no control point; degree 3, one; degree 3, three.
+        (
+            "#10=B_SPLINE_CURVE_WITH_KNOTS('',3,(),.UNSPECIFIED.,.F.,.F.,(3,1),(0.,1.),.UNSPECIFIED.);",
+            10,
+        ),
+        (
+            "#10=B_SPLINE_CURVE_WITH_KNOTS('',3,(#1),.UNSPECIFIED.,.F.,.F.,(4,1),(0.,1.),.UNSPECIFIED.);",
+            10,
+        ),
+        (
+            "#10=B_SPLINE_CURVE_WITH_KNOTS('',3,(#1,#1,#1),.UNSPECIFIED.,.F.,.F.,(4,3),(0.,1.),.UNSPECIFIED.);",
+            10,
+        ),
+        // Degree 1, one control point.
+        (
+            "#10=B_SPLINE_CURVE_WITH_KNOTS('',1,(#1),.UNSPECIFIED.,.F.,.F.,(2,1),(0.,1.),.UNSPECIFIED.);",
+            10,
+        ),
+    ] {
+        assert_eq!(
+            curve_err(data, id, MM),
+            Err("too few control points".to_string()),
+            "{data}"
+        );
+    }
+    // p + 1 points is enough.
+    assert!(
+        curve_err(
+            "#10=B_SPLINE_CURVE_WITH_KNOTS('',3,(#1,#1,#1,#1),.UNSPECIFIED.,.F.,.F.,(4,4),(0.,1.),.UNSPECIFIED.);",
+            10,
+            MM
+        )
+        .is_ok()
+    );
+}
+
+/// A malformed value is refused, never read as a default (jyviko on #2607): only `$` omits a
+/// placement's axis or reference direction, an enumeration must be one the attribute's type
+/// lists, and a logical must be `.T.`, `.F.` or `.U.`.
+#[test]
+fn malformed_values_are_refused_not_defaulted() {
+    let bspline = |form: &str, closed: &str, si: &str, spec: &str| {
+        format!(
+            "#10=B_SPLINE_CURVE_WITH_KNOTS('',1,(#1,#1),{form},{closed},{si},(2,2),(0.,1.),{spec});"
+        )
+    };
+    let trimmed = |pref: &str| {
+        format!(
+            "#10=CIRCLE('',#4,1.);#11=TRIMMED_CURVE('',#10,(PARAMETER_VALUE(0.)),(PARAMETER_VALUE(1.)),.T.,{pref});"
+        )
+    };
+    let circle = |placement: &str| format!("#9={placement};#10=CIRCLE('',#9,1.);");
+    for (data, id, why) in [
+        (
+            circle("AXIS2_PLACEMENT_3D('',#1,1.,#3)"),
+            10,
+            "placement axis: expected a reference or $",
+        ),
+        (
+            circle("AXIS2_PLACEMENT_3D('',#1,'Z',#3)"),
+            10,
+            "placement axis: expected a reference or $",
+        ),
+        (
+            circle("AXIS2_PLACEMENT_3D('',#1,#2,.X.)"),
+            10,
+            "placement ref_direction: expected a reference or $",
+        ),
+        (
+            circle("AXIS2_PLACEMENT_3D('',#1,#2)"),
+            10,
+            "placement ref_direction: expected a reference or $",
+        ),
+        (
+            bspline(".FOO.", ".F.", ".F.", ".UNSPECIFIED."),
+            10,
+            "B-spline curve_form: unknown .FOO.",
+        ),
+        (
+            bspline("$", ".F.", ".F.", ".UNSPECIFIED."),
+            10,
+            "B-spline curve_form: expected an enumeration",
+        ),
+        (
+            bspline(".UNSPECIFIED.", ".F.", ".F.", ".FOO."),
+            10,
+            "B-spline knot_spec: unknown .FOO.",
+        ),
+        (
+            bspline(".UNSPECIFIED.", ".X.", ".F.", ".UNSPECIFIED."),
+            10,
+            "B-spline closed_curve: expected a logical",
+        ),
+        (
+            bspline(".UNSPECIFIED.", ".F.", "1", ".UNSPECIFIED."),
+            10,
+            "B-spline self_intersect: expected a logical",
+        ),
+        (
+            trimmed(".FOO."),
+            11,
+            "trimmed curve master_representation: unknown .FOO.",
+        ),
+        (
+            trimmed("$"),
+            11,
+            "trimmed curve master_representation: expected an enumeration",
+        ),
+    ] {
+        assert_eq!(curve_err(&data, id, MM), Err(why.to_string()), "{data}");
+    }
+    // Each value the types list is read.
+    for (form, want) in [
+        (".POLYLINE_FORM.", CurveForm::PolylineForm),
+        (".CIRCULAR_ARC.", CurveForm::CircularArc),
+        (".ELLIPTIC_ARC.", CurveForm::EllipticArc),
+        (".PARABOLIC_ARC.", CurveForm::ParabolicArc),
+        (".HYPERBOLIC_ARC.", CurveForm::HyperbolicArc),
+        (".UNSPECIFIED.", CurveForm::Unspecified),
+    ] {
+        let c = curve(&bspline(form, ".U.", ".T.", ".UNSPECIFIED."), 10, MM);
+        let Curve::BSpline(b) = &*c else {
+            panic!("{c:?}")
+        };
+        assert_eq!(
+            (b.form, b.closed, b.self_intersect),
+            (want, Logical::Unknown, Logical::True)
+        );
+    }
+    for (spec, want) in [
+        (".UNIFORM_KNOTS.", KnotSpec::UniformKnots),
+        (".QUASI_UNIFORM_KNOTS.", KnotSpec::QuasiUniformKnots),
+        (".PIECEWISE_BEZIER_KNOTS.", KnotSpec::PiecewiseBezierKnots),
+        (".UNSPECIFIED.", KnotSpec::Unspecified),
+    ] {
+        let c = curve(&bspline(".UNSPECIFIED.", ".F.", ".F.", spec), 10, MM);
+        let Curve::BSpline(b) = &*c else {
+            panic!("{c:?}")
+        };
+        assert_eq!(b.knot_spec, want);
+    }
+    for (pref, want) in [
+        (".CARTESIAN.", TrimPreference::Cartesian),
+        (".PARAMETER.", TrimPreference::Parameter),
+        (".UNSPECIFIED.", TrimPreference::Unspecified),
+    ] {
+        let c = curve(&trimmed(pref), 11, MM);
+        let Curve::Trimmed { preference, .. } = &*c else {
+            panic!("{c:?}")
+        };
+        assert_eq!(*preference, want);
+    }
+}
+
+/// ISO 10303-42 `constraints_param_b_spline` limits an interior knot's multiplicity to the
+/// degree (the end knots to degree + 1), and a complex B-spline instance names its knots by
+/// one of the subtypes `B_SPLINE_CURVE_WITH_KNOTS`, `BEZIER_CURVE`, `UNIFORM_CURVE` or
+/// `QUASI_UNIFORM_CURVE`; without one it has none to read (jyviko on #2607).
+#[test]
+fn knots_hold_to_part_42() {
+    // Degree 2, interior multiplicity 3 = p + 1: refused; 2 = p: read.
+    assert_eq!(
+        curve_err(
+            "#10=B_SPLINE_CURVE_WITH_KNOTS('',2,(#1,#1,#1,#1,#1,#1),.UNSPECIFIED.,.F.,.F.,(3,3,3),(0.,1.,2.),.UNSPECIFIED.);",
+            10,
+            MM
+        ),
+        Err("interior knot multiplicity above the degree".to_string())
+    );
+    // The same through a knot written twice (1 + 2 at 1.).
+    assert_eq!(
+        curve_err(
+            "#10=B_SPLINE_CURVE_WITH_KNOTS('',2,(#1,#1,#1,#1,#1,#1),.UNSPECIFIED.,.F.,.F.,(3,1,2,3),(0.,1.,1.,2.),.UNSPECIFIED.);",
+            10,
+            MM
+        ),
+        Err("interior knot multiplicity above the degree".to_string())
+    );
+    let c = curve(
+        "#10=B_SPLINE_CURVE_WITH_KNOTS('',2,(#1,#1,#1,#1,#1),.UNSPECIFIED.,.F.,.F.,(3,2,3),(0.,1.,2.),.UNSPECIFIED.);",
+        10,
+        MM,
+    );
+    let Curve::BSpline(b) = &*c else {
+        panic!("{c:?}")
+    };
+    assert_eq!(
+        (b.knots.clone(), b.multiplicities.clone()),
+        (vec![0.0, 1.0, 2.0], vec![3, 2, 3])
+    );
+    // A complex B-spline with no knot subtype.
+    assert_eq!(
+        curve_err(
+            "#10=(BOUNDED_CURVE()B_SPLINE_CURVE(1,(#1,#1),.UNSPECIFIED.,.F.,.F.)CURVE()GEOMETRIC_REPRESENTATION_ITEM()RATIONAL_B_SPLINE_CURVE((1.,1.))REPRESENTATION_ITEM(''));",
+            10,
+            MM
+        ),
+        Err("complex B-spline without a knot subtype".to_string())
+    );
+}
