@@ -464,6 +464,16 @@ pub trait OffsetExecutive<O> {
         brep: &mut B,
         base: O,
     ) -> Result<(O, Extent2d)>;
+    /// The margin the analytic copy of `base` is extended by for the exact mate
+    /// (`Kernel::fixes.offset_analytic_mate_edges`): the one its extension
+    /// ([`Self::get_create_extended_surface`]) is made with, so the copy holds every piece
+    /// marched on that extension. The default is `upstream`, the fork's five offset
+    /// distances (an implementation compared against it keeps it); the executive's
+    /// adapter gives its face's recorded reach (not upstream).
+    fn analytic_extension_margin(&self, base: O, upstream: f64) -> f64 {
+        let _ = base;
+        upstream
+    }
 }
 
 /// What the unit reads from and writes to the original and offset B-reps,
@@ -3891,9 +3901,11 @@ impl OffsetGeometryCreation {
         // analytic surfaces, not on a tangent extension) is replaced by that curve, its
         // UV curves dropped from it.
         if k.fixes.offset_analytic_mate_edges {
-            let ext_dist = self.offset_distance().abs() * 5.0;
-            let analytic1 = create_analytic_extension(k, surface_of(brep, surf1)?, ext_dist)?;
-            let analytic2 = create_analytic_extension(k, surface_of(brep, surf2)?, ext_dist)?;
+            let upstream = self.offset_distance().abs() * 5.0;
+            let margin1 = executive.analytic_extension_margin(surf1, upstream);
+            let margin2 = executive.analytic_extension_margin(surf2, upstream);
+            let analytic1 = create_analytic_extension(k, surface_of(brep, surf1)?, margin1)?;
+            let analytic2 = create_analytic_extension(k, surface_of(brep, surf2)?, margin2)?;
             if let (Some(analytic1), Some(analytic2)) = (&analytic1, &analytic2) {
                 if !ssi.curves_3d.is_empty() {
                     let exact = analytic1.global_surface_intersect(

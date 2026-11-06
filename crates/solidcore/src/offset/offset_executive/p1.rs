@@ -690,7 +690,7 @@ impl OffsetExecutive {
 
     /// The largest reach recorded: the margin of a surface no recorded face accounts for
     /// (an edge's or vertex's cap, a face the offset did not make from one).
-    fn body_extension_reach(&self) -> f64 {
+    pub(super) fn body_extension_reach(&self) -> f64 {
         self.extension_reaches.values().fold(0.0, |a, &b| a.max(b))
     }
 
