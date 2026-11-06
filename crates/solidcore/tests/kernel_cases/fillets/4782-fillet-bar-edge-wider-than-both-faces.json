@@ -86,9 +86,6 @@
   "case": "4782-fillet-bar-edge-wider-than-both-faces",
   "expected": {
     "body_count": 1,
-    "continuity": {
-      "order": "g1"
-    },
     "method": "a convex round past its faces' far edges is built on the faces continued and its removal subtracted (smlib_fillet): the section keeps the bar's 5x5 square [0,5]x[0,5] (y,z) within the round's circle, centre (10,-5), radius 10. The circle crosses z=0 at y = 10-sqrt(75) and y=5 at z = sqrt(75)-5, and contains the corner (5,0), so with u = 10-y the area is integral from 5 to sqrt(75) of (sqrt(100-u^2) - 5) du = 50 (pi/3 - pi/6) - 5 (sqrt(75) - 5) = 25 pi/3 - 5 sqrt(75) + 25 = 7.8786686; V = 80 area = 2000 pi/3 - 400 sqrt(75) + 2000 = 630.2934873",
     "source": "analytic",
     "sources": [
@@ -100,7 +97,8 @@
     "volume_mm3": 630.2934873,
     "what": "the long top edge of a 5x5 bar rounded r10, wider than both faces it rounds"
   },
-  "expressible": false,
+  "expressible": true,
+  "gallery_note": "R10 consumes the original y=0 and z=5 supports of the 5x5 bar: their tangent seams no longer exist. The round crosses z=0 and y=5 with 120-degree outward-normal angles, as the end view shows. The direct analytic regression checks those crossings, the unchanged operand, the closed-form volume, 5 faces / 9 edges / 6 vertices, manifoldness and Level-2 validity. No kernel geometry changed; the original G1 grading was inapplicable.",
   "operation_expressible": true,
   "outcome": {
     "ran": true,
@@ -141,9 +139,7 @@
     "tagged",
     "blend_dropping"
   ],
-  "ungraded": [
-    "continuity: SolidCraft computes it"
-  ],
+  "ungraded": [],
   "what": "the long top edge of a 5x5 bar rounded r10, wider than both faces it rounds",
   "why_not": []
 }

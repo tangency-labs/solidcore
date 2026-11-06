@@ -50,11 +50,6 @@
     "reason": "refused, but not because \"not supported yet\": step 3 (solid.chamfer): SMLib chamfer: operation: SMLib failed (status 1001) (tangent propagation blended the picked edges' tangent chain with them; with it off, tangent_chain:"
   },
   {
-    "case": "fillets/4782-fillet-bar-edge-wider-than-both-faces",
-    "issue": "tangency-labs/solidcore#2948",
-    "reason": "continuity_order: got Box: no null seams want >= g1 at every blend seam"
-  },
-  {
     "case": "fillets/9-fillet-corner-curvature-with-reduce-fit",
     "issue": "tangency-labs/solidcraft#12645",
     "reason": "solid.fillet builds `corner: g2` with `fit: exact` only"
