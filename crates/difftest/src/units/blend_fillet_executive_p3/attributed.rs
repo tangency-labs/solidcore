@@ -22,8 +22,29 @@ use solidcore::primitive::api_primitives as primitives;
 use solidcore::topology::brep::p1;
 use solidcore::topology::Brep;
 use solidcore::{EntityRef, Result as SolidResult, SolidError};
-use solidcore_ffi::units::blend_fillet_executive_p3 as ffi;
-use solidcore_ffi::units::boolean_api_brep as rows;
+use super::contract;
+
+/// `boolean.api_brep`'s attribute ids: `ATTRIBUTE_BASE + 1000 operand + 500 kind + index`.
+const ATTRIBUTE_BASE: u64 = 10007;
+/// `boolean.api_brep`'s face area accuracy.
+const AREA_ACCURACY: f64 = 1e-4;
+/// `boolean.api_brep`'s edge length accuracy.
+const LENGTH_ACCURACY: f64 = 1e-9;
+
+/// Sorts measure rows (`measure attributes...`) as `boolean.api_brep` does: by their
+/// attribute part, then by measure.
+fn sort_rows(rows: &mut [Vec<f64>]) {
+    rows.sort_by(|x, y| {
+        let (mx, ax) = x.split_first().map_or((0.0, &[][..]), |(m, a)| (*m, a));
+        let (my, ay) = y.split_first().map_or((0.0, &[][..]), |(m, a)| (*m, a));
+        ax.iter()
+            .zip(ay)
+            .map(|(p, q)| p.total_cmp(q))
+            .find(|o| o.is_ne())
+            .unwrap_or_else(|| ax.len().cmp(&ay.len()))
+            .then(mx.total_cmp(&my))
+    });
+}
 
 /// The public fillet entry point.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -131,7 +152,7 @@ impl AttributedFillet {
                 5.0
             }
         };
-        params.resize(ffi::SOURCE_PARAMS, 0.0);
+        params.resize(contract::SOURCE_PARAMS, 0.0);
         out.push(kind);
         out.extend(params);
         out.extend([
@@ -161,13 +182,6 @@ fn output(values: &[f64]) -> Result<Output, HarnessError> {
         head.iter().map(|v| *v as i64).collect(),
     );
     Ok(out.values("attributes", rest.to_vec()))
-}
-
-/// The C++ record of `input`.
-pub(super) fn cpp(input: &AttributedFillet) -> Result<Output, HarnessError> {
-    let (values, step) = super::fresh_cpp(|| ffi::attributed(&input.wire()))
-        .map_err(|e| HarnessError::new(e.to_string()))?;
-    Ok(super::with_point_step(output(&values)?, step))
 }
 
 fn build(k: &mut Kernel, body: &Body) -> SolidResult<Brep> {
@@ -221,7 +235,7 @@ fn tag(b: &mut Brep, behavior: Behavior) -> SolidResult<()> {
                 .map(|(i, e)| (EntityRef::Edge(e), 500 + i as u64)),
         );
     for (entity, offset) in tagged {
-        let id = rows::ATTRIBUTE_BASE + offset;
+        let id = ATTRIBUTE_BASE + offset;
         b.add_attribute(entity, Attribute::long(id, id as i64, behavior))?;
     }
     Ok(())
@@ -264,18 +278,18 @@ fn put_attributes(k: &Kernel, o: &mut Vec<f64>, b: &mut Brep) -> SolidResult<()>
     };
     let mut face_rows = Vec::new();
     for f in p1::faces(b, None)? {
-        let area = measured(face_area(k, b, f, rows::AREA_ACCURACY))?;
+        let area = measured(face_area(k, b, f, AREA_ACCURACY))?;
         face_rows.push(row(b, EntityRef::Face(f), area));
     }
-    rows::sort_rows(&mut face_rows);
+    sort_rows(&mut face_rows);
     o.push(face_rows.len() as f64);
     o.extend(face_rows.into_iter().flatten());
     let mut edge_rows = Vec::new();
     for e in p1::edges(b, None)? {
-        let length = measured(edge_length(k, b, e, rows::LENGTH_ACCURACY))?;
+        let length = measured(edge_length(k, b, e, LENGTH_ACCURACY))?;
         edge_rows.push(row(b, EntityRef::Edge(e), length));
     }
-    rows::sort_rows(&mut edge_rows);
+    sort_rows(&mut edge_rows);
     o.push(edge_rows.len() as f64);
     o.extend(edge_rows.into_iter().flatten());
     Ok(())
@@ -299,7 +313,7 @@ fn generator(code: u32) -> SolidResult<FilletSurfaceGeneratorType> {
 /// `solidcore::blend::fillet_executive::api` entry point runs on it.
 pub(super) fn rust(input: &AttributedFillet) -> Result<Output, HarnessError> {
     let wire = input.wire();
-    ffi::validate_attributed(&wire).map_err(|e| HarnessError::new(e.to_string()))?;
+    contract::validate_attributed(&wire).map_err(|e| HarnessError::new(e.to_string()))?;
     let mut k = Kernel::default();
     let mut run = || -> SolidResult<Vec<f64>> {
         let behavior = Behavior::from_code(i32::from(input.behavior))?;

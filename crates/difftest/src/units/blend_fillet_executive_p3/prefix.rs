@@ -38,7 +38,6 @@ use solidcore::kernel::Kernel;
 use solidcore::topology::brep::p1;
 use solidcore::topology::{edge, edgeuse::p1 as eu, Brep, EdgeId};
 use solidcore::{EntityRef, Result as SolidResult, SolidError};
-use solidcore_ffi::units::blend_fillet_executive_p3 as ffi;
 
 fn invalid(reason: &'static str) -> SolidError {
     SolidError::invalid_input("harness::fillet_prefix", reason)
@@ -918,24 +917,6 @@ pub(super) fn output(mut values: &[f64], checkpoint: Checkpoint) -> Result<Outpu
         return Err(HarnessError::new("trailing prefix data"));
     }
     Ok(out)
-}
-pub(super) fn cpp(input: &RealSolid) -> Result<Output, HarnessError> {
-    let (values, step) =
-        super::super::fresh_cpp(|| ffi::real_prefix(&input.wire(), input.checkpoint.code()))
-            .map_err(|e| HarnessError::new(e.to_string()))?;
-    Ok(super::super::with_point_step(output(&values, input.checkpoint)?, step))
-}
-
-/// [`cpp`] on a file's body (`real_prefix_file`): the box dimensions of the wire are
-/// placeholders the shim validates and does not use.
-pub(super) fn cpp_file(input: &RealSolid, path: &str) -> Result<Output, HarnessError> {
-    let mut wire = vec![1.0, 1.0, 1.0];
-    wire.extend(input.fillet_wire());
-    let (values, step) = super::super::fresh_cpp(|| {
-        ffi::real_prefix_file(&wire, input.checkpoint.code(), path)
-    })
-    .map_err(|e| HarnessError::new(e.to_string()))?;
-    Ok(super::super::with_point_step(output(&values, input.checkpoint)?, step))
 }
 
 fn insertion_output(mut values: &[f64], checkpoint: Checkpoint) -> Result<Output, HarnessError> {

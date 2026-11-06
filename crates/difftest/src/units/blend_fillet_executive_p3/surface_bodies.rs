@@ -15,7 +15,7 @@ use solidcore::surface::surface::Surface;
 use solidcore::topology::brep::p1;
 use solidcore::topology::{Brep, FaceId};
 use solidcore::Result as SolidResult;
-use solidcore_ffi::units::blend_fillet_executive_p3 as ffi;
+use super::contract;
 
 /// Who owns each surface: `owners[0]` 0 free, 1 the face of its own sheet body;
 /// `owners[1]` 0 free, 1 its own sheet body, 2 a second face of surface 1's body,
@@ -124,13 +124,6 @@ fn output(values: &[f64]) -> Result<Output, HarnessError> {
     Ok(out)
 }
 
-/// The C++ record of [`SurfaceSurfaceBodies`].
-pub(super) fn cpp(input: &SurfaceSurfaceBodies) -> Result<Output, HarnessError> {
-    let (values, step) = super::fresh_cpp(|| ffi::surface_surface_bodies(&input.wire()))
-        .map_err(|e| HarnessError::new(e.to_string()))?;
-    Ok(super::with_point_step(output(&values)?, step))
-}
-
 fn body_record(k: &Kernel, body: &Brep, values: &mut Vec<f64>) -> SolidResult<()> {
     values.extend([
         p1::vertices(body, None)?.len() as f64,
@@ -165,7 +158,7 @@ fn sheet(k: &mut Kernel, surfaces: &[&Surface]) -> SolidResult<(Brep, Vec<FaceId
 /// as the shim builds them, then
 /// `solidcore::blend::fillet_executive::api::surface_surface_fillet` runs on them.
 pub(super) fn rust(input: &SurfaceSurfaceBodies) -> Result<Output, HarnessError> {
-    ffi::validate_surface_surface_bodies(&input.wire())
+    contract::validate_surface_surface_bodies(&input.wire())
         .map_err(|e| HarnessError::new(e.to_string()))?;
     let mut k = Kernel::default();
     let mut run = || -> SolidResult<Vec<f64>> {

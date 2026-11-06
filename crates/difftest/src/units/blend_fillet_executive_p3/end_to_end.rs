@@ -9,7 +9,7 @@ use solidcore::math::Vec3;
 use solidcore::topology::brep::p1;
 use solidcore::topology::{edge, edgeuse::p1 as eu, face::p2 as face, loopuse, Brep, EdgeId};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::blend_fillet_executive_p3 as ffi;
+use super::contract;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -127,9 +127,9 @@ pub(super) enum Source {
 }
 impl Source {
     /// Source kind code and the shim's fixed-length parameter block.
-    pub(super) fn wire(&self) -> (f64, [f64; ffi::SOURCE_PARAMS]) {
-        let mut p = [0.0; ffi::SOURCE_PARAMS];
-        let boxes = |p: &mut [f64; ffi::SOURCE_PARAMS], a: &BoxSpec, b: &BoxSpec| {
+    pub(super) fn wire(&self) -> (f64, [f64; contract::SOURCE_PARAMS]) {
+        let mut p = [0.0; contract::SOURCE_PARAMS];
+        let boxes = |p: &mut [f64; contract::SOURCE_PARAMS], a: &BoxSpec, b: &BoxSpec| {
             for (slot, v) in p.iter_mut().zip(
                 a.origin
                     .iter()
@@ -462,24 +462,24 @@ impl RealSolid {
     fn validate(&self) -> Result<(), HarnessError> {
         self.check_form()?;
         if let Some(setback) = self.corner_setback {
-            return ffi::validate_real_solid_setback(&self.wire(), setback.wire())
+            return contract::validate_real_solid_setback(&self.wire(), setback.wire())
                 .map_err(|e| HarnessError::new(e.to_string()));
         }
         if let Some(law) = &self.radius_law {
-            return ffi::validate_real_law_solid(&self.wire(), &law.wire())
+            return contract::validate_real_law_solid(&self.wire(), &law.wire())
                 .map_err(|e| HarnessError::new(e.to_string()));
         }
         match (&self.source, self.radius_end) {
-            (Some(source), Some(end)) => ffi::validate_real_variable_source(
+            (Some(source), Some(end)) => contract::validate_real_variable_source(
                 &self.source_wire(source),
                 source.path().is_some(),
                 end,
             ),
             (Some(source), None) => {
-                ffi::validate_real_source(&self.source_wire(source), source.path().is_some())
+                contract::validate_real_source(&self.source_wire(source), source.path().is_some())
             }
-            (None, Some(end)) => ffi::validate_real_variable_solid(&self.wire(), end),
-            (None, None) => ffi::validate_real_solid(&self.wire()),
+            (None, Some(end)) => contract::validate_real_variable_solid(&self.wire(), end),
+            (None, None) => contract::validate_real_solid(&self.wire()),
         }
         .map_err(|e| HarnessError::new(e.to_string()))
     }
@@ -577,90 +577,6 @@ pub(super) fn output(mut values: &[f64]) -> Result<Output, HarnessError> {
         .insert("mass_status".into(), vec![mass_status as i64]);
     out.values.insert("mass_properties".into(), mass.to_vec());
     Ok(out)
-}
-
-/// A source case's C++ record, or its rejection when the native fillet crashed in the
-/// case's fresh child process (undefined in C++: AGENTS.md section 5.6; the upstream
-/// crashes are UB-209 and UB-261). Rust is not run on a rejected case.
-fn source_output(
-    result: Result<(Vec<f64>, f64), solidcore_ffi::FfiError>,
-) -> Result<Output, HarnessError> {
-    match result {
-        Ok((values, step)) => Ok(super::with_point_step(output(&values)?, step)),
-        Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_CHILD_CRASHED)) => Ok(Output::rejected(
-            "native C++ crash in SmApiFilletEdges (fresh child process; UB-209, UB-261)",
-        )),
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
-}
-
-/// A box case's C++ record (see [`super::fresh_cpp`]).
-fn solid_output(
-    result: Result<(Vec<f64>, f64), solidcore_ffi::FfiError>,
-) -> Result<Output, HarnessError> {
-    let (values, step) = result.map_err(|e| HarnessError::new(e.to_string()))?;
-    Ok(super::with_point_step(output(&values)?, step))
-}
-
-pub(super) fn cpp(input: &RealSolid) -> Result<Output, HarnessError> {
-    input.check_form()?;
-    if let Some(setback) = input.corner_setback {
-        let (values, step) = super::fresh_cpp(|| ffi::real_solid_setback(&input.wire(), setback.wire()))
-            .map_err(|e| HarnessError::new(e.to_string()))?;
-        return Ok(super::with_point_step(output(&values)?, step));
-    }
-    if let Some(shell) = input.shell {
-        let mut wire = input.wire();
-        wire.extend([shell.distance, f64::from(u8::from(shell.open_top))]);
-        let (values, step) = super::fresh_cpp(|| ffi::fillet_then_shell(&wire))
-            .map_err(|e| HarnessError::new(e.to_string()))?;
-        return Ok(super::with_point_step(shell_output(&values)?, step));
-    }
-    if let (Some(step_back), Some(source)) = (input.curve_blend_sih, &input.source) {
-        return source_output(super::fresh_cpp(|| {
-            ffi::curve_sih_source(step_back, &input.source_wire(source), source.path())
-        }));
-    }
-    if let Some(step_back) = input.curve_blend_sih {
-        return solid_output(super::fresh_cpp(|| {
-            ffi::curve_sih_solid(step_back, &input.wire())
-        }));
-    }
-    if let (Some(source), Some(end)) = (&input.source, input.radius_end) {
-        return source_output(super::fresh_cpp(|| {
-            ffi::real_variable_source(&input.source_wire(source), source.path(), end)
-        }));
-    }
-    if let (Some(Source::File { path }), true) =
-        (&input.source, input.checkpoint != Checkpoint::Full)
-    {
-        return prefix::cpp_file(input, path);
-    }
-    if let Some(source) = &input.source {
-        let run = if input.piecewise_merge {
-            ffi::piecewise_source
-        } else {
-            ffi::real_source
-        };
-        return source_output(super::fresh_cpp(|| {
-            run(&input.source_wire(source), source.path())
-        }));
-    }
-    if input.checkpoint != Checkpoint::Full {
-        return prefix::cpp(input);
-    }
-    if let Some(law) = &input.radius_law {
-        return solid_output(super::fresh_cpp(|| ffi::real_law_solid(&input.wire(), &law.wire())));
-    }
-    if let Some(end) = input.radius_end {
-        return solid_output(super::fresh_cpp(|| ffi::real_variable_solid(&input.wire(), end)));
-    }
-    let run = if input.piecewise_merge {
-        ffi::piecewise_solid
-    } else {
-        ffi::real_solid
-    };
-    solid_output(super::fresh_cpp(|| run(&input.wire())))
 }
 
 pub(super) fn section(out: &mut Vec<f64>, data: &[f64]) {
@@ -1503,13 +1419,6 @@ pub(super) fn rust(input: &RealSolid) -> Result<Output, HarnessError> {
     }
 }
 
-/// The C++ record of [`SurfaceSurface`]: `api_status`, then for a result B-rep its
-/// counts, topology and geometry.
-pub(super) fn surface_surface_cpp(input: &SurfaceSurface) -> Result<Output, HarnessError> {
-    let (values, step) = super::fresh_cpp(|| ffi::surface_surface(&input.wire()))
-        .map_err(|e| HarnessError::new(e.to_string()))?;
-    Ok(super::with_point_step(surface_surface_output(&values)?, step))
-}
 fn surface_surface_output(values: &[f64]) -> Result<Output, HarnessError> {
     let (&status, mut rest) = values
         .split_first()
@@ -1550,7 +1459,7 @@ fn surface_surface_output(values: &[f64]) -> Result<Output, HarnessError> {
 /// `solidcore::blend::fillet_executive::api::surface_surface_fillet` runs and the
 /// result B-rep is recorded as the shim records it.
 pub(super) fn surface_surface_rust(input: &SurfaceSurface) -> Result<Output, HarnessError> {
-    ffi::validate_surface_surface(&input.wire()).map_err(|e| HarnessError::new(e.to_string()))?;
+    contract::validate_surface_surface(&input.wire()).map_err(|e| HarnessError::new(e.to_string()))?;
     let mut k = Kernel::default();
     let mut run = || -> SolidResult<Vec<f64>> {
         let surface = |c: &[[f64; 3]; 4]| {
@@ -1679,7 +1588,6 @@ mod tests {
         input.all_edges = true;
         invalid.push(input);
         for input in invalid {
-            assert!(super::cpp(&input).is_err());
             assert!(super::rust(&input).is_err());
         }
     }
@@ -1693,7 +1601,6 @@ mod tests {
             let mut input = setback_input(8.0);
             input.corner_setback = Some(super::CornerSetback { vertex, distance });
             assert!(input.check_form().is_err());
-            assert!(super::cpp(&input).is_err());
             assert!(super::rust(&input).is_err());
         }
     }
@@ -1704,7 +1611,6 @@ mod tests {
             let mut input = setback_input(8.0);
             input.corner_setback.as_mut().expect("setback").vertex = vertex;
             // A malformed fixture must not turn into a compared 1006/1007 or rejection.
-            assert!(super::cpp(&input).is_err());
             assert!(super::rust(&input).is_err());
         }
     }
@@ -1740,7 +1646,6 @@ mod tests {
         assert_eq!(input.wire(), wire);
         input.radius_end = Some(2.0);
         input.checkpoint = super::Checkpoint::IntermediateFaces;
-        assert!(super::cpp(&input).is_err());
         assert!(super::rust(&input).is_err());
     }
 
@@ -1748,11 +1653,9 @@ mod tests {
     fn variable_radius_rejects_ignored_thumbweight_and_nonfinite_endpoint() {
         let mut input = variable_input();
         input.thumbweight = 1.5;
-        assert!(super::cpp(&input).is_err());
         assert!(super::rust(&input).is_err());
         input.thumbweight = 1.0;
         input.radius_end = Some(f64::NAN);
-        assert!(super::cpp(&input).is_err());
         assert!(super::rust(&input).is_err());
     }
 
@@ -1818,7 +1721,6 @@ mod tests {
             set(&|law| law.edge_map = [0.0, f64::INFINITY]),
         ] {
             assert!(input.validate().is_err(), "{input:?}");
-            assert!(super::cpp(&input).is_err());
             assert!(super::rust(&input).is_err());
         }
     }

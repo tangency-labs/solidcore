@@ -18,7 +18,7 @@ use solidcore::topology::edgeuse::p1 as eu;
 use solidcore::topology::edgeuse::p3::{evaluate_binormal_uv, BinormalOptions};
 use solidcore::topology::{edge, Brep, EdgeId, EdgeuseId};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::blend_fillet_executive_p3 as ffi;
+use super::contract;
 
 /// The setbacks of the fork's `sides_offsets`: `along_up` on the face whose face use
 /// normal leans most along `up`, `other` on the other face.
@@ -151,16 +151,9 @@ fn output(values: &[f64]) -> Result<Output, HarnessError> {
     Ok(out)
 }
 
-pub(super) fn cpp(input: &TwoOffsetChamfer) -> Result<Output, HarnessError> {
-    let wire = input.wire()?;
-    let (values, step) = super::fresh_cpp(|| ffi::two_offset_chamfer(&wire))
-        .map_err(|e| HarnessError::new(e.to_string()))?;
-    Ok(super::with_point_step(output(&values)?, step))
-}
-
 pub(super) fn rust(input: &TwoOffsetChamfer) -> Result<Output, HarnessError> {
     let wire = input.wire()?;
-    ffi::validate_two_offset_chamfer(&wire).map_err(|e| HarnessError::new(e.to_string()))?;
+    contract::validate_two_offset_chamfer(&wire).map_err(|e| HarnessError::new(e.to_string()))?;
     let mut k = Kernel::default();
     match run(&mut k, input) {
         Ok(values) => Ok(super::with_point_step(

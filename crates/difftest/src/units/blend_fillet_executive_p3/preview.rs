@@ -20,7 +20,7 @@ use solidcore::surface::surface::Surface;
 use solidcore::topology::brep::p1;
 use solidcore::topology::{Brep, EdgeId};
 use solidcore::SolidError;
-use solidcore_ffi::units::blend_fillet_executive_p3 as ffi;
+use super::contract;
 
 /// Samples per direction of the evaluation grid (as the shim's `PREVIEW_GRID`).
 const GRID: usize = 5;
@@ -51,7 +51,7 @@ impl FilletPreview {
             (None, Some(size)) => {
                 let mut v = vec![0.0];
                 v.extend(size);
-                v.extend([0.0; ffi::SOURCE_PARAMS - 3]);
+                v.extend([0.0; contract::SOURCE_PARAMS - 3]);
                 v
             }
             (Some(source), None) => {
@@ -69,22 +69,10 @@ impl FilletPreview {
         out.push(self.radius);
         out.push(self.edges.len() as f64);
         out.extend(self.edges.iter().map(|&e| e as f64));
-        ffi::validate_fillet_preview(&out, self.source.as_ref().and_then(Source::path).is_some())
+        contract::validate_fillet_preview(&out, self.source.as_ref().and_then(Source::path).is_some())
             .map_err(|e| HarnessError::new(e.to_string()))?;
         Ok(out)
     }
-}
-
-/// The C++ record, in a fresh child process.
-pub(super) fn cpp(input: &FilletPreview) -> Result<Output, HarnessError> {
-    let wire = input.wire()?;
-    let path = input.source.as_ref().and_then(Source::path);
-    let (values, step) = super::fresh_cpp(|| ffi::fillet_preview(&wire, path))
-        .map_err(|e| HarnessError::new(e.to_string()))?;
-    Ok(super::with_point_step(
-        Output::new().values("preview", values),
-        step,
-    ))
 }
 
 /// The upstream status of a Rust error (`-1` for one upstream cannot return).
