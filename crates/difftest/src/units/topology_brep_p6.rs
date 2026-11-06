@@ -1,14 +1,16 @@
-//! Native B-rep p6 operations. The Rust side builds a wire edge, face, network or
-//! kind-5 net fixture itself ([`crate::own_builder`]) and reads an `.smb` file with the
-//! Rust reader ([`crate::own_reader::file_in_order`]), both renumbered into the shim's
-//! walk order: no C++ export reaches the Rust side.
-//! Closure passes compare actual statuses, output reset, shell ownership, context
-//! mark advancement/locks, and every face-use mark. Copy compares the same fixed
+//! Runner for unit `topology.brep_p6`: `solidcore::topology::brep::p6`, ported from
+//! upstream `SmBrep` (`SmBrep.cpp`); checked against its golden.
+//!
+//! The case builds a wire edge, face, network or kind-5 net fixture itself
+//! ([`crate::own_builder`]) or reads an `.smb` file with the Rust reader
+//! ([`crate::own_reader::file_in_order`]), both renumbered into the upstream test
+//! fixture's walk order. Closure passes record statuses, output reset, shell ownership,
+//! context mark advancement/locks, and every face-use mark. Copy records the same fixed
 //! state plus the whole destination B-rep graph (its copied edges' intervals,
 //! tolerances and sampled curves, and their vertices), including empty-input controls.
 //! Op 3 runs `MakeFaceTopology` one or more times (each on the B-rep the previous
 //! call left) with real loops of edge uses, loop vertices, surfaces and UV curves,
-//! then compares every call's status and outputs, the context marks and the whole
+//! then records every call's status and outputs, the context marks and the whole
 //! post-operation graph (the `topology.brep_p10` traversal, with edge marks).
 
 
@@ -41,11 +43,22 @@ use solidcore::topology::{
     VertexId, VertexuseId,
 };
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::topology_brep_p6::{self as ffi, Request};
-use solidcore_ffi::units::topology_vertexuse::counts;
 
-/// Differential runner for `topology.brep_p6`.
+/// Runner for `topology.brep_p6`.
 pub struct Runner;
+
+/// What a closure, copy or state case runs.
+#[derive(Debug, Clone)]
+struct Request {
+    /// Operation, 0..=2.
+    op: i32,
+    /// Existing face-use index for closure testing.
+    seed: i64,
+    /// Edge indices in copy order (duplicates are valid).
+    indices: Vec<i64>,
+    /// Repeat with the same topology/context once or twice.
+    repeat: i32,
+}
 
 /// One edge of a kind-5 network: between points `a` and `b`, a line unless a curve
 /// is given.
@@ -140,46 +153,6 @@ fn brep_of(i: &Inputs) -> Result<&BrepIn, HarnessError> {
     i.brep.as_ref().ok_or_else(|| harness("no B-rep input"))
 }
 
-fn block(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut out = Vec::new();
-    if let Some(net) = &i.net {
-        out.push(5.0);
-        out.push(net.points.len() as f64);
-        for p in &net.points {
-            out.extend(p);
-        }
-        out.push(net.edges.len() as f64);
-        for e in &net.edges {
-            out.extend([e.a as f64, e.b as f64]);
-            match &e.curve {
-                None => out.push(0.0),
-                Some(c) => {
-                    out.push(1.0);
-                    shared::push_curve(&mut out, c)?;
-                }
-            }
-        }
-        out.extend([0.0, 0.0]);
-        return Ok(out);
-    }
-    match brep_of(i)? {
-        BrepIn::File { rebuild, .. } => out.extend([0.0, f64::from(*rebuild)]),
-        BrepIn::Wire { curve, t0, t1 } => {
-            out.push(1.0);
-            shared::push_curve(&mut out, curve)?;
-            out.extend([t0, t1]);
-        }
-        BrepIn::Face { surface, dom } => {
-            out.push(2.0);
-            shared::push_surface(&mut out, surface)?;
-            out.extend(dom);
-        }
-        BrepIn::Network => out.push(3.0),
-    }
-    out.extend([0.0, 0.0]);
-    Ok(out)
-}
-
 // Unit-local ASCII topology fixtures use the same native file reader as upstream
 // files. Keep their path under this fixture directory, without parent components.
 fn path_of(i: &Inputs) -> Result<String, HarnessError> {
@@ -206,39 +179,12 @@ fn path_of(i: &Inputs) -> Result<String, HarnessError> {
     shared::path_of(brep)
 }
 
-/// Split the tagged post-operation graph tail that follows the fixed `header` prefix:
-/// integer items keep their `[0, value]` pair in `state`, doubles go to `geom` with a
-/// `1` marker in `state` (the shim's `post::Out` encoding).
-fn tagged_tail(output: &[f64], header: usize) -> Result<(Vec<i64>, Vec<f64>), HarnessError> {
-    let mut ints: Vec<i64> = output
-        .get(..header)
-        .ok_or_else(|| harness("short output"))?
-        .iter()
-        .map(|v| *v as i64)
-        .collect();
-    let mut values = Vec::new();
-    for pair in output.get(header..).unwrap_or(&[]).chunks(2) {
-        let [tag, v] = pair else {
-            return Err(harness("odd tagged output"));
-        };
-        if *tag == 0.0 {
-            ints.extend([0, *v as i64]);
-        } else {
-            ints.push(1);
-            values.push(*v);
-        }
-    }
-    Ok((ints, values))
-}
-
 fn request(i: &Inputs, c: [usize; 10]) -> Request {
     Request {
         op: i.op,
         seed: shared::sel(i.seed, c[2]),
         indices: i.edges.iter().map(|e| shared::sel(*e, c[7])).collect(),
         repeat: i.repeat,
-        lock_mask: i.lock_mask,
-        flags: i.flags,
     }
 }
 
@@ -253,43 +199,6 @@ const MARKS: [MarkType; 5] = [
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.brep_p6"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        if i.op == 3 {
-            return make_faces_cpp(&i);
-        }
-        let path = path_of(&i)?;
-        let input = block(&i)?;
-        let fixture = ffi::export(&path, &input).map_err(harness)?;
-        let Some(c) = counts(&fixture.graph) else {
-            return Ok(Output::rejected("native fixture constructor"));
-        };
-        let request = request(&i, c);
-        let output = ffi::eval(&path, &input, &request).map_err(harness)?;
-        if output.first().is_some_and(|v| *v == -1.0 || *v == -2.0) {
-            return Ok(Output::rejected(format!(
-                "native fixture constructor: {output:?}"
-            )));
-        }
-        if request.op == 2 {
-            return Ok(Output::new().ints(
-                "state",
-                output.into_iter().map(|v| v as i64).collect::<Vec<_>>(),
-            ));
-        }
-        // op 0/1: the fixed state (status, outputs, marks of each face use, face-use
-        // shells, counts), then the tagged post-operation graph (the split B-rep for
-        // op 0, the copy destination for op 1)
-        let prefix = match request.op {
-            0 => 3,
-            1 => 1 + usize::from(i.flags & 2 != 0),
-            _ => return Err(harness("invalid operation")),
-        };
-        let header = prefix + MARKS.len() * (2 + c[2]) + c[2] + 7;
-        let (ints, values) = tagged_tail(&output, header)?;
-        Ok(Output::new().ints("state", ints).values("geom", values))
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -617,88 +526,6 @@ fn resolve(i: &Inputs, b: &Brep) -> Result<Vec<Resolved>, HarnessError> {
         out.push(Resolved { edgeuses, vertices });
     }
     Ok(out)
-}
-
-fn face_flags(f: &FaceIn) -> i32 {
-    i32::from(f.calc_trims) | (i32::from(f.verify) << 1) | (i32::from(f.opposite) << 2)
-}
-
-fn make_faces_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let path = path_of(i)?;
-    let block = block(i)?;
-    let fixture = ffi::export(&path, &block).map_err(harness)?;
-    if counts(&fixture.graph).is_none() {
-        return Ok(Output::rejected("native fixture constructor"));
-    }
-    let (b, _) = shared::import_raw(&fixture.graph)?;
-    let resolved = resolve(i, &b)?;
-    let mut specs = Vec::new();
-    for (f, r) in i.faces.iter().zip(resolved) {
-        let surface = match &f.surface {
-            None => None,
-            Some(s) => {
-                let mut v = Vec::new();
-                shared::push_surface(&mut v, s)?;
-                Some(v)
-            }
-        };
-        let uv_curves = match &f.uv_curves {
-            None => None,
-            Some(curves) => Some(
-                curves
-                    .iter()
-                    .map(|c| {
-                        c.as_ref()
-                            .map(|c| {
-                                let mut v = Vec::new();
-                                shared::push_curve(&mut v, c).map(|()| v)
-                            })
-                            .transpose()
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            ),
-        };
-        specs.push(ffi::FaceSpec {
-            surface,
-            region: f.region,
-            flags: face_flags(f),
-            loops: f.loops.clone(),
-            edgeuses: r.edgeuses,
-            vertices: r.vertices,
-            uv_curves,
-        });
-    }
-    let out = ffi::make_faces(&path, &block, &specs).map_err(harness)?;
-    match out.first().copied() {
-        Some(-1.0) => return Ok(Output::rejected("native fixture constructor")),
-        Some(-2.0) => {
-            return Ok(Output::rejected(
-                "cpp-guard: MakeFaceTopology would dereference null",
-            ))
-        }
-        _ => {}
-    }
-    let n = *out.first().ok_or_else(|| harness("empty output"))? as usize;
-    let header = 1 + 4 * n + 10;
-    let mut ints: Vec<i64> = out
-        .get(..header)
-        .ok_or_else(|| harness("short output"))?
-        .iter()
-        .map(|v| *v as i64)
-        .collect();
-    let mut values = Vec::new();
-    for pair in out.get(header..).unwrap_or(&[]).chunks(2) {
-        let [tag, v] = pair else {
-            return Err(harness("odd tagged output"));
-        };
-        if *tag == 0.0 {
-            ints.extend([0, *v as i64]);
-        } else {
-            ints.push(1);
-            values.push(*v);
-        }
-    }
-    Ok(Output::new().ints("state", ints).values("geom", values))
 }
 
 /// The tagged export stream: integers (each after a `0` tag) and doubles (a `1` tag
@@ -1386,17 +1213,6 @@ fn gen_faces(rng: &mut Rng) -> Inputs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compare::compare;
-
-    /// The fixed op-1 prefix length (status, optional copied count, marks, face-use
-    /// shells, counts) before the tagged destination graph, from the fixture's counts.
-    fn copy_prefix_len(i: &Inputs) -> usize {
-        let path = path_of(i).unwrap();
-        let input = block(i).unwrap();
-        let fixture = ffi::export(&path, &input).unwrap();
-        let c = counts(&fixture.graph).unwrap();
-        1 + usize::from(i.flags & 2 != 0) + MARKS.len() * (2 + c[2]) + c[2] + 7
-    }
 
     fn case(i: &Inputs) -> Case {
         Case {
@@ -1407,59 +1223,23 @@ mod tests {
         }
     }
 
-    /// The tagged decoder keeps the old integer prefix and partitions the appended
-    /// graph, and a truncated/odd record is a harness error, not a silent pass.
+    /// A copy of one network edge records the whole destination graph's geometry, not
+    /// only counts, marks and statuses: the B-rep tolerance, the edge's tolerance and
+    /// interval, the copied curve's natural interval and five evaluations, and its two
+    /// vertices' points and tolerances.
     #[test]
-    fn tagged_tail_partitions_old_prefix_and_graph() {
-        let output = [1.0, 2.0, 0.0, 3.0, 1.0, 4.5, 0.0, 5.0, 1.0, 6.5];
-        let (ints, values) = tagged_tail(&output, 2).unwrap();
-        assert_eq!(ints, [1, 2, 0, 3, 1, 0, 5, 1]);
-        assert_eq!(values, [4.5, 6.5]);
-        assert!(tagged_tail(&output, 11).is_err());
-        assert!(tagged_tail(&[1.0, 2.0, 0.0], 2).is_err());
-    }
-
-    /// The old copy comparison only saw counts, marks and statuses. This case copies
-    /// one network edge; the destination graph now also compares its copied curve's
-    /// natural interval, its evaluations (which move with its control points) and its
-    /// end vertex.
-    #[test]
-    fn copy_destination_geometry_is_compared_not_just_counts_and_marks() {
+    fn copy_records_the_destination_geometry() {
         let i: Inputs = serde_json::from_value(serde_json::json!({
             "brep": { "kind": "network" },
             "op": 1, "edges": [0], "flags": 2
         }))
         .unwrap();
-        let case = case(&i);
-        let cpp = Runner.run_cpp(&case).unwrap();
-        let rust = Runner.run_rust(&case).unwrap();
-        let diff = compare(&cpp, &rust, &[]);
-        assert!(diff.pass(), "{diff:?}");
-
-        // Destination graph doubles: [0] B-rep tolerance, [1..4] edge tolerance and
-        // interval, [4..6] copied curve interval, [6..21] five evaluations,
-        // [21..25] start vertex point/tolerance, [25..29] end vertex point/tolerance.
+        let rust = Runner.run_rust(&case(&i)).unwrap();
+        // [0] B-rep tolerance, [1..4] edge tolerance and interval, [4..6] copied curve
+        // interval, [6..21] five evaluations, [21..25] start vertex point/tolerance,
+        // [25..29] end vertex point/tolerance
         let geom = rust.values.get("geom").expect("destination geometry");
         assert_eq!(geom.len(), 29);
-
-        let n = copy_prefix_len(&i);
-        let old_cpp = Output::new().ints("state", cpp.ints["state"][..n].to_vec());
-        let old_rust = Output::new().ints("state", rust.ints["state"][..n].to_vec());
-        assert!(compare(&old_cpp, &old_rust, &[]).pass());
-
-        for (what, index) in [
-            ("copied curve natural interval", 4usize),
-            ("copied curve evaluation", 6),
-            ("copied edge end vertex", geom.len() - 3),
-        ] {
-            let mut changed = rust.clone();
-            changed.values.get_mut("geom").unwrap()[index] += 1.0;
-            assert!(
-                !compare(&cpp, &changed, &[]).pass(),
-                "{what} at geom[{index}] must be compared"
-            );
-            // the old prefix is untouched, so the former comparison would still pass
-            assert!(compare(&old_cpp, &old_rust, &[]).pass());
-        }
+        assert!(geom.iter().all(|v| v.is_finite()));
     }
 }
