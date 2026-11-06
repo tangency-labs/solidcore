@@ -616,6 +616,7 @@ mod tests {
         assert!(stale.harness_error.is_some(), "listed but no such case");
     }
 
+    /// Rejects success/rejection transitions even when every other output field is empty.
     #[test]
     fn rejection_and_empty_success_differ_in_both_directions() {
         let empty = encode("c", &Output::new());
@@ -630,6 +631,7 @@ mod tests {
         );
     }
 
+    /// Compares rejection text exactly and identifies it as the changed field.
     #[test]
     fn a_changed_rejection_reason_fails_and_an_unchanged_one_passes() {
         let g = encode("c", &Output::rejected("invalid fixture"));
@@ -645,6 +647,7 @@ mod tests {
         assert!(c.details[0].contains("invalid fixture: missing face"));
     }
 
+    /// Distinguishes an empty reason from no rejection, with missing/null as None.
     #[test]
     fn an_empty_rejection_reason_is_recorded_and_differs_from_none() {
         let empty_reason = encode("c", &Output::rejected(""));
@@ -671,6 +674,7 @@ mod tests {
         );
     }
 
+    /// Keeps the format-1 serialized bytes of non-rejected results unchanged.
     #[test]
     fn a_non_rejected_line_keeps_its_encoded_bytes() {
         assert_eq!(
@@ -679,6 +683,7 @@ mod tests {
         );
     }
 
+    /// Ensures rejection handling does not mask status, topology, integer or value changes.
     #[test]
     fn rejection_comparison_leaves_other_fields_exact() {
         let base = Output {
@@ -711,9 +716,11 @@ mod tests {
     struct Outcomes(Vec<(&'static str, Option<&'static str>)>);
 
     impl UnitDiff for Outcomes {
+        /// Names this isolated outcome-comparison test unit.
         fn id(&self) -> &'static str {
             "golden.rejected"
         }
+        /// Retains every configured case name without consulting its output.
         fn cases(&self, _ctx: &CaseContext) -> Result<Vec<crate::Case>, HarnessError> {
             Ok(self
                 .0
@@ -726,6 +733,7 @@ mod tests {
                 })
                 .collect())
         }
+        /// Produces the configured rejection or an otherwise empty successful result.
         fn run_rust(&self, case: &crate::Case) -> Result<Output, HarnessError> {
             let reason = self
                 .0
@@ -739,6 +747,7 @@ mod tests {
         }
     }
 
+    /// Reports a changed rejection through check_unit without changing the case inventory.
     #[test]
     fn check_unit_reports_a_rejection_change_even_when_the_output_is_empty() {
         let ctx = CaseContext {
