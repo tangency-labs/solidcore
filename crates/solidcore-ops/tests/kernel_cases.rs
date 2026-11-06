@@ -1923,6 +1923,86 @@ fn split_faces_forwards_the_tool_and_record_face_order() {
     }
 }
 
+/// Distinct physical faces and finite tool domains change the observed cut, not just picks.
+#[test]
+fn split_faces_distinguishes_faces_and_finite_tool_extents() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let body = Arc::new(solidcore_ops::make_box([0.0; 3], [10.0, 20.0, 30.0]).unwrap());
+    let (before, order) = body.to_record().unwrap();
+    for (face_axis, face_position, cut_axis, cut_position, origin, xaxis, yaxis, domain) in [
+        (
+            2,
+            30.0,
+            0,
+            3.0,
+            [3, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+            [[-1, 21], [-1, 31]],
+        ),
+        (
+            0,
+            10.0,
+            2,
+            12.0,
+            [0, 0, 12],
+            [1, 0, 0],
+            [0, 1, 0],
+            [[-1, 11], [-1, 21]],
+        ),
+    ] {
+        let pick = before
+            .faces
+            .iter()
+            .position(|face| {
+                matches!(face.surface,
+            RecordSurface::Plane {origin,u_axis,v_axis}
+                if origin[face_axis] == face_position
+                && u_axis[face_axis] == 0.0 && v_axis[face_axis] == 0.0)
+            })
+            .unwrap();
+        for bounds in [domain, [[-100, 100], [-100, 100]]] {
+            let step = serde_json::json!({"op":"split_faces","params":{
+                "faces":[pick],"tools":[{"plane":{"origin":origin,"xaxis":xaxis,
+                    "yaxis":yaxis,"u":bounds[0],"v":bounds[1]}}]
+            }});
+            let out = call(
+                &step,
+                &mut [Slot {
+                    body: Arc::clone(&body),
+                    order: Some(order.clone()),
+                }],
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(out.body.counts().unwrap(), [7, 15, 10]);
+            assert!((out.body.volume(1e-9).unwrap() - 6000.0).abs() < 1e-6);
+            assert!((out.body.area(1e-9).unwrap() - 2200.0).abs() < 1e-6);
+            let result = out.body.to_record().unwrap().0;
+            let added: Vec<_> = result
+                .vertices
+                .iter()
+                .filter(|v| (v.point[cut_axis] - cut_position).abs() < 1e-7)
+                .collect();
+            assert_eq!(added.len(), 2);
+            for v in added {
+                assert!((v.point[face_axis] - face_position).abs() < 1e-7);
+            }
+            assert_eq!(body.to_record().unwrap().0, before);
+        }
+        // The same infinite plane with a domain entirely outside the box cannot cut it.
+        let miss = serde_json::json!({"op":"split_faces","params":{
+            "faces":[pick],"tools":[{"plane":{"origin":origin,"xaxis":xaxis,
+                "yaxis":yaxis,"u":[-10,-5],"v":[-10,-5]}}]
+        }});
+        assert!(
+            matches!(call(&miss,&mut [Slot {body:Arc::clone(&body),order:Some(order.clone())}]),
+            Ok(Err(why)) if why == "tools do not split any selected face")
+        );
+        assert_eq!(body.to_record().unwrap().0, before);
+    }
+}
+
 /// Malformed metadata cannot be counted as unsupported coverage; a named unknown kind can.
 #[test]
 fn split_faces_bad_tool_metadata_is_a_replay_failure() {
