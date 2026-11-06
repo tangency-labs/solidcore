@@ -148,8 +148,8 @@ impl Caches {
     }
 }
 
-/// Counts of the work done by the steps of a boolean whose cost once grew with the square
-/// of the body's size, so a test can check how that work grows: the same on every
+/// Counts of the work done by the steps of a boolean or a blend whose cost once grew with
+/// the square of the body's size, so a test can check how that work grows: the same on every
 /// machine, where a ratio of times is not (the SolidCraft fork's `SmWorkCounters`,
 /// tangency-labs/smlib@2e9e6b2 and @edf7414).
 ///
@@ -161,6 +161,7 @@ impl Caches {
 pub struct WorkCounters {
     face_pairs: Cell<u64>,
     loops_classified: Cell<u64>,
+    wall_body_copies: Cell<u64>,
 }
 
 impl WorkCounters {
@@ -181,10 +182,19 @@ impl WorkCounters {
         self.loops_classified.get()
     }
 
+    /// Copies keep features makes of the body a feature's walls lie in (the sheet of
+    /// rounds for a boss, the target for a cut) to read the walls' boxes and creases from.
+    /// Not the fork's.
+    #[must_use]
+    pub fn wall_body_copies(&self) -> u64 {
+        self.wall_body_copies.get()
+    }
+
     /// Zeroes every count (`SmWorkCounters::Reset`).
     pub fn reset(&self) {
         self.face_pairs.set(0);
         self.loops_classified.set(0);
+        self.wall_body_copies.set(0);
     }
 
     /// Counts one face pair examined for intersection.
@@ -196,6 +206,12 @@ impl WorkCounters {
     pub(crate) fn add_loop_classified(&self) {
         self.loops_classified
             .set(self.loops_classified.get().saturating_add(1));
+    }
+
+    /// Counts one copy of a body keep features reads feature walls from.
+    pub(crate) fn add_wall_body_copy(&self) {
+        self.wall_body_copies
+            .set(self.wall_body_copies.get().saturating_add(1));
     }
 }
 
@@ -1202,12 +1218,6 @@ pub struct UpstreamFixes {
     /// Degenerate intervals shorter than `SM_EFF_ZERO` still return `0.0` without
     /// evaluating. Off by default for pinned C++ parity.
     pub integrator_propagates_failure: bool,
-    /// `SmFace::ComputePreciseProperties` integrates each UV trim curve piece by piece between its knots and its crossings of the surface's u knot lines, and each iso-u integral of `SmODEAreaIFEO` piece by piece between the surface's v knots, so no Runge-Kutta step crosses a knot of a B-spline surface (a NURB cylinder's, sphere's or torus's rational-circle double knots) where the integrand's derivatives jump and the step's error estimate does not bound its error; the requested accuracy then holds at 1e-8 (WR-494, #1435; the SolidCraft fork's tangency-labs/smlib@08d9a14).
-    pub precise_properties_split_at_surface_knots: bool,
-    /// With `precise_properties_split_at_surface_knots`, each iso-u piece of `SmODEAreaIFEO` evaluates the surface at its end from the knot span below it (`bVFromLeft = FALSE`), not the span above (upstream's `TRUE`, kept by the fork's tangency-labs/smlib@08d9a14): where the piece stops at a v knot with a derivative jump (a G2-not-C2 loft merged into one face across its 19 spans, #2091), the integrand's last point came from the next span, the Runge-Kutta steps shrank toward every knot, and each piece took about 5x the evaluations it needs: the #2091 model's precise volume took 26.7 s, 5.8 s with this fix (WR-670, #2091). No effect without `precise_properties_split_at_surface_knots`.
-    pub precise_properties_span_end_from_below: bool,
-    /// `SmFace::ComputePreciseProperties` starts each iso-u integral of `SmODEAreaIFEO` at the lowest v of the face's UV trim curves (the union of their bounding boxes, kept no lower than the face's UV domain), not at the UV domain's lowest v: on a face whose domain is the surface's unbounded one (`±INFINITE_PARAMETER` in v) the integrals ran about 1.2e6 parameter units below the face and the area came out as a small difference of large terms, off by up to 190% (WR-563, #1556).
-    pub precise_properties_trim_base_v: bool,
     /// `SmBrep::ComputePreciseProperties` adds a volume-separating faceuse's volume and mass only where it bounds a non void region and its area only where the area behaviour selects it, where upstream adds both whenever either behaviour selects the faceuse: a face between two solid regions (a merge of overlapping bodies) was counted in the area once per side (WR-535; the fork's tangency-labs/smlib@d2d9586).
     pub brep_area_between_solid_and_void: bool,
     /// `SmVertex::IsTopologicalVertex` ([`crate::topology::vertex::is_topological_vertex`])
@@ -1733,8 +1743,8 @@ pub struct Kernel {
     /// own count, never this one.
     pub blend_operation_scopes: Arc<core::sync::atomic::AtomicU32>,
     /// Not upstream (the SolidCraft fork's `SmWorkCounters`): counts of the work done by
-    /// the steps of a boolean whose cost once grew with the square of the body's size, for
-    /// tests and profiling. They change no result.
+    /// the steps of a boolean or a blend whose cost once grew with the square of the body's
+    /// size, for tests and profiling. They change no result.
     pub work_counters: WorkCounters,
     /// Not upstream (tangency-labs/solidcore#2489): while `Some`, each fillet session that
     /// finishes filleting appends the faces it made in its target, each with what made it
@@ -1928,15 +1938,18 @@ mod tests {
     fn work_counters_count_until_reset() {
         let k = Kernel::default();
         let w = &k.work_counters;
-        assert_eq!((w.face_pairs(), w.loops_classified()), (0, 0));
+        let counts =
+            |w: &WorkCounters| (w.face_pairs(), w.loops_classified(), w.wall_body_copies());
+        assert_eq!(counts(w), (0, 0, 0));
         w.add_face_pair();
         w.add_face_pair();
         w.add_loop_classified();
-        assert_eq!((w.face_pairs(), w.loops_classified()), (2, 1));
+        w.add_wall_body_copy();
+        assert_eq!(counts(w), (2, 1, 1));
         // each kernel counts its own work
         assert_eq!(Kernel::default().work_counters.face_pairs(), 0);
         w.reset();
-        assert_eq!((w.face_pairs(), w.loops_classified()), (0, 0));
+        assert_eq!(counts(w), (0, 0, 0));
     }
 
     #[test]
