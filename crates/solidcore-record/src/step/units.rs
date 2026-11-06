@@ -463,4 +463,145 @@ mod tests {
         );
         assert_eq!(c.uncertainty, Some(1e-4 * (1e-3 * 1000.0)));
     }
+
+    /// The mm per unit of `SI_UNIT(prefix, .METRE.)` and the rad per unit of
+    /// `SI_UNIT(prefix, .RADIAN.)` for every prefix of ISO 10303-41 `si_prefix`, as literals.
+    const SI_PREFIX_LITERALS: [(&str, f64, f64); 17] = [
+        ("$", 1000.0, 1.0),
+        (".EXA.", 1e21, 1e18),
+        (".PETA.", 1e18, 1e15),
+        (".TERA.", 1e15, 1e12),
+        (".GIGA.", 1e12, 1e9),
+        (".MEGA.", 1e9, 1e6),
+        (".KILO.", 1e6, 1e3),
+        (".HECTO.", 1e5, 1e2),
+        (".DECA.", 1e4, 1e1),
+        (".DECI.", 100.0, 1e-1),
+        (".CENTI.", 10.0, 1e-2),
+        (".MILLI.", 1.0, 1e-3),
+        (".MICRO.", 1e-3, 1e-6),
+        (".NANO.", 1e-6, 1e-9),
+        (".PICO.", 1e-9, 1e-12),
+        (".FEMTO.", 1e-12, 1e-15),
+        (".ATTO.", 1e-15, 1e-18),
+    ];
+
+    #[test]
+    fn si_prefixes_are_literals() {
+        // The product the table used to compute is not the literal for a nano metre.
+        assert_ne!(1e-9 * 1000.0, 1e-6);
+        for (prefix, mm, rad) in SI_PREFIX_LITERALS {
+            let ex = parse(&format!(
+                "#1=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT({prefix},.METRE.));\
+                 #2=(NAMED_UNIT(*)PLANE_ANGLE_UNIT()SI_UNIT({prefix},.RADIAN.));"
+            ));
+            assert_eq!(
+                unit_factor(&ex, 1),
+                Some((UnitKind::Length, mm)),
+                "{prefix}"
+            );
+            assert_eq!(
+                unit_factor(&ex, 2),
+                Some((UnitKind::Angle, rad)),
+                "{prefix}"
+            );
+        }
+    }
+
+    #[test]
+    fn measure_with_unit_in_every_form() {
+        // An inch's measure as a simple LENGTH_MEASURE_WITH_UNIT, a simple MEASURE_WITH_UNIT, the
+        // alphabetical complex form whose first record is the empty LENGTH_MEASURE_WITH_UNIT(),
+        // and a complex measure representation item.
+        for measure in [
+            "LENGTH_MEASURE_WITH_UNIT(LENGTH_MEASURE(25.4),#1)",
+            "MEASURE_WITH_UNIT(LENGTH_MEASURE(25.4),#1)",
+            "(LENGTH_MEASURE_WITH_UNIT()MEASURE_WITH_UNIT(LENGTH_MEASURE(25.4),#1))",
+            "(LENGTH_MEASURE_WITH_UNIT()MEASURE_REPRESENTATION_ITEM()\
+             MEASURE_WITH_UNIT(LENGTH_MEASURE(25.4),#1)REPRESENTATION_ITEM('inch'))",
+        ] {
+            let c = ctx(
+                &format!(
+                    "{MM}#10={measure};\
+                     #11=(CONVERSION_BASED_UNIT('INCH',#10)LENGTH_UNIT()NAMED_UNIT(*));"
+                ),
+                "#11,#2",
+                "",
+            );
+            assert_eq!(c.units.len, 25.4, "{measure}");
+        }
+        // A degree in the complex form.
+        let c = ctx(
+            &format!(
+                "{MM}#13=(MEASURE_WITH_UNIT(PLANE_ANGLE_MEASURE(0.017453292519943295),#2)\
+                 PLANE_ANGLE_MEASURE_WITH_UNIT());\
+                 #14=(CONVERSION_BASED_UNIT('DEGREE',#13)NAMED_UNIT(*)PLANE_ANGLE_UNIT());"
+            ),
+            "#1,#14",
+            "",
+        );
+        assert_eq!(c.units.ang, PI / 180.0);
+        // An uncertainty in the simple and in the complex form.
+        for measure in [
+            "UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-07),#1,'distance_accuracy_value','')",
+            "(LENGTH_MEASURE_WITH_UNIT()MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-07),#1)\
+             UNCERTAINTY_MEASURE_WITH_UNIT('distance_accuracy_value',''))",
+        ] {
+            let c = ctx(&format!("{MM}#20={measure};"), "#1,#2", "#20");
+            assert_eq!(c.uncertainty, Some(1e-7), "{measure}");
+        }
+    }
+
+    #[test]
+    fn distance_uncertainty_is_a_length() {
+        // A distance accuracy, then an angle accuracy and a solid angle accuracy listed last: the
+        // distance uncertainty is the length one.
+        let c = ctx(
+            &format!(
+                "{MM}#20=UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-07),#1,'distance_accuracy_value','');\
+                 #21=UNCERTAINTY_MEASURE_WITH_UNIT(SOLID_ANGLE_MEASURE(1.E-05),#3,'solid_angle_accuracy_value','');\
+                 #22=UNCERTAINTY_MEASURE_WITH_UNIT(PLANE_ANGLE_MEASURE(1.E-03),#2,'angle_accuracy_value','');"
+            ),
+            "#1,#2,#3",
+            "#20,#21,#22",
+        );
+        assert_eq!(c.uncertainty, Some(1e-7));
+        // An angle accuracy alone is no distance uncertainty.
+        let c = ctx(
+            &format!(
+                "{MM}#22=UNCERTAINTY_MEASURE_WITH_UNIT(PLANE_ANGLE_MEASURE(1.E-03),#2,'angle_accuracy_value','');"
+            ),
+            "#1,#2,#3",
+            "#22",
+        );
+        assert_eq!(c.uncertainty, None);
+    }
+
+    /// The units of a CATIA V4 file (`CATIA SOLUTIONS V4 RELEASE 2.1`, the STEP Tools AP203
+    /// corpus's `clip.stp` and `socks.stp`), written with Part 21 short names: an inch, a
+    /// degree and a steradian in the context `#48`.
+    const SHORT_NAMES: &str = "#26=DMNEXP(0.,0.,0.,0.,0.,0.,0.);\
+         #27=DMNEXP(1.,0.,0.,0.,0.,0.,0.);\
+         #28=(LNGUNT()NMDUNT(*)SUNT(.MILLI.,.METRE.));\
+         #29=LMWU(LENGTH_MEASURE(25.4000000000),#28);\
+         #30=(CNBSUN('INCH',#29)LNGUNT()NMDUNT(#27));\
+         #31=(NMDUNT(*)PLANUN()SUNT($,.RADIAN.));\
+         #32=PAMWU(PLANE_ANGLE_MEASURE(0.0174532925199),#31);\
+         #33=(CNBSUN('DEGREE',#32)NMDUNT(#26)PLANUN());\
+         #34=(NMDUNT(*)SUNT($,.STERADIAN.)SLANUN());\
+         #48=(GMRPCN(3)GC((#49))GUAC((#30,#33,#34))RPRCNT('*MASTER','WORKSPACE'));";
+
+    #[test]
+    fn unreadable_units_are_not_mm_or_rad() {
+        // A short-name context: its inch must not read as a millimetre.
+        let ex = parse(SHORT_NAMES);
+        assert_ne!(context(&ex, 48).units, Units::default());
+        assert_eq!(unit_factor(&ex, 30), None);
+        // A long-name context listing the short-name units.
+        let c = ctx(SHORT_NAMES, "#30,#33,#34", "");
+        assert_ne!(c.units, Units::default());
+        // An SI unit with an unknown base has no factor.
+        let ex = parse("#1=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.FURLONG.));");
+        assert_eq!(unit_factor(&ex, 1), None);
+    }
 }
