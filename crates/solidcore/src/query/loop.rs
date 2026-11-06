@@ -432,6 +432,7 @@ pub(crate) fn contains_uv_point_with_topology(
                 .ok_or_else(|| null("ContainsUVPoint: edge without curve"))?
                 .clone_for_evaluation()?;
             curve.set_owner_zone_tol_3d(Some(edge.tolerance));
+            k.work_counters.add_containment_edge_drop();
             drop_on_edge(k, &curve, &edge.interval, point_3d, edge.tolerance)?
         };
         if let Some(param) = on_edge_curve {
