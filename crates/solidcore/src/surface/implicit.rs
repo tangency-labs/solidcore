@@ -180,6 +180,41 @@ pub fn curve_lies_on(curve: &BSplineCurve, a: &Implicit) -> Result<bool> {
     Ok(true)
 }
 
+/// The plane `form` lies on, certified by [`lies_on`]: through its first control point,
+/// normal to the two of its control points' chords from there that span the most (the
+/// farthest point, then the one farthest off that chord), so the normal is as well
+/// conditioned as the net allows. `None` where the net spans no plane (its points on one
+/// line) or does not lie on that one: a net off a plane by more than the rounding of its
+/// stored points is no plane.
+///
+/// # Errors
+///
+/// `SM_ERR` without NURB data; those of [`lies_on`].
+pub fn plane_of_net(form: &BSplineSurface) -> Result<Option<Implicit>> {
+    let (net, _, _) = euclidean_net(form)?;
+    let points: Vec<Vec3> = net.into_iter().flatten().collect();
+    let Some(&origin) = points.first() else {
+        return Ok(None);
+    };
+    let far = |a: &&Vec3, b: &&Vec3| (**a - origin).length().total_cmp(&(**b - origin).length());
+    let Some(&along) = points.iter().max_by(far) else {
+        return Ok(None);
+    };
+    let chord = along - origin;
+    let off = |a: &&Vec3, b: &&Vec3| {
+        let (x, y) = (chord.cross(**a - origin), chord.cross(**b - origin));
+        x.length().total_cmp(&y.length())
+    };
+    let Some(&across) = points.iter().max_by(off) else {
+        return Ok(None);
+    };
+    let Ok(normal) = chord.cross(across - origin).unitize() else {
+        return Ok(None);
+    };
+    let plane = Implicit::Plane { origin, normal };
+    Ok(lies_on(form, &plane)?.then_some(plane))
+}
+
 /// Whether the Bézier patch of degrees `(p, q)` with homogeneous points `points` (row by
 /// row) lies on `a` ([`lies_on`]).
 fn bezier_on<'a>(
