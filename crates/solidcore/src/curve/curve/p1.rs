@@ -1351,11 +1351,22 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             return Ok(true);
         }
         let length = iv_length(delta);
-        if length.lo <= 0.0 || !length.hi.is_finite() {
+        if !length.hi.is_finite() {
             return Err(affine_refusal());
         }
-        let length_sq = length * length;
-        let foot = (Ivl::from(0.0) - iv_dot(start, delta)) / length_sq;
+        let foot = if length.lo <= 0.0 {
+            if length.hi > tolerance {
+                return Err(affine_refusal());
+            }
+            // Division by an enclosure containing zero cannot locate the foot.
+            // Enclose the whole span instead; the candidate-gap check below
+            // still has to certify the requested accuracy, including a distinct
+            // upper-knot value. This is not an exact constant-projection range.
+            Ivl::new(0.0, 1.0)
+        } else {
+            let length_sq = length * length;
+            (Ivl::from(0.0) - iv_dot(start, delta)) / length_sq
+        };
         if !foot.lo.is_finite() || !foot.hi.is_finite() {
             return Err(affine_refusal());
         }

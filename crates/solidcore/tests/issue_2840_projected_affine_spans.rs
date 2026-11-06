@@ -20,6 +20,85 @@ use solidcore::Kernel;
 #[derive(Clone, Copy, PartialEq)]
 struct Object;
 
+#[test]
+fn near_constant_affine_projection_certifies_candidates_without_dividing_by_zero() {
+    let next = f64::from_bits(1.0_f64.to_bits() + 1);
+    for isolated_upper in [false, true] {
+        let mut points = vec![
+            CPoint::new(1.0, 0.0, 0.0, 1.0),
+            CPoint::new(next, 0.0, 1.0, 1.0),
+        ];
+        let mut knots = vec![0.0, 0.0, 1.0, 1.0];
+        if isolated_upper {
+            points.extend([
+                CPoint::new(10.0, 0.0, 0.0, 1.0),
+                CPoint::new(10.0, 1.0, 0.0, 1.0),
+            ]);
+            knots.extend([2.0, 2.0]);
+        }
+        let curve = Curve::from(BSplineCurve::from_nurb(
+            NurbCurve::new(points, 1, knots).unwrap(),
+            3,
+            false,
+        ));
+        for operation in [
+            SolverOperation::ProjectedMinimize,
+            SolverOperation::ProjectedMaximize,
+        ] {
+            for requested in [SolutionRequested::Single, SolutionRequested::All] {
+                let answers = curve
+                    .global_point_solve::<Object>(
+                        &Kernel::default(),
+                        &Extent1d::from_min_max(0.0, 1.0),
+                        operation,
+                        Vec3::ZERO,
+                        1e-6,
+                        requested,
+                        &GlobalPointSolveOptions {
+                            opt_vectors: Some(&[Vec3::Z]),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                assert!(!answers.is_empty());
+                let expected = if isolated_upper && operation == SolverOperation::ProjectedMaximize
+                {
+                    10.0
+                } else {
+                    1.0
+                };
+                let best = answers
+                    .as_slice()
+                    .iter()
+                    .map(|s| s.start.solution_value)
+                    .reduce(|a, b| {
+                        if operation == SolverOperation::ProjectedMaximize {
+                            a.max(b)
+                        } else {
+                            a.min(b)
+                        }
+                    })
+                    .unwrap();
+                assert!(
+                    (best - expected).abs() <= 1e-6,
+                    "{operation:?}: {best} != {expected}"
+                );
+                for answer in answers.as_slice() {
+                    assert_eq!(answer.solution_type, SolutionType::SingleValue);
+                    let t = answer.start.parameters[0];
+                    assert!((0.0..=1.0).contains(&t));
+                    if isolated_upper
+                        && operation == SolverOperation::ProjectedMaximize
+                        && requested == SolutionRequested::Single
+                    {
+                        assert_eq!(t, 1.0);
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl SolutionObject for Object {
     fn kind(&self) -> ObjectKind {
         ObjectKind::Other
