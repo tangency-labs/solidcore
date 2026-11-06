@@ -3,11 +3,9 @@
 Unit: `nurbs.b_spline_curve_p3` (`crates/solidcore/src/nurbs/b_spline_curve/p3.rs`).
 Issue: tangency-labs/solidcore#2785. Fix: this PR.
 
-![A three-panel schematic. A: the same cubic Bezier drawn twice, once with knots [0,0,0,0,1,1,1,1] and once with [0,0,0,0,50,50,50,50], the two identical in space. B: the bend magnified, with the osculating circle at it, r = 5.82e-6. C: log-log, domain length T against length: the bend's radius a level black line, the speed tolerance a dashed falling line crossing it at T = 24.3, the length tolerance a level blue line above both, with vertical markers at T = 1 and T = 50 and the verdict at each.](issue-2785-radius-tolerance.svg)
+![A three-panel schematic. A: one cubic Bezier drawn once, with two parameter axes under it over the same span, one from 0 to 1 (T = 1) and one from 0 to 50 (T = 50), and the note that the same span carries 50x more parameter so the average speed is 50x smaller. B: the bend magnified, with the osculating circle and its radius drawn from the bend to the centre, r = 5.82e-6, the same at T = 1 and at T = 50. C: log-log, domain length T against length: the bend's radius a level black line, the speed tolerance a dashed falling line crossing it at T = 24.3, the length tolerance a level blue line above both, with vertical markers at T = 1 and T = 50 and the verdict at each.](issue-2785-radius-tolerance.svg)
 
-*Figure. The same curve at `T = 1` and `T = 50`: its bend and its radius are unchanged, while the
-speed-based tolerance falls through it at `T = 24.3`. From there on the bend was silently
-accepted, although nothing about the curve had changed.*
+*Figure. The same curve at `T = 1` and `T = 50`: the same span carries 50x more parameter, so the speed-based tolerance falls through the bend's radius at `T = 24.3`, while the radius does not move.*
 
 Drawn in VectorCraft 0.21.1 through its MCP server and exported from it with live text
 (`outlineText: false`); `issue-2785-radius-tolerance.vectorcraft` beside it is the source, so the
