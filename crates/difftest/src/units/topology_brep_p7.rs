@@ -1,10 +1,10 @@
-//! Runner for unit `topology.brep_p7`. C++: `solidcore_ffi::units::topology_brep_p7`.
-//! Rust: `solidcore::topology::brep::p7`.
+//! Runner for unit `topology.brep_p7`: `solidcore::topology::brep::p7`, ported from
+//! upstream `SmBrep` (`SmBrep.cpp`); checked against its golden.
 //!
 //! **Ops.** `read` (`SmBrep::ReadFromFile` of an upstream `.smb` file, as read or with
 //! bytes truncated / overwritten), `make_face_with_curves` (planes and B-spline surfaces
 //! with loops of B-spline curves, 3D only, UV only or both, and the input errors),
-//! `make_face` (a null surface, or a square wire loop built in the shim), `glue`
+//! `make_face` (a null surface, or a square wire loop), `glue`
 //! (`GlueEdgesGeneral` of edge pairs of a B-rep of unit `topology.vertexuse`), `copy`
 //! (`CopyFaces` of the first faces into a new B-rep) and `merge_self`
 //! (`MergeSelfIntersectionCurves` with and without curves, including raw-knot splines).
@@ -17,38 +17,27 @@
 //! surface samples are finite evidence that the copied face carries the expected
 //! geometry, not a full geometric equivalence check (no knots or control points are
 //! compared).
-//! The raw-knot plane fixtures construct their B-reps independently on each side.
-//! For `glue`, `copy` and `merge_self` the C++ side builds the fixture B-rep and the Rust
-//! side makes the same source itself ([`own_brep`]: the Rust kernel's build, or the Rust
-//! reader for an `.smb` file, renumbered into the shim's walk order), resolving the
-//! selectors against its own counts; no C++ export reaches the Rust side.
-//! Both sides produce one record (`out`) laid out as in the ffi module; statuses are `SmStatus` values (a Rust
-//! `InvalidInput` is `SM_ERR_INVALID_INPUT`, `1007`).
+//! The raw-knot plane fixtures construct their B-reps themselves. For `glue`, `copy` and
+//! `merge_self` the case builds the fixture source ([`own_brep`]: the Rust kernel's
+//! build, or the Rust reader for an `.smb` file, renumbered into the upstream test
+//! fixture's walk order), resolving the selectors against its counts. The case records
+//! one record (`out`); statuses are `SmStatus` values (an `InvalidInput` refusal is
+//! `SM_ERR_INVALID_INPUT`, `1007`).
 //!
-//! **Guards.** A `read` stream goes through the stream guard of unit `topology.brep_data`
-//! on both sides (its pure-Rust stream simulator, no C++ call; a rejected stream is an
-//! `err("guard")` case). A modified stream (not byte-identical to a shipped file) has its
-//! C++ read run in a fresh child process (`solidcore_ffi::isolate`):
-//! `MakeTopologyFromData` uses its cross-reference indices unchecked and crashes on some
-//! of them (`plan/upstream-issues/UB-164--*.md`), and a child that crashes, or runs past
-//! `READ_SECONDS`, makes the case `rejected`. The streams that survive are compared;
-//! the Rust side always runs its own read (no C++ verdict decides it). The other
-//! shim guards answer `-2` (upstream would dereference null). A `MakeFaceWithCurves` with
-//! a curve on surface, 3D curves and no UV curves that gets past its own input checks
-//! crashes upstream (`plan/upstream-issues.md` UB-165): `run_cpp` rejects it from the
-//! inputs and the Rust side's checks before calling the shim (whose `-2` guard stays as a
-//! safety net), so neither side runs. The other two `-2` guards would only echo that
-//! constant on both sides, so the Rust side defers them: `cpp-guard:null-curve`
-//! (`GlueEdgesGeneral` with `SM_OT_SAME`, equal intervals and one edge without curve),
-//! `cpp-guard:null-surface`
+//! **Contract.** A case outside the input contract ([`in_contract`]) is a harness error.
+//! A `read` stream outside the stream contract ([`crate::cases::brep_stream`]) records
+//! `err("guard")`. A
+//! `MakeFaceWithCurves` with a curve on surface, 3D curves and no UV curves that gets
+//! past its own input checks crashes upstream (`plan/upstream-issues.md` UB-165); the
+//! port refuses it (`InvalidInput`). Two inputs upstream dereferences null on are
+//! deferred: `cpp-guard:null-curve` (`GlueEdgesGeneral` with `SM_OT_SAME`, equal
+//! intervals and one edge without curve) and `cpp-guard:null-surface`
 //! (`MergeSelfIntersectionCurves` on a face without surface).
 //!
 //! Raw-knot fixtures reject positive spans at or below `1e-12` (UB-266); their
 //! comparison does not establish that the input curves retain raw knots after copying
-//! inside the operation. No kernel clone change is implied by this coverage.
+//! inside the operation.
 
-use std::cell::RefCell;
-use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -75,13 +64,10 @@ use solidcore::topology::database_io::FileType;
 use solidcore::topology::edge as ed;
 use solidcore::topology::{Brep, EdgeId, FaceId, RegionId};
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::topology_brep_data as bd;
-use solidcore_ffi::units::topology_brep_p7::{self as ffi, Op};
-use solidcore_ffi::units::topology_vertexuse as fixture;
-use solidcore_ffi::FfiError;
 
 use super::topology_vertexuse::{self as shared, BrepIn};
 use crate::case::CaseContext;
+use crate::cases::contract::{self, Values};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -315,12 +301,6 @@ fn brep_block(b: &BrepIn) -> Result<Vec<f64>, HarnessError> {
     Ok(out)
 }
 
-/// Whether `bytes` are exactly the test file `file` (a damage that changed nothing): the
-/// FFI runs the native read without the B-rep data check on exactly the shipped files.
-fn is_test_file(file: &str, bytes: &[u8]) -> Result<bool, HarnessError> {
-    Ok(read_bytes(file, None)? == bytes)
-}
-
 /// The bytes of a read case.
 fn read_bytes(file: &str, damage: Option<Damage>) -> Result<Vec<u8>, HarnessError> {
     let p = crate::fixtures::upstream_test_file(&crate::case::repo_root(), file)?;
@@ -340,26 +320,10 @@ fn read_bytes(file: &str, damage: Option<Damage>) -> Result<Vec<u8>, HarnessErro
     Ok(bytes)
 }
 
-/// The `topology.brep_data` stream guard of the bytes (its pure-Rust stream simulator; no
-/// C++ call): `false` when it rejects them.
-fn guard_accepts(bytes: &[u8], upstream_file: bool) -> Result<bool, HarnessError> {
-    let req = bd::Request {
-        mode: bd::Mode::ReadFile,
-        // every read case is ASCII: the encoder sends `binary = 0` to the FFI
-        binary: false,
-        version: 0,
-        dim: 0,
-        persist: false,
-        source: 0,
-        pre: 0,
-        data: bytes.to_vec(),
-        upstream_file,
-    };
-    match bd::guard(&req) {
-        Ok(()) => Ok(true),
-        Err(FfiError::InvalidArgument(_)) => Ok(false),
-        Err(e) => Err(harness(format!("guard: {e}"))),
-    }
+/// Whether the read stream `bytes` keeps the stream contract
+/// ([`crate::cases::brep_stream`]; `upstream_file`: exactly a shipped test file).
+fn stream_accepted(bytes: &[u8], upstream_file: bool) -> bool {
+    crate::cases::brep_stream::ascii_file_accepted(bytes, upstream_file)
 }
 
 /// The positions of the last digit of every integer token of the topology records of an
@@ -402,86 +366,6 @@ fn topology_index_digits(bytes: &[u8]) -> Vec<usize> {
 }
 
 /// A cached export with its key (the `.smb` path and the block's bits).
-type CachedExport = (String, Vec<u64>, Rc<Vec<f64>>);
-
-thread_local! {
-    /// The last few exports (both sides of a case export the same B-rep).
-    static EXPORTS: RefCell<Vec<CachedExport>> = const { RefCell::new(Vec::new()) };
-}
-
-fn export_of(brep: &BrepIn) -> Result<Rc<Vec<f64>>, HarnessError> {
-    let path = shared::path_of(brep)?;
-    let block = brep_block(brep)?;
-    let bits: Vec<u64> = block.iter().map(|x| x.to_bits()).collect();
-    if let Some(e) = EXPORTS.with(|c| {
-        c.borrow()
-            .iter()
-            .find(|(p, b, _)| *p == path && *b == bits)
-            .map(|(_, _, e)| Rc::clone(e))
-    }) {
-        return Ok(e);
-    }
-    let e = Rc::new(
-        fixture::eval(fixture::Op::Export, &path, &block)
-            .map_err(|e| harness(format!("c++ export: {e}")))?,
-    );
-    EXPORTS.with(|c| {
-        let mut c = c.borrow_mut();
-        if c.len() >= 4 {
-            c.remove(0);
-        }
-        c.push((path, bits, Rc::clone(&e)));
-    });
-    Ok(e)
-}
-
-/// The inputs with selectors resolved against the B-rep, and its export; `Err(output)`
-/// when the case ends early (the B-rep did not build, or has nothing to select).
-#[allow(clippy::type_complexity)]
-fn resolve(i: &Inputs) -> Result<Result<(Inputs, Option<Rc<Vec<f64>>>), Output>, HarnessError> {
-    let (Inputs::Glue { brep, .. } | Inputs::Copy { brep, .. } | Inputs::MergeSelf { brep, .. }) =
-        i
-    else {
-        return Ok(Ok((i.clone(), None)));
-    };
-    if let Inputs::MergeSelf { face, curves, .. } = i {
-        if curves.iter().any(|c| c.raw_knots) {
-            if *face != 0
-                || !matches!(
-                    brep,
-                    BrepIn::Face {
-                        surface: shared::SrfIn::Plane { .. },
-                        ..
-                    }
-                )
-            {
-                return Err(harness("raw merge requires face 0 of a plane fixture"));
-            }
-            return Ok(Ok((i.clone(), None)));
-        }
-    }
-    let ex = export_of(brep)?;
-    let Some(c) = fixture::counts(&ex) else {
-        return Ok(Err(Output::new().values("out", ex.to_vec())));
-    };
-    let [_, _, _, n_f, _, _, _, n_e, ..] = c;
-    let mut r = i.clone();
-    match &mut r {
-        Inputs::Glue { e1, e2, .. } => {
-            *e1 = shared::sel(*e1, n_e);
-            *e2 = shared::sel(*e2, n_e);
-        }
-        Inputs::MergeSelf { face, .. } => {
-            if n_f == 0 {
-                return Ok(Err(Output::err("no_face")));
-            }
-            *face = shared::sel((*face).max(0), n_f);
-        }
-        _ => {}
-    }
-    Ok(Ok((r, Some(ex))))
-}
-
 fn own_face_owner(f: FaceId) -> ObjectRef {
     key_of(EntityRef::Face(f))
 }
@@ -544,10 +428,21 @@ fn rust_inputs(
     else {
         return Ok(Ok((i.clone(), None)));
     };
-    if let Inputs::MergeSelf { curves, .. } = i {
+    if let Inputs::MergeSelf { face, curves, .. } = i {
         if curves.iter().any(|c| c.raw_knots) {
-            // (its checks only: no export is made for a raw-knot merge)
-            return Ok(resolve(i)?.map(|(r, _)| (r, None)));
+            // a raw-knot merge builds its plane face in `rust_record` (no B-rep here)
+            if *face != 0
+                || !matches!(
+                    brep,
+                    BrepIn::Face {
+                        surface: shared::SrfIn::Plane { .. },
+                        ..
+                    }
+                )
+            {
+                return Err(harness("raw merge requires face 0 of a plane fixture"));
+            }
+            return Ok(Ok((i.clone(), None)));
         }
     }
     let b = match own_brep(k, brep)? {
@@ -573,8 +468,280 @@ fn rust_inputs(
     Ok(Ok((r, Some(b))))
 }
 
-// ---- C++ side ---------------------------------------------------------------------------
+// ---- the input contract ------------------------------------------------------------------
 
+/// The operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Op {
+    Read,
+    MakeFaceWithCurves,
+    MakeFace,
+    Glue,
+    Copy,
+    MergeSelf,
+}
+
+/// Largest control point index of a curve or surface block.
+const MAX_INDEX: usize = 32;
+/// Largest degree.
+const MAX_DEGREE: usize = 5;
+/// Largest coordinate magnitude of the op's own values (the B-rep block has its own
+/// bound, [`contract::BREP_BLOCK`]).
+const MAX_COORD: f64 = 1.0e12;
+/// Largest number of curves (and loops, loop points).
+const MAX_CURVES: usize = 64;
+/// Largest number of copies of `Copy`.
+const MAX_COPIES: usize = 8;
+/// Largest file size of `Read`.
+const MAX_BYTES: usize = 1 << 22;
+
+/// An edge selector: `-1` (none) or an index in `0..=MAX_INDEX << 20` below `n_e`.
+fn edge_selector(rd: &mut Values<'_>, n_e: usize) -> Option<()> {
+    if rd.input.get(rd.at) == Some(&-1.0) {
+        rd.at += 1;
+        return Some(());
+    }
+    (rd.index(MAX_INDEX << 20)? < n_e).then_some(())
+}
+
+/// `SM_OT_UNKNOWN` (0), `SM_OT_SAME` (1) or `SM_OT_OPPOSITE` (2): upstream tests for
+/// `SAME` and treats anything else as the other branch.
+fn orient(rd: &mut Values<'_>) -> Option<()> {
+    rd.index(2).map(|_| ())
+}
+
+/// A clamped, non-decreasing knot vector of degree `p` with a non-empty domain.
+fn knots_ok(knots: &[f64], p: usize) -> bool {
+    let (Some(&a), Some(&b)) = (knots.first(), knots.last()) else {
+        return false;
+    };
+    !knots.windows(2).any(|w| w.first() > w.last())
+        && b > a
+        && knots.iter().take(p + 1).all(|&k| k == a)
+        && knots.iter().rev().take(p + 1).all(|&k| k == b)
+}
+
+/// `count` control points `x y z w`: finite coordinates within [`MAX_COORD`] (`z = NOZ`
+/// for a 2D point), a weight `NOW` or positive.
+fn points(rd: &mut Values<'_>, count: usize, dim2: bool) -> Option<()> {
+    for _ in 0..count {
+        rd.finite(MAX_COORD)?;
+        rd.finite(MAX_COORD)?;
+        if dim2 {
+            if rd.num()? != NOZ {
+                return None;
+            }
+        } else {
+            rd.finite(MAX_COORD)?;
+        }
+        let w = rd.num()?;
+        if w != NOW && !(w.is_finite() && w > 0.0) {
+            return None;
+        }
+    }
+    Some(())
+}
+
+/// A curve block `dim n p m cpts knots`: dimension 2 or 3, `1 ≤ p ≤ n ≤ 32`, `p ≤ 5`,
+/// `m = n + p + 1`, [`points`] and [`knots_ok`].
+fn curve(rd: &mut Values<'_>) -> Option<()> {
+    let dim = rd.index(3)?;
+    if dim < 2 {
+        return None;
+    }
+    let n = rd.index(MAX_INDEX)?;
+    let p = rd.index(MAX_DEGREE)?;
+    let m = rd.index(MAX_INDEX + MAX_DEGREE + 1)?;
+    if p == 0 || p > n || m != n + p + 1 {
+        return None;
+    }
+    points(rd, n + 1, dim == 2)?;
+    let knots = rd.finites(m + 1, MAX_COORD)?;
+    knots_ok(&knots, p).then_some(())
+}
+
+/// A surface block: a plane `1 O[3] N[3]` with a normal of squared length above `1e-24`
+/// (`SmPlane`'s precondition), or a B-spline `0 oob form n m p q r s cpts u v` with
+/// `1 ≤ p ≤ n`, `1 ≤ q ≤ m`, `r = n + p + 1`, `s = m + q + 1`, [`points`] and
+/// [`knots_ok`] knots.
+fn surface(rd: &mut Values<'_>) -> Option<()> {
+    if rd.index(1)? == 1 {
+        rd.vec3(MAX_COORD)?;
+        let n = rd.vec3(MAX_COORD)?;
+        return (n.iter().map(|c| c * c).sum::<f64>() > 1.0e-24).then_some(());
+    }
+    rd.flag()?;
+    rd.index(11)?;
+    let n = rd.index(MAX_INDEX)?;
+    let m = rd.index(MAX_INDEX)?;
+    let p = rd.index(MAX_DEGREE)?;
+    let q = rd.index(MAX_DEGREE)?;
+    let r = rd.index(MAX_INDEX + MAX_DEGREE + 1)?;
+    let s = rd.index(MAX_INDEX + MAX_DEGREE + 1)?;
+    if p == 0 || p > n || q == 0 || q > m || r != n + p + 1 || s != m + q + 1 {
+        return None;
+    }
+    points(rd, (n + 1) * (m + 1), false)?;
+    let u = rd.finites(r + 1, MAX_COORD)?;
+    let v = rd.finites(s + 1, MAX_COORD)?;
+    (knots_ok(&u, p) && knots_ok(&v, q)).then_some(())
+}
+
+/// `MergeSelf`'s arguments `face tol ncurves (raw curve3d raw curveuv1 raw curveuv2)*`
+/// (the UV curves 2D; distinct raw knots more than `1e-12` apart, UB-266, and no knot of
+/// multiplicity above `p + 1`); their length.
+fn merge_self_curves(input: &[f64]) -> Option<usize> {
+    let mut rd = Values::new(input, 0);
+    rd.num()?;
+    rd.num()?;
+    for _ in 0..rd.index(MAX_CURVES)? {
+        for uv in [false, true, true] {
+            let raw = rd.flag()?;
+            let start = rd.at;
+            if uv && rd.input.get(start) != Some(&2.0) {
+                return None;
+            }
+            curve(&mut rd)?;
+            if raw {
+                let block = input.get(start..rd.at)?;
+                let n = *block.get(1)? as usize;
+                let p = *block.get(2)? as usize;
+                let knot_start = n.checked_add(1)?.checked_mul(4)?.checked_add(4)?;
+                let (&first, rest) = block.get(knot_start..)?.split_first()?;
+                let mut unique = first;
+                let mut multiplicity = 1;
+                for &knot in rest {
+                    if knot == unique {
+                        multiplicity += 1;
+                    } else {
+                        if knot - unique <= 1.0e-12 || multiplicity > p + 1 {
+                            return None;
+                        }
+                        unique = knot;
+                        multiplicity = 1;
+                    }
+                }
+                if multiplicity > p + 1 {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(rd.at)
+}
+
+/// A B-rep op's arguments, checked against the B-rep's entity counts `c`; nothing may be
+/// left.
+fn args_ok(op: Op, args: &[f64], c: &[usize; 10]) -> bool {
+    let [_, _, _, n_f, _, _, _, n_e, ..] = *c;
+    let mut ar = Values::new(args, 0);
+    let ok = (|| -> Option<()> {
+        match op {
+            Op::Glue => {
+                edge_selector(&mut ar, n_e)?;
+                edge_selector(&mut ar, n_e)?;
+                orient(&mut ar)?;
+                ar.finite(MAX_COORD)?;
+                ar.flag()?;
+            }
+            Op::Copy => {
+                ar.index(1 << 20)?;
+                ar.flag()?;
+                if ar.index(MAX_COPIES)? == 0 {
+                    return None;
+                }
+            }
+            Op::MergeSelf => {
+                if ar.index(1 << 20)? >= n_f {
+                    return None;
+                }
+                ar.finite(MAX_COORD)?;
+                // (the curves: merge_self_curves)
+                ar.at = args.len();
+            }
+            Op::Read | Op::MakeFaceWithCurves | Op::MakeFace => {}
+        }
+        Some(())
+    })();
+    ok.is_some() && ar.done()
+}
+
+/// The input contract of a case's record `input` (upstream's members dereference or
+/// overrun what it excludes): for `Read` at most [`MAX_BYTES`] bytes and two flags; for
+/// `MakeFaceWithCurves` a valid surface, finite domain, orientation, flags, loop counts
+/// that add up to at most the curves, valid curves and finite points; for `MakeFace` a
+/// positive square side; for a B-rep op its arguments ([`merge_self_curves`] for
+/// `MergeSelf`), then a B-rep block keeping [`contract::brep_block`] with nothing after
+/// it, and the arguments checked against the B-rep's counts `c` ([`args_ok`]: edge and
+/// face indices inside the B-rep, 1 to [`MAX_COPIES`] copies).
+fn in_contract(op: Op, path: &str, input: &[f64], c: &[usize; 10]) -> bool {
+    let mut rd = Values::new(input, 0);
+    let ok = (|| -> Option<()> {
+        match op {
+            Op::Read => {
+                for _ in 0..rd.index(MAX_BYTES)? {
+                    rd.index(255)?;
+                }
+                rd.flag()?;
+                rd.flag()?;
+            }
+            Op::MakeFaceWithCurves => {
+                surface(&mut rd)?;
+                rd.finites(4, MAX_COORD)?;
+                orient(&mut rd)?;
+                rd.flag()?;
+                rd.index(2)?;
+                let mut total = 0usize;
+                for _ in 0..rd.index(MAX_CURVES)? {
+                    total += rd.index(MAX_CURVES)?;
+                }
+                let has3d = rd.flag()?;
+                let has_uv = rd.flag()?;
+                let nc = rd.index(MAX_CURVES)?;
+                // (upstream reads only the first `total` curves: extra ones are unused)
+                if (has3d || has_uv) && total > nc {
+                    return None;
+                }
+                for _ in 0..nc {
+                    if has3d {
+                        curve(&mut rd)?;
+                    }
+                    if has_uv {
+                        curve(&mut rd)?;
+                    }
+                    orient(&mut rd)?;
+                }
+                let np = rd.index(MAX_CURVES)?;
+                rd.finites(3 * np, MAX_COORD)?;
+            }
+            Op::MakeFace => {
+                let kind = rd.index(1)?;
+                // (kind 1: the square's lines need distinct ends; kind 0 ignores the side)
+                if rd.finite(MAX_COORD)? <= 0.0 && kind == 1 {
+                    return None;
+                }
+                orient(&mut rd)?;
+                rd.flag()?;
+            }
+            Op::Glue | Op::Copy | Op::MergeSelf => {
+                let n = match op {
+                    Op::Glue => 5,
+                    Op::Copy => 3,
+                    _ => merge_self_curves(input)?,
+                };
+                let (args, block) = (input.get(..n)?, input.get(n..)?);
+                let mut br = Values::new(block, 0);
+                br.brep_block(path)?;
+                return (contract::brep_block(path, block) && br.done() && args_ok(op, args, c))
+                    .then_some(());
+            }
+        }
+        rd.done().then_some(())
+    })();
+    ok.is_some()
+}
+
+/// The case's input record, as the contract reads it.
 fn encode(i: &Inputs) -> Result<(Op, String, Vec<f64>), HarnessError> {
     let mut v = Vec::new();
     let mut path = String::new();
@@ -698,36 +865,6 @@ fn encode(i: &Inputs) -> Result<(Op, String, Vec<f64>), HarnessError> {
         }
     };
     Ok((op, path, v))
-}
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    if let Inputs::Read { file, damage, .. } = i {
-        let bytes = read_bytes(file, *damage)?;
-        if !guard_accepts(&bytes, is_test_file(file, &bytes)?)? {
-            return Ok(Output::err("guard"));
-        }
-    }
-    let (r, _) = match resolve(i)? {
-        Ok(x) => x,
-        Err(o) => return Ok(o),
-    };
-    if ub_165(&r)? {
-        return Ok(Output::rejected(
-            "UB-165: SmBrep::MakeFaceWithCurves dereferences the null UV curve array \
-             (curve on surface, no UV curves); not run",
-        ));
-    }
-    let (op, path, input) = encode(&r)?;
-    match ffi::eval(op, &path, &input) {
-        Ok(out) => Ok(Output::new().values("out", out)),
-        // a modified stream's read runs in a fresh child process (the FFI)
-        Err(FfiError::Status(solidcore_ffi::SC_ERR_CHILD_CRASHED)) => Ok(Output::rejected(
-            "UB-164: SmBrep::ReadFromFile of the modified stream crashed (or ran past \
-             READ_SECONDS) in its fresh child process: MakeTopologyFromData uses the \
-             stream's cross-reference indices unchecked",
-        )),
-        Err(e) => Err(harness(format!("c++: {e}"))),
-    }
 }
 
 /// A `MakeFaceWithCurves` that crashes upstream (`plan/upstream-issues.md` UB-165,
@@ -1562,7 +1699,7 @@ fn rust_record(k: &mut Kernel, i: &Inputs, built: Option<Brep>) -> Record {
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
     if let Inputs::Read { file, damage, .. } = i {
         let bytes = read_bytes(file, *damage)?;
-        if !guard_accepts(&bytes, is_test_file(file, &bytes)?)? {
+        if !stream_accepted(&bytes, read_bytes(file, None)? == bytes) {
             return Ok(Output::err("guard"));
         }
     }
@@ -1571,20 +1708,20 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
         Ok(x) => x,
         Err(o) => return Ok(o),
     };
-    // an input the FFI refuses is a harness error on both sides (PR #502's convention):
-    // the shim never runs it, so the Rust side must not either. Nightly fuzz case
-    // fuzz00208 mutated a `copy`'s `repeat` to 2^32: the FFI refuses more than
-    // `MAX_COPIES` for the C++ side, while this side copied the faces 2^32 times and ran
-    // past the fuzz time limit. The checks see the same input vector as the C++ side
-    // (after the UB-165 rejection, as `run_cpp` orders them) and this side's own B-rep
-    // counts; a raw-knot merge builds its plane face in `rust_record` (no B-rep here), so
-    // its arguments are left to `resolve`'s checks, as before.
+    // an input outside the contract is a harness error (PR #502's convention). Nightly
+    // fuzz case fuzz00208 mutated a `copy`'s `repeat` to 2^32, and the faces were copied
+    // 2^32 times past the fuzz time limit. The checks see the case's record and this
+    // B-rep's own counts; a raw-knot merge builds its plane face in `rust_record` (no
+    // B-rep here), so its arguments are left to `rust_inputs`' checks. A UB-165 input is
+    // refused by the port itself (`InvalidInput`).
     if !ub_165(&r)? {
         let (op, path, input) = encode(&r)?;
         let brep_op = matches!(op, Op::Glue | Op::Copy | Op::MergeSelf);
         let counts = built.as_ref().map(crate::own_builder::counts);
         if let Some(c) = counts.or_else(|| (!brep_op).then_some([0; 10])) {
-            ffi::validate(op, &path, &input, &c).map_err(|e| harness(e.to_string()))?;
+            if !in_contract(op, &path, &input, &c) {
+                return Err(harness("invalid argument: outside the input contract"));
+            }
         }
     }
     match rust_record(&mut k, &r, built) {
@@ -1943,8 +2080,7 @@ fn gen_inputs(rng: &mut Rng) -> Inputs {
     let file = (*rng.choose(&FILES).unwrap_or(&"disk.smb")).to_string();
     match rng.below(6) {
         0 => {
-            // damaged streams the B-rep data guard accepts (a rejected one would be a
-            // case both sides refuse; give up after a few tries)
+            // damaged streams that keep the stream contract (give up after a few tries)
             let mut damage = Damage::Truncate(0);
             for _ in 0..16 {
                 let d = if rng.chance(0.5) {
@@ -1956,10 +2092,7 @@ fn gen_inputs(rng: &mut Rng) -> Inputs {
                     }
                 };
                 damage = d;
-                let ok = read_bytes(&file, Some(d))
-                    .and_then(|bytes| guard_accepts(&bytes, false))
-                    .unwrap_or(false);
-                if ok {
+                if read_bytes(&file, Some(d)).is_ok_and(|bytes| stream_accepted(&bytes, false)) {
                     break;
                 }
             }
@@ -2039,10 +2172,6 @@ fn gen_inputs(rng: &mut Rng) -> Inputs {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.brep_p7"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -2319,7 +2448,7 @@ impl UnitDiff for Runner {
                 for byte in *b"90" {
                     let d = Damage::Overwrite { at, byte };
                     let b2 = read_bytes(file, Some(d))?;
-                    if b2 == bytes || !guard_accepts(&b2, false)? {
+                    if b2 == bytes || !stream_accepted(&b2, false) {
                         continue;
                     }
                     let fails = solidcore::topology::brep_data::BrepData::read_from_file(
@@ -2361,7 +2490,7 @@ impl UnitDiff for Runner {
                     for byte in *b"19" {
                         let d = Damage::Overwrite { at, byte };
                         let b2 = read_bytes(file, Some(d))?;
-                        if b2 == bytes || !guard_accepts(&b2, false)? {
+                        if b2 == bytes || !stream_accepted(&b2, false) {
                             continue;
                         }
                         let reads = solidcore::topology::brep_data::BrepData::read_from_file(
@@ -2407,7 +2536,7 @@ impl UnitDiff for Runner {
                 };
                 let d = Damage::Overwrite { at, byte };
                 let b2 = read_bytes(file, Some(d))?;
-                if b2 == bytes || !guard_accepts(&b2, false)? {
+                if b2 == bytes || !stream_accepted(&b2, false) {
                     continue;
                 }
                 let reads = solidcore::topology::brep_data::BrepData::read_from_file(
@@ -2455,32 +2584,30 @@ mod tests {
     use super::*;
 
     /// Nightly fuzz case `topology.brep_p7/fuzz00208` (run 41040730716): a `copy` with
-    /// `repeat` 2^32. The FFI refuses more than `MAX_COPIES` copies for the C++ side, and
-    /// the Rust side must be refused the same way instead of copying the faces 2^32 times.
+    /// `repeat` 2^32 is outside the input contract (more than `MAX_COPIES` copies) and is
+    /// refused instead of copying the faces 2^32 times.
     #[test]
-    fn huge_copy_repeat_is_refused_on_both_sides() {
+    fn huge_copy_repeat_is_refused() {
         let v = serde_json::json!({
             "brep": {"kind": "file", "file": "plane_square.smb", "rebuild": false},
             "merge": true, "n": 2, "op": "copy", "repeat": 4_294_967_296_u64
         });
         let i: Inputs = serde_json::from_value(v).unwrap();
-        let cpp = run_cpp(&i).unwrap_err().to_string();
         let rust = run_rust(&i).unwrap_err().to_string();
-        assert_eq!(cpp, "c++: invalid argument: bad index/count 4294967296");
-        assert_eq!(rust, cpp.trim_start_matches("c++: "));
+        assert!(rust.contains("outside the input contract"), "{rust}");
     }
 
-    /// The largest `repeat` the FFI accepts still runs on both sides.
+    /// The largest `repeat` the contract accepts runs.
     #[test]
-    fn max_copy_repeat_runs_on_both_sides() {
+    fn max_copy_repeat_runs() {
         let v = serde_json::json!({
             "brep": {"kind": "file", "file": "plane_square.smb", "rebuild": false},
-            "merge": false, "n": 1, "op": "copy", "repeat": ffi::MAX_COPIES
+            "merge": false, "n": 1, "op": "copy", "repeat": MAX_COPIES
         });
         let i: Inputs = serde_json::from_value(v).unwrap();
-        let cpp = run_cpp(&i).unwrap();
         let rust = run_rust(&i).unwrap();
-        assert!(crate::compare(&cpp, &rust, &[]).mismatches.is_empty());
+        assert!(rust.error.is_none() && rust.rejected.is_none() && rust.deferred.is_none());
+        assert!(copy_geometry_offsets(&rust.values["out"], MAX_COPIES).is_some());
     }
 
     /// Offsets of the destination geometry a `copy` record appends after its counts.
@@ -2489,10 +2616,6 @@ mod tests {
         prefix_end: usize,
         /// The first face's five sample x offsets.
         face_samples: Vec<usize>,
-        /// The first edge's used-interval minimum.
-        edge_interval: usize,
-        /// The first edge's end vertex x.
-        end_vertex: usize,
         /// The first edge's five curve sample x offsets.
         curve_samples: Vec<usize>,
     }
@@ -2578,11 +2701,12 @@ mod tests {
                 }
             }
         }
+        // (a record with an edge and its end vertex)
+        edge_interval?;
+        end_vertex?;
         (c.at == rec.len()).then_some(CopyOffsets {
             prefix_end,
             face_samples,
-            edge_interval: edge_interval?,
-            end_vertex: end_vertex?,
             curve_samples,
         })
     }
@@ -2599,78 +2723,30 @@ mod tests {
             && points.windows(2).any(|w| w.first() != w.get(1))
     }
 
-    /// The destination geometry `copy` appends is compared: the old prefix still agrees,
-    /// the new surface and curve samples are real copied geometry, and mutating only a
-    /// new surface sample, curve interval, end vertex or curve sample fails the
-    /// comparison where the old prefix would pass.
+    /// The destination geometry `copy` appends is recorded: the record follows the copy
+    /// layout, and its surface and curve samples are real copied geometry.
     #[test]
-    fn copy_destination_geometry_is_compared() {
-        let v = serde_json::json!({
-            "brep": {"kind": "file", "file": "plane_square.smb", "rebuild": false},
-            "merge": false, "n": 1, "op": "copy", "repeat": 2
-        });
-        let i: Inputs = serde_json::from_value(v).unwrap();
-        let cpp = run_cpp(&i).unwrap();
-        let rust = run_rust(&i).unwrap();
-        let cppv = cpp.values.get("out").expect("cpp record");
-        let rv = rust.values.get("out").expect("rust record");
-        assert!(
-            crate::compare(&cpp, &rust, &[]).mismatches.is_empty(),
-            "real copied geometry must agree: {:?}",
-            crate::compare(&cpp, &rust, &[]).mismatches
-        );
-        let off = copy_geometry_offsets(cppv, 2).expect("copy record layout");
-        assert_eq!(&cppv[..off.prefix_end], &rv[..off.prefix_end]);
-        assert!(cppv.len() > off.prefix_end, "new geometry must be appended");
-        assert!(
-            off.face_samples.len() == 5 && distinct_samples(cppv, &off.face_samples),
-            "the copied face's surface samples must vary"
-        );
-        assert!(
-            off.curve_samples.len() == 5 && distinct_samples(cppv, &off.curve_samples),
-            "the copied edge's curve samples must vary"
-        );
-        // (the five samples of the first face/edge: parse every one to prove they vary)
-        for (name, at) in [
-            ("surface sample", off.face_samples[0]),
-            ("curve interval", off.edge_interval),
-            ("end vertex", off.end_vertex),
-            ("curve sample", off.curve_samples[0]),
-        ] {
-            let mut m = rv.clone();
-            let x = m.get_mut(at).expect("offset");
-            *x = if *x == 0.0 { 1.0e-6 } else { *x * (1.0 + 1.0e-6) };
-            let out = Output::new().values("out", m);
+    fn copy_destination_geometry_is_recorded() {
+        for merge in [false, true] {
+            let v = serde_json::json!({
+                "brep": {"kind": "file", "file": "plane_square.smb", "rebuild": false},
+                "merge": merge, "n": 1, "op": "copy", "repeat": 2
+            });
+            let i: Inputs = serde_json::from_value(v).unwrap();
+            let rust = run_rust(&i).unwrap();
+            let rv = rust.values.get("out").expect("rust record");
+            let off = copy_geometry_offsets(rv, 2).expect("copy record layout");
+            assert!(rv.len() > off.prefix_end, "new geometry must be appended");
             assert!(
-                !crate::compare(&cpp, &out, &[]).mismatches.is_empty(),
-                "{name} at {at} is not compared"
+                off.face_samples.len() == 5 && distinct_samples(rv, &off.face_samples),
+                "the copied face's surface samples must vary (merge {merge})"
             );
+            if !merge {
+                assert!(
+                    off.curve_samples.len() == 5 && distinct_samples(rv, &off.curve_samples),
+                    "the copied edge's curve samples must vary"
+                );
+            }
         }
-    }
-
-    /// The merge branch's destination graph is compared too: a real copied face and its
-    /// edges (through `SmMerge`) agree on the appended surface and edge geometry.
-    #[test]
-    fn copy_merge_destination_geometry_is_compared() {
-        let v = serde_json::json!({
-            "brep": {"kind": "file", "file": "plane_square.smb", "rebuild": false},
-            "merge": true, "n": 1, "op": "copy", "repeat": 2
-        });
-        let i: Inputs = serde_json::from_value(v).unwrap();
-        let cpp = run_cpp(&i).unwrap();
-        let rust = run_rust(&i).unwrap();
-        let diff = crate::compare(&cpp, &rust, &[]);
-        assert!(
-            diff.mismatches.is_empty(),
-            "real merged copied geometry must agree: {:?}",
-            diff.mismatches
-        );
-        let cppv = cpp.values.get("out").expect("cpp record");
-        let off = copy_geometry_offsets(cppv, 2).expect("copy record layout");
-        assert!(cppv.len() > off.prefix_end, "new geometry must be appended");
-        assert!(
-            off.face_samples.len() == 5 && distinct_samples(cppv, &off.face_samples),
-            "the merged copied face's surface samples must vary"
-        );
     }
 }
