@@ -358,12 +358,14 @@ fn body_bits(k: &Kernel, b: &Brep) -> Vec<Vec<[u64; 3]>> {
 }
 
 #[test]
-fn the_nodal_quartic_round_keeps_no_definition() {
-    // its spine is on the offsets only to 2e-9 of the radius (9.6e-10 and 9.8e-10 at
-    // r = 0.5), beyond the rounding a bound of 0 needs: no definition
+fn the_nodal_quartic_round_keeps_its_exact_definition() {
+    // Both the offset identities and the canal-surface identity must certify at 0,
+    // including after its supports, leader and net pass through a JSON record.
     let (k, b, res, _) = pipes_kept(true, true);
     res.unwrap();
-    assert!(exact_round_checks(&k, &b).is_empty());
+    let exact = exact_round_checks(&k, &b);
+    assert_eq!(exact.len(), 1, "the nodal quartic keeps its definition");
+    assert_eq!(exact[0].0, ExactClass::NodalQuartic);
     let (k0, b0, r0, _) = pipes_kept(true, false);
     r0.unwrap();
     assert_eq!(body_bits(&k, &b), body_bits(&k0, &b0));

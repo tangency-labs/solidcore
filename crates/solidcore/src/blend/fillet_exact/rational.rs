@@ -1384,11 +1384,39 @@ mod tests {
             (eval(&seg, 0.5) - power_eval(&arc.w, 0.375)).abs()
                 < 1e-12 * power_eval(&arc.w, 0.375).abs()
         );
-        // the fork's formula in doubles: W cancels by about 1e4 at s = 1 (the second point
-        // of a short line from the node), leaving 1.3e-10 there (1e-14 in 60-digit
-        // arithmetic); the fork's exact-round criterion is 1e-9
-        assert!(worst < 1e-9, "{worst:e}");
+        // A rational exact-class spine must satisfy the offsets to rounding, including
+        // the last end, where the old power-basis construction lost about 1e-10.
+        let rounding = crate::nurbs::math::gamma(64) * a.radius;
+        assert!(worst < rounding, "{worst:e} exceeds {rounding:e}");
         assert!(end(0.0).distance(on(0.3)) < 1e-14);
-        assert!(end(1.0).distance(on(2.0 * PI - 0.3)) < 1e-9);
+        assert!(end(1.0).distance(on(2.0 * PI - 0.3)) < rounding);
+        for i in 0..16 {
+            let lo = f64::from(i) / 16.0;
+            let hi = f64::from(i + 1) / 16.0;
+            let w = power_to_bernstein(&arc.w, lo, hi);
+            let m = arc.x.each_ref().map(|p| power_to_bernstein(p, lo, hi));
+            let points: Vec<_> = w
+                .iter()
+                .enumerate()
+                .map(|(j, &weight)| Point3::new(m[0][j], m[1][j], m[2][j]) / weight)
+                .collect();
+            let curve = BSplineCurve::create_canonical(&CanonicalData {
+                dim: 3,
+                degree: 4,
+                control_points: &points,
+                form: BSplineCurveForm::Unspecified,
+                knot_multiplicities: &[5, 5],
+                knots: &[0.0, 1.0],
+                knot_type: KnotType::PiecewiseBezierKnots,
+                weights: Some(&w),
+                trim: None,
+            })
+            .unwrap();
+            assert!(
+                crate::surface::implicit::curve_on_quadrics(&curve, &[a.implicit(), b.implicit()])
+                    .unwrap(),
+                "segment {i} is not identically on both offsets"
+            );
+        }
     }
 }
