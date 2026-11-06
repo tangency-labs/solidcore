@@ -13,7 +13,7 @@
 //! ([`crate::own_builder::renumber_with`], so edge and vertex selectors name the same
 //! entities as the golden's cases always have). The seeds and op arguments are checked
 //! against the scene as the reference wrapper checked them ([`validate_rust`]), and the
-//! B-rep blocks by `topology.vertexuse`'s block contract (`fixture::validate_block`, pure
+//! B-rep blocks by `topology.vertexuse`'s block contract (`cases::contract::vertexuse_block`, pure
 //! Rust).
 //!
 //! Compared: the construction state (transforms, projection box, ray offset tolerance,
@@ -54,8 +54,8 @@
 //! `IntersectCurveWithSilhouettes` reports that as `InvalidInput` ("UB-170").
 
 use super::topology_vertexuse::{gen_brep, path_of, push_curve, push_surface, sel, BrepIn, CrvIn};
-use solidcore_ffi::units::topology_vertexuse as fixture;
 
+use crate::cases::contract::vertexuse_block;
 use crate::{own_reader, Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -403,14 +403,14 @@ fn rust_hcr(k: &mut Kernel, i: &Inputs) -> Result<Result<Hcr, Output>, HarnessEr
     if let Err(m) = check_magnitudes(&brep).and_then(|()| check_magnitudes(&hcr)) {
         return Ok(Err(Output::err(m)));
     }
-    // the fixture export's block checks (`fixture::eval`; pure Rust, no shim call)
-    if let Err(e) = fixture::validate_block(&path_of(&i.brep)?, &brep) {
+    // the fixture's block contract (`topology.vertexuse`'s, ported in `cases::contract`)
+    if let Err(e) = vertexuse_block::check(&path_of(&i.brep)?, &brep) {
         return Ok(Err(Output::err(format!("rejected: {e}"))));
     }
     // the reference wrapper admits the extra curve through a wire fixture too.
     if let Some(x) = &i.extra {
         let wire = brep_block(&BrepIn::Wire { curve: x.curve.clone(), t0: x.t0, t1: x.t1 })?;
-        if let Err(e) = fixture::validate_block("", &wire) {
+        if let Err(e) = vertexuse_block::check("", &wire) {
             return Ok(Err(Output::err(format!("rejected: {e}"))));
         }
     }

@@ -28,11 +28,11 @@
 {"case":"curve_visibility_start_hint_3_end_hint_1","deferred":null,"error":null,"ints":{},"topology":null,"values":{"record":{"blocks":[[3e+20,3e+20,3.6e+21]],"n":18},"status":[0.0]}}
 {"case":"curve_visibility_start_hint_big","deferred":null,"error":null,"ints":{},"topology":null,"values":{"record":{"blocks":[[3e+20,3e+20,3.6e+21]],"n":18},"status":[0.0]}}
 {"case":"curve_visibility_start_hint_minus1","deferred":null,"error":null,"ints":{},"topology":null,"values":{"record":{"blocks":[[3e+20,3e+20,3.6e+21]],"n":18},"status":[0.0]}}
-{"case":"extra_wire_admission_degree","deferred":null,"error":"rejected: invalid argument: curve: need 1 <= p <= n and m = n + p + 1","ints":{},"topology":null,"values":{}}
-{"case":"extra_wire_admission_dimension","deferred":null,"error":"rejected: invalid argument: bad index/count 7 (max 3)","ints":{},"topology":null,"values":{}}
-{"case":"extra_wire_admission_knot_count","deferred":null,"error":"rejected: invalid argument: curve: need 1 <= p <= n and m = n + p + 1","ints":{},"topology":null,"values":{}}
+{"case":"extra_wire_admission_degree","deferred":null,"error":"rejected: malformed B-rep block","ints":{},"topology":null,"values":{}}
+{"case":"extra_wire_admission_dimension","deferred":null,"error":"rejected: malformed B-rep block","ints":{},"topology":null,"values":{}}
+{"case":"extra_wire_admission_knot_count","deferred":null,"error":"rejected: malformed B-rep block","ints":{},"topology":null,"values":{}}
 {"case":"extra_wire_admission_valid","deferred":null,"error":null,"ints":{},"topology":null,"values":{"record":{"blocks":[[4.20200002,16.20218002,135.26627062]],"n":38},"status":[0.0]}}
-{"case":"extra_wire_admission_zero_width","deferred":null,"error":"rejected: invalid argument: wire edge interval outside the curve's","ints":{},"topology":null,"values":{}}
+{"case":"extra_wire_admission_zero_width","deferred":null,"error":"rejected: malformed B-rep block","ints":{},"topology":null,"values":{}}
 {"case":"gen0000","deferred":null,"error":null,"ints":{},"topology":null,"values":{"record":{"blocks":[[1e+20,1e+20,1.2e+21]],"n":18},"status":[0.0]}}
 {"case":"gen0001","deferred":null,"error":null,"ints":{},"topology":null,"values":{"record":{"blocks":[[23.36671100560458,23.36671100560458,527.4042780255102]],"n":46},"status":[0.0]}}
 {"case":"gen0002","deferred":null,"error":null,"ints":{},"topology":null,"values":{"record":{"blocks":[[3e+20,3e+20,3.6e+21]],"n":18},"status":[0.0]}}
