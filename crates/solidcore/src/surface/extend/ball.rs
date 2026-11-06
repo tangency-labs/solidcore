@@ -8,9 +8,8 @@
 //! extended offset replaces the face's surface with UV trim creation off) and every point
 //! stays on the sphere: the identity `|H - C w|^2 = R^2 w^2` that puts the net on the
 //! sphere is a polynomial identity, so it holds on its continuation. The result is
-//! certified on the sphere on its net ([`continuation_lies_on`]), within its rounding and
-//! the source net's own residual as the continuation carries it out, and is the ball patch
-//! on the same sphere.
+//! certified on the sphere on its net ([`lies_on`]), within its rounding, and is the ball
+//! patch on the same sphere.
 //!
 //! The patch is the sphere's triangle with one side collapsed to its pole `P` (proved: the
 //! side's certified diameter's lower bound is 0), the two sides through the pole great
@@ -54,7 +53,7 @@ use crate::nurbs::math::{gamma, NOW};
 use crate::nurbs::srf_basic::Direction;
 use crate::nurbs::srf_tool::p1::extract_iso_crv;
 use crate::surface::ball_patch::BallPatch;
-use crate::surface::implicit::{continuation_lies_on, Implicit};
+use crate::surface::implicit::{lies_on, Implicit};
 use crate::surface::side::{Across, BoxSide, Bracket};
 use crate::surface::surface::Surface;
 use std::f64::consts::PI;
@@ -185,7 +184,7 @@ pub(super) fn ball_extended_sides(
         centre: c,
         radius: r,
     };
-    if !continuation_lies_on(net, &cur, &on)? {
+    if !lies_on(&cur, &on)? {
         return Err(refused(ExtendRefusal::NotExact, None));
     }
     Ok(Some(ExtendedSides {
