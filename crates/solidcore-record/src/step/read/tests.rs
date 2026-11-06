@@ -790,11 +790,6 @@ fn analytic_surfaces() {
             minor_radius: 2.0
         }
     );
-    // A negative major radius (a spindle torus some writers write) is read as written.
-    assert!(matches!(
-        *surface("#10=TOROIDAL_SURFACE('',#4,-1.,2.);", 10, MM),
-        Surface::Torus { major_radius, .. } if major_radius == -1.0
-    ));
     assert_eq!(
         *surface("#10=DEGENERATE_TOROIDAL_SURFACE('',#4,1.,2.,.T.);", 10, MM),
         Surface::DegenerateTorus {
@@ -1577,4 +1572,151 @@ fn knots_hold_to_part_42() {
         ),
         Err("complex B-spline without a knot subtype".to_string())
     );
+}
+
+/// `SURFACE_CURVE.associated_geometry` is `LIST [1:2]` (ISO 10303-42): an empty list is refused
+/// like a missing one (jyviko on #2612).
+#[test]
+fn a_surface_curve_has_associated_geometry() {
+    assert_eq!(
+        curve_err(
+            "#10=CIRCLE('',#4,1.);#11=SURFACE_CURVE('',#10,(),.CURVE_3D.);",
+            11,
+            MM
+        ),
+        Err("surface curve without associated geometry".into())
+    );
+}
+
+/// A torus's radii are `positive_length_measure`s, and a degenerate torus has
+/// `WR1: major_radius < minor_radius` (ISO 10303-42); both are refused when the file breaks
+/// them (jyviko on #2612). Was: any finite major radius read, a negative one as a spindle torus.
+#[test]
+fn torus_radii_hold_to_part_42() {
+    for (data, why) in [
+        (
+            "#10=TOROIDAL_SURFACE('',#4,0.,2.);",
+            "torus major radius must be positive",
+        ),
+        (
+            "#10=TOROIDAL_SURFACE('',#4,-1.,2.);",
+            "torus major radius must be positive",
+        ),
+        (
+            "#10=DEGENERATE_TOROIDAL_SURFACE('',#4,-1.,2.,.T.);",
+            "torus major radius must be positive",
+        ),
+        (
+            "#10=DEGENERATE_TOROIDAL_SURFACE('',#4,3.,2.,.T.);",
+            "degenerate torus major radius must be below its minor radius",
+        ),
+        (
+            "#10=DEGENERATE_TOROIDAL_SURFACE('',#4,2.,2.,.F.);",
+            "degenerate torus major radius must be below its minor radius",
+        ),
+    ] {
+        assert_eq!(
+            surface_err(data, 10, MM).map(|_| ()),
+            Err(why.to_string()),
+            "{data}"
+        );
+    }
+    // A torus whose major radius is below its minor one is still a torus (Part 42 sets no
+    // order between them there).
+    assert_eq!(
+        *surface("#10=TOROIDAL_SURFACE('',#4,1.,2.);", 10, MM),
+        Surface::Torus {
+            position: WORLD,
+            major_radius: 1.0,
+            minor_radius: 2.0
+        }
+    );
+}
+
+/// The surfaces' own malformed values are refused like the curves' (jyviko on #2607): an
+/// `AXIS1_PLACEMENT` axis that is neither a reference nor `$`, an unknown `surface_form` or
+/// `master_representation`, and a bad `u_closed`, `v_closed` or `self_intersect`.
+#[test]
+fn malformed_surface_values_are_refused_not_defaulted() {
+    let bspline = |form: &str, uc: &str, vc: &str, si: &str| {
+        format!(
+            "#10=B_SPLINE_SURFACE_WITH_KNOTS('',1,1,((#1,#1),(#1,#1)),{form},{uc},{vc},{si},(2,2),(2,2),(0.,1.),(0.,1.),.UNSPECIFIED.);"
+        )
+    };
+    for (data, why) in [
+        (
+            bspline(".FOO.", ".F.", ".F.", ".F."),
+            "B-spline surface_form: unknown .FOO.",
+        ),
+        (
+            bspline("$", ".F.", ".F.", ".F."),
+            "B-spline surface_form: expected an enumeration",
+        ),
+        (
+            bspline(".UNSPECIFIED.", ".X.", ".F.", ".F."),
+            "u_closed: expected a logical",
+        ),
+        (
+            bspline(".UNSPECIFIED.", ".F.", "1", ".F."),
+            "v_closed: expected a logical",
+        ),
+        (
+            bspline(".UNSPECIFIED.", ".F.", ".F.", "$"),
+            "self_intersect: expected a logical",
+        ),
+        (
+            "#11=CIRCLE('',#4,1.);#12=AXIS1_PLACEMENT('',#1,1.);#10=SURFACE_OF_REVOLUTION('',#11,#12);"
+                .to_string(),
+            "axis direction: expected a reference or $",
+        ),
+    ] {
+        assert_eq!(
+            surface_err(&data, 10, MM).map(|_| ()),
+            Err(why.to_string()),
+            "{data}"
+        );
+    }
+    for (form, want) in [
+        (".PLANE_SURF.", SurfaceForm::PlaneSurf),
+        (".CYLINDRICAL_SURF.", SurfaceForm::CylindricalSurf),
+        (".CONICAL_SURF.", SurfaceForm::ConicalSurf),
+        (".SPHERICAL_SURF.", SurfaceForm::SphericalSurf),
+        (".TOROIDAL_SURF.", SurfaceForm::ToroidalSurf),
+        (".SURF_OF_REVOLUTION.", SurfaceForm::SurfOfRevolution),
+        (".RULED_SURF.", SurfaceForm::RuledSurf),
+        (".GENERALISED_CONE.", SurfaceForm::GeneralisedCone),
+        (".QUADRIC_SURF.", SurfaceForm::QuadricSurf),
+        (
+            ".SURF_OF_LINEAR_EXTRUSION.",
+            SurfaceForm::SurfOfLinearExtrusion,
+        ),
+        (".UNSPECIFIED.", SurfaceForm::Unspecified),
+    ] {
+        let s = surface(&bspline(form, ".T.", ".U.", ".F."), 10, MM);
+        let Surface::BSpline(b) = &*s else {
+            panic!("{s:?}")
+        };
+        assert_eq!(
+            (b.form, b.u_closed, b.v_closed, b.self_intersect),
+            (want, Logical::True, Logical::Unknown, Logical::False)
+        );
+    }
+    let seam = |master: &str| {
+        format!("#10=PLANE('',#4);#11=CIRCLE('',#4,1.);#12=SURFACE_CURVE('',#11,(#10),{master});")
+    };
+    assert_eq!(
+        curve_err(&seam(".FOO."), 12, MM),
+        Err("surface curve master_representation: unknown .FOO.".into())
+    );
+    for (master, want) in [
+        (".CURVE_3D.", PreferredRep::Curve3d),
+        (".PCURVE_S1.", PreferredRep::PcurveS1),
+        (".PCURVE_S2.", PreferredRep::PcurveS2),
+    ] {
+        let c = curve(&seam(master), 12, MM);
+        let Curve::SurfaceCurve { master, .. } = &*c else {
+            panic!("{c:?}")
+        };
+        assert_eq!(*master, want);
+    }
 }
