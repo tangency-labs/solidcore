@@ -18,7 +18,8 @@
 //! `Surface` dispatch yet (`EvaluateNormal`, `EvaluateSimple`, `EvaluateNormalAtSingularity`,
 //! `EvaluateGeometric`, `EvaluateNormalSection`, `EvaluateSTEP`, `EvaluateSTEPPoint`) and
 //! `operator==` between two objects (`SmSurface::operator==`). Every run has at least
-//! [`MIN_GENERATED`] generated cases.
+//! [`MIN_GENERATED`] generated cases; generated inputs outside the C++ reference wrapper's
+//! input contract ([`keeps_contract`]) are redrawn.
 //!
 //! Deviations: runner-local `.sms`/`.smc` parsers reject unrepresentable counts,
 //! check dimension, coordinate-width and knot arithmetic and available numeric
@@ -44,7 +45,7 @@ use solidcore::nurbs::b_spline_surface::{BSplineSurface, BSplineSurfaceForm, Sur
 use solidcore::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use solidcore::nurbs::crv_basic::Curve;
 use solidcore::nurbs::knots::Side;
-use solidcore::nurbs::math::{CPoint, NOW};
+use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::nurbs::srf_basic::Surface as NlSurface;
 use solidcore::surface::curve_bounded_surface::{self as cbs, CurveBoundedSurface};
 use solidcore::surface::surface::p2::{Surface, SurfaceKind};
@@ -52,6 +53,7 @@ use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::contract;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -892,6 +894,157 @@ fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
     })
 }
 
+// ---- input contract -----------------------------------------------------------------
+
+/// The largest control point index of a basis direction or boundary.
+const MAX_INDEX: usize = 32;
+/// The largest degree.
+const MAX_DEGREE: usize = 7;
+/// The most boundaries of each kind.
+const MAX_CURVES: usize = 6;
+/// The largest magnitude of a coordinate, knot or scalar.
+const MAX_COORD: f64 = 1e6;
+
+fn fin(v: f64) -> bool {
+    contract::finite(v, MAX_COORD)
+}
+
+/// Whether control points are 3D-stored, of one rationality, with weights in `[1e-3, 1e3]`
+/// and coordinates within range.
+fn points(pts: &[[f64; 4]]) -> bool {
+    let rat = pts.first().is_some_and(|p| p[3] != NOW);
+    pts.iter().all(|&[x, y, z, w]| {
+        z != NOZ
+            && (w != NOW) == rat
+            && (!rat || (1e-3..=1e3).contains(&w))
+            && [x, y, z].iter().all(|&c| fin(c))
+    })
+}
+
+/// The domain `[u0, v0, u1, v1]` of a basis within the size bounds (`1 ≤ p ≤ n`,
+/// `1 ≤ q ≤ m`, full rows), with [`points`] and clamped knots within range.
+fn basis(s: &InlineSrf) -> Option<[f64; 4]> {
+    let n = s.net.len().checked_sub(1)?;
+    let cols = s.net.first()?.len();
+    let m = cols.checked_sub(1)?;
+    let (r, q_) = (s.u.len().checked_sub(1)?, s.v.len().checked_sub(1)?);
+    let ok = n <= MAX_INDEX
+        && m <= MAX_INDEX
+        && (1..=n.min(MAX_DEGREE)).contains(&s.p)
+        && (1..=m.min(MAX_DEGREE)).contains(&s.q)
+        && r == n + s.p + 1
+        && q_ == m + s.q + 1
+        && s.net.iter().all(|row| row.len() == cols && points(row))
+        && s.u.iter().chain(&s.v).all(|&k| fin(k));
+    if !ok {
+        return None;
+    }
+    let (u0, u1) = contract::clamped(&s.u, s.p)?;
+    let (v0, v1) = contract::clamped(&s.v, s.q)?;
+    Some([u0, v0, u1, v1])
+}
+
+/// Whether a boundary is a 2D or 3D B-spline within the size bounds with [`points`] and
+/// clamped knots within range.
+fn boundary(c: &CrvIn) -> bool {
+    let Ok(c) = crv(c) else {
+        return false;
+    };
+    let Some(n) = c.cpts.len().checked_sub(1) else {
+        return false;
+    };
+    (2..=3).contains(&c.dim)
+        && n <= MAX_INDEX
+        && (1..=n.min(MAX_DEGREE)).contains(&c.p)
+        && c.u.len() == n + c.p + 2
+        && points(&c.cpts)
+        && c.u.iter().all(|&k| fin(k))
+        && contract::clamped(&c.u, c.p).is_some()
+}
+
+fn boundaries(cs: &[CrvIn]) -> bool {
+    cs.len() <= MAX_CURVES && cs.iter().all(boundary)
+}
+
+/// The basis domain of a curve bounded surface that keeps the contract: a form up to 11,
+/// a [`basis`] and [`boundaries`].
+fn surface_block(b: &CbsIn) -> Option<[f64; 4]> {
+    let dom = basis(&srf(&b.srf).ok()?)?;
+    (b.form <= 11 && boundaries(&b.c3d) && boundaries(&b.cuv)).then_some(dom)
+}
+
+/// Whether `uv` is finite and inside `dom`.
+fn uv_in(uv: [f64; 2], dom: [f64; 4]) -> bool {
+    let [u, v] = uv;
+    fin(u) && fin(v) && (dom[0]..=dom[2]).contains(&u) && (dom[1]..=dom[3]).contains(&v)
+}
+
+/// Derivative orders up to 4, equal when `upper`.
+fn orders(hu: usize, hv: usize, upper: bool) -> bool {
+    hu <= 4 && hv <= 4 && (!upper || hu == hv)
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/surface_curve_bounded_surface.rs`, `validate` and
+/// `validate_read_db`): a [`surface_block`] and the op's parameters (points inside the
+/// basis domain, bounded orders and type lists, a positive tolerance, a non-zero
+/// direction, `eq_other` only for at least as many UV as 3D boundaries), or a `read_db`
+/// record of a B-spline basis (or a type that is not a surface), [`boundaries`], a UV
+/// header type in `[1, 2^20]` and a version up to 32.
+fn keeps_contract(i: &Inputs) -> bool {
+    if let OpIn::ReadDb {
+        version,
+        basis_type,
+        srf: s,
+        c3d,
+        uv_header_type,
+        cuv,
+        ..
+    } = &i.op
+    {
+        return !((15000..=15500).contains(basis_type) && *basis_type != B_SPLINE_SURFACE_TYPE)
+            && srf(s).ok().as_ref().and_then(basis).is_some()
+            && boundaries(c3d)
+            && boundaries(cuv)
+            && (1..=1 << 20).contains(uv_header_type)
+            && *version <= 32;
+    }
+    let Some(this) = &i.this else {
+        return false;
+    };
+    let Some(dom) = surface_block(this) else {
+        return false;
+    };
+    match &i.op {
+        OpIn::State | OpIn::EqSelf | OpIn::SetContext => true,
+        OpIn::Eval {
+            uv, hu, hv, upper, ..
+        }
+        | OpIn::Simple {
+            uv, hu, hv, upper, ..
+        }
+        | OpIn::Step {
+            uv, hu, hv, upper, ..
+        } => uv_in(*uv, dom) && orders(*hu, *hv, *upper),
+        OpIn::EvalPt { uv }
+        | OpIn::StepPt { uv }
+        | OpIn::Normal { uv, .. }
+        | OpIn::Geometric { uv, .. } => uv_in(*uv, dom),
+        OpIn::Queries { types } => {
+            types.len() <= 16 && types.iter().all(|t| (0..=1 << 20).contains(t))
+        }
+        OpIn::Defaults { v } => contract::vec3(v, MAX_COORD),
+        OpIn::EqOther { other } => {
+            this.c3d.len() <= this.cuv.len() && surface_block(other).is_some()
+        }
+        OpIn::Singular { uv, tol } => uv_in(*uv, dom) && fin(*tol) && *tol > 0.0,
+        OpIn::NormalSection { uv, dir, .. } => {
+            uv_in(*uv, dom) && contract::vec3(dir, MAX_COORD) && contract::len_sq(*dir) >= 1e-12
+        }
+        OpIn::ReadDb { .. } => false,
+    }
+}
+
 // ---- generated cases ----------------------------------------------------------------
 
 fn gen_knots(rng: &mut Rng, p: usize, n: usize) -> Vec<f64> {
@@ -1131,7 +1284,13 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(rng)).ok()
+        for _ in 0..64 {
+            let i = gen_case(rng);
+            if keeps_contract(&i) {
+                return serde_json::to_value(i).ok();
+            }
+        }
+        None
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1161,6 +1320,9 @@ mod tests {
         for seed in 0..1000u64 {
             let mut rng = Rng::new(0x5eed_0000 + seed);
             let i = gen_case(&mut rng);
+            if !keeps_contract(&i) {
+                continue;
+            }
             let name = serde_json::to_value(&i.op).unwrap()["op"].as_str().unwrap().to_string();
             let out = rust(k, &i).expect("harness");
             let kind = if let Some(d) = &out.deferred {
