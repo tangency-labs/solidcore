@@ -48,9 +48,17 @@ No tolerance was relaxed and no new failure was hidden or parked.
 ## Other checks
 
 Workspace formatting and workspace/all-target Clippy with warnings denied pass.
-The profile-enabled wasm check passes. The complete profile-enabled library
-suite passes **3,571 tests**, with four ignored. Full integration execution and
-the final example/default-feature wasm checks are recorded when complete.
+Wasm checks pass with profiling enabled and with default features. The complete
+optimized profile-enabled test run passes **5,086 tests**, with zero failures and
+44 ignored: 3,571 library tests plus 1,515 integration tests. Four library tests
+and 40 integration tests are ignored; the documentation-test target has no tests.
+
+The final example exits successfully. Every geometry count, validity result,
+coincident-pair count, boolean work count, coincidence phase counter and final
+volume equals the archived profiled run, after excluding the three elapsed-time
+fields. The named analytic volume constant introduced during review does not
+change the expected value. The three source files on the validation machine
+match the submitted files by SHA-256 after normalizing line endings.
 
 The initial default debug build was stopped before test execution because its
 generated integration executables consumed excessive disk space; those artifacts

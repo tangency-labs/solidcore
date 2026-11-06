@@ -71,4 +71,5 @@ PARTIAL topology.assert_valid cases=965 passed=957 failed=0 deferred=0 max_rel_e
 The eight non-passing classifications already exist in the unit's fixtures and
 mismatch records. No mismatch classification, tolerance, unit status, geometry
 formula or traversal order is changed here. This is not a claim that the partial
-unit is green. The broader test run is recorded separately when complete.
+unit is green. The [broader validation addendum](topology.validation--menger-broad-validation-2667.md)
+records the complete test run and full native sweep comparison with exact main.
