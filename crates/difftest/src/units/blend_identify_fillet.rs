@@ -1,7 +1,9 @@
 //! Differential coverage for `blend.identify_fillet` (`SmFace::IdentifyFillet`).
 //!
-//! The fixtures are upstream `.smb` solids with fillets, read by the native
-//! `SmBrep::ReadFromFile` and by the Rust reader (no C++ state reaches the Rust side). A
+//! Ported from upstream `SmFace::IdentifyFillet`; checked against its golden. Rust:
+//! `solidcore::blend::identify_fillet`.
+//!
+//! The fixtures are upstream `.smb` solids with fillets, read by the Rust reader. A
 //! case identifies one face (`GetFaces` order) with `IdentifyFillet(SM_ZONE_TOL_3D, 5.0, ..)`
 //! and the case's tangent / manifold rail requirements, with or without the min/max radii;
 //! every face of every fixture solid is a case, so planes, cylinders and the other faces
@@ -16,8 +18,6 @@ use solidcore::blend::identify_fillet::{identify_fillet, IdentifyFilletOptions};
 use solidcore::kernel::Kernel;
 use solidcore::topology::brep::p1 as bp1;
 use solidcore::topology::{face, loopuse};
-use solidcore_ffi::units::blend_identify_fillet as ffi;
-use solidcore_ffi::FfiError;
 
 use super::topology_brep_mirror::herr;
 use super::topology_vertexuse::{path_of, BrepIn};
@@ -57,23 +57,11 @@ impl Default for Inputs {
     }
 }
 
-/// The shared B-rep block of `ReadFromFile(file, rebuild)`; no validate-only, no gaps.
-fn block(i: &Inputs) -> Vec<f64> {
-    vec![0.0, f64::from(i.rebuild), 0.0, 0.0]
-}
-
 fn path(i: &Inputs) -> Result<String, HarnessError> {
     path_of(&BrepIn::File {
         file: i.file.clone(),
         rebuild: i.rebuild,
     })
-}
-
-/// The shim's flag bits.
-fn flags(i: &Inputs) -> u32 {
-    u32::from(i.require_tangent)
-        | (u32::from(i.require_manifold) << 1)
-        | (u32::from(i.min_max_radii) << 2)
 }
 
 /// `failed` alone, or `failed` and the outputs: `ints` are `is_fillet cross_section
@@ -91,54 +79,6 @@ fn output(failed: bool, ints: Vec<i64>, values: Vec<f64>) -> Output {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "blend.identify_fillet"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let raw = match ffi::eval(&path(&i)?, &block(&i), i.face, flags(&i)) {
-            Ok(raw) if raw.first() == Some(&-999.) => {
-                return Ok(Output::rejected(format!(
-                    "fixture constructor status {}",
-                    raw.get(1).copied().unwrap_or(-1.)
-                )))
-            }
-            Ok(raw) if raw.first() == Some(&-998.) => {
-                return Ok(Output::rejected("face index past the fixture's faces"))
-            }
-            Ok(raw) => raw,
-            Err(e @ FfiError::InvalidArgument(_)) => {
-                return Ok(Output::rejected(format!("ffi guard: {e}")))
-            }
-            Err(e) => return Err(herr(e)),
-        };
-        let short = || herr("short record");
-        let status = *raw.first().ok_or_else(short)?;
-        if status != 0.0 {
-            return Ok(output(true, Vec::new(), Vec::new()));
-        }
-        let mut at = 1;
-        let mut next = || -> Result<f64, HarnessError> {
-            let v = *raw.get(at).ok_or_else(short)?;
-            at += 1;
-            Ok(v)
-        };
-        let mut ints = Vec::new();
-        for _ in 0..4 {
-            ints.push(next()? as i64);
-        }
-        let mut values = vec![next()?, next()?];
-        if i.min_max_radii {
-            values.push(next()?);
-            values.push(next()?);
-        }
-        for _ in 0..2 {
-            let n = next()?;
-            ints.push(n as i64);
-            for _ in 0..n as usize {
-                ints.push(next()? as i64);
-            }
-        }
-        Ok(output(false, ints, values))
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
