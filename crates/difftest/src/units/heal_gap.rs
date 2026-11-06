@@ -74,11 +74,14 @@ use solidcore::topology::edgeuse::p1 as eu1;
 use solidcore::topology::vertexuse as vu1;
 use solidcore::topology::{Brep, EdgeId, EdgeuseId, FaceId, VertexId, VertexuseId};
 use solidcore::SolidError;
-use solidcore_ffi::units::heal_gap::{self as ffi, Op, UNDEF};
-use solidcore_ffi::units::topology_vertexuse::counts;
+
+use super::topology_edgeuse_p1::BrepIn as EdgeuseBrepIn;
+use crate::own_builder::{build_any, build_status, counts as own_counts, read_with, Built};
+/// `SM_UNDEF_DOUBLE`.
+const UNDEF: f64 = 1.23456e-61;
 
 use super::topology_vertexuse::{
-    gen_brep, import, import_raw, path_of, push_curve, push_surface, sel, BrepIn,
+    gen_brep, path_of, push_curve, push_surface, sel, BrepIn,
 };
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -339,171 +342,6 @@ enum Inputs {
 
 fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
-}
-
-fn push_nurb(o: &mut Vec<f64>, n: &NurbIn) -> Result<(), HarnessError> {
-    let k = n.cpts.len().checked_sub(1).ok_or_else(|| harness("no points"))?;
-    let m = n.u.len().checked_sub(1).ok_or_else(|| harness("no knots"))?;
-    o.extend([k as f64, n.p as f64, m as f64]);
-    for p in &n.cpts {
-        o.extend(p);
-    }
-    o.extend(&n.u);
-    Ok(())
-}
-
-fn push_bss(o: &mut Vec<f64>, b: &BssIn) -> Result<(), HarnessError> {
-    let n = b.net.len().checked_sub(1).ok_or_else(|| harness("empty net"))?;
-    let m = b
-        .net
-        .first()
-        .and_then(|r| r.len().checked_sub(1))
-        .ok_or_else(|| harness("empty net row"))?;
-    if b.net.iter().any(|r| r.len() != m + 1) {
-        return Err(harness("ragged net"));
-    }
-    let r = b.u.len().checked_sub(1).ok_or_else(|| harness("no u knots"))?;
-    let s = b.v.len().checked_sub(1).ok_or_else(|| harness("no v knots"))?;
-    o.extend([
-        flag(b.oob),
-        f64::from(b.form),
-        n as f64,
-        m as f64,
-        b.p as f64,
-        b.q as f64,
-        r as f64,
-        s as f64,
-    ]);
-    for row in &b.net {
-        for p in row {
-            o.extend(p);
-        }
-    }
-    o.extend(&b.u);
-    o.extend(&b.v);
-    Ok(())
-}
-
-fn push_curve_in(o: &mut Vec<f64>, c: &CurveIn) -> Result<(), HarnessError> {
-    match c {
-        CurveIn::Bspline { dim, oob, nurb } => {
-            o.extend([0.0, *dim as f64, flag(*oob)]);
-            push_nurb(o, nurb)?;
-        }
-        CurveIn::Hermite { dim, p1, d1, p2, d2 } => {
-            o.extend([1.0, *dim as f64]);
-            for v in [p1, d1, p2, d2] {
-                o.extend(v);
-            }
-        }
-        CurveIn::Line {
-            p,
-            v,
-            domain,
-            scale,
-            inside_out,
-        } => {
-            o.extend([2.0, 3.0]);
-            o.extend(p);
-            o.extend(v);
-            o.extend(domain);
-            o.extend([*scale, flag(*inside_out)]);
-        }
-        CurveIn::Ellipse {
-            dim,
-            c,
-            x,
-            y,
-            domain,
-            radii,
-            inside_out,
-        } => {
-            o.extend([3.0, *dim as f64]);
-            o.extend(c);
-            o.extend(x);
-            o.extend(y);
-            o.extend(domain);
-            o.extend(radii);
-            o.push(flag(*inside_out));
-        }
-        CurveIn::Circle {
-            dim,
-            c,
-            x,
-            y,
-            domain,
-            radius,
-            inside_out,
-        } => {
-            o.extend([4.0, *dim as f64]);
-            o.extend(c);
-            o.extend(x);
-            o.extend(y);
-            o.extend(domain);
-            o.extend([*radius, flag(*inside_out)]);
-        }
-        CurveIn::CrvOnSurf { uv, surface } => {
-            o.extend([5.0, 2.0]);
-            push_nurb(o, uv)?;
-            push_bss(o, surface)?;
-        }
-    }
-    Ok(())
-}
-
-fn push_surf_in(o: &mut Vec<f64>, s: &SurfIn) -> Result<(), HarnessError> {
-    match s {
-        SurfIn::Bspline(b) => {
-            o.push(0.0);
-            push_bss(o, b)
-        }
-        SurfIn::Plane { o: org, x, y, scale, dom } => {
-            o.push(1.0);
-            o.extend(org);
-            o.extend(x);
-            o.extend(y);
-            o.extend(scale);
-            o.extend(dom);
-            Ok(())
-        }
-        SurfIn::CurveBounded(b) => {
-            o.push(2.0);
-            push_bss(o, b)
-        }
-    }
-}
-
-fn kind_of(g: &GfIn) -> u8 {
-    let base = match g.this {
-        ThisIn::Curve { .. } => 0,
-        ThisIn::Surface { .. } => 3,
-    };
-    base + match g.other {
-        OtherIn::Point(_) => 0,
-        OtherIn::Curve(_) => 1,
-        OtherIn::Surface(_) => 2,
-    }
-}
-
-fn push_gf(o: &mut Vec<f64>, g: &GfIn) -> Result<(), HarnessError> {
-    o.extend([f64::from(kind_of(g)), g.tol]);
-    match &g.this {
-        ThisIn::Curve { curve, ivl } => {
-            push_curve_in(o, curve)?;
-            o.extend(ivl);
-        }
-        ThisIn::Surface { surface, dom } => {
-            push_surf_in(o, surface)?;
-            o.extend(dom);
-        }
-    }
-    match &g.other {
-        OtherIn::Point(p) => o.extend(p),
-        OtherIn::Curve(c) => push_curve_in(o, c)?,
-        OtherIn::Surface(s) => push_surf_in(o, s)?,
-    }
-    o.extend([g.cnt_u as f64, g.cnt_v as f64]);
-    Ok(())
 }
 
 // ---- Rust geometry ---------------------------------------------------------------------
@@ -895,14 +733,39 @@ fn topo_brep<'a>(
     }
 }
 
-/// The graph of a topology case: its path, block, export and import.
-fn topo_graph(brep: TopoBrep<'_>) -> Result<(String, Vec<f64>, Vec<f64>), HarnessError> {
+/// The B-rep of a topology case, built by the Rust kernel and renumbered into the
+/// reference fixture's walk order, so the selectors name the entities they named there:
+/// an `.smb` file read by the Rust reader ([`read_with`]), every other source (a wire edge, a face from a
+/// surface, the `my_test_topology` network, the analytic ellipse face) by the Rust
+/// constructors ([`crate::own_builder::build_any`]) once its block keeps the reference
+/// fixture's contract ([`crate::cases::contract::vertexuse_block`], HANG-29 included).
+fn own_topo_brep(k: &mut Kernel, brep: TopoBrep<'_>) -> Result<Built, HarnessError> {
+    let conv = &crate::own_builder::Conventions::EDGEUSE_GRAPH;
+    if let TopoBrep::Shared(src @ BrepIn::File { rebuild, .. }) = brep {
+        return read_with(k, &path_of(src)?, *rebuild, false, false, conv);
+    }
     let (path, block) = match brep {
         TopoBrep::Shared(b) => (path_of(b)?, brep_block(b)?),
         TopoBrep::EllipseFace(e) => (String::new(), ellipse_face_block(e)),
     };
-    let ex = ffi::export(&path, &block).map_err(|e| harness(format!("c++ export: {e}")))?;
-    Ok((path, block, ex))
+    crate::cases::contract::vertexuse_block::check(&path, &block)
+        .map_err(|e| harness(format!("B-rep block: {e}")))?;
+    let src: EdgeuseBrepIn = match brep {
+        TopoBrep::Shared(b) => serde_json::to_value(b)
+            .and_then(serde_json::from_value)
+            .map_err(|e| harness(format!("B-rep source: {e}")))?,
+        TopoBrep::EllipseFace(e) => EdgeuseBrepIn::EllipseFace {
+            circle: e.circle,
+            origin: e.origin,
+            axis: e.axis,
+            radii: e.radii,
+            angles: e.angles,
+            natural: e.natural,
+            inside_out: e.inside_out,
+            oob: e.oob,
+        },
+    };
+    build_any(k, &src, false, false, conv)
 }
 
 fn idx(i: Option<u32>) -> f64 {
@@ -1051,12 +914,6 @@ fn raw_trim_gap_rust(
     Ok(out)
 }
 
-fn raw_trim_gap_block(trim: &NurbIn, t: f64, edge_gap: bool, mate: bool, raw: bool) -> Result<Vec<f64>, HarnessError> {
-    let mut out = vec![flag(edge_gap), flag(mate), flag(raw), t];
-    push_nurb(&mut out, trim)?;
-    Ok(out)
-}
-
 fn raw_trim_knots(curve: &Curve) -> Result<&[f64], HarnessError> {
     match curve.kind() {
         solidcore::curve::curve::CurveKind::BSpline(c) => c.gw_nurb()
@@ -1066,89 +923,6 @@ fn raw_trim_knots(curve: &Curve) -> Result<&[f64], HarnessError> {
 }
 
 // ---- run ---------------------------------------------------------------------------------
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let call = |op: Op, input: &[f64]| {
-        ffi::eval(op, input).map_err(|e| harness(format!("c++: {e}")))
-    };
-    let mut o = Vec::new();
-    match i {
-        Inputs::RawTrimGap { trim, t, edge_gap, mate, raw_knots } => {
-            call(Op::RawTrimGap, &raw_trim_gap_block(trim, *t, *edge_gap, *mate, *raw_knots)?)
-                .map(state)
-        }
-        Inputs::Gf {
-            gf,
-            set_cnt,
-            set_tol,
-            stop,
-            mode,
-        } => {
-            push_gf(&mut o, gf)?;
-            let [su, sv] = set_cnt.unwrap_or([1, 1]);
-            o.extend([flag(set_cnt.is_some()), su as f64, sv as f64]);
-            o.extend([flag(set_tol.is_some()), set_tol.unwrap_or(0.0)]);
-            o.extend([flag(*stop), f64::from(*mode)]);
-            Ok(state(call(Op::Gf, &o)?))
-        }
-        Inputs::Eval { gf, u, v, gu, gv } => {
-            push_gf(&mut o, gf)?;
-            o.extend([*u, *v]);
-            o.extend([flag(gu.is_some()), gu.unwrap_or(0.0)]);
-            o.extend([flag(gv.is_some()), gv.unwrap_or(0.0)]);
-            Ok(state(call(Op::Eval, &o)?))
-        }
-        Inputs::AddUnique { a, value } => {
-            o.push(a.len() as f64);
-            o.extend(a);
-            o.push(*value);
-            Ok(state(call(Op::AddUnique, &o)?))
-        }
-        Inputs::Sample {
-            this,
-            tu,
-            tv,
-            other,
-            ou,
-            ov,
-            drop,
-            tol,
-        } => {
-            o.extend(this);
-            o.extend([*tu, *tv]);
-            o.extend(other);
-            o.extend([*ou, *ov, f64::from(*drop), *tol]);
-            Ok(state(call(Op::Sample, &o)?))
-        }
-        Inputs::GapArray { a, b } => {
-            o.push(a.len() as f64);
-            o.extend(a);
-            o.push(b.len() as f64);
-            o.extend(b);
-            Ok(state(call(Op::GapArray, &o)?))
-        }
-        Inputs::Topo {
-            brep,
-            ellipse_face,
-            kind,
-            sel0,
-            sel1,
-            f0,
-            f1,
-            uv,
-        } => {
-            let spec = topo_brep(brep.as_ref(), ellipse_face.as_ref())?;
-            let (path, block, ex) = topo_graph(spec)?;
-            let Some(c) = counts(&ex) else {
-                return Ok(state(vec![-1.0, ex.get(1).copied().unwrap_or(0.0)]));
-            };
-            let (b, _) = import_raw(&ex)?;
-            let args = topo_args(&b, c, *kind, *sel0, *sel1, *f0, *f1, *uv)?;
-            let out = ffi::topo(&path, &block, &args).map_err(|e| harness(format!("c++: {e}")))?;
-            Ok(state(out))
-        }
-    }
-}
 
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
     let mut k = Kernel::default();
@@ -1279,25 +1053,13 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
             uv,
         } => {
             let spec = topo_brep(brep.as_ref(), ellipse_face.as_ref())?;
-            let (mut b, c) = if let TopoBrep::Shared(src @ BrepIn::File { rebuild, .. }) = spec {
-                // an `.smb` file: read by the Rust reader and renumbered into the
-                // shim's walk order (no C++ export reaches the Rust side)
-                use crate::own_builder::{build_status, counts as own_counts, read_with, Built};
-                let conv = &crate::own_builder::Conventions::EDGEUSE_GRAPH;
-                match read_with(&mut k, &path_of(src)?, *rebuild, false, false, conv)? {
-                    Built::Brep(b) => {
-                        let c = own_counts(&b);
-                        (*b, c)
-                    }
-                    Built::Failed(e) if e.is_unported() => return rust_fail(&e),
-                    Built::Failed(e) => return Ok(state(vec![-1.0, build_status(&e)])),
+            let (mut b, c) = match own_topo_brep(&mut k, spec)? {
+                Built::Brep(b) => {
+                    let c = own_counts(&b);
+                    (*b, c)
                 }
-            } else {
-                let (_, _, ex) = topo_graph(spec)?;
-                let Some(c) = counts(&ex) else {
-                    return Ok(state(vec![-1.0, ex.get(1).copied().unwrap_or(0.0)]));
-                };
-                (import(&ex)?.0, c)
+                Built::Failed(e) if e.is_unported() => return rust_fail(&e),
+                Built::Failed(e) => return Ok(state(vec![-1.0, build_status(&e)])),
             };
             let args = topo_args(&b, c, *kind, *sel0, *sel1, *f0, *f1, *uv)?;
             match topo_rust(&k, &mut b, &args) {
@@ -1815,10 +1577,6 @@ impl UnitDiff for Runner {
         Ok(v)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         run_rust(&case.parse()?)
     }
@@ -1833,90 +1591,27 @@ mod tests {
     use super::*;
 
     /// HANG-29: fuzz14876, a topology op on a face whose B-spline surface has a control
-    /// point of `-1e300` (no native result in 60 s). Both sides refuse its block through
-    /// the `topology.vertexuse` export's HANG-29 bound (`1e150`), which both run. It
-    /// cannot be a fixture (a harness error always fails a case).
+    /// point of `-1e300` (no native result in 60 s). The block contract refuses it through
+    /// the `topology.vertexuse` block's HANG-29 bound (`1e150`). It cannot be a fixture (a
+    /// harness error always fails a case).
     #[test]
-    fn both_sides_refuse_a_topo_block_in_the_overflow_range() {
+    fn a_topo_block_in_the_overflow_range_is_refused() {
         let recorded: Value = serde_json::from_str(include_str!(
             "../../tests/fuzz_regressions/heal.gap.json"
         ))
         .unwrap();
         for recorded in recorded["cases"].as_array().unwrap() {
             let i: Inputs = serde_json::from_value(recorded["inputs"].clone()).unwrap();
-            for error in [run_rust(&i), run_cpp(&i)] {
-                let error = error.unwrap_err().to_string();
-                assert!(error.contains("HANG-29"), "{}: {error}", recorded["name"]);
-            }
+            let error = run_rust(&i).unwrap_err().to_string();
+            assert!(error.contains("HANG-29"), "{}: {error}", recorded["name"]);
         }
     }
     use solidcore::curve::curve::p2::{CIRCLE_TYPE, ELLIPSE_TYPE};
-    use solidcore::curve::curve::CurveKind;
 
-    /// The exported graph keeps the native circle/ellipse identity and state, and the
-    /// exact head is what preserves it: the same export without the head imports the
-    /// curve as its B-spline part (the old stand-in).
+    /// Every gap record on a native circle/ellipse face is computed, and the selected edge
+    /// curve stays the analytic kind (not a B-spline stand-in).
     #[test]
-    fn exact_transport_preserves_native_circle_and_ellipse() {
-        for (label, face) in analytic_face_specs() {
-            let block = ellipse_face_block(&face);
-            let ex = ffi::export("", &block).expect("export");
-            let (b, _) = import_raw(&ex).expect("import");
-            let ty = if face.circle { CIRCLE_TYPE } else { ELLIPSE_TYPE };
-            let found = b.edges().iter().find_map(|(id, edge)| {
-                let curve = edge.curve.as_ref()?;
-                (curve.type_code() == ty).then_some((id, curve))
-            });
-            let (id, curve) = found.unwrap_or_else(|| panic!("{label}: no analytic edge"));
-            let CurveKind::Ellipse(ellipse) = curve.kind() else {
-                panic!("{label}: not an ellipse/circle")
-            };
-            assert_eq!(ellipse.type_code(), ty, "{label}");
-            assert_eq!(ellipse.is_circle_class(), face.circle, "{label}");
-            assert_eq!(
-                [ellipse.x_radius(), ellipse.y_radius()],
-                face.radii,
-                "{label}"
-            );
-            assert_eq!(
-                ellipse.step_interval(),
-                Extent1d::from_raw(face.angles[0], face.angles[1]),
-                "{label}"
-            );
-            assert_eq!(
-                ellipse.base().natural_interval(),
-                Extent1d::from_raw(face.natural[0], face.natural[1]),
-                "{label}"
-            );
-            assert_eq!(ellipse.inside_out(), face.inside_out, "{label}");
-            assert_eq!(
-                ellipse.base().is_out_of_bounds_enabled(),
-                face.oob,
-                "{label}"
-            );
-
-            let head = ex
-                .windows(2)
-                .position(|w| w == [-3.0, ty as f64])
-                .unwrap_or_else(|| panic!("{label}: no exact head"));
-            assert_eq!(ex[head + 3], 3.0, "{label}: not 3D");
-            assert_eq!(ex[head + 4], f64::from(u8::from(face.oob)), "{label}");
-            let regular = 6 + ex[head + 5] as usize;
-            let mut old = ex.clone();
-            old.drain(head..head + regular);
-            let (old_b, _) = import_raw(&old).expect("old import");
-            let old_curve = old_b.edge(id).expect("edge").curve.as_ref().expect("curve");
-            assert!(
-                matches!(old_curve.kind(), CurveKind::BSpline(_)),
-                "{label}: old block must import as a B-spline stand-in"
-            );
-        }
-    }
-
-    /// Every gap record on a native circle/ellipse face matches the C++ after healing,
-    /// and the selected edge curve stays the analytic kind (not a B-spline stand-in).
-    #[test]
-    fn analytic_gap_records_match_native() {
+    fn analytic_gap_records_keep_the_analytic_curve() {
         let cases = analytic_topo_cases().expect("cases");
         for case in &cases {
             let inputs: Inputs = case.parse().expect("inputs");
@@ -1928,20 +1623,12 @@ mod tests {
             else {
                 panic!("{}: not an analytic case", case.name);
             };
-            let cpp = run_cpp(&inputs).expect("cpp");
             let rust = run_rust(&inputs).expect("rust");
-            assert!(
-                cpp.rejected.is_none() && cpp.error.is_none() && cpp.deferred.is_none(),
-                "{}: {cpp:?}",
-                case.name
-            );
             assert!(
                 rust.rejected.is_none() && rust.error.is_none() && rust.deferred.is_none(),
                 "{}: {rust:?}",
                 case.name
             );
-            let diff = crate::compare(&cpp, &rust, Runner.abs_floors());
-            assert!(diff.pass(), "{}: {diff:?}", case.name);
             let ty = if face.circle { CIRCLE_TYPE } else { ELLIPSE_TYPE };
             let expected = if *kind <= 2 && *kind != 0 {
                 -1.0
@@ -1953,22 +1640,17 @@ mod tests {
         }
     }
     #[test]
-    fn raw_trim_gap_records_match_native_at_close_knot_parameters() {
+    fn raw_trim_gap_records_hold_at_close_knot_parameters() {
         let cases = raw_trim_gap_cases().expect("cases");
         for case in cases {
             let inputs: Inputs = case.parse().expect("inputs");
-            let cpp = run_cpp(&inputs).expect("native independent face");
             let rust = run_rust(&inputs).expect("Rust independent face");
-            let diff = crate::compare(&cpp, &rust, Runner.abs_floors());
-            assert!(diff.pass(), "{}: {diff:?}", case.name);
-            for output in [&cpp, &rust] {
-                let state = output.values.get("state").expect("state");
-                assert_eq!(state[3], 2.0, "{}: endpoints", case.name);
-                assert_eq!(state[7], state[1], "{}: endpoint U", case.name);
-                assert_eq!(state[8], state[2], "{}: endpoint V", case.name);
-                assert_eq!(state[9], 0.0, "{}: plane Z", case.name);
-                assert_eq!(state[10], state[0], "{}: recached length", case.name);
-            }
+            let state = rust.values.get("state").expect("state");
+            assert_eq!(state[3], 2.0, "{}: endpoints", case.name);
+            assert_eq!(state[7], state[1], "{}: endpoint U", case.name);
+            assert_eq!(state[8], state[2], "{}: endpoint V", case.name);
+            assert_eq!(state[9], 0.0, "{}: plane Z", case.name);
+            assert_eq!(state[10], state[0], "{}: recached length", case.name);
         }
     }
 }
