@@ -109,18 +109,24 @@ fn corpus_parses() {
     );
 }
 
+/// The STEP files in the repository parse to every instance they hold, each id once: a parser
+/// that dropped or merged instances would change the counts (the instance lines in the files).
 #[test]
 fn repository_files_parse() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let paths = [
-        "crates/difftest/src/units/topology_brep_constructor_tetra.stp",
-        "crates/step-brep/tests/fixtures/discord-2026-10-30-fillet.step",
-    ]
-    .map(|p| root.join(p));
-    let failures = parse_all(&root, &paths);
-    assert!(
-        failures.is_empty(),
-        "files that did not parse:\n{}",
-        failures.join("\n")
-    );
+    for (path, entities) in [
+        (
+            "crates/difftest/src/units/topology_brep_constructor_tetra.stp",
+            86,
+        ),
+        (
+            "crates/solidcore-record/tests/fixtures/discord-2026-10-30-fillet.step",
+            571,
+        ),
+    ] {
+        let text = std::fs::read_to_string(root.join(path)).unwrap();
+        let ex = p21::parse(&text).unwrap_or_else(|e| panic!("{path}: {e}"));
+        assert_eq!(ex.entities.len(), entities, "{path}");
+        assert!(ex.duplicates.is_empty(), "{path}: {:?}", ex.duplicates);
+    }
 }

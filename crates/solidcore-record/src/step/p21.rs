@@ -31,6 +31,21 @@ const MAX_DEPTH: usize = 64;
 /// A complex instance is refused when more than this many of its parts have been read and
 /// another follows.
 const MAX_COMPLEX_PARTS: usize = 64;
+/// Most parameters in one file, nested ones included.
+pub const MAX_PARAMS: usize = 20_000_000;
+
+/// The counts a parse refuses beyond: [`MAX_ENTITIES`] and [`MAX_PARAMS`] for every caller,
+/// smaller in tests so a limit is reached with a short text.
+#[derive(Clone, Copy)]
+struct Limits {
+    entities: usize,
+    params: usize,
+}
+
+const LIMITS: Limits = Limits {
+    entities: MAX_ENTITIES,
+    params: MAX_PARAMS,
+};
 
 /// A parameter value.
 #[derive(Clone, Debug, PartialEq)]
@@ -204,6 +219,12 @@ pub enum Error {
     #[error("STEP file has more than {limit} entities")]
     TooManyEntities {
         /// The limit, [`MAX_ENTITIES`].
+        limit: usize,
+    },
+    /// More parameters than the limit.
+    #[error("STEP file has more than {limit} parameters")]
+    TooManyParams {
+        /// The limit, [`MAX_PARAMS`].
         limit: usize,
     },
     /// The [`Progress`] watcher cancelled.
@@ -439,6 +460,12 @@ impl Lexer<'_> {
 
 /// Decode the Part 21 string escapes (`\X\hh`, `\X2\…\X0\`, `\X4\…\X0\`, `\S\c`, `\\`).
 fn decode_string(raw: &[u8]) -> String {
+    decode_string_with(raw, |rest| rest.windows(4).position(|w| w == b"\\X0\\"))
+}
+
+/// [`decode_string`] with the search for a run's `\X0\` given, so a test can count its steps.
+/// `find_end(rest)` is the offset of the first `\X0\` in `rest`.
+fn decode_string_with(raw: &[u8], mut find_end: impl FnMut(&[u8]) -> Option<usize>) -> String {
     let mut out = String::new();
     let mut i = 0;
     let hex = |b: &[u8]| {
@@ -464,7 +491,7 @@ fn decode_string(raw: &[u8]) -> String {
             let mut run = false;
             for (tag, width) in [(&b"\\X2\\"[..], 4usize), (&b"\\X4\\"[..], 8)] {
                 if rest.starts_with(tag)
-                    && let Some(end) = rest.windows(4).position(|w| w == b"\\X0\\")
+                    && let Some(end) = find_end(rest)
                 {
                     let body = rest.get(4..end).unwrap_or(&[]);
                     let units: Vec<u32> = body.chunks(width).filter_map(hex).collect();
@@ -520,6 +547,14 @@ pub fn parse(text: &str) -> Result<Exchange, Error> {
 
 /// [`parse`], reporting progress to `watch` and stopping when it cancels.
 pub fn parse_with(text: &str, watch: Option<&dyn Progress>) -> Result<Exchange, Error> {
+    parse_limited(text, watch, LIMITS)
+}
+
+fn parse_limited(
+    text: &str,
+    watch: Option<&dyn Progress>,
+    limits: Limits,
+) -> Result<Exchange, Error> {
     if text.len() > MAX_BYTES {
         return Err(Error::TooLarge { bytes: text.len() });
     }
@@ -635,9 +670,9 @@ pub fn parse_with(text: &str, watch: Option<&dyn Progress>) -> Result<Exchange, 
                         }
                         w.progress("reading", lx.i, lx.s.len());
                     }
-                    if ex.entities.len() >= MAX_ENTITIES {
+                    if ex.entities.len() >= limits.entities {
                         return Err(Error::TooManyEntities {
-                            limit: MAX_ENTITIES,
+                            limit: limits.entities,
                         });
                     }
                     // A duplicate id is invalid; some writers emit them for geometry nobody
@@ -697,21 +732,40 @@ mod tests {
         assert_eq!(x[4].as_f64(), Some(1e-3));
     }
 
+    /// A DATA section holding `data`, with no header.
+    fn data(data: &str) -> String {
+        format!("ISO-10303-21;DATA;{data}ENDSEC;END-ISO-10303-21;")
+    }
+
     #[test]
     fn hostile_text_is_an_error() {
         for t in [
-            "",
-            "garbage",
-            "ISO-10303-21;",
-            "ISO-10303-21;DATA;#1=A(",
-            "ISO-10303-21;DATA;#1=A('x",
-            "ISO-10303-21;DATA;#1=A(/*",
-            "ISO-10303-21;DATA;#=A();ENDSEC;END-ISO-10303-21;",
-            "ISO-10303-21;DATA;#99999999999999999999999=A();ENDSEC;END-ISO-10303-21;",
-            "ISO-10303-21;DATA;#1=A(1e999999.);ENDSEC;END-ISO-10303-21;",
+            String::new(),
+            "garbage".into(),
+            "ISO-10303-21;".into(),
+            "ISO-10303-21;DATA;#1=A(".into(),
+            "ISO-10303-21;DATA;#1=A('x".into(),
+            "ISO-10303-21;DATA;#1=A(/*".into(),
+            data("#=A();"),
+            data("#99999999999999999999999=A();"),
+            // An exponent written with a fraction is no number: `bad number`.
+            data("#1=A(1e999999.);"),
+            // A number needs a digit before its exponent.
+            data("#1=A(.);"),
+            data("#1=A(+.);"),
+            data("#1=A(-.E3);"),
+            // An integer beyond i64 is refused, not read as a real.
+            data("#1=A(99999999999999999999);"),
         ] {
-            let _ = parse(t);
+            assert!(parse(&t).is_err(), "{t:?} parsed");
         }
+        // A real beyond f64 parses as infinity, which `as_f64` refuses where it is used.
+        let big = parse(&data("#1=A(1.E999999);")).unwrap();
+        let p = &big.get(1).unwrap().params()[0];
+        assert_eq!(*p, Param::Real(f64::INFINITY));
+        assert_eq!(p.as_f64(), None);
+        // A byte order mark before the header is skipped.
+        assert!(parse(&format!("\u{feff}{}", data(""))).is_ok());
         let deep = format!(
             "ISO-10303-21;DATA;#1=A({}{});ENDSEC;END-ISO-10303-21;",
             "(".repeat(10_000),
@@ -732,6 +786,75 @@ mod tests {
         assert_eq!(
             decode_string(b"\\X4\\0001F600\\X0\\\\X2\\00E9\\X0\\\\S\\a"),
             "\u{1f600}\u{e9}\u{e1}"
+        );
+        // `\S\` takes a basic-alphabet character; before a UTF-8 one it is kept as written.
+        assert_eq!(decode_string("\\S\\\u{e9}".as_bytes()), "\\S\\\u{e9}");
+    }
+
+    /// The decoded text, with the windows its terminator searches compare counted: the test
+    /// stops at the first one beyond the text's length, which a decoder searching the same
+    /// tail again reaches.
+    fn decode_counted(raw: &[u8]) -> String {
+        let mut steps = 0;
+        decode_string_with(raw, |rest| {
+            rest.windows(4).position(|w| {
+                steps += 1;
+                assert!(
+                    steps <= raw.len(),
+                    "more search steps than {} bytes",
+                    raw.len()
+                );
+                w == b"\\X0\\"
+            })
+        })
+    }
+
+    #[test]
+    fn run_terminators_are_searched_once() {
+        // The space keeps a tag's closing backslash from pairing with the next tag's opening one
+        // as an escaped `\\`, which would leave only the first tag to search from.
+        for tag in [&b"\\X2\\ "[..], b"\\X4\\ "] {
+            let raw = tag.repeat(100_000);
+            // No `\X0\` anywhere: every tag is kept as written.
+            assert_eq!(decode_counted(&raw).as_bytes(), raw.as_slice());
+        }
+        let raw = b"\\X2\\00E9\\X0\\".repeat(100_000);
+        assert_eq!(decode_counted(&raw), "\u{e9}".repeat(100_000));
+    }
+
+    #[test]
+    fn parameters_are_counted_against_the_limit() {
+        // `$`, the list, its `$`, the typed value and its `1.`: five parameters.
+        let t = data("#1=A($,($),T(1.));");
+        let at = |params| parse_limited(&t, None, Limits { params, ..LIMITS });
+        assert!(at(5).is_ok());
+        assert_eq!(at(4).unwrap_err(), Error::TooManyParams { limit: 4 });
+        // The count runs over the whole file, not one entity.
+        let two = data("#1=A($,$);#2=A($,$);");
+        assert_eq!(
+            parse_limited(
+                &two,
+                None,
+                Limits {
+                    params: 3,
+                    ..LIMITS
+                }
+            )
+            .unwrap_err(),
+            Error::TooManyParams { limit: 3 }
+        );
+    }
+
+    #[test]
+    fn duplicate_instances_count_against_the_entity_limit() {
+        let limits = Limits {
+            entities: 2,
+            ..LIMITS
+        };
+        assert!(parse_limited(&data("#1=A();#2=A();"), None, limits).is_ok());
+        assert_eq!(
+            parse_limited(&data("#1=A();#1=A();#1=A();"), None, limits).unwrap_err(),
+            Error::TooManyEntities { limit: 2 }
         );
     }
 }
