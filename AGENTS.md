@@ -58,6 +58,14 @@ request that names it. Check all three, and build on the existing work rather th
 - [docs/procedural-sweep.md](docs/procedural-sweep.md): swept surfaces, their frames, threads.
 - [docs/ssi.md](docs/ssi.md): surface-surface intersection, and what the boolean takes from it.
 - [docs/layers.md](docs/layers.md): which layer each job lives in.
+- [docs/validity-and-tolerances.md](docs/validity-and-tolerances.md): what a valid body is, local
+  tolerances, healing, and when a tolerance may grow.
+- [docs/booleans.md](docs/booleans.md): the boolean's pipeline, classification on S, coincident
+  faces and tangent contacts.
+- [docs/offset-and-shell.md](docs/offset-and-shell.md): offsets of the definition, folds and the
+  largest wall, the offset construction, shell and thicken.
+- [docs/coordinating.md](docs/coordinating.md): if you lead other agents: how to understand the
+  problem, search for related work, split it into briefs and inspect what comes back.
 
 Each reference ends with "If you're stuck". If the docs and the code don't answer your question,
 ask the maintainers on the area's hub issue before you build.
@@ -65,10 +73,17 @@ ask the maintainers on the area's hub issue before you build.
 **Show the problem first, then research it.** Before you build a fix, show the person you work
 for what you are solving: a schematic of the problem drawn in VectorCraft (house style:
 [docs/agent-style.md](docs/agent-style.md#figures)), or a rendition of the failing case, next to
-what the correct result is. Then find how the problem is solved in the literature: search for
-the papers, read the ones that apply, and design from them. Say in the issue what you read and
-how the design follows it. A fix nobody has seen the problem of, or built without that research,
-is not ready for review.
+what the correct result is. For a body in an `.smb` file, `cargo run --release -p diagnostics --
+FILE.smb --out DIR` draws it through `solidcore-tess` with its large-tolerance edges over
+everything (`--highlight` and `--see-through` take face indices) and writes a JSON report of
+every face and edge with its tolerance and label pixel. A pull request that changes a case's
+result attaches its pictures before and after the change, drawn the same way from the same view,
+whenever the case can be drawn, and a VectorCraft schematic where the problem is a mechanism a
+picture of the body cannot show (a tolerance against a gap, an enclosure that does not shrink,
+the order of a solve). Then find how the problem is solved in the literature: search for the
+papers, read the ones that apply, and design from them. Say in the issue what you read and how
+the design follows it. A fix nobody has seen the problem of, or built without that research, is
+not ready for review.
 
 **Licence.** Read only `upstream/source/SMLib`, `upstream/source/SM_API`,
 `upstream/tests/SM_API_test`, `upstream/tests/prog_test`, `upstream/TestFiles/pt_TestFiles`,
@@ -187,7 +202,8 @@ an update is an addendum file. Known mismatches live in
 what the maintainers have agreed to. Never add a file to `docs/` that hasn't been discussed with
 them first, on its issue. A pull request's evidence (validation runs, comparisons, measurements)
 goes in its description, or in a `plan/findings/` record when it must outlive the PR. A doc
-points to issues, code, tests and records, never to a pull request.
+points to code, tests, records and the literature, never to a pull request or an issue (no
+`#NNNN`), so it reads the same whatever happens to the tracker.
 
 **Porting and wiring units** (the work that remains of the port: `UNPORTED` stubs, back-edges,
 unit status): [docs/porting.md](docs/porting.md).
@@ -216,12 +232,14 @@ own constructions. The policy (owner, 2026-11-04; supersedes 2026-11-02 and #101
 - **Record differences from the C++, don't hide them.** When solidcore is more correct and
   differs, the C++ is wrong for that case: record it as a confirmed `plan/upstream-issues/` entry
   and a `cpp_defect` known-mismatch marker (§1). Never loosen a tolerance.
-- **Cases with images.** A pull request that makes a SolidCraft rig case pass, or turns a known
-  failure into a correct refusal, updates its row in `docs/generic-blend.md` §7 and its render
-  (`docs/generic-blend/cases/<case>.jpg`) in the same change. No row changes without its image.
-  Choose the render's view from the case's geometry so it shows the issue (the corner, the seam,
-  the spot refused or fixed), framed close on it, with an inset of the whole part where it helps;
-  never a fixed angle.
+- **Cases with images.** A pull request that makes a kernel case pass, or turns a known failure
+  into a correct refusal, updates the case's entry (its expectation, and its `gallery_note` if the
+  gallery needs to say more), its line in `known_failing.json` and its render beside it
+  (`crates/solidcore/tests/kernel_cases/<area>/<case>.jpg`) in the same change, never a doc: the
+  site's case gallery is generated from them. No status changes without a new render. Choose the
+  render's view from the case's geometry so it shows the issue (the corner, the seam, the spot
+  refused or fixed), framed close on it, with an inset of the whole part where it helps; never a
+  fixed angle.
 - **Don't extend code that is going away.** Improve the construction that replaces it; an old
   path is deleted when its replacement lands, never kept as a fallback.
 - **Crash, UB, hang and nondeterminism fixes are unconditional**, e.g. the fix for UB-87.
