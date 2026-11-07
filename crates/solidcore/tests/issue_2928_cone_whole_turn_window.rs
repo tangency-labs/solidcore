@@ -2,14 +2,16 @@
 //! ends sit a rounding error outside ±180° (the NIST `ctc_02` AP203 face #1152: u
 //! −180.0000000000005 … 179.99999999999955°). The window is inside [−360°, 360°], but the
 //! sweep circle was built a turn too high ([≈180°, ≈540°]) and `create_circle_segment`
-//! refused it. A whole-turn window is accepted wherever its ends fall.
+//! refused it. A whole-turn window is accepted wherever its ends fall, and the NURB built
+//! for it lies on the cone: across the window, the NURB point at each STEP parameter's
+//! NURB parameter is the cone's own (analytic) point there.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
     clippy::indexing_slicing
 )] // test helpers
-use solidcore::geom::{axis2_placement::Axis2Placement, extent2d::Extent2d};
+use solidcore::geom::{axis2_placement::Axis2Placement, extent2d::Extent2d, vector2d::Point2};
 use solidcore::{kernel::Kernel, math::Vec3, surface::cone::Cone};
 
 const V_MAX: f64 = 39.31893628625494;
@@ -44,6 +46,20 @@ fn a_whole_turn_window_a_rounding_error_past_180_is_accepted() {
             .unwrap();
             let r = cone.adjust_step_uv_domain(&k, &Extent2d::from_bounds(u0, 0.0, u1, V_MAX));
             assert!(r.is_ok(), "semi-angle {semi_angle}, u {u0}..{u1}: {r:?}");
+            for i in 0..=8 {
+                for v in [0.0, 0.5 * V_MAX, V_MAX] {
+                    let u = u0 + (u1 - u0) * f64::from(i) / 8.0;
+                    let step_uv = Point2::new(u, v);
+                    let on_cone = cone.evaluate_step_point(step_uv).unwrap();
+                    let nurb_uv = cone.convert_uv_from_step_to_nurbs(&k, step_uv).unwrap();
+                    let on_nurb = cone.evaluate_point(&k, nurb_uv).unwrap();
+                    let gap = (on_nurb - on_cone).length();
+                    assert!(
+                        gap <= 1e-9 * 1000.0,
+                        "semi-angle {semi_angle}, u {u0}..{u1}, at ({u}, {v}): gap {gap:e}"
+                    );
+                }
+            }
         }
     }
 }
