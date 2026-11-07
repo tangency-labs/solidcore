@@ -70,8 +70,13 @@ pub(super) fn natural(source: &Local, side: BoxSide, origin: Vec3, e: f64) -> Re
     world.frame = Some(bound);
     if !(world.is_finite() && bound.is_finite()) { return Ok(None); }
     Ok(Some(Made {
-        world: BSplineSurface::from_gw_nurb(&world.surface(side)?),
-        local: BSplineSurface::from_gw_nurb(&local.surface(side)?),
+        // The knots are already supplied by Local's validated continuation.
+        // from_gw_nurb would fix them up again using the enlarged box's scale:
+        // a large bracketing probe can then merge the SOURCE's distinct knots.
+        // The existing borrowed-net constructor preserves the supplied knots;
+        // the Rust Surface value owns/shares its storage independently of that flag.
+        world: BSplineSurface::from_nurb(world.surface(side)?, true),
+        local: BSplineSurface::from_nurb(local.surface(side)?, true),
         bound,
     }))
 }
