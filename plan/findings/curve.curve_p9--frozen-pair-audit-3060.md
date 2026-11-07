@@ -158,3 +158,31 @@ constructors/evaluator, admissible domains and target rules in the
 [unrepaired-case exclusion audit](curve.curve_p9--unrepaired-all-rust-witnesses-3060.md).
 All are unchanged before/after the scoped fix; 44 are newly documented exclusions
 and gen0472 was already known. No unverified search result is used to exclude a case.
+
+## Merged checkpoint and filtered golden graduation
+
+At `69d8abd33`, all 32 focused projected-pair tests pass. Both frozen input
+cohorts are byte-identical to the original inputs. The 35-row Single/cylinder
+replay retains exactly 31 changed rows, and the 75-row All replay retains exactly
+eight changed rows, with zero new refusals or decode errors. Complete parsed
+inputs, outputs and solutions equal `9402730dd`; only elapsed-time metadata differs.
+
+The actual golden runner regenerated only these independently audited records:
+
+- `curve.curve_p9`: gen0011, gen0131, gen0144, gen0155, gen0302, gen0313,
+  gen0373, gen0421, gen0445, gen0743, gen0844, gen0880, gen1086, gen1116,
+  gen1458, gen1658, gen1744, gen1839, gen1860, gen2016, gen2017, gen2050,
+  gen2131, gen2187, gen2189, gen2325, gen2440, gen2501, gen2585, gen2603,
+  gen2768, gen2771, gen2962, gen2969, gen2976.
+- `intersect.topology_solver_p2`: analytic_face_cyl_x_6_15,
+  analytic_face_cyl_x_7_15, analytic_face_halfcyl_x_6_15,
+  analytic_face_halfcyl_x_7_15.
+
+Each filtered run produced one case with zero broken cases. The 35 curve rows
+comprise 30 changed existing records and five graduated exclusions; the four
+cylinder records change from the old local answer to the proved maximum
+`sqrt(2.5)`. These are the records whose original requests, feasible witnesses,
+closed-form/interval proofs and same-view geometry are documented above. No
+unchanged or unverified curved All record is blessed. The remaining 45 known
+failures retain their issue-linked exclusions. Whole-unit and broader merged-head
+gates remain pending; the final parent selection correction is tracked separately.

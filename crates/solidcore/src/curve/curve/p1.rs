@@ -26,8 +26,8 @@
 //!   exactly. Certificates account for their own rounding separately from
 //!   retention slack. Projected extrema refuse uncovered cache domains and
 //!   propagate solve errors rather than publishing uncertified partial results.
-//!   Affine joins are omitted only after exact dyadic continuity and directed
-//!   collinearity predicates, never from the cache's approximate G1 label alone.
+//!   Native joins are omitted only after defining continuity/collinearity or
+//!   one-sided objective-sign proofs, never from an approximate G1 label alone.
 //! - **Projected endpoint extrema.** Eligible finite boundaries are candidates
 //!   independently of the stationary-point search. Finding a stationary
 //!   point does not establish that it beats the interval endpoints.
@@ -979,7 +979,7 @@ fn merge_point_solution<O: Copy>(
 // residual to zero in a raw knot interval with only a few thousand f64 values.
 use crate::blend::fillet_section::interval::Ivl;
 
-/// Report that no representable parameter was certified within the requested objective tolerance.
+/// Report that no representable parameter was certified to its own objective enclosure.
 fn affine_refusal() -> SolidError {
     SolidError::Upstream {
         operation: "curve::curve::p1::projected_affine_certificate",
@@ -988,7 +988,7 @@ fn affine_refusal() -> SolidError {
     }
 }
 
-// f64::next_up/next_down postdate the crate's Rust 1.85 minimum.
+// MSRV 1.85: f64::next_up/next_down were stabilized in Rust 1.86.
 /// Return the next representable parameter toward positive infinity on Rust 1.85.
 fn next_parameter_up(value: f64) -> f64 {
     if value.is_nan() || value == f64::INFINITY {
@@ -1044,6 +1044,115 @@ fn iv_lerp(a: [Ivl; 3], b: [Ivl; 3], t: Ivl) -> [Ivl; 3] {
     [ax + (bx - ax) * t, ay + (by - ay) * t, az + (bz - az) * t]
 }
 
+/// Tight directed bounds for the affine carrier proof only. Each IEEE binary64
+/// basic operation is rounded once, then stepped one representable value outward;
+/// signed zero and subnormal results are covered without a fixed absolute floor.
+fn carrier_outward(lo: f64, hi: f64) -> Ivl {
+    if !lo.is_finite() || !hi.is_finite() || lo > hi {
+        Ivl::whole()
+    } else {
+        Ivl::new(next_parameter_down(lo), next_parameter_up(hi))
+    }
+}
+/// Whether a carrier operand is an ordered, finite enclosure.
+fn carrier_finite(a: Ivl) -> bool {
+    a.lo.is_finite() && a.hi.is_finite() && a.lo <= a.hi
+}
+/// Enclose a sum, preserving exact addition of zero.
+fn carrier_add(a: Ivl, b: Ivl) -> Ivl {
+    if !carrier_finite(a) || !carrier_finite(b) {
+        return Ivl::whole();
+    }
+    if b.lo == 0.0 && b.hi == 0.0 {
+        a
+    } else if a.lo == 0.0 && a.hi == 0.0 {
+        b
+    } else {
+        carrier_outward(a.lo + b.lo, a.hi + b.hi)
+    }
+}
+/// Enclose a difference, preserving exact subtraction of identical point inputs.
+fn carrier_sub(a: Ivl, b: Ivl) -> Ivl {
+    if !carrier_finite(a) || !carrier_finite(b) {
+        return Ivl::whole();
+    }
+    if a.lo == a.hi && a == b {
+        Ivl::from(0.0)
+    } else if b.lo == 0.0 && b.hi == 0.0 {
+        a
+    } else {
+        carrier_outward(a.lo - b.hi, a.hi - b.lo)
+    }
+}
+/// Enclose a product; a nonfinite intermediate cannot establish a certificate.
+fn carrier_mul(a: Ivl, b: Ivl) -> Ivl {
+    if !carrier_finite(a) || !carrier_finite(b) {
+        return Ivl::whole();
+    }
+    let products = [a.lo * b.lo, a.lo * b.hi, a.hi * b.lo, a.hi * b.hi];
+    if products.iter().any(|value| !value.is_finite()) {
+        return Ivl::whole();
+    }
+    if (a.lo == 0.0 && a.hi == 0.0) || (b.lo == 0.0 && b.hi == 0.0) {
+        return Ivl::from(0.0);
+    }
+    if a.lo == 1.0 && a.hi == 1.0 {
+        return b;
+    }
+    if b.lo == 1.0 && b.hi == 1.0 {
+        return a;
+    }
+    carrier_outward(
+        products.into_iter().fold(f64::INFINITY, f64::min),
+        products.into_iter().fold(f64::NEG_INFINITY, f64::max),
+    )
+}
+/// Enclose division directly at its four corners; a zero denominator refuses.
+fn carrier_div(a: Ivl, b: Ivl) -> Ivl {
+    if !carrier_finite(a) || !carrier_finite(b) {
+        return Ivl::whole();
+    }
+    if !(b.lo > 0.0 || b.hi < 0.0) {
+        return Ivl::whole();
+    }
+    if b.lo == 1.0 && b.hi == 1.0 {
+        return a;
+    }
+    let values = [a.lo / b.lo, a.lo / b.hi, a.hi / b.lo, a.hi / b.hi];
+    if values.iter().any(|value| !value.is_finite()) {
+        return Ivl::whole();
+    }
+    carrier_outward(
+        values.into_iter().fold(f64::INFINITY, f64::min),
+        values.into_iter().fold(f64::NEG_INFINITY, f64::max),
+    )
+}
+/// Dot product with outward rounding after each multiply and addition.
+fn carrier_dot(a: [Ivl; 3], b: [Ivl; 3]) -> Ivl {
+    a.into_iter().zip(b).fold(Ivl::from(0.0), |sum, (a, b)| {
+        carrier_add(sum, carrier_mul(a, b))
+    })
+}
+/// Cross product with outward rounding after each multiply and subtraction.
+fn carrier_cross(a: [Ivl; 3], b: [Ivl; 3]) -> [Ivl; 3] {
+    let [ax, ay, az] = a;
+    let [bx, by, bz] = b;
+    [
+        carrier_sub(carrier_mul(ay, bz), carrier_mul(az, by)),
+        carrier_sub(carrier_mul(az, bx), carrier_mul(ax, bz)),
+        carrier_sub(carrier_mul(ax, by), carrier_mul(ay, bx)),
+    ]
+}
+/// Nonnegative length bound; IEEE sqrt is correctly rounded before stepping out.
+fn carrier_length(a: [Ivl; 3]) -> Ivl {
+    let squared = a.into_iter().fold(Ivl::from(0.0), |sum, x| {
+        let square = carrier_outward(x.mig() * x.mig(), x.mag() * x.mag());
+        carrier_add(sum, square)
+    });
+    let bounds = carrier_outward(squared.lo.max(0.0).sqrt(), squared.hi.sqrt());
+    Ivl::new(bounds.lo.max(0.0), bounds.hi)
+}
+
 // An exact zero predicate for four products of finite binary64 inputs. A
 // product has at most 106 significand bits and exponent in [-2148, 1942].
 // Four same-sign products need at most 4198 bits above 2^-2148; 66 u64 words
@@ -1061,6 +1170,8 @@ fn dyadic_products_zero(terms: &[(f64, f64, bool)]) -> bool {
             return None;
         }
         let bits = value.to_bits();
+        // The mask is at most 2047, so this cast is exact. Finite inputs exclude
+        // 2047; the resulting power-of-two exponent is in [-1074, 971].
         let exponent = ((bits >> 52) & 0x7ff) as i32;
         let fraction = bits & ((1_u64 << 52) - 1);
         Some((
@@ -1080,11 +1191,14 @@ fn dyadic_products_zero(terms: &[(f64, f64, bool)]) -> bool {
     /// Accumulate one shifted word with checked access to the fixed-capacity sum.
     fn add_word(words: &mut [u64; 66], word: u64, shift: usize) -> bool {
         let mut index = shift / 64;
+        // Constant nonzero divisor; remainder is 0..=63, below u128's 128 bits.
         let mut carry = u128::from(word) << (shift % 64);
         while carry != 0 {
             let Some(slot) = words.get_mut(index) else {
                 return false;
             };
+            // Two u64 values sum to at most 2^65-2. The cast deliberately keeps
+            // the low word; sum >> 64 carries its single high bit forward.
             let sum = u128::from(*slot) + (carry & u128::from(u64::MAX));
             *slot = sum as u64;
             carry = (carry >> 64) + (sum >> 64);
@@ -1104,6 +1218,9 @@ fn dyadic_products_zero(terms: &[(f64, f64, bool)]) -> bool {
         let Some((sb, mb, eb)) = parts(b) else {
             return false;
         };
+        // Each significand is below 2^53, so multiplication fits in 106 bits.
+        // ea+eb+2148 is in [0,4090], fitting both i32 and wasm32 usize. The
+        // second word's shift is at most 4154, within the 4224-bit accumulator.
         let product = u128::from(ma) * u128::from(mb);
         let shift = (ea + eb + 2148) as usize;
         let words = if sa ^ sb ^ negate {
@@ -1126,16 +1243,61 @@ fn exact_affine_join(curve: &Curve, t: f64) -> bool {
     if matches!(curve.kind(), CurveKind::Line(_)) {
         return true;
     }
+    exact_native_spline_join(curve, t, true)
+}
+
+/// Establish smoothness from native knot multiplicity or exact endpoint chords.
+/// At a C0 Bezier join, tangent directions use the adjacent defining controls;
+/// equal positive local weights cancel without evaluating or rounding endpoints.
+fn exact_native_spline_join(curve: &Curve, t: f64, require_linear: bool) -> bool {
     let CurveKind::BSpline(spline) = curve.kind() else {
         return false;
     };
     let Some(nurb) = spline.gw_nurb() else {
         return false;
     };
-    if nurb.degree() != 1 {
+    let degree = nurb.degree();
+    if degree == 0 || (require_linear && degree != 1) {
         return false;
     }
+    let Some(order) = degree.checked_add(1) else {
+        return false;
+    };
     let natural = spline.natural_interval();
+    if t > natural.min() && t < natural.max() {
+        let multiplicity = nurb.knots().partition_point(|knot| *knot <= t)
+            - nurb.knots().partition_point(|knot| *knot < t);
+        // Interior non-knots and knots of multiplicity < degree have at least
+        // C1 continuity by the defining spline space, not the cache angle test.
+        if multiplicity < degree {
+            let Some(first) = nurb.cpts().first() else {
+                return false;
+            };
+            return nurb.cpts().iter().all(|point| {
+                point.x.is_finite()
+                    && point.y.is_finite()
+                    && point.z.is_finite()
+                    && if first.w == crate::nurbs::math::NOW {
+                        point.w == crate::nurbs::math::NOW
+                    } else {
+                        point.w.is_finite() && point.w > 0.0
+                    }
+            });
+        }
+    } else if !nurb
+        .knots()
+        .iter()
+        .take(order)
+        .all(|knot| *knot == natural.min())
+        || !nurb
+            .knots()
+            .iter()
+            .rev()
+            .take(order)
+            .all(|knot| *knot == natural.max())
+    {
+        return false;
+    }
     let left_t = if t == natural.min() { natural.max() } else { t };
     let right_t = if t == natural.max() { natural.min() } else { t };
     let span = |parameter: f64, left: bool| {
@@ -1184,7 +1346,13 @@ fn exact_affine_join(curve: &Curve, t: f64) -> bool {
         };
         Some((coordinates(a), coordinates(b), weight))
     };
-    let Some(((a, b, w), (c, d, v))) = controls(li).zip(controls(ri)) else {
+    let Some(right_control) = ri
+        .checked_sub(degree)
+        .and_then(|index| index.checked_add(1))
+    else {
+        return false;
+    };
+    let Some(((a, b, w), (c, d, v))) = controls(li).zip(controls(right_control)) else {
         return false;
     };
     // Homogeneous positions must agree even at repeated knots or a closed seam.
@@ -1224,6 +1392,111 @@ fn exact_affine_join(curve: &Curve, t: f64) -> bool {
             .zip(b)
             .zip(c.into_iter().zip(d))
             .any(|((a, b), (c, d))| (b > a && d > c) || (b < a && d < c))
+}
+
+/// Keep native spline knots unless their defining data proves smoothness.
+/// Other geometry kinds retain their existing endpoint policy.
+fn omit_projected_boundary(curve: &Curve, t: f64, continuity: ContinuityType) -> bool {
+    (continuity as i32) >= (ContinuityType::G1 as i32)
+        && (!matches!(curve.kind(), CurveKind::BSpline(_))
+            || exact_native_spline_join(curve, t, false))
+}
+
+/// Exclude a continuous native C0 knot when a one-sided derivative proves that
+/// the projected squared distance moves away from the requested extremum there.
+fn native_join_is_not_extremum(
+    curve: &Curve,
+    t: f64,
+    point: Vec3,
+    normal: Vec3,
+    maximize: bool,
+) -> bool {
+    let CurveKind::BSpline(spline) = curve.kind() else {
+        return false;
+    };
+    let Some(nurb) = spline.gw_nurb() else {
+        return false;
+    };
+    let degree = nurb.degree();
+    let Some(order) = degree.checked_add(1) else {
+        return false;
+    };
+    let first = nurb.knots().partition_point(|knot| *knot < t);
+    let after = nurb.knots().partition_point(|knot| *knot <= t);
+    let natural = spline.natural_interval();
+    if degree == 0 || after - first < degree || t <= natural.min() || t >= natural.max() {
+        return false;
+    }
+    let Some(left) = first.checked_sub(1) else {
+        return false;
+    };
+    let Some(right) = after.checked_sub(order) else {
+        return false;
+    };
+    let Some(a) = left.checked_sub(1).and_then(|index| nurb.cpts().get(index)) else {
+        return false;
+    };
+    let Some(b) = nurb.cpts().get(left) else {
+        return false;
+    };
+    let Some(c) = nurb.cpts().get(right) else {
+        return false;
+    };
+    let Some(d) = right
+        .checked_add(1)
+        .and_then(|index| nurb.cpts().get(index))
+    else {
+        return false;
+    };
+    let data = |p: &crate::nurbs::math::CPoint| {
+        let w = if p.w == crate::nurbs::math::NOW {
+            1.0
+        } else {
+            p.w
+        };
+        let xyz = [
+            p.x,
+            p.y,
+            if p.z == crate::nurbs::math::NOZ {
+                0.0
+            } else {
+                p.z
+            },
+        ];
+        (w.is_finite() && w > 0.0 && xyz.iter().all(|x| x.is_finite())).then_some((xyz, w))
+    };
+    let Some(((a, wa), (b, wb))) = data(a).zip(data(b)) else {
+        return false;
+    };
+    let Some(((c, wc), (d, wd))) = data(c).zip(data(d)) else {
+        return false;
+    };
+    if !b
+        .into_iter()
+        .zip(c)
+        .all(|(b, c)| dyadic_products_zero(&[(b, wc, false), (c, wb, true)]))
+    {
+        return false;
+    }
+    let a = a.map(|x| Ivl::from(x) / Ivl::from(wa));
+    let b = b.map(|x| Ivl::from(x) / Ivl::from(wb));
+    let c = c.map(|x| Ivl::from(x) / Ivl::from(wc));
+    let d = d.map(|x| Ivl::from(x) / Ivl::from(wd));
+    let project = |v| iv_cross(iv_cross(iv_point(normal), v), iv_point(normal));
+    let residual = project(iv_sub(b, iv_point(point)));
+    let left = iv_dot(residual, project(iv_sub(b, a)));
+    let right = iv_dot(residual, project(iv_sub(d, c)));
+    if ![left.lo, left.hi, right.lo, right.hi]
+        .into_iter()
+        .all(f64::is_finite)
+    {
+        return false;
+    }
+    if maximize {
+        left.hi < 0.0 || right.lo > 0.0
+    } else {
+        left.lo > 0.0 || right.hi < 0.0
+    }
 }
 
 /// Test exact parallelism before rounding the difference of the two input points.
@@ -1276,6 +1549,116 @@ impl AffineDefinition {
         let fraction = (t - Ivl::from(self.interval.min())) / span;
         let derivative = iv_sub(self.end, self.start).map(|x| x / span);
         (iv_lerp(self.start, self.end, fraction), derivative)
+    }
+
+    /// Enclose the mathematical endpoint difference from defining factors before
+    /// rounded world-space endpoint evaluations can erase a short direction.
+    fn difference(&self, curve: &Curve, interval: Extent1d) -> Option<[Ivl; 3]> {
+        let width = Ivl::from(interval.max()) - Ivl::from(interval.min());
+        let (direction, factor) = match self.direction {
+            AffineDirection::Controls(a, b) => {
+                let CurveKind::BSpline(spline) = curve.kind() else {
+                    return None;
+                };
+                let nurb = spline.gw_nurb()?;
+                let index = nurb
+                    .knots()
+                    .partition_point(|knot| *knot <= self.interval.min())
+                    .checked_sub(1)?;
+                let control = nurb.cpts().get(index)?;
+                let weight = if control.w == crate::nurbs::math::NOW {
+                    1.0
+                } else {
+                    control.w
+                };
+                (
+                    iv_sub(b.map(Ivl::from), a.map(Ivl::from)),
+                    width
+                        / (Ivl::from(self.interval.max()) - Ivl::from(self.interval.min()))
+                        / Ivl::from(weight),
+                )
+            }
+            AffineDirection::MappedLine { vector, scale, .. } => {
+                let CurveKind::Line(line) = curve.kind() else {
+                    return None;
+                };
+                let natural = line.natural_interval();
+                let mut factor = width * Ivl::from(scale);
+                let bounded_map = line.is_bounded() && !is_zero(natural.length());
+                if bounded_map {
+                    let analytic = line.step_interval();
+                    factor = factor * (Ivl::from(analytic.max()) - Ivl::from(analytic.min()))
+                        / (Ivl::from(natural.max()) - Ivl::from(natural.min()));
+                }
+                if line.inside_out() && (bounded_map || !line.is_bounded()) {
+                    factor = Ivl::from(0.0) - factor;
+                }
+                (iv_point(vector), factor)
+            }
+        };
+        Some(direction.map(|component| component * factor))
+    }
+
+    /// Lower-bound distance to the infinite projected carrier without a rounded
+    /// stationary parameter: |N|^2 |(A-Q).(N x D)| / |N x D|.
+    /// The raw direction's nonzero scalar factors cancel. This bound remains
+    /// valid on every bounded subinterval of the carrier.
+    fn carrier_minimum(&self, curve: &Curve, point: Vec3, normal: Vec3) -> Option<Ivl> {
+        let (anchor, direction) = match self.direction {
+            AffineDirection::Controls(a, b) => {
+                let CurveKind::BSpline(spline) = curve.kind() else {
+                    return None;
+                };
+                let nurb = spline.gw_nurb()?;
+                let index = nurb
+                    .knots()
+                    .partition_point(|knot| *knot <= self.interval.min())
+                    .checked_sub(1)?;
+                let weight = nurb.cpts().get(index)?.w;
+                let weight = Ivl::from(if weight == crate::nurbs::math::NOW {
+                    1.0
+                } else {
+                    weight
+                });
+                let [ax, ay, az] = a.map(Ivl::from);
+                let [bx, by, bz] = b.map(Ivl::from);
+                (
+                    a.map(|x| carrier_div(Ivl::from(x), weight)),
+                    [
+                        carrier_sub(bx, ax),
+                        carrier_sub(by, ay),
+                        carrier_sub(bz, az),
+                    ],
+                )
+            }
+            AffineDirection::MappedLine { vector, .. } => {
+                let CurveKind::Line(line) = curve.kind() else {
+                    return None;
+                };
+                (iv_point(line.line_point()), iv_point(vector))
+            }
+        };
+        let n = iv_point(normal);
+        let transverse = carrier_cross(n, direction);
+        let denominator = carrier_length(transverse);
+        if denominator.lo <= 0.0 || !denominator.hi.is_finite() {
+            return None;
+        }
+        let [ax, ay, az] = anchor;
+        let offset = [
+            carrier_sub(ax, Ivl::from(point.x)),
+            carrier_sub(ay, Ivl::from(point.y)),
+            carrier_sub(az, Ivl::from(point.z)),
+        ];
+        let numerator = carrier_dot(offset, transverse);
+        let bound = carrier_div(
+            carrier_mul(
+                Ivl::new(numerator.mig(), numerator.mag()),
+                carrier_dot(n, n),
+            ),
+            denominator,
+        );
+        (bound.lo.is_finite() && bound.hi.is_finite()).then_some(bound)
     }
 
     /// Enclose the affine point at the caller's raw parameter.
@@ -1408,6 +1791,76 @@ pub(super) fn affine_definition(curve: &Curve, interval: Extent1d) -> Option<Aff
     })
 }
 
+/// Enclose the projected metric at an actual native point of an analytic line
+/// or an equal-weight linear spline span. Native linear-spline knots and natural
+/// endpoints use the evaluator's actual control value, including a right-valued
+/// discontinuity. Unsupported curve definitions or parameters return `None`.
+pub(crate) fn affine_projected_point_enclosure(
+    curve: &Curve,
+    t: f64,
+    point: Vec3,
+    normal: Vec3,
+) -> Option<Ivl> {
+    let natural = curve.natural_interval();
+    if !t.is_finite() || t < natural.min() || t > natural.max() {
+        return None;
+    }
+    let position = match curve.kind() {
+        CurveKind::Line(_) => affine_definition(curve, Extent1d::from_min_max(t, t))?.start,
+        CurveKind::BSpline(spline) => {
+            let nurb = spline.gw_nurb()?;
+            if nurb.degree() != 1 {
+                return None;
+            }
+            let control = if t == natural.min() {
+                nurb.cpts().first()
+            } else if t == natural.max() {
+                nurb.cpts().last()
+            } else {
+                let index = nurb
+                    .knots()
+                    .partition_point(|knot| *knot <= t)
+                    .checked_sub(1)?;
+                if nurb.knots().get(index) == Some(&t) {
+                    index
+                        .checked_sub(1)
+                        .and_then(|index| nurb.cpts().get(index))
+                } else {
+                    None
+                }
+            };
+            if let Some(control) = control {
+                let weight = if control.w == crate::nurbs::math::NOW {
+                    1.0
+                } else {
+                    control.w
+                };
+                if !weight.is_finite() || weight <= 0.0 {
+                    return None;
+                }
+                [
+                    control.x,
+                    control.y,
+                    if control.z == crate::nurbs::math::NOZ {
+                        0.0
+                    } else {
+                        control.z
+                    },
+                ]
+                .map(|x| Ivl::from(x) / Ivl::from(weight))
+            } else {
+                affine_definition(curve, Extent1d::from_min_max(t, t))?.point(t)
+            }
+        }
+        _ => return None,
+    };
+    let bound = iv_length(iv_cross(
+        iv_cross(iv_point(normal), iv_sub(position, iv_point(point))),
+        iv_point(normal),
+    ));
+    (bound.lo.is_finite() && bound.hi.is_finite()).then_some(bound)
+}
+
 impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
     /// `AddSortedSolution` by value (with parameter) or by first parameter.
     fn add_solution(&mut self, solution: &Solution<O>, by_value: bool) -> Result<()> {
@@ -1442,7 +1895,10 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         };
         let start = projected(definition.point(interval.min()));
         let end = projected(definition.point(interval.max()));
-        let delta = iv_sub(end, start);
+        let Some(difference) = definition.difference(curve, interval) else {
+            return Err(affine_refusal());
+        };
+        let delta = iv_cross(iv_cross(iv_point(normal), difference), iv_point(normal));
         let constant = definition.constant_projection(normal);
         let left_end = if definition.isolated_end.is_some() {
             next_parameter_down(interval.max())
@@ -1477,7 +1933,12 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
                 definition.point(t)
             };
             let bounds = iv_length(projected(position));
-            if !value.is_finite() || !bounds.lo.is_finite() || !bounds.hi.is_finite() {
+            if !value.is_finite()
+                || !bounds.lo.is_finite()
+                || !bounds.hi.is_finite()
+                || value < bounds.lo
+                || value > bounds.hi
+            {
                 return Err(affine_refusal());
             }
             // The enclosure certifies optimization error, not exact binary
@@ -1523,9 +1984,11 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         let fraction = Ivl::new(foot.lo.clamp(0.0, 1.0), foot.hi.clamp(0.0, 1.0));
         let smooth = [
             (conts[0] as i32) >= (ContinuityType::G1 as i32)
-                && exact_affine_join(curve, interval.min()),
+                && (exact_affine_join(curve, interval.min())
+                    || native_join_is_not_extremum(curve, interval.min(), point, normal, maximize)),
             (conts[1] as i32) >= (ContinuityType::G1 as i32)
-                && exact_affine_join(curve, interval.max()),
+                && (exact_affine_join(curve, interval.max())
+                    || native_join_is_not_extremum(curve, interval.max(), point, normal, maximize)),
         ];
         if !maximize
             && definition.isolated_end.is_none()
@@ -1533,11 +1996,34 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         {
             return Ok(true);
         }
-        let mut optimum = iv_length(iv_lerp(start, end, fraction));
+        let mut optimum = if foot.hi <= 0.0 {
+            iv_length(start)
+        } else if foot.lo >= 1.0 {
+            iv_length(end)
+        } else {
+            iv_length(iv_lerp(start, end, fraction))
+        };
+        if let Some(carrier) = definition.carrier_minimum(curve, point, normal) {
+            optimum.lo = optimum.lo.max(carrier.lo);
+        }
         if let Some(position) = definition.isolated_end {
             let isolated = iv_length(projected(position));
             optimum.lo = optimum.lo.min(isolated.lo);
             optimum.hi = optimum.hi.min(isolated.hi);
+        }
+        if !maximize {
+            // A proved nonretained leaf needs no representable local minimizer.
+            // Re-enclose the incumbent from its actual defining span: no report
+            // value or another evaluation's width is used as solve accuracy.
+            if let Some(incumbent) = self.base.solutions.as_slice().first() {
+                let t = incumbent.start.parameters[0];
+                if let Some(bound) = affine_projected_point_enclosure(curve, t, point, normal) {
+                    let cutoff = Ivl::from(bound.hi) + Ivl::from(tolerance);
+                    if cutoff.hi.is_finite() && optimum.lo > cutoff.hi {
+                        return Ok(true);
+                    }
+                }
+            }
         }
         let mut parameters = Vec::new();
         for (t, omit) in [(interval.min(), smooth[0]), (interval.max(), smooth[1])] {
@@ -1575,9 +2061,9 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         }
         candidates.sort_by(|a, b| {
             if maximize {
-                b.1.total_cmp(&a.1)
+                b.2.hi.total_cmp(&a.2.hi).then_with(|| b.1.total_cmp(&a.1))
             } else {
-                a.1.total_cmp(&b.1)
+                a.2.lo.total_cmp(&b.2.lo).then_with(|| a.1.total_cmp(&b.1))
             }
         });
         let Some(&(best_t, best_value, best_bound)) = candidates.first() else {
@@ -1594,7 +2080,7 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
                 || (best_t == interval.max() && foot.lo > 1.0)
         };
         if !proven_optimal {
-            let gap = if maximize {
+            let certified_to_own_enclosure = if maximize {
                 // Only eligible boundaries belong to this leaf's maximum search.
                 let mut upper = candidates
                     .iter()
@@ -1603,27 +2089,21 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
                 if definition.isolated_end.is_some() {
                     upper = upper.max(iv_length(end).hi);
                 }
-                upper - best_bound.lo
+                upper <= best_bound.hi
             } else {
-                best_bound.hi - optimum.lo
+                optimum.lo >= best_bound.lo
             };
-            // Retention slack is not a demand for sub-rounding optimization.
-            // Subtract only the uncertainty already enclosed by the arithmetic;
-            // an excess beyond these enclosures still needs the caller's slack.
-            let rounding = if maximize {
-                let upper_rounding = candidates
-                    .iter()
-                    .map(|(_, _, b)| b.hi - b.lo)
-                    .fold(0.0_f64, f64::max);
-                (best_bound.hi - best_bound.lo) + upper_rounding
-            } else {
-                (best_bound.hi - best_bound.lo) + (optimum.hi - optimum.lo)
-            };
-            if !gap.is_finite() || !rounding.is_finite() || gap > tolerance + rounding {
+            // Retention slack only filters solutions in add_sorted_solution.
+            // Neither that slack nor a different evaluation's interval width
+            // may make this representable candidate an accurate construction.
+            if !certified_to_own_enclosure {
                 return Err(affine_refusal());
             }
         }
         self.add_solution(&make_solution(best_t, best_value), true)?;
+        if self.base.solution_requested == SolutionRequested::Single {
+            return Ok(true);
+        }
         // Preserve eligible endpoint candidates for All mode, but do not emit
         // adjacent floating-point representatives as distinct stationary roots.
         for (t, value, _) in candidates.into_iter().skip(1) {
@@ -1940,7 +2420,16 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             // points. Enumerate them independently: Newton can find an interior
             // minimum while a requested maximum lies at an endpoint (or vice versa).
             for (parameter, continuity) in [(bez_ivl.min(), conts[0]), (bez_ivl.max(), conts[1])] {
-                if (continuity as i32) >= (ContinuityType::G1 as i32) {
+                if omit_projected_boundary(curve, parameter, continuity)
+                    || ((continuity as i32) >= (ContinuityType::G1 as i32)
+                        && native_join_is_not_extremum(
+                            curve,
+                            parameter,
+                            test_pnt,
+                            self.opt(0)?,
+                            op == SolverOperation::ProjectedMaximize,
+                        ))
+                {
                     continue;
                 }
                 let mut endpoint = Solution::new();
@@ -2132,11 +2621,13 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             let mut bndry: Option<(Point3, Vec3)> = None;
             if is_zero(solution.start.parameters[0] - bez_ivl.min())
                 && (conts[0] as i32) >= (ContinuityType::G1 as i32)
+                && (!projected_extremum || omit_projected_boundary(curve, bez_ivl.min(), conts[0]))
             {
                 bndry = Some((start_pt[0], start_pt[1])); // been negated: points outside
             }
             if is_zero(solution.start.parameters[0] - bez_ivl.max())
                 && (conts[1] as i32) >= (ContinuityType::G1 as i32)
+                && (!projected_extremum || omit_projected_boundary(curve, bez_ivl.max(), conts[1]))
             {
                 bndry = Some((end_pt[0], end_pt[1])); // points outside interval
             }
@@ -2960,6 +3451,92 @@ impl Curve {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn affine_point_enclosure_uses_actual_right_value_at_a_jump() {
+        use crate::nurbs::math::CPoint;
+        let net = crate::nurbs::crv_basic::Curve::new(
+            vec![
+                CPoint::new(100.0, 0.0, 0.0, 1.0),
+                CPoint::new(1.0, 0.0, 0.0, 1.0),
+                CPoint::new(20.0, 0.0, 0.0, 2.0),
+                CPoint::new(10.0, 1.0, 0.0, 1.0),
+            ],
+            1,
+            vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0],
+        )
+        .unwrap();
+        let curve = Curve::from(BSplineCurve::from_nurb(net, 3, true));
+        let at = affine_projected_point_enclosure(&curve, 1.0, Vec3::ZERO, Vec3::Z).unwrap();
+        assert!(at.lo <= 10.0 && at.hi >= 10.0 && at.lo > 9.0);
+        let left =
+            affine_projected_point_enclosure(&curve, next_parameter_down(1.0), Vec3::ZERO, Vec3::Z)
+                .unwrap();
+        assert!(left.lo < 1.000001 && left.hi < 1.000001);
+        let end = affine_projected_point_enclosure(&curve, 2.0, Vec3::ZERO, Vec3::Z).unwrap();
+        assert!(end.lo <= 101.0_f64.sqrt() && end.hi >= 101.0_f64.sqrt());
+        assert!(affine_projected_point_enclosure(&curve, 3.0, Vec3::ZERO, Vec3::Z).is_none());
+        let line = Curve::from(crate::curve::line::Line::infinite(
+            Vec3::new(1.0, 2.0, 3.0),
+            Vec3::X * 2.0,
+            3,
+            false,
+        ));
+        let metric = affine_projected_point_enclosure(&line, 0.5, Vec3::ZERO, Vec3::Z).unwrap();
+        assert!(metric.lo <= 8.0_f64.sqrt() && metric.hi >= 8.0_f64.sqrt());
+    }
+    #[test]
+    fn carrier_directed_arithmetic_covers_binary64_boundaries() {
+        let third = carrier_div(Ivl::from(1.0), Ivl::from(3.0));
+        // FMA retains the tiny signed differences that separately rounded
+        // endpoint*3 can round back to exactly one.
+        assert!(third.lo.mul_add(3.0, -1.0) < 0.0 && third.hi.mul_add(3.0, -1.0) > 0.0);
+        let tiny = f64::from_bits(1);
+        let half = carrier_mul(Ivl::from(tiny), Ivl::from(0.5));
+        assert!(half.lo <= 0.0 && half.hi >= tiny);
+        let zero = carrier_sub(Ivl::from(-0.0), Ivl::from(0.0));
+        assert_eq!(zero, Ivl::from(0.0));
+        let overflow = carrier_mul(Ivl::from(f64::MAX), Ivl::from(2.0));
+        assert_eq!(overflow, Ivl::whole());
+        assert_eq!(
+            carrier_div(Ivl::from(1.0), Ivl::new(-0.0, 0.0)),
+            Ivl::whole()
+        );
+        assert_eq!(
+            carrier_sub(Ivl::from(f64::INFINITY), Ivl::from(f64::INFINITY)),
+            Ivl::whole()
+        );
+        let product = carrier_mul(
+            Ivl::from(next_parameter_up(1.0)),
+            Ivl::from(next_parameter_down(1.0)),
+        );
+        assert!(product.lo < 1.0 && product.hi > 1.0);
+        let length = carrier_length([Ivl::from(3.0), Ivl::from(4.0), Ivl::from(0.0)]);
+        assert!(length.lo <= 5.0 && length.hi >= 5.0);
+    }
+    #[test]
+    fn cubic_c0_join_proof_distinguishes_straight_and_small_kink() {
+        for height in [0.0, 1.0 / 1024.0] {
+            let points = (-3_i32..=3)
+                .map(|x| {
+                    crate::nurbs::math::CPoint::new(
+                        f64::from(x),
+                        f64::from(x.abs()) * height,
+                        0.0,
+                        crate::nurbs::math::NOW,
+                    )
+                })
+                .collect();
+            let net = crate::nurbs::crv_basic::Curve::new(
+                points,
+                3,
+                vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0],
+            )
+            .unwrap();
+            let curve = Curve::from(BSplineCurve::from_nurb(net, 3, false));
+            assert_eq!(exact_native_spline_join(&curve, 1.0, false), height == 0.0);
+            assert!(exact_native_spline_join(&curve, 0.5, false));
+        }
+    }
 
     #[test]
     fn affine_join_requires_exact_position_direction_and_orientation() {

@@ -1,6 +1,7 @@
 //! #2794: a circle swept along two perpendicular lines (the shape of difftest
 //! `primitive.primitive_creation_p2` `gen0092`/`gen0189`, 100 times larger: those have radius 1e-3,
-//! legs 1e-2, and their body is not valid, see `plan/findings/`). The elbow's net is its
+//! legs 1e-2; their former invalid body is covered by the small-profile regressions
+//! in `wr_660_planar_path_pose.rs`). The elbow's net is its
 //! definition exactly and the mitre's union succeeds (the fitted net failed it with status 1001).
 //! The result is checked directly: a valid closed body of the closed-form volume.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
