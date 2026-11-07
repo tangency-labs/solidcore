@@ -238,6 +238,20 @@ mod tests {
     }
 
     #[test]
+    fn bspline_with_too_few_points_has_no_point() {
+        // degree 2 needs 3 points; the knots [0, 0, 1, 1] fit one point and put
+        // u[p] = 1 above u[n] = 0
+        let c = BSplineCurve {
+            degree: 2,
+            points: vec![[0.0; 3]],
+            weights: None,
+            knots: vec![0.0, 1.0],
+            mults: vec![2, 2],
+        };
+        assert_eq!(bspline_point(&c, 0.5), None);
+    }
+
+    #[test]
     fn bspline_with_multiplicity_out_of_range_has_no_point() {
         // a multiplicity of 0, and one above degree + 1 (the reader's `check_knots`
         // refuses both)
