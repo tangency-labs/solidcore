@@ -2950,14 +2950,14 @@ mod tests {
         for error in errors {
             let kind = error.kind();
             let original = error.to_string();
-            let returned = super::projected_side_vote(Err(error)).unwrap_err();
+            let returned = projected_side_vote(Err(error)).unwrap_err();
             assert_eq!(returned.kind(), kind);
             assert_eq!(returned.to_string(), original);
         }
-        assert_eq!(super::projected_side_vote(Ok(1)).unwrap(), Some(1));
+        assert_eq!(projected_side_vote(Ok(1)).unwrap(), Some(1));
         let ambiguity = SolidError::sm_err("projection");
         assert_eq!(ambiguity.kind(), ErrorKind::Failed);
-        assert_eq!(super::projected_side_vote(Err(ambiguity)).unwrap(), None);
+        assert_eq!(projected_side_vote(Err(ambiguity)).unwrap(), None);
     }
 
     use super::*;

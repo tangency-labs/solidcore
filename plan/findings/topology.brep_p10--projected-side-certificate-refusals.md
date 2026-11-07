@@ -61,14 +61,25 @@ cargo test -p solidcore --test projected_side_classification
 cargo test -p solidcore --lib projected_vote_preserves_refusal_and_control_signals
 ```
 
-Green validation is pending. No golden has been blessed.
+The public regression passes on the caller fix merged with parent `d3e2cfdc8`: all eight narrow-gap operations refuse, retain their original face in this classification-only setup, and all four wide-gap controls preserve the correct face count. Independent Linux validation at `ad59d6c20` passed the same classification matrix,
+32 projected-query tests and eight caller-keyed operation tests. Scoped goldens:
+`curve.curve_p1` 3102 unchanged; `curve.crv_on_surf` 2407 unchanged;
+`topology.brep_p1` 2636 unchanged; `topology.brep_p10` 1436 cases with exactly
+the eight narrow-gap changes below and zero broken. The four ordinary Defeature
+cases are unchanged. Policy-unit and strict lint validation are pending.
+No golden has been blessed by this branch.
 
 ## Intended golden change
 
-Exactly these eight cases must change from successful reversed classification
-(KeepPoint: zero faces; DeletePoint: one face) to status 1021 with no successful
-result. The public test additionally verifies that classification-only refusal
-leaves the original face present.
+Exactly these eight checked-in golden cases change from the older successful
+classification (KeepPoint: one face; DeletePoint: zero faces) to operation status
+1021, retaining the original face. The intermediate strict parent before this
+caller fix instead produced the reversed successful 0 / 1 counts shown above;
+those wrong intermediate outputs were never blessed.
+
+The runner stores operation status inside its encoded integer result, so its
+top-level `error` field remains null. The public test directly checks the typed
+operation error and proves classification-only refusal leaves the face present.
 
 | fixture family | gaps | modes |
 |---|---|---|
