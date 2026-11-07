@@ -22,6 +22,8 @@
 //! - **Projected Single maxima (#3060).** Definition enclosures and feasible
 //!   witnesses replace the incomplete stationary search; subdivision is bounded
 //!   to 32,768 boxes and depth 48 in `projected_pair`. Proof failures propagate.
+//!   A structural finite-affine All class shares the definition enclosures and
+//!   preserves the existing retention and ordered duplicate rules.
 //! - **Curves and kernel.** The solver's trees only name their curves by the
 //!   caller's handle ([`crate::geom::tree::Tree::owner_object`]), so the solver
 //!   carries the curves and the kernel ([`CcGlobalSolver::with_curves`]); a solver
@@ -1325,6 +1327,24 @@ impl Curve {
             );
         }
 
+        // The finite affine All class is selected structurally, before proof.
+        // A selected refusal propagates; curved/multi-piece enumeration keeps
+        // its existing path and remains a separate #3060 obligation.
+        if op == Op::ProjectedMaximize
+            && requested == SolutionRequested::All
+            && super::projected_pair_all::supports([self, other], [*interval, *other_interval])
+        {
+            return super::projected_pair_all::solve(
+                k,
+                [self, other],
+                [*interval, *other_interval],
+                opt(0)?,
+                dist_tol,
+                opts.handles,
+                opts.target_distance,
+            );
+        }
+
         // init outputs
         let mut sols: SolutionArray<O> = SolutionArray::new();
 
@@ -2532,6 +2552,46 @@ mod tests {
             )
             .unwrap();
         assert!(sols.is_empty());
+    }
+
+    #[test]
+    fn projected_pair_all_public_dispatch_preserves_ties_and_refusals() {
+        let a = segment([-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
+        let b = segment([-0.5, 0.5, 0.0], [0.5, 0.5, 0.0]);
+        let vertical = segment([0.0, 0.0, -1.0], [0.0, 0.0, 1.0]);
+        let normal = [Vec3::new(0.0, 0.0, 1.0)];
+        for pass_on in [false, true] {
+            let mut k = Kernel::default();
+            k.fixes.query_statuses_pass_on = pass_on;
+            let solve = |other: &Curve| {
+                a.global_curve_solve(
+                    &k,
+                    &a.natural_interval(),
+                    other,
+                    &other.natural_interval(),
+                    SolverOperation::ProjectedMaximize,
+                    0.0,
+                    &CurveSolveOptions {
+                        handles: handles(&a, other),
+                        opt_vectors: Some(&normal),
+                        ..CurveSolveOptions::default()
+                    },
+                    SolutionRequested::All,
+                )
+            };
+            let sols = solve(&b).unwrap();
+            assert_eq!(sols.len(), 2);
+            for solution in sols.as_slice() {
+                assert_eq!(solution.start.solution_value, 2.5_f64.sqrt());
+            }
+            assert!(matches!(
+                solve(&vertical),
+                Err(SolidError::Unsupported {
+                    operation: "curve::curve::projected_pair_all",
+                    ..
+                })
+            ));
+        }
     }
 
     #[test]
