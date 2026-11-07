@@ -1,8 +1,8 @@
 //! Whole-domain bounds for a projected point/surface maximum.
 //!
 //! Not upstream. Candidate generation is deliberately independent of this check:
-//! every knot rectangle must exclude a value larger than the candidate plus retention
-//! slack and the arithmetic enclosure widths of individual evaluated points.
+//! every knot rectangle must fit inside the candidate point's own arithmetic
+//! enclosure. Caller tolerance selects retained answers, not solve accuracy.
 //! The mean-value enclosure uses the existing outward-rounded NURBS partials.
 //! Deviations: no recursion; at most 16,384 boxes and 48 bisections along a path.
 
@@ -37,13 +37,10 @@ pub(super) fn certify<O: crate::geom::solution_array::SolutionObject>(
     point: Vec3,
     solver: &crate::geom::global_solver::GlobalSolver<'_, O>,
 ) -> Result<()> {
-    let (net, domain, normal, candidate_lower, rounding) =
-        checked_candidate(k, objects, face, point, solver)?;
-    let upper =
-        (Ivl::from(candidate_lower) + Ivl::from(solver.tolerance_3d) + Ivl::from(rounding)).lo;
-    if !maximum_with_rounding_is_bounded(k, &net, &domain, point, normal, upper, true)? {
+    let (net, domain, normal, upper) = checked_candidate(k, objects, face, point, solver)?;
+    if !maximum_is_bounded(k, &net, &domain, point, normal, upper)? {
         return Err(refused(
-            "whole-face projected maximum could not be certified within tolerance",
+            "whole-face maximum does not fit the candidate point enclosure",
         ));
     }
     Ok(())
@@ -67,7 +64,7 @@ fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
     face: O,
     point: Vec3,
     solver: &crate::geom::global_solver::GlobalSolver<'_, O>,
-) -> Result<(Nurbs, Extent2d, Vec3, f64, f64)> {
+) -> Result<(Nurbs, Extent2d, Vec3, f64)> {
     use crate::blend::fillet_section::station::as_b_spline;
     use crate::surface::surface::SurfaceKind;
     let surface = objects.surface(objects.face_surface(face)?)?;
@@ -108,10 +105,9 @@ fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
     {
         return Err(refused("projected maximum has no finite error budget"));
     }
-    let mut rounding = 0.0;
     // Other objects supply a previously validated feasible incumbent. Without
     // this face's point enclosure, grant it no additional arithmetic allowance.
-    let mut candidate_lower = reported;
+    let mut upper = reported;
     if solution.objects.contains(&Some(face)) {
         if solution.solution_type != crate::geom::solution_array::SolutionType::SingleValue {
             return Err(refused(
@@ -131,19 +127,18 @@ fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
             return Err(refused("projected candidate is outside the face domain"));
         }
         let value = value_at(&net, uv, point, normal)?;
-        candidate_lower = value.lo;
-        rounding = (Ivl::from(value.hi) - Ivl::from(value.lo)).hi;
-        let budget = (Ivl::from(solver.tolerance_3d) + Ivl::from(rounding)).lo;
-        if !(value - Ivl::from(reported)).mag().is_finite()
-            || !rounding.is_finite()
-            || (value - Ivl::from(reported)).mag() > budget
+        if !(value.lo.is_finite()
+            && value.hi.is_finite()
+            && value.lo <= reported
+            && reported <= value.hi)
         {
             return Err(refused(
-                "projected candidate value is not enclosed within tolerance",
+                "projected candidate value is outside its own point enclosure",
             ));
         }
+        upper = value.hi;
     }
-    Ok((net, domain, normal, candidate_lower, rounding))
+    Ok((net, domain, normal, upper))
 }
 
 #[derive(Clone, Copy)]
@@ -189,9 +184,21 @@ fn norm_squared(v: V3<Ivl>) -> Ivl {
 
 /// Enclose the metric at a feasible parameter, including arithmetic rounding.
 pub(super) fn value_at(net: &Nurbs, uv: Vec2, point: Vec3, normal: Vec3) -> Result<Ivl> {
-    let p = crate::blend::fillet_section::certificate::nurbs_partials_over_box(
-        net, uv.x, uv.x, uv.y, uv.y, 0, 0,
-    )?;
+    // A point uses the native span (the right-hand piece at an interior knot,
+    // the last piece at the upper natural endpoint). The generic box routine
+    // hulls both sides: at a discontinuous knot that hull includes a geometric
+    // jump, which is not arithmetic uncertainty of this returned point.
+    let us = knot_cuts(&net.u, net.p, net.nu, uv.x, uv.x, 0)?;
+    let vs = knot_cuts(&net.v, net.q, net.nv, uv.y, uv.y, 0)?;
+    let ku = us
+        .last()
+        .ok_or_else(|| refused("missing candidate u span"))?
+        .2;
+    let kv = vs
+        .last()
+        .ok_or_else(|| refused("missing candidate v span"))?
+        .2;
+    let p = nurbs_partials_over_piece(net, ku, kv, uv.x, uv.x, uv.y, uv.y, 0)?;
     Ok(norm_squared(projected(
         relative(p.at(0, 0), point),
         V3::from_vec3(normal),
@@ -371,28 +378,58 @@ pub(super) fn projected_box_distance(
     norm_squared(projected(delta, V3::from_vec3(normal))).sqrt()
 }
 
-fn bound(net: &Nurbs, cell: Cell, point: Vec3, normal: V3<Ivl>) -> Result<Ivl> {
+/// Enclose the largest objective value in a cell. A strict derivative sign
+/// moves its maximizer to that side before evaluation; this is an interval
+/// theorem over the complete cell, not a sampled direction or extra slack.
+fn bound(net: &Nurbs, mut cell: Cell, point: Vec3, normal: Vec3) -> Result<Ivl> {
+    let normal_ivl = V3::from_vec3(normal);
     let p = nurbs_partials_over_piece(
         net, cell.ku, cell.kv, cell.u.lo, cell.u.hi, cell.v.lo, cell.v.hi, 1,
     )?;
-    let q = projected(relative(p.at(0, 0), point), normal);
+    let q = projected(relative(p.at(0, 0), point), normal_ivl);
+    let du = Ivl::from(2.0) * dot(q, projected(p.at(1, 0), normal_ivl));
+    let dv = Ivl::from(2.0) * dot(q, projected(p.at(0, 1), normal_ivl));
+    let original = cell;
+    if du.lo > 0.0 {
+        cell.u = Ivl::from(cell.u.hi);
+    } else if du.hi < 0.0 {
+        cell.u = Ivl::from(cell.u.lo);
+    }
+    if dv.lo > 0.0 {
+        cell.v = Ivl::from(cell.v.hi);
+    } else if dv.hi < 0.0 {
+        cell.v = Ivl::from(cell.v.lo);
+    }
+    if cell.u.lo == cell.u.hi && cell.v.lo == cell.v.hi {
+        // Keep this knot rectangle's one-sided definition at repeated knots.
+        let corner = nurbs_partials_over_piece(
+            net, cell.ku, cell.kv, cell.u.lo, cell.u.hi, cell.v.lo, cell.v.hi, 0,
+        )?;
+        return Ok(norm_squared(projected(relative(corner.at(0, 0), point), normal_ivl)).sqrt());
+    }
+    let p = if cell.u != original.u || cell.v != original.v {
+        nurbs_partials_over_piece(
+            net, cell.ku, cell.kv, cell.u.lo, cell.u.hi, cell.v.lo, cell.v.hi, 1,
+        )?
+    } else {
+        p
+    };
+    let q = projected(relative(p.at(0, 0), point), normal_ivl);
     let direct = norm_squared(q);
     let (u, v) = (cell.u.mid(), cell.v.mid());
     let middle = nurbs_partials_over_piece(net, cell.ku, cell.kv, u, u, v, v, 0)?;
-    let at_middle = norm_squared(projected(relative(middle.at(0, 0), point), normal));
-    let du = Ivl::from(2.0) * dot(q, projected(p.at(1, 0), normal));
-    let dv = Ivl::from(2.0) * dot(q, projected(p.at(0, 1), normal));
+    let at_middle = norm_squared(projected(relative(middle.at(0, 0), point), normal_ivl));
+    let du = Ivl::from(2.0) * dot(q, projected(p.at(1, 0), normal_ivl));
+    let dv = Ivl::from(2.0) * dot(q, projected(p.at(0, 1), normal_ivl));
     let centred = at_middle + du * (cell.u - Ivl::from(u)) + dv * (cell.v - Ivl::from(v));
-    Ok(Ivl::new(
-        direct.lo.max(centred.lo),
-        direct.hi.min(centred.hi),
-    ))
+    Ok(Ivl::new(direct.lo.max(centred.lo), direct.hi.min(centred.hi)).sqrt())
 }
 
 /// Prove an upper bound on the projected distance over the supplied rectangle.
+/// Acceptance is U <= C.hi, where C encloses the returned candidate metric.
+/// No caller retention slack or another evaluation's uncertainty widens C.
 /// This alone does NOT certify candidate feasibility, trimming, or an analytic
 /// definition's agreement with this net; callers must establish those separately.
-#[cfg(test)]
 pub(super) fn maximum_is_bounded(
     k: &Kernel,
     net: &Nurbs,
@@ -400,20 +437,6 @@ pub(super) fn maximum_is_bounded(
     point: Vec3,
     normal: Vec3,
     upper: f64,
-) -> Result<bool> {
-    maximum_with_rounding_is_bounded(k, net, domain, point, normal, upper, false)
-}
-
-/// Point evaluations contribute arithmetic enclosure width, never the width of
-/// a parameter box. This keeps zero retention slack distinct from exact arithmetic.
-fn maximum_with_rounding_is_bounded(
-    k: &Kernel,
-    net: &Nurbs,
-    domain: &Extent2d,
-    point: Vec3,
-    normal: Vec3,
-    upper: f64,
-    allow_point_rounding: bool,
 ) -> Result<bool> {
     if !upper.is_finite()
         || upper < 0.0
@@ -427,8 +450,6 @@ fn maximum_with_rounding_is_bounded(
     }
     let us = knot_cuts(&net.u, net.p, net.nu, domain.min.x, domain.max.x, 0)?;
     let vs = knot_cuts(&net.v, net.q, net.nv, domain.min.y, domain.max.y, 0)?;
-    let normal_vector = normal;
-    let normal = V3::from_vec3(normal);
     let mut visited = 0;
     for &(ua, ub, ku) in &us {
         for &(va, vb, kv) in &vs {
@@ -445,24 +466,9 @@ fn maximum_with_rounding_is_bounded(
                 if visited > MAX_BOXES {
                     return Ok(false);
                 }
-                let cell_upper = if allow_point_rounding {
-                    let value = value_at(
-                        net,
-                        Vec2::new(cell.u.mid(), cell.v.mid()),
-                        point,
-                        normal_vector,
-                    )?;
-                    let width = (Ivl::from(value.hi) - Ivl::from(value.lo)).hi;
-                    if !width.is_finite() {
-                        return Ok(false);
-                    }
-                    (Ivl::from(upper) + Ivl::from(width)).lo
-                } else {
-                    upper
-                };
                 match bound(net, cell, point, normal) {
-                    Ok(value) if value.lo <= value.hi && value.sqrt().hi <= cell_upper => continue,
-                    Ok(value) if value.sqrt().lo > cell_upper => return Ok(false),
+                    Ok(value) if value.lo <= value.hi && value.hi <= upper => continue,
+                    Ok(value) if value.lo > upper => return Ok(false),
                     Err(e @ SolidError::Cancelled { .. }) => return Err(e),
                     // A denominator not separated from zero may become provable
                     // after subdivision. An unresolved box never counts as passed.
@@ -523,34 +529,51 @@ mod tests {
     }
 
     #[test]
-    fn zero_retention_uses_only_point_evaluation_rounding() {
+    fn point_enclosure_excludes_an_unrelated_discontinuous_knot_limit() {
+        // Left patch is x=100; native right patch starts at x=0 and grows to 1.
+        // A box hull at u=.5 would incorrectly grant the returned point 100
+        // units of "rounding" and certify it over the whole right patch.
+        let mut pw = Vec::new();
+        for x in [100.0, 100.0, 0.0, 1.0] {
+            for _ in 0..2 {
+                pw.extend([x, 0.0, 0.0, 1.0]);
+            }
+        }
+        let net = Nurbs {
+            p: 1,
+            q: 1,
+            nu: 4,
+            nv: 2,
+            u: vec![0.0, 0.0, 0.5, 0.5, 1.0, 1.0],
+            v: vec![0.0, 0.0, 1.0, 1.0],
+            pw,
+        };
+        let normal = Vec3::new(0.0, 0.0, 1.0);
+        let value = value_at(&net, Vec2::new(0.5, 0.5), Vec3::ZERO, normal).unwrap();
+        assert!(value.lo <= 0.0 && value.hi < 1.0);
+        assert!(!maximum_is_bounded(
+            &Kernel::default(),
+            &net,
+            &Extent2d::from_bounds(0.5, 0.0, 1.0, 1.0),
+            Vec3::ZERO,
+            normal,
+            value.hi,
+        )
+        .unwrap());
+        let end = value_at(&net, Vec2::new(1.0, 0.5), Vec3::ZERO, normal).unwrap();
+        assert!(end.lo <= 1.0 && end.hi >= 1.0 && end.hi < 2.0);
+    }
+
+    #[test]
+    fn maximum_uses_only_candidate_point_enclosure() {
         let k = Kernel::default();
         let net = hidden_peak();
         let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
         let normal = Vec3::new(0.0, 0.0, 1.0);
         let value = value_at(&net, Vec2::new(0.5, 0.5), Vec3::ZERO, normal).unwrap();
-        let width = (Ivl::from(value.hi) - Ivl::from(value.lo)).hi;
-        let upper = (Ivl::from(value.lo) + Ivl::from(width)).lo;
-        assert!(maximum_with_rounding_is_bounded(
-            &k,
-            &net,
-            &domain,
-            Vec3::ZERO,
-            normal,
-            upper,
-            true,
-        )
-        .unwrap());
-        assert!(!maximum_with_rounding_is_bounded(
-            &k,
-            &net,
-            &domain,
-            Vec3::ZERO,
-            normal,
-            1.0,
-            true,
-        )
-        .unwrap());
+        let upper = value.hi;
+        assert!(maximum_is_bounded(&k, &net, &domain, Vec3::ZERO, normal, upper,).unwrap());
+        assert!(!maximum_is_bounded(&k, &net, &domain, Vec3::ZERO, normal, 1.0,).unwrap());
     }
 
     #[test]
