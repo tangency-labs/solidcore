@@ -1413,3 +1413,329 @@ mod bounds {
         );
     }
 }
+
+mod missed_cutter_keeps_geometry {
+    //! Missed projected cutters must preserve the input geometry, not only its counts.
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use solidcore::blend::fillet_executive::api::circular_fillet;
+    use solidcore::curve::curve::Curve;
+    use solidcore::math::Vec3;
+    use solidcore::primitive::{api_curves, api_primitives, api_trim_ops};
+    use solidcore::topology::brep::p1;
+    use solidcore::topology::brep_data_write::DATABASE_VERSION;
+    use solidcore::topology::database_io::{DatabaseWriter, FileType};
+    use solidcore::topology::geometry_write::{write_curve, write_surface};
+    use solidcore::topology::Brep;
+    use solidcore::Kernel;
+    use std::collections::BTreeMap;
+
+    type Geometry = BTreeMap<String, Vec<u8>>;
+
+    // Binary geometry records contain complete definitions (including placement and
+    // NURBS control points/weights/knots), not sampled points or digest aggregates.
+    // Typed arena identities and oriented topology are kept too: a missed cutter
+    // has no new boundaries to introduce. Deliberately omit query memo/cache data.
+    fn geometry(k: &Kernel, b: &Brep) -> Geometry {
+        let mut out = BTreeMap::new();
+        let mut put = |name: String, bytes: Vec<u8>| {
+            out.insert(name, bytes);
+        };
+        for id in p1::vertices(b, None).unwrap() {
+            let v = b.vertex(id).unwrap();
+            let bytes = [v.point.x, v.point.y, v.point.z, v.tolerance]
+                .into_iter()
+                .flat_map(f64::to_le_bytes)
+                .collect();
+            put(format!("vertex/{id:?}"), bytes);
+        }
+        for id in p1::edges(b, None).unwrap() {
+            let e = b.edge(id).unwrap();
+            put(
+                format!("edge/{id:?}"),
+                format!(
+                    "{:?}/{:?}/{:?}/{:?}",
+                    e.vertices, e.edgeuses, e.interval, e.tolerance
+                )
+                .into_bytes(),
+            );
+            if let Some(curve) = &e.curve {
+                let mut db = DatabaseWriter::open_for_write(FileType::Binary);
+                db.write_type(curve.type_code(), Some(curve.dim()));
+                write_curve(curve, &mut db, DATABASE_VERSION).unwrap();
+                put(format!("edge-curve/{id:?}"), db.into_bytes());
+            }
+        }
+        for id in p1::faces(b, None).unwrap() {
+            let f = b.face(id).unwrap();
+            put(
+                format!("face/{id:?}"),
+                format!(
+                    "{:?}/{:?}/{:?}/{:?}/{:?}",
+                    f.shell, f.loops, f.faceuse, f.uv_domain, f.tolerance
+                )
+                .into_bytes(),
+            );
+            if let Some(surface) = &f.surface {
+                assert!(
+                    surface.procedural_definition().is_none(),
+                    "fixture has a retained definition outside this geometry record"
+                );
+                // Ordinary Clone starts fresh NURB/cache slots; evaluation copies
+                // would share them and could prime the operation before it runs.
+                let surface = surface.clone();
+                surface.kind_with_nurb(k).unwrap();
+                let mut db = DatabaseWriter::open_for_write(FileType::Binary);
+                db.write_type(surface.type_code(), None);
+                write_surface(&surface, &mut db, DATABASE_VERSION).unwrap();
+                put(format!("face-surface/{id:?}"), db.into_bytes());
+            }
+        }
+        for (id, eu) in b.edgeuses().iter() {
+            put(
+                format!("edgeuse/{id:?}"),
+                format!(
+                    "{:?}/{:?}/{:?}/{:?}/{:?}/{:?}",
+                    eu.edge, eu.owner, eu.ccw, eu.cw, eu.vertexuse, eu.orientation
+                )
+                .into_bytes(),
+            );
+            if let Some(curve) = &eu.uv_trim_curve {
+                let mut db = DatabaseWriter::open_for_write(FileType::Binary);
+                db.write_type(curve.type_code(), Some(curve.dim()));
+                write_curve(curve, &mut db, DATABASE_VERSION).unwrap();
+                put(format!("uv-trim/{id:?}"), db.into_bytes());
+            }
+        }
+        // These records contain only topology and orientation (no geometry cache).
+        for (id, item) in b.loops().iter() {
+            put(format!("loop/{id:?}"), format!("{item:?}").into_bytes());
+        }
+        for (id, item) in b.loopuses().iter() {
+            put(format!("loopuse/{id:?}"), format!("{item:?}").into_bytes());
+        }
+        for (id, item) in b.faceuses().iter() {
+            put(format!("faceuse/{id:?}"), format!("{item:?}").into_bytes());
+        }
+        for (id, item) in b.shells().iter() {
+            put(format!("shell/{id:?}"), format!("{item:?}").into_bytes());
+        }
+        for (id, item) in b.regions().iter() {
+            put(format!("region/{id:?}"), format!("{item:?}").into_bytes());
+        }
+        for (id, item) in b.vertexuses().iter() {
+            put(
+                format!("vertexuse/{id:?}"),
+                format!("{item:?}").into_bytes(),
+            );
+        }
+        out
+    }
+
+    fn input_box(k: &mut Kernel, origin: Vec3, filleted: bool) -> Brep {
+        let mut b = api_primitives::create_box(k, origin, 10.0, 5.0, 15.0).unwrap();
+        if filleted {
+            circular_fillet(k, &mut b, 0.5).unwrap();
+        }
+        b
+    }
+
+    fn counts(b: &Brep) -> (usize, usize, usize) {
+        (
+            p1::faces(b, None).unwrap().len(),
+            p1::edges(b, None).unwrap().len(),
+            p1::vertices(b, None).unwrap().len(),
+        )
+    }
+
+    fn preserves_missed_box(filleted: bool) {
+        let mut k = Kernel::default();
+        let mut b = input_box(&mut k, Vec3::ZERO, filleted);
+        let before = geometry(&k, &b);
+        let cutter = Curve::from(
+            api_curves::create_curve(&[
+                Vec3::new(100.0, -2.0, 20.0),
+                Vec3::new(101.0, 5.0, 20.0),
+                Vec3::new(102.0, 0.0, 20.0),
+                Vec3::new(103.0, 2.0, 20.0),
+            ])
+            .unwrap(),
+        );
+        // For every projected box point, half the distance-squared derivative to
+        // this Bezier cutter is >=123>0. Its first endpoint is nearest, and
+        // 3*(qy+2)-21*(qx-100)>0 throughout the box and at the reference. Keeping
+        // that side must retain every input surface and boundary exactly.
+        api_trim_ops::project_and_trim(
+            &mut k,
+            &mut b,
+            &cutter,
+            -Vec3::Z,
+            Vec3::new(5.0, 1.0, 20.0),
+        )
+        .unwrap();
+        let after = geometry(&k, &b);
+        let changed: Vec<_> = before
+            .keys()
+            .chain(after.keys())
+            .filter(|key| before.get(*key) != after.get(*key))
+            .collect();
+        assert!(changed.is_empty(), "changed geometry records: {changed:?}");
+        // A valid translated body has exactly the same topology counts. The
+        // definition comparison must reject it, so counts cannot make this pass.
+        let translated = input_box(&mut k, Vec3::new(1.0, 2.0, 3.0), filleted);
+        assert_eq!(counts(&b), counts(&translated));
+        let translated_geometry = geometry(&k, &translated);
+        assert_ne!(after, translated_geometry);
+        assert!(
+            after.iter().any(|(name, bytes)| {
+                name.starts_with("face-surface/")
+                    && translated_geometry
+                        .get(name)
+                        .is_some_and(|other| bytes != other)
+            }),
+            "negative control must change a complete surface definition, not just IDs"
+        );
+        println!(
+            "filleted={filleted}: {} geometry/topology records unchanged; translated control rejected",
+            after.len()
+        );
+    }
+
+    #[test]
+    fn pat_plain_misses_retains_complete_input_geometry() {
+        preserves_missed_box(false);
+    }
+    #[test]
+    fn pat_misses_retains_complete_filleted_input_geometry() {
+        preserves_missed_box(true);
+    }
+}
+
+mod g1_joins {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    // Approximate cache continuity must not erase actual projected corner extrema.
+    //
+    // The two segments meet at an angle 2 atan(1/1024), below the cache's 0.5-degree
+    // G1 threshold. Their shared point is nevertheless a genuine minimum or maximum
+    // of the projected distance, depending on the query point.
+
+    use solidcore::curve::curve::{p1::GlobalPointSolveOptions, Curve};
+    use solidcore::geom::extent1d::Extent1d;
+    use solidcore::geom::geom_utility::ContinuityType;
+    use solidcore::geom::global_solver::{SolutionRequested, SolverOperation};
+    use solidcore::geom::solution_array::{ObjectKind, SolutionObject};
+    use solidcore::math::Vec3;
+    use solidcore::nurbs::b_spline_curve::BSplineCurve;
+    use solidcore::nurbs::crv_basic::Curve as NurbCurve;
+    use solidcore::nurbs::math::{CPoint, NOW};
+    use solidcore::Kernel;
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    struct Handle;
+    impl SolutionObject for Handle {
+        fn kind(&self) -> ObjectKind {
+            ObjectKind::Curve
+        }
+    }
+
+    fn polyline(height: f64) -> Curve {
+        Curve::from(BSplineCurve::from_nurb(
+            NurbCurve::new(
+                vec![
+                    CPoint::new(-1.0, height, 0.0, NOW),
+                    CPoint::new(0.0, 0.0, 0.0, NOW),
+                    CPoint::new(1.0, height, 0.0, NOW),
+                ],
+                1,
+                vec![0.0, 0.0, 1.0, 2.0, 2.0],
+            )
+            .unwrap(),
+            3,
+            false,
+        ))
+    }
+
+    fn check_corner(operation: SolverOperation, point: Vec3, expected: f64) {
+        let k = Kernel::default();
+        let curve = polyline(1.0 / 1024.0);
+        let (_, continuity) = curve.calculate_continuities(&k, 0.5).unwrap();
+        assert!((continuity[1] as i32) >= (ContinuityType::G1 as i32));
+        for requested in [SolutionRequested::Single, SolutionRequested::All] {
+            let answers = curve
+                .global_point_solve::<Handle>(
+                    &k,
+                    &curve.natural_interval(),
+                    operation,
+                    point,
+                    1e-8,
+                    requested,
+                    &GlobalPointSolveOptions {
+                        opt_vectors: Some(&[Vec3::Z]),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            println!(
+                "{operation:?} {requested:?}: {:?}",
+                answers
+                    .as_slice()
+                    .iter()
+                    .map(|s| (s.start.parameters[0], s.start.solution_value))
+                    .collect::<Vec<_>>()
+            );
+            assert!(
+                !answers.is_empty(),
+                "the G1-tagged kink is the unique extremum"
+            );
+            for answer in answers.as_slice() {
+                assert!(
+                    (answer.start.solution_value - expected).abs() <= 1e-8,
+                    "reported {}, expected {expected}",
+                    answer.start.solution_value
+                );
+                assert_eq!(answer.start.parameters[0], 1.0);
+            }
+        }
+    }
+
+    #[test]
+    fn near_collinear_join_is_projected_minimum() {
+        check_corner(
+            SolverOperation::ProjectedMinimize,
+            Vec3::new(0.0, -1.0, 0.0),
+            1.0,
+        );
+    }
+
+    #[test]
+    fn near_collinear_join_is_projected_maximum() {
+        check_corner(
+            SolverOperation::ProjectedMaximize,
+            Vec3::new(0.0, 1024.0, 0.0),
+            1024.0,
+        );
+    }
+
+    #[test]
+    fn exactly_collinear_join_does_not_become_an_extra_all_maximum() {
+        let curve = polyline(0.0);
+        let answers = curve
+            .global_point_solve::<Handle>(
+                &Kernel::default(),
+                &Extent1d::from_min_max(0.0, 2.0),
+                SolverOperation::ProjectedMaximize,
+                Vec3::Y,
+                10.0,
+                SolutionRequested::All,
+                &GlobalPointSolveOptions {
+                    opt_vectors: Some(&[Vec3::Z]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(answers.len(), 2);
+        assert!(answers
+            .as_slice()
+            .iter()
+            .all(|answer| answer.start.parameters[0] == 0.0 || answer.start.parameters[0] == 2.0));
+    }
+}

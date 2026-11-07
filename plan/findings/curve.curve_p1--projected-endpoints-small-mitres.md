@@ -109,6 +109,123 @@ minimum near `t=0.6406108473689742`. Its exact distance is approximately
 `1.5495187277368766e-16`; the nearest parameter's excess is only
 `1.247199610658913e-19`. Zero retention slack must not reject enclosure rounding.
 
+## Current global curve golden changes (review 4501494573)
+
+This audit compares `99ed57c4d4f4cd77d942ac6cd2e4d09f612acb20` with
+`2e5087da73b32eeaa3e362f0f6dadf135eeaf571`: all 55 changed existing
+`curve.curve_p1` records, on the unchanged generated inputs. It supersedes the
+historical table below for this comparison. The [complete saved records](diagnostics/projected_global_golden_changes_2968.json)
+contain exact old/new golden records, inputs and expanded output arrays. A native
+replay of all 55 inputs reproduced the current records exactly, including the
+19-value arrays compressed into checksums for `gen0572` and `gen1457`.
+
+The [independent evaluator and plotting script](diagnostics/projected_global_golden_changes_2968.py)
+expands every nonempty knot span into rational polynomials. For projection
+`M = (n dot n) I - n n^T`, it writes squared distance as `N(t)/W(t)^2`.
+Interior extrema are among the real roots of `N' W - 2 N W'`; evaluating
+those roots, span endpoints, and requested interval endpoints gives the
+comparison extremum. Positive supplied weights keep denominators nonzero.
+Line cases use the exact affine parameterization; Hermite cases use the cubic
+endpoint/tangent definition. The root calculation uses NumPy floating-point
+polynomial roots; it is an independent numerical oracle, not an interval
+certificate. The saved [evaluation report](diagnostics/projected_global_golden_changes_2968_report.json)
+lists every returned point, its independently evaluated distance, and its gap
+from the enumerated best. Plot sampling only draws the curves.
+
+All 46 successful cases have the reported geometric distances at the returned
+parameters and satisfy the original retention slack relative to that extremum.
+The script allows `1e-10 * max(1, distance)` only for the independent Python
+reconstruction check; this is not a solver tolerance, golden floor, or proof
+that all nonbest retained points are stationary. In particular, the additional
+endpoints in `gen0572`, `gen1256`, `gen1457`, and `gen1621` are within the original
+retention slack; they are not claimed to be isolated unconstrained extrema.
+
+All nine status-1021 records refuse an uncovered requested domain. They do
+not claim that the mathematical curve has no answer. No current success is
+justified by copying a historical return value.
+
+Each result below is `distance @ parameter`; omitted result metadata is identical
+`[type=1, objects=1, variables=1, reserved=0]` for every returned point. The exact
+array begins with the point count. `no solutions` is successful `[0]`, distinct
+from status 1021 with empty output. The linked JSON preserves every field.
+
+| Case | Before | Current | Current mathematical check / refusal reason |
+|---|---|---|---|
+| `gen0002` | no solutions | 9.2486752805868271 @ 0.82584407876161836 | max 9.2486752805868271 at 0.82584407876161592; largest returned gap 1.7764e-15 <= slack 0.050000000000000003. |
+| `gen0069` | no solutions | 8.8901767919182149 @ 4.2339767627157618 | max 8.8901767919182184 at 4.2339767627157618; largest returned gap 0 <= slack 1.0000000000000001e-05. |
+| `gen0073` | 2.4569516620450993 @ 7.4243781152978494 | 2.4569516620450993 @ 7.4243781152978476 | min 2.4569516620450997 at 7.4243781152978503; largest returned gap 0 <= slack 9.9999999999999995e-07. |
+| `gen0159` | no solutions | 1.033541203184561 @ 1.1388624755787422 | max 1.033541203184561 at 1.1388624755787422; largest returned gap 0 <= slack 0.001. |
+| `gen0268` | 0 @ 0 | 95.282075215491687 @ 1 | max 95.282075215491702 at 1; largest returned gap 0 <= slack 0.050000000000000003. |
+| `gen0312` | no solutions | 28.246790603072732 @ 0.98007941619113648 | max 28.24679060307276 at 0.98007941619113514; largest returned gap 1.0658e-14 <= slack 1.0000000000000001e-05. |
+| `gen0419` | no solutions | 332.06684015374105 @ 1 | max 332.06684015374111 at 1; largest returned gap 0 <= slack 1.0000000000000001e-05. |
+| `gen0429` | no solutions | 22.540316380568978 @ 0 | max 22.540316380568978 at 0; largest returned gap 0 <= slack 0.050000000000000003. |
+| `gen0457` | 2.5223629445039558e-14 @ 0.29104003360208125 | status 1021; `[]` | Request [-0.15450174803462408, 0.35218219198212913] is not contained in cache domain [0, 1]. |
+| `gen0478` | no solutions | 4.7619030295801057 @ 0.74580880176850051 | max 4.7619030295801066 at 0.74580880176850051; largest returned gap 0 <= slack 0.050000000000000003. |
+| `gen0572` | 0.0071576915035326634 @ 0.5072601353765418 | 0.0071576915035326634 @ 0.5072601353765418; 0.016737875986831931 @ 0.57557342760196972; 0.02270442517931608 @ 0.41501895441540232 | min 0.0071576915035326616 at 0.50726013537654158; largest returned gap 0.015547 <= slack 0.050000000000000003. |
+| `gen0660` | no solutions | 1.4420595249547044 @ 0.30484065810692407 | max 1.4420595249547048 at 0.30484065810692851; largest returned gap 0 <= slack 9.9999999999999995e-07. |
+| `gen0757` | no solutions | 10.557927271679803 @ 4.0683848792589856 | max 10.557927271679802 at 4.0683848792589856; largest returned gap 0 <= slack 0.001. |
+| `gen0852` | no solutions | status 1021; `[]` | Request [1.0788892254595575, 1.0806593495146779] is not contained in cache domain [0, 1]. |
+| `gen0869` | no solutions | 14.774212810947549 @ 1 | max 14.774212810947542 at 1; largest returned gap 0 <= slack 9.9999999999999995e-07. |
+| `gen0877` | no solutions | 10.649300098095045 @ 1 | max 10.649300098095047 at 1; largest returned gap 0 <= slack 9.9999999999999995e-07. |
+| `gen0903` | no solutions | 5.3562304943464323 @ 1.2914264682598677 | max 5.3562304943464323 at 1.2914264682598677; largest returned gap 0 <= slack 0.050000000000000003. |
+| `gen0909` | 0.73163212383281029 @ 0.46331104938392431 | 0.57314391403147991 @ 0; 0.57314391403147935 @ 1 | min 0.57314391403148002 at 0; largest returned gap 0 <= slack 0.001. |
+| `gen0975` | no solutions | status 1021; `[]` | Request [9.1110838878227796, 11.50075760044348] is not contained in cache domain [0, 9.8285191721035368]. |
+| `gen0983` | no solutions | status 1021; `[]` | Request [-1.5012244873106328, -0.85983642891267775] is not contained in cache domain [0, 7.9492474797840238]. |
+| `gen1092` | no solutions | 1.9538402164155864 @ 0.64427276589930793 | max 1.9538402164155868 at 0.64427276589930793; largest returned gap 0 <= slack 9.9999999999999995e-07. |
+| `gen1110` | no solutions | 2.3980925297368416 @ 13.726611511845006 | max 2.3980925297368407 at 13.726611511845006; largest returned gap 0 <= slack 0.050000000000000003. |
+| `gen1172` | 6.6784454602178034e-17 @ 0.28602071545115759 | 0 @ 0.28602071545115765 | min 0 at 0.28602071545115765; largest returned gap 0 <= slack 0.050000000000000003. |
+| `gen1256` | no solutions | 9.3518785127959525 @ 0.01121571674824913; 9.3476106799938581 @ 0 | max 9.3518785127959543 at 0.011215716748249243; largest returned gap 0.0042678 <= slack 0.050000000000000003. |
+| `gen1267` | no solutions | status 1021; `[]` | Request [1.3782439467163963, 1.7097656369276324] is not contained in cache domain [-4.7268502029667676, 0.68320624884804726]. |
+| `gen1273` | no solutions | 0.065254951376831904 @ 0.53904519426058628 | min 0.065254951376831793 at 0.53904519426058628; largest returned gap 0 <= slack 0.001. |
+| `gen1302` | no solutions | 44.199638754463066 @ 0.52441072279730372 | max 44.199638754463066 at 0.52441072279730427; largest returned gap 0 <= slack 0.001. |
+| `gen1448` | no solutions | 12.29457040830604 @ -3.0423314947687778 | max 12.294570408306024 at -3.0423314947687778; largest returned gap 0 <= slack 9.9999999999999995e-07. |
+| `gen1457` | 4.3438322141615746 @ 0.20373517220503476 | 4.3438322141615746 @ 0.20373517220503476; 4.3797147977505153 @ 0; 4.3797147977505162 @ 1 | min 4.3438322141615755 at 0.20373517220503479; largest returned gap 0.035883 <= slack 0.050000000000000003. |
+| `gen1520` | no solutions | 33.789379056506853 @ 2.3849086148836021 | min 33.78937905650686 at 2.3849086148836021; largest returned gap 0 <= slack 1.0000000000000001e-05. |
+| `gen1548` | 162.22337078032484 @ 0.94328458912860502 | 0.75822411532265399 @ 0 | min 0.75822411532265421 at 0; largest returned gap 0 <= slack 1.0000000000000001e-05. |
+| `gen1554` | no solutions | status 1021; `[]` | Request [-0.014223841201944171, 1.1169569330124063] is not contained in cache domain [0, 1]. |
+| `gen1621` | no solutions | 22.088438326716776 @ 0.0049847243869220884; 22.085041647697494 @ 0 | max 22.088438326716776 at 0.0049847243869219106; largest returned gap 0.0033967 <= slack 0.050000000000000003. |
+| `gen1657` | 48.896960999198846 @ 0.67695613383414943 | 0.3802896874236637 @ 0 | min 0.38028968742366376 at 0; largest returned gap 0 <= slack 0.050000000000000003. |
+| `gen1695` | no solutions | 39.869632717513078 @ 0 | max 39.869632717513085 at 0; largest returned gap 0 <= slack 1.0000000000000001e-05. |
+| `gen1699` | 85.585085694095937 @ 5.5867637405271262 | 1.3941829382067421 @ 5.7177741326260971 | min 1.3941829382067272 at 5.7177741326260971; largest returned gap 0 <= slack 1.0000000000000001e-05. |
+| `gen1732` | no solutions | 1.5611572970102852 @ 4.86141236791868 | min 1.5611572970102852 at 4.86141236791868; largest returned gap 0 <= slack 9.9999999999999995e-07. |
+| `gen1872` | no solutions | 7.3549564229763549 @ 0.38506387034726092 | min 7.3549564229763522 at 0.38506387034726092; largest returned gap 0 <= slack 9.9999999999999995e-07. |
+| `gen1876` | 7.2636780630313235e-16 @ -4.0639550817160597 | 1.3914285882969528 @ -2.6326022132199061 | max 1.3914285882969526 at -2.6326022132199061; largest returned gap 0 <= slack 9.9999999999999995e-07. |
+| `gen2021` | no solutions | 28.857905823233743 @ 1 | max 28.857905823233743 at 1; largest returned gap 0 <= slack 1.0000000000000001e-05. |
+| `gen2092` | no solutions | 8.0542139867220666 @ 0.074766904398441164 | max 8.0542139867220648 at 0.074766904398441178; largest returned gap 0 <= slack 9.9999999999999995e-07. |
+| `gen2126` | no solutions | 5.556128313677057 @ 2.8100032256169061 | max 5.556128313677057 at 2.8100032256169061; largest returned gap 0 <= slack 1.0000000000000001e-05. |
+| `gen2196` | no solutions | 7.9738378188486907 @ 0.06596314686589877 | max 7.9738378188486898 at 0.065963146865898742; largest returned gap 0 <= slack 0.050000000000000003. |
+| `gen2207` | no solutions | status 1021; `[]` | Request [0.87419100217506518, 0.94459092715786475] is not contained in cache domain [-0.23881952170832665, 0.76118047829167335]. |
+| `gen2218` | no solutions | 3.5683265921762817 @ 3.0261404497837283 | max 3.5683265921762812 at 3.0261404497837283; largest returned gap 0 <= slack 1.0000000000000001e-05. |
+| `gen2292` | 10.531529151927153 @ 0.97397763370896406 | 4.5142803266087421 @ 0 | min 4.5142803266087412 at 0; largest returned gap 0 <= slack 1.0000000000000001e-05. |
+| `gen2361` | no solutions | 4.6198607072580273 @ 0.066619966966380756 | max 4.6198607072580273 at 0.066619966966377911; largest returned gap 8.8818e-16 <= slack 9.9999999999999995e-07. |
+| `gen2450` | 0.27002492486264312 @ 2.5540707534588072 | 0.27002492486264307 @ 2.5540707534588063 | min 0.27002492486264307 at 2.5540707534588067; largest returned gap 7.2164e-16 <= slack 9.9999999999999995e-07. |
+| `gen2524` | no solutions | 0.16452101103224887 @ 0.5161062644162443 | max 0.16452101103224909 at 0.51610626441624408; largest returned gap 2.7756e-17 <= slack 9.9999999999999995e-07. |
+| `gen2525` | no solutions | status 1021; `[]` | Request [6.5843795421782971, 9.3024172167042547] is not contained in cache domain [0.097910539182596068, 8.4937777191536945]. |
+| `gen2611` | 34.173415063360942 @ 0.12001180281277017 | 34.173415063382613 @ 0.12001180281343077 | max 34.17341506338262 at 0.12001180281343077; largest returned gap 0 <= slack 0.001. |
+| `gen2740` | no solutions | 39.766866097214823 @ 0.12365865927611258 | max 39.766866097214823 at 0.12365865927611254; largest returned gap 7.1054e-15 <= slack 0.001. |
+| `gen2874` | 81.764961013612023 @ 0.69924160525610057 | 42.294050545981115 @ 5.8559804627410896 | min 42.294050545981108 at 5.8559804627410896; largest returned gap 0 <= slack 9.9999999999999995e-07. |
+| `gen2883` | no solutions | status 1021; `[]` | Request [0.9300363540079557, 1.119641960869513] is not contained in cache domain [0, 1]. |
+| `gen2942` | no solutions | 1.2588335544914846 @ 1 | max 1.2588335544914846 at 1; largest returned gap 0 <= slack 0.050000000000000003. |
+
+The figures overlay the exact old/current reported pairs on the independently
+evaluated objective. Domain-refusal panels show requested versus cached intervals.
+A red marker can be hidden by an overlapping green marker when the change is
+only rounding-sized. All seven figures were visually inspected.
+
+![Global projected golden cases, sheet 1](figures/projected-global-goldens-2968-1.png)
+
+![Global projected golden cases, sheet 2](figures/projected-global-goldens-2968-2.png)
+
+![Global projected golden cases, sheet 3](figures/projected-global-goldens-2968-3.png)
+
+![Global projected golden cases, sheet 4](figures/projected-global-goldens-2968-4.png)
+
+![Global projected golden cases, sheet 5](figures/projected-global-goldens-2968-5.png)
+
+![Global projected golden cases, sheet 6](figures/projected-global-goldens-2968-6.png)
+
+![Global projected golden cases, sheet 7](figures/projected-global-goldens-2968-7.png)
+
 ## Historical independent caller audits
 
 These tables preserve the independent geometry audit used to classify changes.
@@ -187,6 +304,94 @@ counts, temporary replay programs, and redundant validation snapshots are omitte
 | gen2335 | not found | (0.2057706791318854, 1.526401246903282) | New stationary minimum. |
 | gen2938 | (-1.416959240152698, 842.2781967874612) | (-1.635855706635469, 223.8362336456594) | Both valid roots; native maximum, Rust minimum. Changed basin, not a false native result. |
 | gen2940 | (0.08124076285751645, 38.51742584776892) | not found | Native valid maximum; Rust misses it from this guess. Lost local convergence. |
+
+### Exact local-solve golden changes
+
+The seven `curve.curve_p5` changes below are the serialized baseline values,
+not rounded values from the historical reference audit above. All seven keep
+`status=[0]`, `error=null`, `deferred=null`, and `topology=null`.
+`out=[0]` means the local solve did not find an answer; it does **not** claim
+that no stationary point exists. `out=[1,1,t,d]` means found, SingleValue,
+parameter, and projected distance `d = |N x (C(t)-P) x N|`.
+
+| Case | Previous golden `out` | Current golden `out` |
+|---|---|---|
+| gen0042 | `[0.0]` | `[1.0, 1.0, 2.568630556952937, 53.055590916261835]` |
+| gen0773 | `[0.0]` | `[1.0, 1.0, 0.022531387570006292, 33.08376518405103]` |
+| gen1144 | `[1.0, 1.0, 0.2424349354598795, 47.309906397183966]` | `[1.0, 1.0, 0.7897693109735117, 37.0895839403429]` |
+| gen1760 | `[1.0, 1.0, 6.160833635900556, 1702.7465397258384]` | `[0.0]` |
+| gen2335 | `[0.0]` | `[1.0, 1.0, 0.2057706791318854, 1.5264012469032822]` |
+| gen2938 | `[1.0, 1.0, -1.416959240152698, 842.2781967874612]` | `[1.0, 1.0, -1.635855706635469, 223.83623364565938]` |
+| gen2940 | `[1.0, 1.0, 0.08124076285751645, 38.51742584768916]` | `[0.0]` |
+
+These cases exercise `ProjectedPointMaximize` through `local_property_analysis`,
+whose search is a local zero of the stationary equation. For the projection
+`A(v) = N x v x N`, set `V=A(C-P)`, `T=A(C')`, and `U=A(C'')`.
+The smooth equation before maximization's sign change is
+`F = dot(V,T)/|T|`, with derivative
+`F' = (dot(U,V)+dot(T,T))/|T| - dot(T,U)*dot(V,T)/|T|^3`.
+Negating `F` requires negating `F'` too. The previous implementation negated
+only `F`, reversing the Newton correction. The current implementation uses
+the derivative of the function it evaluates.
+
+That correction does not turn this local API into a maximum certificate.
+A zero of `F` can be a minimum or a maximum: gen0042, gen0773, and gen2335
+now report minima; gen1144 and gen2938 change from maxima to minima.
+The two `found=false` outcomes (gen1760 and gen2940) honestly report lost
+convergence from these guesses. Their old maxima still exist. None of these
+changes proves that the new result is a global maximum or that convergence
+improved for every input. Global projected maximum queries use the separate
+bounded query path; they must not treat this local result as that certificate.
+
+The [reproduction script](diagnostics/local_projected_roots_2968.py) reads the
+[seven saved public-generator inputs](diagnostics/local_projected_roots_2968.json),
+rebuilds their rational B-spline or cubic Hermite definitions independently with
+SciPy/NumPy, and checks each returned distance and stationary residual. Inputs
+come from the public `curve_curve_p5::Runner::generate`, initialized with
+`Rng::new(CaseContext::seed_for("curve.curve_p5", index))`; the seeds are saved
+alongside them. Before values
+are the golden at the PR's main baseline `99ed57c4d`; after values are at
+`ef59a836b`. No baseline was changed by this evidence update.
+
+Run `python plan/findings/diagnostics/local_projected_roots_2968.py` with NumPy,
+SciPy and Matplotlib. The checked distance agrees with every serialized value
+within `2e-12` relative. The table reports the normalized stationarity residual
+`dot(V,T)/(|V| |T|)` and `dot(T,T)+dot(V,U)`, half the second derivative of
+squared projected distance. Its sign classifies these isolated, nonzero-distance
+stationary points. These are floating-point checks of the explicit definitions,
+not interval certificates. The largest normalized residual is `2.4e-11`.
+
+| Case / output | Normalized residual | Half squared-distance second derivative | Classification |
+|---|---:|---:|---|
+| gen0042 / after | -4.25146e-17 | 635.070696 | minimum |
+| gen0773 / after | -1.50715e-16 | 140792.067 | minimum |
+| gen1144 / before | -9.34221e-17 | -13514.3407 | maximum |
+| gen1144 / after | -2.38074e-11 | 2620.16771 | minimum |
+| gen1760 / before | 4.86697e-13 | -988886.903 | maximum |
+| gen2335 / after | 3.49441e-16 | 4.09934356 | minimum |
+| gen2938 / before | -1.12319e-15 | -8832873.23 | maximum |
+| gen2938 / after | 1.44851e-14 | 1.10077701e+09 | minimum |
+| gen2940 / before | 1.75280e-16 | -20685.4014 | maximum |
+
+Each pair below uses the same projection, geometry, interval and axes. The top
+row shows the actual projected curve and returned point; the lower row shows
+distance over the requested parameter interval. `found=false` has no returned
+point and must not be read as an empty geometry or a proof that roots are absent.
+The sampled curves illustrate the analytic checks; they do not certify maxima.
+
+![gen0042: before and after projected curve, returned stationary point when present, and distance over the same interval.](figures/local-projected-root-gen0042-2968.png)
+
+![gen0773: before and after projected curve, returned stationary point when present, and distance over the same interval.](figures/local-projected-root-gen0773-2968.png)
+
+![gen1144: before and after projected curve, returned stationary point when present, and distance over the same interval.](figures/local-projected-root-gen1144-2968.png)
+
+![gen1760: before and after projected curve, returned stationary point when present, and distance over the same interval.](figures/local-projected-root-gen1760-2968.png)
+
+![gen2335: before and after projected curve, returned stationary point when present, and distance over the same interval.](figures/local-projected-root-gen2335-2968.png)
+
+![gen2938: before and after projected curve, returned stationary point when present, and distance over the same interval.](figures/local-projected-root-gen2938-2968.png)
+
+![gen2940: before and after projected curve, returned stationary point when present, and distance over the same interval.](figures/local-projected-root-gen2940-2968.png)
 
 | p4 case | Native derivative | Rust derivative | Qualification |
 |---|---:|---:|---|
@@ -398,6 +603,29 @@ The squared-distance derivative divided by two is bounded below by
 first endpoint. Its side expression `3*(qy+2)-21*(qx-100)` is positive
 throughout the box and at the reference. The filleted box is a subset.
 
+The returned geometry is checked directly by
+`missed_cutter_keeps_geometry::{pat_plain_misses_retains_complete_input_geometry,
+pat_misses_retains_complete_filleted_input_geometry}` in
+`crates/solidcore/tests/projected_curve_queries.rs`. Both tests construct the
+exact golden fixture through the same public box, fillet, curve and trim APIs.
+Before and after the trim they compare complete binary curve and surface
+records: analytic definitions and placements, NURBS control points, weights,
+knots and orientations, plus UV trim definitions. They also compare vertex
+positions, edge intervals, face domains, tolerances and oriented boundary
+connectivity. This is exact record equality, with no sampling or numerical
+tolerance, and establishes the same bounded surface definitions and enclosed
+body. Serialization-only NURBs are materialized on ordinary surface copies
+with fresh cache slots, so the check does not prime the operation's cache.
+
+The optimized production library passes both checks: 198 geometry/topology
+records for the plain box and 786 for the filleted box are unchanged. As a
+negative control, each test constructs a valid box translated by `(1,2,3)`
+with identical face/edge/vertex counts and confirms the same comparison rejects
+it. A matching face's full surface-definition bytes must differ too; a change
+in arena identifiers alone cannot satisfy the control. Thus topology counts
+cannot conceal a moved or altered returned body. No golden or kernel code is
+changed by this additional regression evidence.
+
 For the raw-knot lens, both forward boundaries have `x=-1+2s`, with
 `y_upper=0.2s+0.8s^2` and `y_lower=-0.2s+1.2s^2` for `0<=s<=1`.
 They lie below the cutting segment `y=s` in the interior. The reference
@@ -429,3 +657,36 @@ running at its start; this is not a controlled main-versus-PR timing comparison
 and does not establish regression attribution. The captured union-case replay
 passes. No deadline, tolerance, fixture or classification was changed to hide
 the timeout. Hosted CI separately requires repository-admin workflow approval.
+
+## Projected face review follow-up: retention slack and early exits
+
+The face certificate now distinguishes retention slack from arithmetic rounding.
+For a face-owned incumbent it uses the lower endpoint of its singleton metric
+interval, plus the caller's slack and that interval's width. Each parameter box
+may additionally use the width of the metric interval at its single midpoint.
+No geometric parameter-box width is counted as arithmetic error, and no absolute
+or relative accuracy floor is introduced. A previous feasible incumbent from
+another object receives no additional incumbent rounding allowance here.
+
+The zero-slack plane regression returns the exact constrained corner maximum for
+normals `Z` and `2Z`; changing the reported scalar by four times its computed point
+enclosure width is rejected in either direction. The quadratic hidden-peak test
+also closes at zero slack while rejecting a lower, nonmaximal candidate.
+This does not claim complete candidate construction for every surface: a radius
+0.5 sphere patch over longitude [-90,90] and latitude [-60,60], queried from
+(-1,0,2) along Z at zero slack, currently constructs a boundary value 1.25 and
+refuses it because the interior maximum is 1.5. Arithmetic allowance does not
+turn that missing-candidate case into a successful answer.
+
+The near-zero point-answer shortcut now excludes the entire Maximize category,
+including ordinary and directed maxima. A full torus with radii 1 and 0.25 queried
+at its sole seam vertex has maximum distance 2.5, rather than the early vertex
+answer 0; the directed case at an X offset of 5e-7 has maximum 2.5000005.
+The regression uses the body's proven owner identities and asserts two seam
+curves and one face are present in its cache. Arena-only keys on this generated
+fixture omitted the seam curves and were an invalid diagnostic setup, not a new
+kernel accuracy issue. Both analytic expectations remain unchanged.
+
+All 33 focused topology-solver tests pass for this review change. Full validation
+of the final parent/main merges remains a separate gate; earlier full-suite
+results above are not attributed to these later changes.

@@ -500,3 +500,256 @@ fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expecte
         global.as_slice()
     );
 }
+
+fn check_maximum_after_near_seam_vertex(operation: SolverOperation) {
+    let mut k = Kernel::default();
+    let mut torus = Torus::new(
+        &k,
+        Vec3::ZERO,
+        Vec3::X,
+        Vec3::Y,
+        Extent2d::from_bounds(0.0, 0.0, 360.0, 360.0),
+        1.0,
+        0.25,
+        TorusOptions::default(),
+    )
+    .unwrap();
+    torus.make_nurb(&k).unwrap();
+    let surface = Surface::from(torus);
+    let domain = surface.natural_uv_domain_with_nurb(&k).unwrap();
+    let mut b = new_brep(&mut k, USE_DEFAULT, USE_DEFAULT).unwrap();
+    let mut state = ArenaNotifyState::new(&b);
+    let mut env = state.env(None);
+    let mut marks = Marks::default();
+    let keys = |f| arena_identity(CacheObject::Face(f));
+    let mut fenv = FaceBuildEnv {
+        env: &mut env,
+        marks: &mut marks,
+        this_face: &keys,
+    };
+    let face = create_face_from_surface(&mut k, &mut b, Some(surface), &domain, &mut fenv).unwrap();
+    let vertices = crate::topology::brep::p1::vertices(&b, None).unwrap();
+    assert_eq!(vertices.len(), 1);
+    assert_eq!(
+        b.vertex(vertices[0]).unwrap().point,
+        Vec3::new(1.25, 0.0, 0.0)
+    );
+    // Face construction records notification identities for its seam edges;
+    // arena-only keys would silently omit them from the cache tree.
+    let proven = crate::query::brep::BrepIdentity::of_brep_with_id(BrepId::from_index(0), &b);
+    let identity = proven.identity();
+    let mut preparation = crate::query::brep::RayPreparation::default();
+    {
+        let objects = BrepObjects {
+            preparation: Some(&preparation),
+            brep: &b,
+            brep_id: BrepId::from_index(0),
+            cache: None,
+            keys: identity.keys,
+            owner_of: identity.owner_of,
+        };
+        let mut context = objects.surface_solve_context().unwrap();
+        assert!(matches!(
+            context.build_surface_cache(
+                &k,
+                b.face(face).unwrap().surface.as_ref().unwrap(),
+                Some(CacheObject::Surface(face))
+            ),
+            Err(crate::SolidError::PreparationRequired { .. })
+        ));
+    }
+    let request = preparation.take_request().unwrap();
+    preparation.prepare(&k, &mut b, request).unwrap();
+    let mut cache =
+        crate::topology::brep_cache::BrepCache::new(crate::geom::a_object::BREP_TYPE).unwrap();
+    cache
+        .build_trees(
+            &k,
+            crate::topology::brep_cache::CacheSource::Brep(&b),
+            |o| o,
+            identity.keys,
+        )
+        .unwrap();
+    assert_eq!(cache.curve_tree().unwrap().object_list().unwrap().len(), 2);
+    assert_eq!(
+        cache.surface_tree().unwrap().object_list().unwrap().len(),
+        1
+    );
+    let objects = BrepObjects {
+        preparation: Some(&preparation),
+        brep: &b,
+        brep_id: BrepId::from_index(0),
+        cache: Some(&cache),
+        keys: identity.keys,
+        owner_of: identity.owner_of,
+    };
+    let tolerance = 1e-6;
+    let offset = if operation == SolverOperation::DirectedMaximize {
+        tolerance / 2.0
+    } else {
+        0.0
+    };
+    let query = Vec3::new(1.25 + offset, 0.0, 0.0);
+    // Every torus point has norm at most R+r=1.25. The triangle bound
+    // |C-query| <= 1.25+|query| is attained at (-1.25,0,0). That point
+    // also lies on the directed X line in the Z projection, so the same
+    // closed form applies to both operations.
+    let expected = 2.5 + offset;
+    let vectors = [Vec3::Z, Vec3::X];
+    let answer = TopologySolver::brep_point_solve(
+        &k,
+        &objects,
+        Some(CacheObject::Brep),
+        query,
+        crate::intersect::topology_solver::p2::TopologySolveOptions {
+            operation,
+            requested: SolutionRequested::Single,
+            tolerance_3d: tolerance,
+            best_answer_so_far_sq: 0.0,
+            opt_vectors: &vectors,
+        },
+    )
+    .unwrap();
+    assert_eq!(answer.len(), 1);
+    let actual = answer.as_slice()[0].start.solution_value;
+    println!("{operation:?}: actual={actual:.17e}, expected={expected:.17e}");
+    assert!(
+        (actual - expected).abs() <= tolerance,
+        "{operation:?}: actual={actual}, expected={expected}"
+    );
+}
+
+#[test]
+fn distance_maximum_does_not_stop_at_coincident_seam_vertex() {
+    check_maximum_after_near_seam_vertex(SolverOperation::Maximize);
+}
+
+#[test]
+fn directed_maximum_does_not_stop_at_nearby_seam_vertex() {
+    check_maximum_after_near_seam_vertex(SolverOperation::DirectedMaximize);
+}
+
+fn check_zero_slack_plane_candidate(normal: Vec3) {
+    let mut k = Kernel::default();
+    let domain = Extent2d::from_bounds(-0.5, -0.5, 0.5, 0.5);
+    let surface = &Surface::from(crate::surface::plane::Plane::new(
+        Vec3::ZERO,
+        Vec3::X,
+        Vec3::Y,
+        Vec2::new(1.0, 1.0),
+        &domain,
+    ));
+    let expected = 2.5_f64.sqrt() * normal.length_squared();
+    let domain = surface.natural_uv_domain_with_nurb(&k).unwrap();
+    let mut b = new_brep(&mut k, USE_DEFAULT, USE_DEFAULT).unwrap();
+    let mut state = ArenaNotifyState::new(&b);
+    let mut env = state.env(None);
+    let mut marks = Marks::default();
+    let keys = |f| arena_identity(CacheObject::Face(f));
+    let mut fenv = FaceBuildEnv {
+        env: &mut env,
+        marks: &mut marks,
+        this_face: &keys,
+    };
+    let face = create_face_from_surface(&mut k, &mut b, Some(surface.clone()), &domain, &mut fenv)
+        .unwrap();
+    let mut preparation = crate::query::brep::RayPreparation::default();
+    {
+        let objects = BrepObjects {
+            preparation: Some(&preparation),
+            brep: &b,
+            brep_id: BrepId::from_index(0),
+            cache: None,
+            keys: &arena_identity,
+            owner_of: &|_| None,
+        };
+        let mut context = objects.surface_solve_context().unwrap();
+        assert!(matches!(
+            context.build_surface_cache(
+                &k,
+                b.face(face).unwrap().surface.as_ref().unwrap(),
+                Some(CacheObject::Surface(face))
+            ),
+            Err(crate::SolidError::PreparationRequired { .. })
+        ));
+    }
+    let request = preparation.take_request().unwrap();
+    preparation.prepare(&k, &mut b, request).unwrap();
+    let objects = BrepObjects {
+        preparation: Some(&preparation),
+        brep: &b,
+        brep_id: BrepId::from_index(0),
+        cache: None,
+        keys: &arena_identity,
+        owner_of: &|_| None,
+    };
+    let query = Vec3::new(-1.0, 0.0, 2.0);
+    let tol = 0.0;
+    let mut solver = TopologySolver::new(
+        &k,
+        &objects,
+        SolverOperation::ProjectedMaximize,
+        SolutionRequested::Single,
+        tol,
+        0.0,
+        &[normal],
+    );
+    let mut local = LocalSolver::new(LocalSolverKind::PointFace, false, None);
+    local.set_point(query);
+    local
+        .solve_it(&k, &mut solver, None, Some(CacheObject::Surface(face)))
+        .unwrap_or_else(|error| {
+            panic!(
+                "{error:?}; candidates={:?}",
+                solver.base.solutions.as_slice()
+            )
+        });
+    assert_eq!(solver.base.solutions.len(), 1);
+    let solution = &solver.base.solutions.as_slice()[0];
+    let uv = Vec2::new(
+        solution.start.param(0).unwrap(),
+        solution.start.param(1).unwrap(),
+    );
+    let point = surface.evaluate_point(&k, uv).unwrap();
+    let measured = normal.cross(point - query).cross(normal).length();
+    eprintln!(
+        "certified projected maximum: normal={normal:?}, reported={:.17e}, exact={expected:.17e}",
+        solution.start.solution_value,
+    );
+    // Closed form: the farthest projected corners are (0.5,+/-0.5,0).
+    // Candidate construction includes the exact trim endpoints. The explicit
+    // caller slack is zero; all remaining room comes from arithmetic bounds.
+    assert_eq!(solution.objects[0], Some(CacheObject::Face(face)));
+    assert!(domain.contains_point(uv, 0.0));
+    assert!((solution.start.solution_value - expected).abs() <= 8.0 * f64::EPSILON * expected);
+    assert!((measured - expected).abs() <= 8.0 * f64::EPSILON * expected);
+    let net = crate::blend::fillet_section::station::Nurbs::of(
+        &crate::blend::fillet_section::station::as_b_spline(&k, surface)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    let enclosure = super::projected_bound::value_at(&net, uv, query, normal).unwrap();
+    let perturbation = 4.0 * (enclosure.hi - enclosure.lo);
+    assert!(perturbation > 0.0);
+    for delta in [-perturbation, perturbation] {
+        let mut incorrect = solver.base.clone();
+        let mut changed = *solution;
+        changed.start.solution_value += delta;
+        incorrect.solutions.set_at(0, &changed).unwrap();
+        assert!(super::projected_bound::certify_candidate(
+            &k,
+            &objects,
+            CacheObject::Face(face),
+            query,
+            &incorrect,
+        )
+        .is_err());
+    }
+}
+
+#[test]
+fn zero_slack_projected_face_maximum_accepts_plane_corner() {
+    check_zero_slack_plane_candidate(Vec3::Z);
+    check_zero_slack_plane_candidate(Vec3::Z * 2.0);
+}
