@@ -3467,8 +3467,12 @@ impl Surface {
             // polar converter made again on that net. The swap is made on a copy first, so a
             // net the converter refuses leaves the surface as it was, with nothing notified;
             // then the surface itself is swapped with its notifications and takes the copy.
+            // The copy is exact, as `clone_kind_exact`'s: the B-spline objects as they are
+            // (`Clone` fixes their knots up) and a torus's inside-out mark (`Clone` drops it
+            // without `keeps_inside_out`).
             SurfaceKind::Cone(s) => {
                 let mut swapped = s.clone();
+                swapped.rev = s.rev().clone_exact();
                 swapped.rev.toggle_swap_uv_bit();
                 swapped.base_mut().swap_uv()?;
                 swapped.rebuild_cone_polar_converter(k)?;
@@ -3478,6 +3482,7 @@ impl Surface {
             }
             SurfaceKind::Sphere(s) => {
                 let mut swapped = s.clone();
+                swapped.base = s.base().clone_exact();
                 swapped.base.toggle_swap_uv_bit();
                 swapped.base.base_mut().swap_uv()?;
                 swapped.rebuild_polar_converter(k)?;
@@ -3487,6 +3492,8 @@ impl Surface {
             }
             SurfaceKind::Torus(s) => {
                 let mut swapped = s.clone();
+                swapped.base = s.base().clone_exact();
+                swapped.inside_out = s.inside_out;
                 swapped.base.toggle_swap_uv_bit();
                 swapped.base.base_mut().swap_uv()?;
                 swapped.rebuild_polar_converter(k)?;
@@ -3496,7 +3503,7 @@ impl Surface {
             }
             SurfaceKind::SurfOfRevolution(s) => {
                 // the stored NURB stands for GetOrCreateGwNurbPointer, as in `reverse`
-                let mut swapped = s.clone();
+                let mut swapped = Box::new(s.clone_exact());
                 swapped.toggle_swap_uv_bit();
                 swapped.base_mut().swap_uv()?;
                 swapped.rebuild_polar_converter(k, &SurfOfRevolution::own_sweep_iso)?;
