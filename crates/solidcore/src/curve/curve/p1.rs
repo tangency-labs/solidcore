@@ -29,6 +29,10 @@
 //!   Native joins are omitted only after defining continuity/collinearity or
 //!   one-sided objective-sign proofs, never from an approximate G1 label alone.
 //!   The affine curve/face endpoint API refuses more than 128 defining spans.
+//! - **Wrapper join proof.** Defining-wrapper proofs and coverage preflight follow
+//!   the owned geometry tree with the shared 32-level nesting bound. Unproved
+//!   artificial boundaries and unsupported definition coverage refuse construction;
+//!   genuine defining joins remain candidates unless omission is proved safe.
 //! - **Projected endpoint extrema.** Eligible finite boundaries are candidates
 //!   independently of the stationary-point search. Finding a stationary
 //!   point does not establish that it beats the interval endpoints.
@@ -1164,16 +1168,37 @@ pub(crate) fn dyadic_four_products_zero(terms: [(f64, f64, bool); 4]) -> bool {
     dyadic_products_zero(&terms)
 }
 
-/// At most eight products need 4199 bits; the same 4224-bit storage suffices.
+/// At most eight two-factor products need 4199 bits; 4224-bit storage suffices.
 fn dyadic_products_zero(terms: &[(f64, f64, bool)]) -> bool {
-    /// Split a finite binary64 value into its sign, integer significand and exponent.
+    if terms.len() > 8 {
+        return false;
+    }
+    let mut products = [([0.0; 2], false); 8];
+    for (slot, &(a, b, negative)) in products.iter_mut().zip(terms) {
+        *slot = ([a, b], negative);
+    }
+    products.get(..terms.len()).is_some_and(|products| {
+        dyadic_product_order::<2, 66>(products) == Some(std::cmp::Ordering::Equal)
+    })
+}
+
+/// Four factors are needed for cross products of rational tangent numerators.
+fn dyadic_four_product_order(terms: &[([f64; 4], bool)]) -> Option<std::cmp::Ordering> {
+    dyadic_product_order::<4, 132>(terms)
+}
+
+/// Exact sign of at most eight products of four finite binary64 values.
+/// Each product needs at most 212 significand bits, with exponent [-4296,3884].
+/// Including the three carry bits for eight terms requires at most 8395 bits;
+/// two fixed 8448-bit accumulators bound storage independently of the inputs.
+fn dyadic_product_order<const FACTORS: usize, const WORDS: usize>(
+    terms: &[([f64; FACTORS], bool)],
+) -> Option<std::cmp::Ordering> {
     fn parts(value: f64) -> Option<(bool, u64, i32)> {
         if !value.is_finite() {
             return None;
         }
         let bits = value.to_bits();
-        // The mask is at most 2047, so this cast is exact. Finite inputs exclude
-        // 2047; the resulting power-of-two exponent is in [-1074, 971].
         let exponent = ((bits >> 52) & 0x7ff) as i32;
         let fraction = bits & ((1_u64 << 52) - 1);
         Some((
@@ -1190,53 +1215,68 @@ fn dyadic_products_zero(terms: &[(f64, f64, bool)]) -> bool {
             },
         ))
     }
-    /// Accumulate one shifted word with checked access to the fixed-capacity sum.
-    fn add_word(words: &mut [u64; 66], word: u64, shift: usize) -> bool {
+    fn add_word(words: &mut [u64], word: u64, shift: usize) -> Option<()> {
         let mut index = shift / 64;
-        // Constant nonzero divisor; remainder is 0..=63, below u128's 128 bits.
         let mut carry = u128::from(word) << (shift % 64);
         while carry != 0 {
-            let Some(slot) = words.get_mut(index) else {
-                return false;
-            };
-            // Two u64 values sum to at most 2^65-2. The cast deliberately keeps
-            // the low word; sum >> 64 carries its single high bit forward.
+            let slot = words.get_mut(index)?;
             let sum = u128::from(*slot) + (carry & u128::from(u64::MAX));
             *slot = sum as u64;
             carry = (carry >> 64) + (sum >> 64);
             index += 1;
         }
-        true
+        Some(())
+    }
+    // Only these audited fixed sizes are supported; neither comes from input.
+    if !((FACTORS == 2 && WORDS == 66) || (FACTORS == 4 && WORDS == 132)) {
+        return None;
     }
     if terms.len() > 8 {
-        return false;
+        return None;
     }
-    let mut positive = [0_u64; 66];
-    let mut negative = [0_u64; 66];
-    for &(a, b, negate) in terms {
-        let Some((sa, ma, ea)) = parts(a) else {
-            return false;
-        };
-        let Some((sb, mb, eb)) = parts(b) else {
-            return false;
-        };
-        // Each significand is below 2^53, so multiplication fits in 106 bits.
-        // ea+eb+2148 is in [0,4090], fitting both i32 and wasm32 usize. The
-        // second word's shift is at most 4154, within the 4224-bit accumulator.
-        let product = u128::from(ma) * u128::from(mb);
-        let shift = (ea + eb + 2148) as usize;
-        let words = if sa ^ sb ^ negate {
-            &mut negative
-        } else {
-            &mut positive
-        };
-        if !add_word(words, product as u64, shift)
-            || !add_word(words, (product >> 64) as u64, shift + 64)
-        {
-            return false;
+    let mut positive = [0_u64; WORDS];
+    let mut negative = [0_u64; WORDS];
+    for (factors, negate) in terms {
+        let mut sign = *negate;
+        let mut exponent = 0;
+        let mut product = [1_u64, 0, 0, 0];
+        for factor in factors {
+            let (negative_factor, mantissa, power) = parts(*factor)?;
+            sign ^= negative_factor;
+            exponent += power;
+            let mut carry = 0_u128;
+            for word in &mut product {
+                // A 64-bit limb times a 53-bit significand plus its carry fits
+                // in 118 bits. Four significands need only 212 of 256 bits.
+                let value = u128::from(*word) * u128::from(mantissa) + carry;
+                *word = value as u64;
+                carry = value >> 64;
+            }
+            if carry != 0 {
+                return None;
+            }
+        }
+        // Two/four finite exponents plus2148/4296 are nonnegative and at most
+        // 4090/8180. The guarded constant conversion fits both i32 and wasm32.
+        let shift = (exponent + 1074 * FACTORS as i32) as usize;
+        let words = if sign { &mut negative } else { &mut positive };
+        for (index, word) in product.into_iter().enumerate() {
+            add_word(words, word, shift + 64 * index)?;
         }
     }
-    positive == negative
+    Some(positive.iter().rev().cmp(negative.iter().rev()))
+}
+
+/// Native spline definitions that are actually evaluated by the kind dispatcher.
+/// Analytic labels do not replace these stored control points during evaluation.
+fn evaluated_native_spline(curve: &Curve) -> Option<&BSplineCurve> {
+    match curve.kind() {
+        CurveKind::BSpline(spline) => Some(spline),
+        CurveKind::Ellipse(ellipse) => Some(ellipse.base()),
+        CurveKind::Hyperbola(hyperbola) => Some(hyperbola.base()),
+        CurveKind::Parabola(parabola) => Some(parabola.base()),
+        _ => None,
+    }
 }
 
 /// Omit an affine boundary only when adjoining definitions are exactly smooth.
@@ -1250,9 +1290,9 @@ fn exact_affine_join(curve: &Curve, t: f64) -> bool {
 
 /// Establish smoothness from native knot multiplicity or exact endpoint chords.
 /// At a C0 Bezier join, tangent directions use the adjacent defining controls;
-/// equal positive local weights cancel without evaluating or rounding endpoints.
+/// positive rational weights use exact homogeneous tangent numerators.
 fn exact_native_spline_join(curve: &Curve, t: f64, require_linear: bool) -> bool {
-    let CurveKind::BSpline(spline) = curve.kind() else {
+    let Some(spline) = evaluated_native_spline(curve) else {
         return false;
     };
     let Some(nurb) = spline.gw_nurb() else {
@@ -1328,15 +1368,13 @@ fn exact_native_spline_join(curve: &Curve, t: f64, require_linear: bool) -> bool
     }
     let controls = |i: usize| {
         let (a, b) = nurb.cpts().get(i - 1).zip(nurb.cpts().get(i))?;
-        let weight = if a.w == crate::nurbs::math::NOW && b.w == a.w {
-            1.0
-        } else if a.w == b.w && a.w > 0.0 && a.w.is_finite() {
-            a.w
-        } else {
-            return None;
-        };
-        let coordinates = |p: &crate::nurbs::math::CPoint| {
-            [
+        let data = |p: &crate::nurbs::math::CPoint| {
+            let weight = if p.w == crate::nurbs::math::NOW {
+                1.0
+            } else {
+                p.w
+            };
+            let xyz = [
                 p.x,
                 p.y,
                 if p.z == crate::nurbs::math::NOZ {
@@ -1344,9 +1382,11 @@ fn exact_native_spline_join(curve: &Curve, t: f64, require_linear: bool) -> bool
                 } else {
                     p.z
                 },
-            ]
+            ];
+            (weight.is_finite() && weight > 0.0 && xyz.iter().all(|v| v.is_finite()))
+                .then_some((xyz, weight))
         };
-        Some((coordinates(a), coordinates(b), weight))
+        data(a).zip(data(b))
     };
     let Some(right_control) = ri
         .checked_sub(degree)
@@ -1354,17 +1394,20 @@ fn exact_native_spline_join(curve: &Curve, t: f64, require_linear: bool) -> bool
     else {
         return false;
     };
-    let Some(((a, b, w), (c, d, v))) = controls(li).zip(controls(right_control)) else {
+    let Some((((a, wa), (b, wb)), ((c, wc), (d, wd)))) = controls(li).zip(controls(right_control))
+    else {
         return false;
     };
-    // Homogeneous positions must agree even at repeated knots or a closed seam.
     if !b
         .into_iter()
         .zip(c)
-        .all(|(b, c)| dyadic_products_zero(&[(b, v, false), (c, w, true)]))
+        .all(|(b, c)| dyadic_products_zero(&[(b, wc, false), (c, wb, true)]))
     {
         return false;
     }
+    // Rational endpoint tangent numerators are L=B*wa-A*wb and R=D*wc-C*wd.
+    // Positive weights and positive knot spans only multiply them by positive
+    // factors. Test L x R exactly, before any division or rounded subtraction.
     let [ax, ay, az] = a;
     let [bx, by, bz] = b;
     let [cx, cy, cz] = c;
@@ -1376,55 +1419,605 @@ fn exact_native_spline_join(curve: &Curve, t: f64, require_linear: bool) -> bool
     ]
     .into_iter()
     .all(|(ai, aj, bi, bj, ci, cj, di, dj)| {
-        dyadic_products_zero(&[
-            (bi, dj, false),
-            (bi, cj, true),
-            (ai, dj, true),
-            (ai, cj, false),
-            (bj, di, true),
-            (bj, ci, false),
-            (aj, di, false),
-            (aj, ci, true),
-        ])
+        dyadic_four_product_order(&[
+            ([bi, wa, dj, wc], false),
+            ([bi, wa, cj, wd], true),
+            ([ai, wb, dj, wc], true),
+            ([ai, wb, cj, wd], false),
+            ([bj, wa, di, wc], true),
+            ([bj, wa, ci, wd], false),
+            ([aj, wb, di, wc], false),
+            ([aj, wb, ci, wd], true),
+        ]) == Some(std::cmp::Ordering::Equal)
     });
-    // Parallel but reversed chords form a cusp, not a smooth join. Comparisons
-    // determine difference signs exactly without subtracting or normalizing.
     parallel
         && a.into_iter()
             .zip(b)
             .zip(c.into_iter().zip(d))
-            .any(|((a, b), (c, d))| (b > a && d > c) || (b < a && d < c))
+            .any(|((a, b), (c, d))| {
+                let left = dyadic_four_product_order(&[
+                    ([b, wa, 1.0, 1.0], false),
+                    ([a, wb, 1.0, 1.0], true),
+                ]);
+                let right = dyadic_four_product_order(&[
+                    ([d, wc, 1.0, 1.0], false),
+                    ([c, wd, 1.0, 1.0], true),
+                ]);
+                matches!(
+                    (left, right),
+                    (
+                        Some(std::cmp::Ordering::Less),
+                        Some(std::cmp::Ordering::Less)
+                    ) | (
+                        Some(std::cmp::Ordering::Greater),
+                        Some(std::cmp::Ordering::Greater)
+                    )
+                )
+            })
+}
+
+/// Preserve only an actual defining boundary when smoothness was not proved.
+/// An uncertain artificial cache split is not a geometric extremum candidate.
+fn retain_defining_boundary(k: &Kernel, curve: &Curve, t: f64) -> Result<bool> {
+    let (knots, _) = curve.knots(k, None)?;
+    if knots.contains(&t) {
+        Ok(false)
+    } else {
+        Err(affine_refusal())
+    }
+}
+
+/// Enclose the raw native point and first derivative without rebuilding controls
+/// through `control_polygon`'s divide/remultiply conversion. Net validation bounds
+/// degree by `MAX_DEGREE` (17); derivative order is the fixed value one.
+fn native_point_jet(curve: &Curve, t: f64, piece: Option<usize>) -> Option<[[Ivl; 3]; 2]> {
+    use crate::blend::fillet_section::certificate::{curve_derivs_over, NurbsCurve};
+    if !t.is_finite() {
+        return None;
+    }
+    if matches!(curve.kind(), CurveKind::Line(_)) {
+        let interval = Extent1d::from_min_max(0.0, 1.0);
+        let definition = affine_definition(curve, interval)?;
+        return Some([
+            definition.tight_point(curve, t)?,
+            definition.difference(curve, interval)?,
+        ]);
+    }
+    let spline = evaluated_native_spline(curve)?;
+    let net = spline.gw_nurb()?;
+    let p = net.degree();
+    let n = net.cpts().len();
+    if p == 0
+        || p > crate::nurbs::knots::MAX_DEGREE
+        || n.checked_add(p)?.checked_add(1)? != net.knots().len()
+        || t < spline.natural_interval().min()
+        || t > spline.natural_interval().max()
+        || net.knots().iter().any(|v| !v.is_finite())
+        || net
+            .knots()
+            .windows(2)
+            .any(|pair| matches!(pair,[a,b] if a>b))
+    {
+        return None;
+    }
+    if let Some(index) = piece {
+        if index < p || index >= n {
+            return None;
+        }
+        let (&lo, &hi) = net
+            .knots()
+            .get(index)
+            .zip(net.knots().get(index.checked_add(1)?))?;
+        if !(lo < hi && t >= lo && t <= hi) {
+            return None;
+        }
+    }
+    let nonrational = net.cpts().first()?.w == crate::nurbs::math::NOW;
+    let mut pw = Vec::new();
+    for control in net.cpts() {
+        let w = if nonrational {
+            if control.w != crate::nurbs::math::NOW {
+                return None;
+            }
+            1.0
+        } else {
+            control.w
+        };
+        let z = if control.z == crate::nurbs::math::NOZ {
+            0.0
+        } else {
+            control.z
+        };
+        if w <= 0.0 || ![control.x, control.y, z, w].into_iter().all(f64::is_finite) {
+            return None;
+        }
+        pw.extend_from_slice(&[control.x, control.y, z, w]);
+    }
+    let definition = NurbsCurve {
+        p,
+        n,
+        u: net.knots().to_vec(),
+        pw,
+    };
+    let jet = curve_derivs_over(&definition, Ivl::from(t), 1, piece).ok()?;
+    let convert = |v: &crate::blend::fillet_section::series::V3<Ivl>| [v.x, v.y, v.z];
+    let result = [convert(jet.first()?), convert(jet.get(1)?)];
+    result
+        .iter()
+        .flatten()
+        .all(|v| v.lo.is_finite() && v.hi.is_finite() && v.lo <= v.hi)
+        .then_some(result)
+}
+
+/// C2 base regularity makes the normalized-binormal offset C1 locally. Native
+/// degree-one joins have a separate constant-binormal proof on their two spans.
+fn omit_offset_definition_join(
+    k: &Kernel,
+    curve: &Curve,
+    offset: &crate::curve::offset_curve::OffsetCurve,
+    t: f64,
+) -> Result<bool> {
+    let base = offset.base_curve().ok_or_else(affine_refusal)?;
+    let mapped = offset.base_parameter(t);
+    if !offset.offset_distance().is_finite() {
+        return Err(affine_refusal());
+    }
+    let mut primary_t = mapped;
+    let mut other_jet = None;
+    if let Some(spline) = evaluated_native_spline(base) {
+        let net = spline.gw_nurb().ok_or_else(affine_refusal)?;
+        let natural = spline.natural_interval();
+        let multiplicity = net.knots().partition_point(|v| *v <= mapped)
+            - net.knots().partition_point(|v| *v < mapped);
+        let interior = mapped > natural.min() && mapped < natural.max();
+        let c2 = interior
+            && (multiplicity == 0
+                || net
+                    .degree()
+                    .checked_sub(multiplicity)
+                    .is_some_and(|c| c >= 2));
+        let straight = net.degree() == 1 && exact_native_spline_join(base, mapped, true);
+        if !c2 && !straight {
+            return retain_defining_boundary(k, curve, t);
+        }
+        if straight && !c2 {
+            // Equal tangent directions can have different one-sided speeds.
+            // The evaluator's repairs must be inactive on both pieces.
+            let left_t = if mapped == natural.min() {
+                natural.max()
+            } else {
+                mapped
+            };
+            primary_t = if mapped == natural.max() {
+                natural.min()
+            } else {
+                mapped
+            };
+            let left = net
+                .knots()
+                .partition_point(|v| *v < left_t)
+                .checked_sub(1)
+                .ok_or_else(affine_refusal)?;
+            other_jet =
+                Some(native_point_jet(base, left_t, Some(left)).ok_or_else(affine_refusal)?);
+        }
+    } else if !matches!(base.kind(), CurveKind::Line(_)) {
+        return retain_defining_boundary(k, curve, t);
+    }
+    let primary_jet = native_point_jet(base, primary_t, None).ok_or_else(affine_refusal)?;
+    let normal = offset.offset_normal();
+    if ![normal.x, normal.y, normal.z]
+        .into_iter()
+        .all(f64::is_finite)
+    {
+        return Err(affine_refusal());
+    }
+    let regular = std::iter::once(primary_jet)
+        .chain(other_jet)
+        .all(|[point, tangent]| {
+            if !point
+                .iter()
+                .chain(&tangent)
+                .all(|v| v.lo.is_finite() && v.hi.is_finite())
+            {
+                return false;
+            }
+            let size = point.into_iter().fold(0.0_f64, |a, b| a.max(b.mag()));
+            // Prove both the native evaluator repair and offset finite-difference
+            // fallback inactive, independently for each one-sided tangent.
+            let threshold =
+                Ivl::from(1.1) * (Ivl::from(EFF_ZERO) * (Ivl::from(1.0) + Ivl::from(size)));
+            let tangent_length = iv_length(tangent);
+            let binormal_length = iv_length(iv_cross(tangent, iv_point(normal)));
+            tangent_length.hi.is_finite()
+                && binormal_length.hi.is_finite()
+                && tangent_length.lo > threshold.hi
+                && binormal_length.lo > EFF_ZERO
+        });
+    if regular {
+        Ok(true)
+    } else {
+        Err(affine_refusal())
+    }
+}
+
+/// An isocurve varies the opposite surface direction from its fixed parameter.
+/// Structural C1 continuity of the actual native tensor basis survives fixing
+/// the other coordinate; no fitted isocurve control polygon is introduced.
+fn omit_iso_definition_join(
+    k: &Kernel,
+    curve: &Curve,
+    iso: &crate::curve::iso_curve::IsoCurve,
+    t: f64,
+) -> Result<bool> {
+    use crate::{nurbs::b_spline_surface::SurfParamType, surface::surface::p2::SurfaceKind};
+    use std::borrow::Cow;
+    let surface = iso.surface();
+    if !t.is_finite() || !iso.iso_parameter().is_finite() {
+        return Err(affine_refusal());
+    }
+    if surface.procedural_definition().is_some() {
+        return retain_defining_boundary(k, curve, t);
+    }
+    let fixed_u = iso.surf_param() == SurfParamType::U;
+    let base = match surface.kind_with_nurb(k)? {
+        SurfaceKind::BSpline(s) => Cow::Borrowed(s),
+        SurfaceKind::BallPatch(s) => Cow::Borrowed(s.net()),
+        SurfaceKind::SurfOfRevolution(s) => Cow::Borrowed(s.base()),
+        SurfaceKind::Sphere(s) => Cow::Borrowed(s.base().base()),
+        SurfaceKind::Torus(s) => Cow::Borrowed(s.base().base()),
+        SurfaceKind::SurfOfExtrusion(_) => surface.extrusion_base_with_nurb(k)?,
+        SurfaceKind::Plane(plane) => {
+            let frame = plane.position();
+            let scale = plane.uv_scale();
+            let finite = [frame.origin(), frame.x_axis(), frame.y_axis()]
+                .into_iter()
+                .all(|v| [v.x, v.y, v.z].into_iter().all(f64::is_finite))
+                && scale.x.is_finite()
+                && scale.y.is_finite();
+            let domain = plane.step_uv_domain();
+            let (lo, hi) = if fixed_u {
+                (domain.min().y, domain.max().y)
+            } else {
+                (domain.min().x, domain.max().x)
+            };
+            return if finite && t > lo && t < hi {
+                Ok(true)
+            } else {
+                retain_defining_boundary(k, curve, t)
+            };
+        }
+        _ => return retain_defining_boundary(k, curve, t),
+    };
+    let net = base.gw_nurb().ok_or_else(affine_refusal)?;
+    let (p, q) = net.degrees();
+    let (n, m, _, _) = net.array_sizes();
+    let active = |knots: &[f64], degree: usize, last: usize| -> Option<(f64, f64)> {
+        if degree == 0
+            || degree > crate::nurbs::knots::MAX_DEGREE
+            || last < degree
+            || last.checked_add(degree)?.checked_add(2)? != knots.len()
+            || !knots.iter().all(|v| v.is_finite())
+            || knots.windows(2).any(|pair| pair.first() > pair.get(1))
+        {
+            return None;
+        }
+        let lo = *knots.get(degree)?;
+        let hi = *knots.get(last.checked_add(1)?)?;
+        (lo < hi).then_some((lo, hi))
+    };
+    let (u_lo, u_hi) = active(net.u_knots(), p, n).ok_or_else(affine_refusal)?;
+    let (v_lo, v_hi) = active(net.v_knots(), q, m).ok_or_else(affine_refusal)?;
+    if net.rows().count() != n.checked_add(1).ok_or_else(affine_refusal)?
+        || net.rows().any(|row| Some(row.len()) != m.checked_add(1))
+    {
+        return Err(affine_refusal());
+    }
+    // Positive weights exclude rational poles only on the active tensor domain.
+    // Natural intervals may include extrapolation for nonclamped knot vectors.
+    let (vary_lo, vary_hi, fixed_lo, fixed_hi) = if fixed_u {
+        (v_lo, v_hi, u_lo, u_hi)
+    } else {
+        (u_lo, u_hi, v_lo, v_hi)
+    };
+    if t < vary_lo
+        || t > vary_hi
+        || iso.iso_parameter() < fixed_lo
+        || iso.iso_parameter() > fixed_hi
+    {
+        return Err(affine_refusal());
+    }
+    let domain = base.natural_uv_domain();
+    let (degree, knots, fixed_degree, fixed_knots, lo, hi, fixed_lo, fixed_hi) = if fixed_u {
+        (
+            q,
+            net.v_knots(),
+            p,
+            net.u_knots(),
+            domain.min().y,
+            domain.max().y,
+            domain.min().x,
+            domain.max().x,
+        )
+    } else {
+        (
+            p,
+            net.u_knots(),
+            q,
+            net.v_knots(),
+            domain.min().x,
+            domain.max().x,
+            domain.min().y,
+            domain.max().y,
+        )
+    };
+    if t <= lo || t >= hi {
+        return retain_defining_boundary(k, curve, t);
+    }
+    let fixed = iso.iso_parameter();
+    if fixed < fixed_lo || fixed > fixed_hi {
+        return Err(affine_refusal());
+    }
+    let fixed_mult =
+        fixed_knots.partition_point(|v| *v <= fixed) - fixed_knots.partition_point(|v| *v < fixed);
+    // Point evaluation uses the native default side. A stored left-side flag
+    // at an actual fixed-direction jump could differentiate a different curve.
+    if iso.from_left() && fixed > fixed_lo && fixed < fixed_hi && fixed_mult > fixed_degree {
+        return Err(affine_refusal());
+    }
+    let multiplicity = knots.partition_point(|v| *v <= t) - knots.partition_point(|v| *v < t);
+    if multiplicity != 0 && multiplicity >= degree {
+        return retain_defining_boundary(k, curve, t);
+    }
+    let first = net.rows().flatten().next().ok_or_else(affine_refusal)?;
+    let nonrational = first.w == crate::nurbs::math::NOW;
+    let regular = net.rows().flatten().all(|c| {
+        [c.x, c.y, c.z].into_iter().all(f64::is_finite)
+            && if nonrational {
+                c.w == crate::nurbs::math::NOW
+            } else {
+                c.w.is_finite() && c.w > 0.0
+            }
+    });
+    if regular {
+        Ok(true)
+    } else {
+        Err(affine_refusal())
+    }
+}
+
+/// The direct conic evaluator is polynomial or rational away from its poles.
+/// Its ellipse chart switch at1 has common position(0,b) and tangent(-a,0).
+fn conic_definition_is_smooth(conic: &crate::curve::conic::Conic, t: f64) -> bool {
+    use crate::curve::conic::ConicType;
+    let origin = conic.origin();
+    let (sin, cos) = conic.sin_cos_theta();
+    if ![
+        t,
+        conic.a(),
+        conic.b(),
+        origin.x,
+        origin.y,
+        conic.theta_rad(),
+        sin,
+        cos,
+    ]
+    .into_iter()
+    .all(f64::is_finite)
+    {
+        return false;
+    }
+    match conic.conic_type() {
+        ConicType::Unknown => false,
+        ConicType::Hyperbola => {
+            let denominator = Ivl::from(1.0) - Ivl::from(t) * Ivl::from(t);
+            denominator.lo.is_finite()
+                && denominator.hi.is_finite()
+                && (denominator.lo > 0.0 || denominator.hi < 0.0)
+        }
+        ConicType::Ellipse | ConicType::Parabola | ConicType::Line => true,
+    }
+}
+
+/// A finite matrix/orientation chain is a fixed affine map of its input point.
+/// This proof walks at most the shared32-level geometry nesting bound.
+fn volume_chain_is_affine(volume: &crate::surface::volume::p1::Volume) -> bool {
+    use crate::surface::volume::p1::VolumeKind;
+    let mut current = Some(volume);
+    for _ in 0..crate::surface::surface::p2::MAX_GEOMETRY_NESTING {
+        let Some(map) = current else {
+            return true;
+        };
+        let VolumeKind::Transform(transform) = map.kind() else {
+            return false;
+        };
+        if !std::iter::once(transform)
+            .chain(map.orient_map())
+            .chain(map.inv_orient_map())
+            .all(|matrix| matrix.matrix().iter().flatten().all(|v| v.is_finite()))
+        {
+            return false;
+        }
+        current = map.next_map();
+    }
+    current.is_none()
+}
+
+/// Map a requested parameter range through the actual offset evaluator and
+/// refuse relevant reflected defining breaks with no exact binary64 inverse.
+fn offset_definition_range(
+    k: &Kernel,
+    offset: &crate::curve::offset_curve::OffsetCurve,
+    range: Ivl,
+) -> Result<Ivl> {
+    if !range.lo.is_finite() || !range.hi.is_finite() || range.lo > range.hi {
+        return Err(affine_refusal());
+    }
+    if !offset.is_reversed() {
+        return Ok(range);
+    }
+    let center = offset.base_parameter(0.0);
+    let mapped = Ivl::from(center) - range;
+    if !mapped.lo.is_finite() || !mapped.hi.is_finite() {
+        return Err(affine_refusal());
+    }
+    let base = offset.base_curve().ok_or_else(affine_refusal)?;
+    for knot in base.knots(k, None)?.0 {
+        if !knot.is_finite() {
+            return Err(affine_refusal());
+        }
+        let reflected = Ivl::from(center) - Ivl::from(knot);
+        if reflected.lo <= range.hi
+            && reflected.hi >= range.lo
+            && offset.base_parameter(offset.base_parameter(knot)) != knot
+        {
+            // Rounded knot metadata is useful, but it does not locate this
+            // defining break under the evaluator's actual binary64 map.
+            return Err(affine_refusal());
+        }
+    }
+    Ok(mapped)
+}
+
+/// `TangentField` inherits UV knots but changes definition in endpoint strips and
+/// supplies only first finite-difference derivatives. The current candidate
+/// machinery does not cover that definition; a cache with no artificial split
+/// must not turn it into a successful empty answer. Follow directly evaluated
+/// curve wrappers too, before any cache or target shortcut can return success.
+fn require_projected_boundary_coverage(
+    k: &Kernel,
+    curve: &Curve,
+    range: Ivl,
+    depth: usize,
+) -> Result<()> {
+    if depth > crate::surface::surface::p2::MAX_GEOMETRY_NESTING {
+        return Err(affine_refusal());
+    }
+    match curve.kind() {
+        CurveKind::TangentField(_) => Err(affine_refusal()),
+        CurveKind::Projected(c) => {
+            require_projected_boundary_coverage(k, c.curve(), range, depth + 1)
+        }
+        CurveKind::Offset(c) => require_projected_boundary_coverage(
+            k,
+            c.base_curve().ok_or_else(affine_refusal)?,
+            offset_definition_range(k, c, range)?,
+            depth + 1,
+        ),
+        CurveKind::CrvInVolume(c) => {
+            require_projected_boundary_coverage(k, c.curve(), range, depth + 1)
+        }
+        CurveKind::CrvOnSurf(c) => {
+            require_projected_boundary_coverage(k, c.uv_curve(), range, depth + 1)
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Require defining smoothness for native spline and plane-UV joins.
 /// A plane is an affine map of UV: it preserves an exact UV tangent identity.
 /// In particular, native UV non-knots remain artificial subdivisions rather
 /// than becoming extrema merely because the curve is wrapped by a surface.
-fn omit_projected_boundary(curve: &Curve, t: f64, continuity: ContinuityType) -> bool {
+fn omit_projected_boundary(
+    k: &Kernel,
+    curve: &Curve,
+    t: f64,
+    continuity: ContinuityType,
+) -> Result<bool> {
     if (continuity as i32) < (ContinuityType::G1 as i32) {
-        return false;
+        return Ok(false);
+    }
+    omit_projected_definition_join(k, curve, t, 0)
+}
+
+/// Recursion follows defining geometry and is bounded by the shared32-level
+/// nesting limit. Only a true defining boundary may be retained without a
+/// smoothness proof; uncertainty at artificial cache splits is an error.
+fn omit_projected_definition_join(k: &Kernel, curve: &Curve, t: f64, depth: usize) -> Result<bool> {
+    if depth > crate::surface::surface::p2::MAX_GEOMETRY_NESTING {
+        return Err(affine_refusal());
     }
     match curve.kind() {
-        CurveKind::BSpline(_) => exact_native_spline_join(curve, t, false),
+        CurveKind::BSpline(_)
+        | CurveKind::Ellipse(_)
+        | CurveKind::Hyperbola(_)
+        | CurveKind::Parabola(_) => {
+            if exact_native_spline_join(curve, t, false) {
+                Ok(true)
+            } else {
+                retain_defining_boundary(k, curve, t)
+            }
+        }
+        CurveKind::Projected(projected) => {
+            use crate::nurbs::b_spline_curve::ProjectionType;
+            if [
+                projected.proj_point(),
+                projected.proj_vec(),
+                projected.aux_data(),
+            ]
+            .into_iter()
+            .any(|p| ![p.x, p.y, p.z].into_iter().all(f64::is_finite))
+            {
+                return Err(affine_refusal());
+            }
+            match projected.proj_type() {
+                ProjectionType::Parallel | ProjectionType::Rotation | ProjectionType::Unknown => {
+                    omit_projected_definition_join(k, projected.curve(), t, depth + 1)
+                }
+                // A projective map is smooth where its defining denominator
+                // cannot vanish. This first proof covers native stored splines
+                // and exact lines, never an approximated wrapper control net.
+                ProjectionType::Perspective => {
+                    let [point, _] =
+                        native_point_jet(projected.curve(), t, None).ok_or_else(affine_refusal)?;
+                    let denominator = iv_dot(
+                        iv_sub(point, iv_point(projected.aux_data())),
+                        iv_point(projected.proj_vec()),
+                    );
+                    let numerator = iv_dot(
+                        iv_sub(
+                            iv_point(projected.proj_point()),
+                            iv_point(projected.aux_data()),
+                        ),
+                        iv_point(projected.proj_vec()),
+                    );
+                    if !numerator.lo.is_finite()
+                        || !numerator.hi.is_finite()
+                        || !denominator.lo.is_finite()
+                        || !denominator.hi.is_finite()
+                        || !(denominator.lo > 0.0 || denominator.hi < 0.0)
+                    {
+                        return Err(affine_refusal());
+                    }
+                    omit_projected_definition_join(k, projected.curve(), t, depth + 1)
+                }
+            }
+        }
+        CurveKind::Offset(offset) => {
+            offset_definition_range(k, offset, Ivl::from(t))?;
+            if offset.offset_distance() == 0.0 {
+                let base = offset.base_curve().ok_or_else(affine_refusal)?;
+                omit_projected_definition_join(k, base, offset.base_parameter(t), depth + 1)
+            } else {
+                omit_offset_definition_join(k, curve, offset, t)
+            }
+        }
         CurveKind::CrvOnSurf(on_surface) => {
             if on_surface.surface().procedural_definition().is_some() {
-                return false;
+                return retain_defining_boundary(k, curve, t);
             }
             let crate::surface::surface::p2::SurfaceKind::Plane(plane) =
                 on_surface.surface().kind()
             else {
-                return false;
+                return retain_defining_boundary(k, curve, t);
             };
             let uv = on_surface.uv_curve();
-            let CurveKind::BSpline(spline) = uv.kind() else {
-                return false;
+            let Some(spline) = evaluated_native_spline(uv) else {
+                return retain_defining_boundary(k, curve, t);
             };
             let Some(net) = spline.gw_nurb() else {
-                return false;
+                return Err(affine_refusal());
             };
-            // Plane evaluation clamps outside its analytic domain. Prove the
-            // defining positive-weight UV hull stays strictly inside, so that
-            // clamping cannot introduce another, hidden nonsmooth join.
             let domain = plane.step_uv_domain();
             let inside = net.cpts().iter().all(|control| {
                 let weight = if control.w == crate::nurbs::math::NOW {
@@ -1442,11 +2035,54 @@ fn omit_projected_boundary(curve: &Curve, t: f64, continuity: ContinuityType) ->
                     && y.lo > domain.min().y
                     && y.hi < domain.max().y
             });
-            inside && exact_native_spline_join(uv, t, false)
+            if inside {
+                omit_projected_definition_join(k, uv, t, depth + 1)
+            } else {
+                retain_defining_boundary(k, curve, t)
+            }
         }
-        // Other curve kinds retain their existing boundary policy; this proof
-        // does not establish smoothness of their wrapped definitions.
-        _ => true,
+        CurveKind::Iso(iso) => omit_iso_definition_join(k, curve, iso, t),
+        CurveKind::Conic(conic) => {
+            if conic_definition_is_smooth(conic, t) {
+                Ok(true)
+            } else {
+                Err(affine_refusal())
+            }
+        }
+        CurveKind::CrvInVolume(mapped) => {
+            if volume_chain_is_affine(mapped.volume()) {
+                omit_projected_definition_join(k, mapped.curve(), t, depth + 1)
+            } else {
+                retain_defining_boundary(k, curve, t)
+            }
+        }
+        // Neither the field's strip transitions nor composite evaluation has
+        // a certified local omission contract in the current point solver.
+        CurveKind::TangentField(_) | CurveKind::Composite(_) => Err(affine_refusal()),
+        CurveKind::Line(line) => {
+            if t.is_finite()
+                && line.line_scale().is_finite()
+                && [line.line_point(), line.line_vector()]
+                    .into_iter()
+                    .all(|v| [v.x, v.y, v.z].into_iter().all(f64::is_finite))
+            {
+                Ok(true)
+            } else {
+                Err(affine_refusal())
+            }
+        }
+        CurveKind::Hermite(hermite) => {
+            let (c, d) = hermite.power_basis();
+            if t.is_finite()
+                && [hermite.start_point(), hermite.start_derivative(), c, d]
+                    .into_iter()
+                    .all(|v| [v.x, v.y, v.z].into_iter().all(f64::is_finite))
+            {
+                Ok(true)
+            } else {
+                Err(affine_refusal())
+            }
+        }
     }
 }
 
@@ -1459,7 +2095,7 @@ fn native_join_is_not_extremum(
     normal: Vec3,
     maximize: bool,
 ) -> bool {
-    let CurveKind::BSpline(spline) = curve.kind() else {
+    let Some(spline) = evaluated_native_spline(curve) else {
         return false;
     };
     let Some(nurb) = spline.gw_nurb() else {
@@ -1791,6 +2427,57 @@ impl AffineDefinition {
             denominator,
         );
         (bound.lo.is_finite() && bound.hi.is_finite()).then_some(bound)
+    }
+
+    /// Lower-bound the full projected carrier in a frame centered at `t`.
+    /// For `X = P(C(t)-Q)` and a nonzero projected direction `D`, completing the
+    /// square gives `min_s |X+sD|^2 = |X|^2 - (X.D)^2 / |D|^2`. The carrier
+    /// contains the requested span, so this is also its lower bound. Centering
+    /// near the stationary parameter avoids the cancellation in a remote-anchor
+    /// triple product; the candidate's own arithmetic enclosure is unchanged.
+    fn centered_carrier_lower(
+        &self,
+        curve: &Curve,
+        t: f64,
+        point: Vec3,
+        normal: Vec3,
+    ) -> Option<f64> {
+        let direction = match self.direction {
+            AffineDirection::Controls(a, b) => {
+                let [ax, ay, az] = a.map(Ivl::from);
+                let [bx, by, bz] = b.map(Ivl::from);
+                [
+                    carrier_sub(bx, ax),
+                    carrier_sub(by, ay),
+                    carrier_sub(bz, az),
+                ]
+            }
+            AffineDirection::MappedLine { vector, .. } => iv_point(vector),
+        };
+        // Nonzero scalar parameter/weight factors do not change this carrier.
+        // A zero projected direction is handled by the constant construction.
+        let n = iv_point(normal);
+        let d = carrier_cross(carrier_cross(n, direction), n);
+        let denominator = carrier_dot(d, d);
+        if !carrier_finite(denominator) || denominator.lo <= 0.0 {
+            return None;
+        }
+        let [a, b, c] = self.tight_point(curve, t)?;
+        let offset = [
+            carrier_sub(a, Ivl::from(point.x)),
+            carrier_sub(b, Ivl::from(point.y)),
+            carrier_sub(c, Ivl::from(point.z)),
+        ];
+        let x = carrier_cross(carrier_cross(n, offset), n);
+        let residual = carrier_dot(x, d);
+        let correction = carrier_div(carrier_mul(residual, residual), denominator);
+        let squared = carrier_sub(carrier_dot(x, x), correction);
+        if !carrier_finite(squared) {
+            return None;
+        }
+        // The exact squared norm is nonnegative. One outward sqrt step covers
+        // IEEE rounding, including a subnormal result, without a geometric floor.
+        Some(next_parameter_down(squared.lo.max(0.0).sqrt()).max(0.0))
     }
 
     /// Enclose the affine point at the caller's raw parameter.
@@ -2559,6 +3246,14 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         if let Some(carrier) = definition.carrier_minimum(curve, point, normal) {
             optimum.lo = optimum.lo.max(carrier.lo);
         }
+        if let Some(lower) = definition.centered_carrier_lower(
+            curve,
+            interval.evaluate(fraction.mid()),
+            point,
+            normal,
+        ) {
+            optimum.lo = optimum.lo.max(lower);
+        }
         if let Some(position) = definition.isolated_end {
             let isolated = iv_length(projected(position));
             optimum.lo = optimum.lo.min(isolated.lo);
@@ -3012,7 +3707,7 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             // points. Enumerate them independently: Newton can find an interior
             // minimum while a requested maximum lies at an endpoint (or vice versa).
             for (parameter, continuity) in [(bez_ivl.min(), conts[0]), (bez_ivl.max(), conts[1])] {
-                if omit_projected_boundary(curve, parameter, continuity)
+                if omit_projected_boundary(k, curve, parameter, continuity)?
                     || ((continuity as i32) >= (ContinuityType::G1 as i32)
                         && native_join_is_not_extremum(
                             curve,
@@ -3213,13 +3908,15 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             let mut bndry: Option<(Point3, Vec3)> = None;
             if is_zero(solution.start.parameters[0] - bez_ivl.min())
                 && (conts[0] as i32) >= (ContinuityType::G1 as i32)
-                && (!projected_extremum || omit_projected_boundary(curve, bez_ivl.min(), conts[0]))
+                && (!projected_extremum
+                    || omit_projected_boundary(k, curve, bez_ivl.min(), conts[0])?)
             {
                 bndry = Some((start_pt[0], start_pt[1])); // been negated: points outside
             }
             if is_zero(solution.start.parameters[0] - bez_ivl.max())
                 && (conts[1] as i32) >= (ContinuityType::G1 as i32)
-                && (!projected_extremum || omit_projected_boundary(curve, bez_ivl.max(), conts[1]))
+                && (!projected_extremum
+                    || omit_projected_boundary(k, curve, bez_ivl.max(), conts[1])?)
             {
                 bndry = Some((end_pt[0], end_pt[1])); // points outside interval
             }
@@ -3532,6 +4229,17 @@ impl Curve {
         opts: &GlobalPointSolveOptions<'_, O>,
         cache: &mut Option<CurveCache<O>>,
     ) -> Result<SolutionArray<O>> {
+        if matches!(
+            op,
+            SolverOperation::ProjectedMinimize | SolverOperation::ProjectedMaximize
+        ) {
+            require_projected_boundary_coverage(
+                k,
+                self,
+                Ivl::new(interval.min(), interval.max()),
+                0,
+            )?;
+        }
         let target = opts.target_distance;
 
         // Try quick solves when MINIMIZING and INTERSECTING (without using curve cache)
@@ -4147,14 +4855,14 @@ mod tests {
             }
             let curve = Curve::from(CrvOnSurf::new(&k, uv, surface, None, 2).unwrap());
             assert_eq!(
-                omit_projected_boundary(&curve, 1.0, ContinuityType::G1),
+                omit_projected_boundary(&k, &curve, 1.0, ContinuityType::G1).unwrap(),
                 smooth
             );
             if domain_y == 2.0 && !kept_definition {
                 // The same underlying affine span on either side of an
                 // artificial subdivision remains exactly smooth.
-                assert!(omit_projected_boundary(&curve, 0.5, ContinuityType::G1));
-                assert!(omit_projected_boundary(&curve, 1.5, ContinuityType::G1));
+                assert!(omit_projected_boundary(&k, &curve, 0.5, ContinuityType::G1).unwrap());
+                assert!(omit_projected_boundary(&k, &curve, 1.5, ContinuityType::G1).unwrap());
             }
         }
     }
@@ -4754,5 +5462,291 @@ mod tests {
             test_span_accuracy(k, &c, 0.0, [a[0], a[1]], 1.0, [b[0], b[1]], 1e-9, true).unwrap();
         assert!(r.passes);
         assert!(r.max_dist < 1e-12);
+    }
+    #[test]
+    fn exact_product_sign_handles_four_factor_extremes() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        let huge = f64::MAX;
+        let tiny = f64::from_bits(1);
+        for factors in [
+            [huge; 4],
+            [tiny; 4],
+            [huge, tiny, huge, tiny],
+            [-huge, tiny, -huge, tiny],
+        ] {
+            assert_eq!(
+                dyadic_four_product_order(&[(factors, false), (factors, true)]),
+                Some(Equal)
+            );
+            assert_eq!(
+                dyadic_four_product_order(&[(factors, false)]),
+                Some(Greater)
+            );
+            assert_eq!(dyadic_four_product_order(&[(factors, true)]), Some(Less));
+        }
+        assert_eq!(
+            dyadic_four_product_order(&[
+                ([1.0; 4], false),
+                ([1.0, 1.0, 1.0, next_parameter_up(1.0)], true)
+            ]),
+            Some(Less)
+        );
+        let factors = [huge, huge, 0.5, 0.25];
+        let permuted = [0.25, huge, 0.5, huge];
+        let mut carry_terms = [(factors, false); 8];
+        assert_eq!(dyadic_four_product_order(&carry_terms), Some(Greater));
+        for term in carry_terms.iter_mut().skip(4) {
+            *term = (permuted, true);
+        }
+        assert_eq!(dyadic_four_product_order(&carry_terms), Some(Equal));
+        // Cancel six overflowing products, leaving two positive subnormal
+        // products. This exercises carries and cancellation over the full span.
+        let mixed = [
+            (factors, false),
+            (permuted, true),
+            (factors, false),
+            ([-huge, huge, 0.5, 0.25], false),
+            (factors, false),
+            (permuted, true),
+            ([tiny; 4], false),
+            ([tiny; 4], false),
+        ];
+        assert_eq!(dyadic_four_product_order(&mixed), Some(Greater));
+        assert_eq!(
+            dyadic_four_product_order(&[([f64::INFINITY; 4], false)]),
+            None
+        );
+        assert_eq!(dyadic_four_product_order(&[([1.0; 4], false); 9]), None);
+    }
+
+    #[test]
+    fn exact_rational_native_join_keeps_weighted_tangent_identity() {
+        use crate::nurbs::{crv_basic::Curve as Net, math::CPoint};
+        for scale in [2.0_f64.powi(-400), 1.0, 2.0_f64.powi(400)] {
+            for (dx, dy, smooth) in [
+                (4.0, 8.0, true),
+                (next_parameter_up(4.0), 8.0, false),
+                (4.0, 0.0, false),
+            ] {
+                let controls = [
+                    (0., 0., 1.),
+                    (2., 0., 2.),
+                    (1., 1., 1.),
+                    (dx, dy, 4.),
+                    (2., 2., 1.),
+                ]
+                .into_iter()
+                .map(|(x, y, w)| CPoint::new(x * scale, y * scale, 0., w * scale))
+                .collect();
+                let curve = Curve::from(BSplineCurve::from_nurb(
+                    Net::new(controls, 2, vec![0., 0., 0., 1., 1., 2., 2., 2.]).unwrap(),
+                    3,
+                    false,
+                ));
+                assert_eq!(
+                    exact_native_spline_join(&curve, 1., false),
+                    smooth,
+                    "scale={scale} dx={dx} dy={dy}"
+                );
+                assert!(exact_native_spline_join(&curve, 0.5, false));
+                assert!(exact_native_spline_join(&curve, 1.5, false));
+            }
+        }
+    }
+    #[test]
+    fn offset_boundary_policy_distinguishes_cusp_smooth_splits_and_singularities() {
+        use crate::{
+            curve::offset_curve::OffsetCurve,
+            nurbs::{
+                crv_basic::Curve as Net,
+                math::{CPoint, NOW},
+            },
+        };
+        let k = Kernel::default();
+        let base = Curve::from(BSplineCurve::from_nurb(
+            Net::new(
+                vec![
+                    CPoint::new(-2., 2., 0., NOW),
+                    CPoint::new(-1., 0., 0., NOW),
+                    CPoint::new(0., 0., 0., NOW),
+                    CPoint::new(1., 0., 0., NOW),
+                    CPoint::new(2., 0., 0., NOW),
+                ],
+                2,
+                vec![0., 0., 0., 1., 1., 2., 2., 2.],
+            )
+            .unwrap(),
+            3,
+            false,
+        ));
+        let offset = Curve::from(
+            OffsetCurve::new(3, base, Extent1d::from_min_max(0., 2.), Vec3::Z, -2., true).unwrap(),
+        );
+        assert!(!omit_projected_definition_join(&k, &offset, 1., 0).unwrap());
+        assert!(omit_projected_definition_join(&k, &offset, 0.5, 0).unwrap());
+        assert!(omit_projected_definition_join(&k, &offset, 1.5, 0).unwrap());
+        let line = Curve::from(BSplineCurve::create_line_segment(3, Vec3::ZERO, Vec3::X).unwrap());
+        let singular = Curve::from(
+            OffsetCurve::new(3, line, Extent1d::from_min_max(0., 1.), Vec3::X, 1., true).unwrap(),
+        );
+        assert!(omit_projected_definition_join(&k, &singular, 0.5, 0).is_err());
+    }
+
+    #[test]
+    fn reflected_break_guard_is_scoped_to_the_requested_range() {
+        use crate::{
+            curve::offset_curve::OffsetCurve,
+            nurbs::{crv_basic::Curve as Net, math::CPoint},
+        };
+        let base = Curve::from(BSplineCurve::from_nurb(
+            Net::new(
+                vec![
+                    CPoint::new(0., 0., 0., 1.),
+                    CPoint::new(1., 1., 0., 1.),
+                    CPoint::new(2., 0., 0., 1.),
+                ],
+                1,
+                vec![0., 0., 0.1, 1., 1.],
+            )
+            .unwrap(),
+            3,
+            true,
+        ));
+        let mut offset =
+            OffsetCurve::new(3, base, Extent1d::from_min_max(0., 1.), Vec3::Z, 0., true).unwrap();
+        let _ = offset.reverse_parameterization(&Extent1d::from_min_max(0., 1.));
+        let k = Kernel::default();
+        assert!(offset_definition_range(&k, &offset, Ivl::new(0., 0.5)).is_ok());
+        assert!(offset_definition_range(&k, &offset, Ivl::new(0.8, 1.)).is_err());
+        assert!(offset_definition_range(&k, &offset, Ivl::from(0.9)).is_err());
+    }
+
+    #[test]
+    fn iso_smoothness_requires_the_active_tensor_domain() {
+        use crate::{
+            curve::iso_curve::IsoCurve,
+            nurbs::{
+                b_spline_surface::{BSplineSurface, SurfParamType},
+                math::CPoint,
+                srf_basic::Surface as Net,
+            },
+        };
+        let k = Kernel::default();
+        let rows = vec![
+            vec![CPoint::new(0., 0., 0., 1.), CPoint::new(0., 1., 0., 1.)],
+            vec![CPoint::new(1., 0., 0., 1.), CPoint::new(1., 1., 0., 1.)],
+        ];
+        let surface = BSplineSurface::from_nurb(
+            Net::new(rows, 1, 1, vec![-1., 0., 1., 2.], vec![-1., 0., 1., 2.]).unwrap(),
+            true,
+        );
+        let curve = Curve::from(IsoCurve::new(surface, SurfParamType::U, 0.5, false, true));
+        assert!(omit_projected_definition_join(&k, &curve, 0.5, 0).unwrap());
+        assert!(omit_projected_definition_join(&k, &curve, -0.5, 0).is_err());
+        assert!(omit_projected_definition_join(&k, &curve, 1.5, 0).is_err());
+    }
+
+    #[test]
+    fn conic_regular_chart_and_pole_controls() {
+        use crate::curve::conic::{Conic, ConicType};
+        let k = Kernel::default();
+        for kind in [
+            ConicType::Ellipse,
+            ConicType::Hyperbola,
+            ConicType::Parabola,
+            ConicType::Line,
+        ] {
+            let conic = Conic::new(kind, 2., 1.);
+            assert!(conic_definition_is_smooth(&conic, 0.5));
+            if kind == ConicType::Ellipse {
+                assert!(conic_definition_is_smooth(&conic, 1.));
+                assert_eq!(conic.evaluate_point(1.), Vec3::new(0., 1., 0.));
+                assert_eq!(
+                    conic.evaluate(1., 1, false).unwrap()[1],
+                    Vec3::new(-2., 0., 0.)
+                );
+            }
+        }
+        let hyperbola = Conic::new(ConicType::Hyperbola, 1., 1.);
+        for t in [-1., 1.] {
+            assert!(!conic_definition_is_smooth(&hyperbola, t));
+        }
+        let unknown = Curve::from(Conic::empty());
+        assert!(omit_projected_definition_join(&k, &unknown, 0., 0).is_err());
+        assert!(!conic_definition_is_smooth(
+            &Conic::new(ConicType::Line, f64::NAN, 0.),
+            0.
+        ));
+    }
+    #[test]
+    fn offset_g1_proof_checks_both_one_sided_parameter_speeds() {
+        use crate::{
+            curve::offset_curve::OffsetCurve,
+            nurbs::{crv_basic::Curve as Net, math::CPoint},
+        };
+        let k = Kernel::default();
+        for (span, weight, regular) in [(1.0, 1.0, true), (1e13, 1.0, false), (1.0, 1e-13, false)] {
+            let base = Curve::from(BSplineCurve::from_nurb(
+                Net::new(
+                    vec![
+                        CPoint::new(-weight, 0., 0., weight),
+                        CPoint::new(0., 0., 0., 1.),
+                        CPoint::new(1., 0., 0., 1.),
+                    ],
+                    1,
+                    vec![0., 0., span, span + 1., span + 1.],
+                )
+                .unwrap(),
+                3,
+                true,
+            ));
+            assert!(exact_native_spline_join(&base, span, true));
+            let right = native_point_jet(&base, span, None).unwrap();
+            assert!(iv_length(right[1]).lo > 0.5);
+            let left = native_point_jet(&base, span, Some(1)).unwrap();
+            if !regular {
+                assert!(iv_length(left[1]).hi < EFF_ZERO);
+            }
+            let offset = Curve::from(
+                OffsetCurve::new(
+                    3,
+                    base,
+                    Extent1d::from_min_max(0., span + 1.),
+                    Vec3::Z,
+                    1.,
+                    true,
+                )
+                .unwrap(),
+            );
+            let proof = omit_projected_definition_join(&k, &offset, span, 0);
+            if regular {
+                assert!(proof.unwrap());
+            } else {
+                assert!(proof.is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn perspective_artificial_boundary_refuses_a_singular_denominator() {
+        use crate::{
+            curve::projected_curve::{OwnsCurve, ProjectedCurve},
+            nurbs::b_spline_curve::ProjectionType,
+        };
+        let k = Kernel::default();
+        let base =
+            Curve::from(BSplineCurve::create_line_segment(3, Vec3::Z, Vec3::X + Vec3::Z).unwrap());
+        let curve = Curve::from(
+            ProjectedCurve::new(
+                base,
+                Some(Vec3::ZERO),
+                Some(Vec3::Z),
+                Some(Vec3::Z),
+                ProjectionType::Perspective,
+                OwnsCurve::Yes,
+            )
+            .unwrap(),
+        );
+        assert!(omit_projected_definition_join(&k, &curve, 0.5, 0).is_err());
     }
 }

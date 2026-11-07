@@ -94,5 +94,9 @@
     "nurb_fillet_face5_same": "tangency-labs/solidcore#3042: the Ruled product form reaches past the rows' end, the extended offset then returns a non-manifold body (at the raw kernel call; ops' finish refuses it NotSolid and keeps the body); refused as not exact before it",
     "nurb_fillet_face6_same": "tangency-labs/solidcore#3042: the Ruled product form reaches past the rows' end, the extended offset then returns a non-manifold body (at the raw kernel call; ops' finish refuses it NotSolid and keeps the body); refused as not exact before it",
     "nurb_fillet_face7_same": "tangency-labs/solidcore#3042: the Ruled product form reaches past the rows' end, the extended offset then returns a non-manifold body (at the raw kernel call; ops' finish refuses it NotSolid and keeps the body); refused as not exact before it"
+  },
+  "intersect.topology_solver_p2": {
+    "analytic_face_torus_x_6_15": "tangency-labs/solidcore#3109: fitted-silhouette pair reports 1.6642154866673036, but its returned native point measures 1.6642135459403802; PR #3110 repairs native attainment and certification",
+    "analytic_face_torus_x_7_15": "tangency-labs/solidcore#3109: fitted-silhouette pair reports 1.6642154866673036, but its returned native point measures 1.6642135459403802; PR #3110 repairs native attainment and certification"
   }
 }

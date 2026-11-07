@@ -186,3 +186,90 @@ closed-form/interval proofs and same-view geometry are documented above. No
 unchanged or unverified curved All record is blessed. The remaining 45 known
 failures retain their issue-linked exclusions. Whole-unit and broader merged-head
 gates remain pending; the final parent selection correction is tracked separately.
+
+## Cone and sphere curve/edge-face maxima: native rounding audit
+
+The six frozen cases in `projected_pair_cone_sphere_inputs.jsonl` use the runner's
+native degree-1 X segment from -1 to 1, parameter domain [0,1], and normal Z.
+Entries 6/7 differ only by curve/edge ownership. Reconstructing the runner's actual
+canonical cone and `Sphere::make_nurb` surfaces confirms native face domains [0,1]^2
+and admissibility of every returned parameter. Independent native evaluation
+reproduces the six reported scalars exactly.
+
+For ideal geometry, the cone axis is X, apex (-1,0,0), height h in [.5,1.5],
+and radial extent h*tan(30 degrees). For a line point x in [-1,1], the squared
+projected distance is bounded by max(h^2,(2-h)^2)+h^2/3. Both quadratics are convex
+in h, so endpoint comparison gives maximum 3, attained at h=1.5, x=-1, azimuth 0.
+For either sphere patch, projected radius is at most .5; the triangle inequality
+bounds distance to the X segment by 1.5. Both angular domains include longitude 0
+and latitude 0, attaining that ideal bound at x=-1.
+
+These ideal formulas alone do not certify the rounded native NURBS: the quarter
+sphere's seam evaluates to x=.500000000000000111. The native proof therefore uses
+the defining rational control net and an outward point enclosure at each actual
+returned parameter. The unchanged Bernstein residual helper from `c7b84de47`
+certifies the entire face against **each** exact line endpoint using that own upper.
+Convexity of norm in the affine line parameter extends these two bounds to every
+line point. The feasible returned point supplies a matching lower bound; thus the
+global maximum lies inside its own arithmetic enclosure, without retention slack.
+
+| Surface (entries 6 and 7) | Native reported value | Own enclosure |
+|---|---:|---|
+| cone X | 1.73205080756887719 | [1.73205080756886276, 1.73205080756889185] |
+| sphere band | 1.5 | [1.49999999999998823, 1.50000000000001177] |
+| sphere quarter | 1.5 | [1.49999999999998801, 1.50000000000001199] |
+
+All six endpoint/full-face certificates pass. All three negative controls reject
+an upper bound exactly one binary64 predecessor below the native witness value.
+The own-point arithmetic specializes the exact Z double-cross to dx^2+dy^2; no
+normalization, approximate ideal-sphere substitution or user tolerance is used.
+
+Reproduce with `diagnostics/projected_pair_cone_sphere_native_audit.py`, supplying
+the already-built c7 kernel rlib and matching dependency directory as documented
+in its header. The driver builds only a temporary standalone executable. It obtains
+the residual module with `git show`, mechanically changes import paths, and checks
+copy equality. Original residual SHA256:
+`1a776236708b16d53febe276118e32e6dbcaac3e5e8c182c4a79fbb79b81899a`.
+Import-adapted SHA256:
+`6e3b99e2caf22228246eda9efcb95ae0d1a12a1b3dc7bdaecbb5f9cf49a760fe`.
+The audit-only knot partition bridge is restricted to these continuous fixture
+nets; it is not a replacement production API. Actual outputs are recorded in
+`diagnostics/projected_pair_cone_sphere_native_audit.jsonl`. No expected golden
+record is generated or edited by this evidence.
+
+![Native projected cone and sphere domains](diagnostics/projected_pair_cone_sphere_projection.svg)
+
+### Half-torus curve/edge additions
+
+The same pinned native proof now covers `analytic_face_torus_half_x_6_15` and
+`analytic_face_torus_half_x_7_15`. Their exact returned native parameters are
+`(t,u,v)=(0,0,0.12499999813735485)`, all inside [0,1]. Native evaluation gives
+`1.66421356237309492`; its own enclosure is
+`[1.66421356237307383,1.66421356237311580]`. Both endpoint/full-face Bernstein
+certificates pass at that own upper; one binary64 predecessor below the native
+witness value is rejected. The source/copy residual hashes remain unchanged.
+
+For the ideal torus axis X, major radius 1 and minor radius 1/4, the projection
+satisfies `x=(1/4)sin(v)` and `|y| <= 1+(1/4)cos(v)`. Maximizing against either
+X-line endpoint yields squared distance at most
+`2+1/16+(1/2)(|sin(v)|+cos(v)) <= 2+1/16+sqrt(2)/2`, hence maximum
+`sqrt(2)+1/4`. Azimuth zero and minor angle 45 degrees attain it within the half
+major-angle domain. Native rounded control coefficients and the reported
+parameter do not require exact agreement with that ideal number: the independent
+own-enclosure residual proof above certifies the actual native geometry.
+
+### Eight additional native records
+
+The actual c7 optimized runner changes cone X entries 6/7 from empty output to
+sqrt(3), changes sphere band and quarter entries 6/7 to the certified native
+representatives recorded above (reported distance 1.5), and graduates half-torus
+entries 6/7 from their excluded 1.25 result to 1.664213562373095. Exact old/new
+serialized golden values are preserved in
+`diagnostics/projected_pair_native_golden_changes.json`; these are runner output,
+not manually calculated replacement records. No other expected row changes.
+
+The two full-torus entries remain excluded: their reported 1.6642154866673036
+exceeds the native distance 1.6642135459403802 at the returned parameters. Their
+native-attainment repair is separate. No tolerance or floor changes accompany
+these eight records. The c7 whole-unit run had six changed records and zero
+broken cases; the refreshed whole-unit gate remains required after this migration.
