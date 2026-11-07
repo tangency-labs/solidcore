@@ -624,6 +624,8 @@
 {"case":"perspective_small_separated_swap_1","deferred":null,"error":null,"ints":{"ints":[0,0,3,0,0]},"topology":null,"values":{"floats":[1e+20,0.0,0.0]}}
 {"case":"perspective_unequal_containing_swap_0","deferred":null,"error":null,"ints":{"ints":[0,0,3,0,0]},"topology":null,"values":{"floats":[1e+20,0.0,0.0]}}
 {"case":"perspective_unequal_containing_swap_1","deferred":null,"error":null,"ints":{"ints":{"blocks":[[-3,-91]],"n":18}},"topology":null,"values":{"floats":{"blocks":[[1e+20,1e+20,1e+20]],"n":25}}}
+{"case":"projected_max_scaled_bounds","deferred":null,"error":null,"ints":{"ints":[1]},"topology":null,"values":{"floats":[]}}
+{"case":"projected_min_scaled_bounds","deferred":null,"error":null,"ints":{"ints":[1]},"topology":null,"values":{"floats":[]}}
 {"case":"reversed_line_join_intersection_test","deferred":null,"error":null,"ints":{"ints":{"blocks":[[267,31844],[44,769]],"n":290}},"topology":null,"values":{"floats":{"blocks":[[1e-6,1e-6,3e-6],[0.0,0.0,0.0]],"n":487}}}
 {"case":"surface_3d_signed_directed","deferred":null,"error":null,"ints":{"ints":{"blocks":[[-8,-458]],"n":56}},"topology":null,"values":{"floats":{"blocks":[[1e+20,1e+20,1e+20]],"n":91}}}
 {"case":"surface_closest_point_minimize","deferred":null,"error":null,"ints":{"ints":{"blocks":[[993,57740]],"n":62}},"topology":null,"values":{"floats":{"blocks":[[1e+20,1e+20,1e+20]],"n":91}}}
