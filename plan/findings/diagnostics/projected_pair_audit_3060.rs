@@ -63,6 +63,20 @@ fn selected(root: &Path, all: bool) -> Result<Vec<Case>, Box<dyn std::error::Err
 }
 
 fn solutions(case: &Case, output: &Output) -> Result<Value, &'static str> {
+    if output.error.is_some()
+        || output.rejected.is_some()
+        || output.deferred.is_some()
+        || output
+            .ints
+            .get("status")
+            .is_some_and(|s| s.first() != Some(&0))
+        || output
+            .values
+            .get("status")
+            .is_some_and(|s| s.first() != Some(&0.0))
+    {
+        return Ok(Value::Null);
+    }
     let topology = case.unit == "intersect.topology_solver_p2";
     let key = if topology { "static" } else { "out" };
     let Some(flat) = output.values.get(key) else {

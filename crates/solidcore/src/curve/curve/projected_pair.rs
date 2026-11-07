@@ -3,7 +3,7 @@
 //! Not upstream. The branch-and-bound invariant follows Neumaier (2004),
 //! sections 11 and 12: only a feasible point supplies a lower bound, and every
 //! parameter rectangle must have an upper bound within caller slack plus the
-//! explicitly enclosed rounding at feasible points (as in projected_affine).
+//! explicitly enclosed rounding at feasible points (as in `projected_affine`).
 //! Deviations: iterative subdivision; at most 32,768 boxes, depth 48 and degree
 //! 18. Unsupported definitions and unresolved bounds return a typed refusal.
 
@@ -341,6 +341,22 @@ pub(super) fn solve<O: SolutionObject>(
         && normal.z.is_finite())
     {
         return Err(refused("projected maximum has no finite error budget"));
+    }
+    // Existing cache traversal searches the intersection with each natural
+    // domain (including when an evaluator permits extrapolation). An empty
+    // admissible pair domain is an empty success, not a failed certificate.
+    for (curve, interval) in curves.iter().zip(intervals) {
+        let natural = curve.natural_interval();
+        if interval.min().is_finite()
+            && interval.max().is_finite()
+            && interval.min() <= interval.max()
+            && natural.min().is_finite()
+            && natural.max().is_finite()
+            && natural.min() <= natural.max()
+            && natural.are_disjoint(&interval, 0.0)
+        {
+            return Ok(SolutionArray::new());
+        }
     }
     let [ca, cb] = curves;
     let [ia, ib] = intervals;

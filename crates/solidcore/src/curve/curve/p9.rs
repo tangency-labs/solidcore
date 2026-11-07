@@ -2511,6 +2511,30 @@ mod tests {
     }
 
     #[test]
+    fn projected_pair_maximum_empty_natural_domain_is_empty_success() {
+        let k = Kernel::default();
+        let a = segment([0.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
+        let normal = [Vec3::new(0.0, 0.0, 1.0)];
+        let sols = a
+            .global_curve_solve(
+                &k,
+                &Extent1d::from_min_max(2.0, 3.0),
+                &a,
+                &a.natural_interval(),
+                SolverOperation::ProjectedMaximize,
+                0.0,
+                &CurveSolveOptions {
+                    handles: handles(&a, &a),
+                    opt_vectors: Some(&normal),
+                    ..CurveSolveOptions::default()
+                },
+                SolutionRequested::Single,
+            )
+            .unwrap();
+        assert!(sols.is_empty());
+    }
+
+    #[test]
     fn projected_pair_maximum_includes_constrained_corners() {
         let k = Kernel::default();
         let a = segment([-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
