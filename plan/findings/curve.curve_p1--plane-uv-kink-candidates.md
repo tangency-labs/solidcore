@@ -176,3 +176,60 @@ native replay against the integrated fix, pass `--native <new-replay.jsonl>
 --require-success` to require all 19 corrected metadata results. No numerical
 tolerance is used in this metadata check; exact binary64 values and rational
 inverse relationships are compared.
+
+## Nonlinear wrapper definition audit (validation in progress)
+
+The prior checkpoint paragraph does not describe the subsequent policy. The
+regularity draft distinguishes a genuine defining boundary (retain it), a proved
+smooth artificial subdivision (omit it), and an unproved artificial or singular
+boundary (return the projected construction refusal). It does not introduce
+cache samples as extrema. All recursive wrapper walks are bounded by the shared
+32-level geometry nesting limit.
+
+A nonzero offset can turn a C1 base join into a cusp. The quadratic base with
+controls (-2,2),(-1,0),(0,0),(1,0),(2,0), knots [0,0,0,1,1,2,2,2], normal Z and
+distance -2 has offset point (0,2) at t=1. Its one-sided derivatives are (-2,0)
+and (2,0). Against query (1,2), the projected maximum on [.9,1.1] is exactly 1;
+the old result was .8079873760552383 at .9. The draft retains this defining join.
+Omitting nonzero-offset joins requires sufficient native C2 regularity, or an
+exact straight degree-one join, and interval proof that evaluator tangent repair
+and binormal fallback are inactive. At a straight true join, both one-sided jets
+are checked because their parameter speeds can differ. Singular artificial
+boundaries refuse rather than yielding sampled candidates.
+
+Perspective projection additionally requires its actual rational denominator to
+exclude zero. Fixed finite affine volume maps preserve a proved source join.
+Direct Conic polynomial/rational branches are handled explicitly, including the
+ellipse chart switch and hyperbola poles. Native Iso proofs use the actual varying
+tensor direction and positive-weight regularity only inside both active knot
+domains, with finite/ordered knots and bounded degrees. Procedural definitions
+are not substituted with fitted nets. The unequal-direction-count Iso metadata
+bug is separately tracked in #3113; the equal-count missed join is covered here.
+
+Reversed offset knot metadata now remains usable even when a rounded mirrored
+knot cannot map exactly back to the defining knot. Before projected traversal,
+relevant breaks are checked against outward mapped query intervals. A relevant
+noninvertible break refuses that construction; it is not mislabeled smooth, nor
+silently represented by its rounded metadata location. This guard also follows
+nested directly evaluated wrappers. It does not globally reject unrelated offset
+metadata operations.
+
+TangentField inherits UV knots while its evaluator switches to stored endpoint
+vectors in endpoint strips and only implements first finite-difference derivatives.
+Public projected maximum queries returned successful empty arrays even on constant
+subdomains with attained maxima. #3114 records the reproduction and missing actual
+construction support. Until that support exists, the draft refuses projected
+TangentField queries before cache/target shortcuts, including indirect Projected,
+Offset, CrvInVolume and CrvOnSurf chains. This is an explicit unsupported class,
+not a claim of complete wrapper construction. Broad-retention All classification
+remains separately tracked in #3111.
+
+The initial nonlinear integration checkpoint passed 38 tests. The first expanded
+private run passed 25 of 26; an unequal-span fixture was altered by its constructor's
+knot fixup before testing the proof. The fixture now preserves its raw stored net.
+The final expanded checkpoint passes all 42 public projected-query tests and all
+28 private p1 tests, including both one-sided speeds, active tensor-domain
+extrapolation refusal and reflected-break query scoping. The metadata success
+control passes alongside direct and outer-wrapper projected refusal controls.
+Formatting and diff checks pass. Strict Clippy, panic inventory and integrated
+golden replay remain pending; no ready or complete claim is made for this draft.
