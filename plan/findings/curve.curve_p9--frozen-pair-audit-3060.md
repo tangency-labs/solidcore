@@ -12,6 +12,15 @@ computed arithmetic enclosure; its reported scalar lies inside that same
 interval. Caller retention slack and other point widths do not loosen this
 certificate. This follows the [maintainer contract](https://github.com/tangency-labs/solidcore/pull/2840#discussion_r4496188362).
 
+The final guard replay at 9402730dd has bitwise-identical inputs, outputs and
+solutions to 46bd74511 across both cohorts (only timing metadata differs).
+A separate [public Rust remeasurement](diagnostics/projected_pair_single_native_3060.jsonl)
+reconstructs all 31 generated inputs, reruns the public solver, then reevaluates
+every returned parameter through `Curve::evaluate_point`. It reports zero
+inadmissible parameters, zero solver/audit errors and exactly zero scalar
+remeasurement differences. The four cylinder rows have the independent analytic
+endpoint proof recorded below.
+
 All returned parameters are admissible. Independent native line/Hermite/rational
 evaluation agrees with each reported scalar within 7.11e-15. Independent
 optimization's largest positive excess over an answer is 2.85e-14; those signed
@@ -30,7 +39,11 @@ proved endpoint contractions in the search state and allowing 128 total
 bisections for two coordinates removed all 19, without changing the strict
 acceptance rule or the 32,768-box work cap. All 31 focused tests pass at 46bd74511,
 including identical answers for zero and large retention on an interior peak.
-The later final-All retention guard has its own separate validation checkpoint.
+The final-All retention guard at `9402730dd` passes 32 focused tests and both
+frozen cohorts with the same changed-case counts and no new refusals. It keeps
+existing sorting and duplicate policy, but refuses if the actual returned set
+cannot cover the complete objective bound or silently drops a distinct candidate
+whose exclusion from the retention band is unproved.
 
 | Case | Before values (status) | Strict after values | Retention slack | Independent search minus answer |
 |---|---|---|---|---|
