@@ -759,17 +759,24 @@ fn on_definition(
                 });
             }
             let (origin, axis) = (f.origin, f.axis);
-            // every row turns by the same angle (the form is a tensor product): take it from
-            // the row farthest from the axis, since a row on the axis (a pole) has no angle
-            let mut far = (0.0_f64, 0.0_f64);
-            for (&(j, _), row) in joint.iter().zip(&past) {
-                let &[_, (end, _)] = row.as_slice() else {
+            // every row turns by the same angle and ends at the same weight ratio (the form is
+            // a tensor product): take them from the row farthest from the axis, since a row on
+            // the axis (a pole) has no angle. A ratio per row would differ by the rounding of
+            // the continuation, and rows far apart along the axis turn that into a height:
+            // the iso between them leaves its plane
+            let mut far = (0.0_f64, 0.0_f64, 1.0_f64);
+            for (&(j, wj), row) in joint.iter().zip(&past) {
+                let &[_, (end, wn)] = row.as_slice() else {
                     return Err(SolidError::sm_err(OP));
                 };
                 let centre = origin + axis * axis.dot(j - origin);
                 let (r0, r1) = (j - centre, end - centre);
                 if r0.length() > far.0 {
-                    far = (r0.length(), axis.dot(r0.cross(r1)).atan2(r0.dot(r1)));
+                    far = (
+                        r0.length(),
+                        axis.dot(r0.cross(r1)).atan2(r0.dot(r1)),
+                        wn / wj,
+                    );
                 }
             }
             if !(far.0.is_finite() && far.0 > 0.0) {
@@ -780,10 +787,8 @@ fn on_definition(
             if half.cos().is_nan() || half.cos() <= 0.0 {
                 return Ok(None);
             }
-            for (&(j, wj), row) in joint.iter().zip(&past) {
-                let &[_, (_, wn)] = row.as_slice() else {
-                    return Err(SolidError::sm_err(OP));
-                };
+            for &(j, wj) in &joint {
+                let wn = wj * far.2;
                 let centre = origin + axis * axis.dot(j - origin);
                 let r0 = j - centre;
                 let turn = |phi: f64| r0 * phi.cos() + axis.cross(r0) * phi.sin();
