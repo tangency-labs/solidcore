@@ -145,7 +145,7 @@
 {"case":"adv_sec_b2_e2_m0_f1e-09_c0_t0.0_0.5","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
 {"case":"adv_sec_b2_e2_m0_f1e-09_c2_t0.0_0.5","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
 {"case":"adv_sec_b2_e2_m1_f0.5_c2_t0.25_0.75","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
-{"case":"adv_sec_b2_e2_m2_f0.5_c0_t0.25_0.75","deferred":null,"error":null,"ints":{"sector":[0,0,0]},"topology":null,"values":{}}
+{"case":"adv_sec_b2_e2_m2_f0.5_c0_t0.25_0.75","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
 {"case":"adv_sec_b2_e2_m2_f0.5_c1_t1.0_1.0","deferred":null,"error":null,"ints":{"sector":[0,0,0]},"topology":null,"values":{}}
 {"case":"adv_sec_b2_e2_m2_f0.5_c2_t1.0_0.0","deferred":null,"error":"rejected","ints":{},"topology":null,"values":{}}
 {"case":"adv_sec_b2_e3_m0_f0.0_c1_t0.5_0.0","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
@@ -153,8 +153,8 @@
 {"case":"adv_sec_b2_e3_m0_f0.5_c1_t1.0_0.0","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
 {"case":"adv_sec_b2_e3_m0_f0.5_c2_t1.0_1.0","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
 {"case":"adv_sec_b2_e3_m0_f1e-09_c0_t1.0_0.0","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
-{"case":"adv_sec_b2_e3_m1_f0.5_c1_t0.5_0.0","deferred":null,"error":null,"ints":{"sector":[1,1,5]},"topology":null,"values":{}}
-{"case":"adv_sec_b2_e3_m2_f0.5_c1_t1.0_0.0","deferred":null,"error":null,"ints":{"sector":[0,0,0]},"topology":null,"values":{}}
+{"case":"adv_sec_b2_e3_m1_f0.5_c1_t0.5_0.0","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
+{"case":"adv_sec_b2_e3_m2_f0.5_c1_t1.0_0.0","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
 {"case":"adv_sec_b3_e0_m0_f0.0_c0_t0.25_0.75","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
 {"case":"adv_sec_b3_e0_m0_f0.0_c1_t0.5_0.5","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
 {"case":"adv_sec_b3_e0_m0_f0.5_c0_t0.5_0.5","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
@@ -517,7 +517,7 @@
 {"case":"gen0065","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
 {"case":"gen0066","deferred":null,"error":null,"ints":{"sector":[0,0,0]},"topology":null,"values":{}}
 {"case":"gen0067","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
-{"case":"gen0068","deferred":null,"error":null,"ints":{"sector":[0,0,0]},"topology":null,"values":{}}
+{"case":"gen0068","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
 {"case":"gen0069","deferred":null,"error":null,"ints":{"sector":[0,0,0]},"topology":null,"values":{}}
 {"case":"gen0070","deferred":null,"error":null,"ints":{"flags":[0,0,0,1],"interval_classes":{"blocks":[[905,8136]],"n":18}},"topology":null,"values":{"interval_bounds":[0.0,0.050000000000000044,0.050000000000000044,0.95,0.95,1.0],"uv_line":[0.49999999999999994,1.0,0.5,0.0]}}
 {"case":"gen0071","deferred":null,"error":null,"ints":{},"topology":null,"values":{"point":[0.00045499999999999995,0.00024483644066968993,0.0]}}
@@ -557,7 +557,7 @@
 {"case":"gen0105","deferred":null,"error":null,"ints":{},"topology":null,"values":{"max":[-1.3311108304397739,-1.587969346982801,1.7506377088792828],"min":[-1.7284300130195767,-2.0364057422837716,1.423959927296724]}}
 {"case":"gen0106","deferred":null,"error":null,"ints":{},"topology":null,"values":{"max":[1.1605053901023252,-0.49593113960636925,2.702421166694543],"min":[0.10955322470541784,-0.8299220809367118,1.9248153569082542]}}
 {"case":"gen0107","deferred":null,"error":null,"ints":{"flags":[0,0,0,1],"interval_classes":[102,-1,102,-1,104,0,104,0,100,-1,100,-1]},"topology":null,"values":{"interval_bounds":[0.0,0.4999999999998394,0.4999999999998394,1.0],"uv_line":[0.4999999999999999,1.0,0.5,0.0]}}
-{"case":"gen0108","deferred":null,"error":null,"ints":{"sector":[0,0,0]},"topology":null,"values":{}}
+{"case":"gen0108","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
 {"case":"gen0109","deferred":null,"error":null,"ints":{},"topology":null,"values":{"max":[-1611.1503915355445,-1552.0860850538054,2204.8652407938525],"min":[-1975.4519778243225,-1668.2386901250165,1584.148845715502]}}
 {"case":"gen0110","deferred":null,"error":null,"ints":{},"topology":null,"values":{"max":[0.6303374910931118,-0.87546012220069,-0.7226208285935098],"min":[-0.1177294575565423,-1.3025124799907293,-1.5877858577177395]}}
 {"case":"gen0111","deferred":null,"error":null,"ints":{},"topology":null,"values":{"max":[0.910526029958002,-1.1791577674072724,2.1213171460813998],"min":[0.27751371060391905,-1.3331000984090433,1.7352875283281894]}}
@@ -696,7 +696,7 @@
 {"case":"gen0244","deferred":null,"error":null,"ints":{"sector":[1,1,6]},"topology":null,"values":{}}
 {"case":"gen0245","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
 {"case":"gen0246","deferred":null,"error":null,"ints":{"flags":[1,1,1,1],"interval_classes":[103,-1,102,-1,103,-1]},"topology":null,"values":{"interval_bounds":[0.0,1.0],"uv_line":[60.0,0.0,60.0,48.2842712474619]}}
-{"case":"gen0247","deferred":null,"error":null,"ints":{"sector":[0,0,0]},"topology":null,"values":{}}
+{"case":"gen0247","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
 {"case":"gen0248","deferred":null,"error":null,"ints":{},"topology":null,"values":{"max":[0.2520235741078084,0.43091521025371726,2.478881954030412],"min":[-0.3825768286255796,0.14713724342857792,1.8401653904945263]}}
 {"case":"gen0249","deferred":null,"error":null,"ints":{},"topology":null,"values":{"max":[2.163641361606644,1.5335082951047618,0.22036608090508392],"min":[0.6178244750873463,0.34336696659046767,-0.07843725831762839]}}
 {"case":"gen0250","deferred":null,"error":null,"ints":{},"topology":null,"values":{"max":[13.000000000000002,7.0,7.000000000000001],"min":[-2.0,-5.362311101832848,0.0]}}
@@ -1032,7 +1032,7 @@
 {"case":"gen0580","deferred":null,"error":null,"ints":{},"topology":null,"values":{"max":[2.9434044511180586,5.128693072196752,1.3615278758980773],"min":[-3.9837668450190407,-5.230683091597772,-1.3615278758980773]}}
 {"case":"gen0581","deferred":null,"error":null,"ints":{},"topology":null,"values":{"max":[1283.8244962457861,3633.020374135985,291.79736047637385],"min":[319.54844012913816,1990.6267573308562,88.35653743333015]}}
 {"case":"gen0582","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
-{"case":"gen0583","deferred":null,"error":null,"ints":{"sector":[1,1,5]},"topology":null,"values":{}}
+{"case":"gen0583","deferred":null,"error":null,"ints":{"sector":[1,1,2]},"topology":null,"values":{}}
 {"case":"gen0584","deferred":null,"error":null,"ints":{"sector":[1,0,0]},"topology":null,"values":{}}
 {"case":"gen0585","deferred":null,"error":null,"ints":{},"topology":null,"values":{"point":[0.9221630752150342,1.8069116003102232,-0.03898689456551707]}}
 {"case":"gen0586","deferred":null,"error":null,"ints":{},"topology":null,"values":{"max":[2.3415224841317617,5.025003268665487,3.518673221201174],"min":[-3.2827144288188794,-6.4428127458184825,0.7435837611926075]}}

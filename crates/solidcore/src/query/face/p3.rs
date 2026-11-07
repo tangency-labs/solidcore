@@ -76,6 +76,10 @@
 //! - **`FindElementInMaskedArray` (`WR-167`).** Each element is searched only when
 //!   its own mask bit is set; indices beyond the mask width have no bit. This corrects
 //!   upstream's `1<ii` comparison (`plan/upstream-issues/` `WR-167`).
+//! - **`SectorClassifyCurveOn` `[230227_crease]` (`WR-754`).** Upstream unitizes
+//!   `sCurvePV[1]` into `sCrvTan` (`SmFace.cpp:13372-13373`) and then dots `sBin1` and
+//!   `sBin2` against raw `sCurvePV[1]` (`SmFace.cpp:13376-13377`). The port dots against
+//!   the unitized `crv_tan` so the `0.1` cosine threshold is scale-independent.
 //! - **Dropped** (no effect on results in the reference build, which defines neither
 //!   `SM_DEBUG_CODE` nor active asserts): the debug graphics and dumps, every
 //!   `SM_ASSERT*` and `SM_DBG_WARN`, `lFaceIndx` of `SectorClassifyCurveOn` (debug only),
@@ -2254,9 +2258,9 @@ pub fn sector_classify_curve_on(
         // [230227_crease]
         match evaluate_binormal(k, b, cp_eu2, new_eu2_param, use_3d_only) {
             Ok(bin2_eval) => {
-                if curve_pv[1].unitize().is_ok() {
-                    let dot1 = bin1.dot(curve_pv[1]);
-                    let dot2 = bin2_eval.binormal.dot(curve_pv[1]);
+                if let Ok(crv_tan) = curve_pv[1].unitize() {
+                    let dot1 = bin1.dot(crv_tan);
+                    let dot2 = bin2_eval.binormal.dot(crv_tan);
                     if dot1 > 0.1 && dot2 > 0.1 {
                         res.inside = true;
                         return Ok(res);
@@ -3426,5 +3430,66 @@ mod tests {
     fn classify_problem_codes() {
         assert_eq!(ClassifyProblem::None as i32, 0);
         assert_eq!(ClassifyProblem::UnresolvedClassification as i32, 7);
+    }
+
+    #[test]
+    fn wr754_sector_classify_crease_dots_unitized_curve_tangent() {
+        use crate::nurbs::b_spline_curve::{
+            BSplineCurve, BSplineCurveForm, CanonicalData, KnotType,
+        };
+
+        let k = Kernel::default();
+        let mut b = Brep::new();
+        let f = square(&mut b, 0.0);
+
+        // Identical quadratic Bezier curve parameterized over `[0, 1]` vs `[0, 1e-3]`.
+        // It starts on Edge 0 at `(0.5, 0, 0)` with a sub-tolerance `+0.001 rad` graze
+        // (`max y = 5e-8 << zone_tol = 1e-3`) before plunging outside the square to
+        // `(0.7, -0.2, 0)`. Scaling the knot span by `1e-3` scales `|C'(0)|` by `1000`
+        // (`y'(0) = +0.2 > 0.1`), which tripped `[230227_crease]` when upstream dotted
+        // against raw `sCurvePV[1]` instead of unitized `sCrvTan`.
+        let pts = [
+            Point3::new(0.5, 0.0, 0.0),
+            Point3::new(0.6, 1e-4, 0.0),
+            Point3::new(0.7, -0.2, 0.0),
+        ];
+        for knot_hi in [1.0, 1e-3] {
+            let curve = Curve::from(
+                BSplineCurve::create_canonical(&CanonicalData {
+                    dim: 3,
+                    degree: 2,
+                    control_points: &pts,
+                    form: BSplineCurveForm::Unspecified,
+                    knot_multiplicities: &[3, 3],
+                    knots: &[0.0, knot_hi],
+                    knot_type: KnotType::PiecewiseBezierKnots,
+                    weights: None,
+                    trim: None,
+                })
+                .unwrap(),
+            );
+            let eu = |orientation| SectorEdgeuse {
+                edgeuse: EdgeuseId::from_index(0),
+                param: 0.5,
+                zone_tol_3d: 1e-3,
+                orientation,
+            };
+            let input = SectorClassifyInput {
+                eu1: eu(OrientType::Same),
+                eu2: eu(OrientType::Opposite),
+                curve: &curve,
+                curve_interval: curve.natural_interval(),
+                curve_orientation: OrientType::Same,
+                curve_zone_tol_3d: 1e-3,
+                on_singularity: false,
+                singularity_uv: Point2::new(0.0, 0.0),
+                uv_space_okay: true,
+            };
+            let r = sector_classify_curve_on(&k, &mut b, f, &input).unwrap();
+            assert!(
+                !r.inside,
+                "knot_hi={knot_hi}: curve exits into y < 0, got {r:?}"
+            );
+        }
     }
 }
