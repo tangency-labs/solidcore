@@ -658,7 +658,12 @@ and does not establish regression attribution. The captured union-case replay
 passes. No deadline, tolerance, fixture or classification was changed to hide
 the timeout. Hosted CI separately requires repository-admin workflow approval.
 
-## Projected face review follow-up: retention slack and early exits
+## Historical projected-face checkpoint (superseded by strict review work)
+
+The following records the earlier `711b12437` checkpoint. Its combined caller/
+comparison-point allowance was subsequently rejected in review and is not the
+current certificate contract. The strict own-enclosure revision and its separate validation are recorded
+below; the earlier 33-test result does not validate that revision.
 
 The face certificate now distinguishes retention slack from arithmetic rounding.
 For a face-owned incumbent it uses the lower endpoint of its singleton metric
@@ -730,6 +735,51 @@ used as the before image.
 | Before: invalid small elbow | After: valid small elbow |
 |---|---|
 | ![Original native edges](figures/small-elbow-diag-wire-before.png) | ![Corrected native edges](figures/small-elbow-diag-wire-after.png) |
+
+
+## Strict projected-face certificate revision
+
+The current construction uses only the returned point's own definition-based
+metric enclosure. Caller distance tolerance selects retained answers; it never
+increases the construction cutoff. A face, edge, or vertex incumbent is enclosed
+from its actual geometry and native parameter side, and its reported scalar must
+lie inside that enclosure. Unsupported incumbent definitions explicitly refuse
+certification instead of trusting an unchecked reported distance.
+
+Native UV refinement uses at most 48 active-set Newton steps to improve the
+candidate on its exact rectangular trim. This is candidate generation, not a
+maximality proof. The independent whole-face check uses homogeneous Bernstein
+coefficients of `U^2 W^2 - |N x (H-QW) x N|^2`, where `U` is that same candidate's
+own upper metric enclosure. Positive native weights and nonnegative residual
+coefficient lower bounds prove the bound over every requested knot patch.
+Neither another point's arithmetic width nor geometric parameter uncertainty
+is added to `U`.
+
+This bounded proof supports degree at most 8 in each surface parameter, visits
+at most 4096 subdivision cells, and uses depth at most 64. Higher degrees,
+exhausted budgets, unresolved coefficient signs, and uncovered discontinuous
+upper boundaries explicitly refuse certification. Degree-8 success and
+otherwise equivalent degree-9 refusal are tested separately. These bounds are
+implementation limits, not evidence that the unsupported geometric query has
+no answer; affected golden cases must be audited before updating expectations.
+
+A zero projection normal has identically zero projected numerator. It therefore
+certifies at upper bound zero without an arithmetic floor. Negative or nonfinite
+upper bounds and invalid inputs remain refusals. Native discontinuous knots
+use the actual evaluator's default side for the candidate; the other side is
+never treated as point rounding. An isolated native-right value at a requested
+upper boundary remains a refusal until it is included in the global proof.
+
+Validation of this integrated revision: all 44 topology-solver unit tests pass,
+including all eight cases that the strict mean-value bound previously refused.
+The original plane, sphere, trimmed/banded sphere, tilted projection, torus and
+traversal-order expectations are unchanged. The seven residual-specific tests
+include independent polynomial, rational-weight, knot-extraction and degree-limit
+controls. Strict library/tests Clippy and formatting pass. The panic-site
+inventory reports no unlisted sites; its Windows base-revision lookup uses a
+backslash path, so the authoritative base-list ratchet remains a Linux gate.
+Broad golden validation remains separate; earlier full-suite totals above
+belong to their identified historical checkpoints.
 
 ## Exact joins and strict affine construction
 

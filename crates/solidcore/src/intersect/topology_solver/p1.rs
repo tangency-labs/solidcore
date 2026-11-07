@@ -1680,6 +1680,13 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
                     sub.point_curve(k, ts, curve, None)?;
                 }
                 if certified_maximum {
+                    super::projected_bound::refine_candidate(
+                        k,
+                        objects,
+                        face,
+                        self.point,
+                        &mut ts.base,
+                    )?;
                     if let Some(faces) = &mut ts.deferred_projected_faces {
                         super::projected_bound::certify_candidate(
                             k, objects, face, self.point, &ts.base,

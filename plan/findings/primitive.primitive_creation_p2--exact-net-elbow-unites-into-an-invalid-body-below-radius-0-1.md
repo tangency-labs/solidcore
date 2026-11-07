@@ -39,10 +39,5 @@ reference offsets in the mitre trim (`planar_path.rs`, `before[0] + (-before[1] 
 are not the cause alone, since a leg of 1 fails the same.
 
 Solidcore returns an invalid body where the C++ refused.
-Both cases were listed in `crates/goldens/expected/known_failing.json` without golden lines.
-The follow-up #2840/#3087 graduates them after checking the actual seeded inputs:
-Level2 validity passes and volume agrees with pi r^2 2 leg = 6.283185307179586e-8
-within the existing volume test tolerance. See the consolidated
-[`curve.curve_p1` finding](curve.curve_p1--projected-endpoints-small-mitres.md#original-seeded-elbow-cases)
-for the measured values, reproducible helper and renders. The failure measurements above
-record the pre-fix behavior.
+Both cases are listed in `crates/goldens/expected/known_failing.json` (no golden line) until the small-profile mitre is fixed (the correct answer for
+radius 1e-3 is the valid body of volume pi r^2 2 leg = 6.2832e-8, or a refusal).
