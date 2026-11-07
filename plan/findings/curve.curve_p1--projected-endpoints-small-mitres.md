@@ -254,14 +254,21 @@ counts, temporary replay programs, and redundant validation snapshots are omitte
 
 ### Analytic face and subdivided callers
 
+The four cylinder curve/face rows below are known failures, not valid maximum
+baselines. In projected coordinates their line spans `[-1, 1]` and the face spans
+`[-0.5, 0.5]^2`: every pair has `|dx| <= 1.5`, `|dy| <= 0.5`, and an opposite
+endpoint/corner pair attains both bounds. Thus the exact maximum is `sqrt(2.5)`.
+Their incorrect `0.5` golden rows are removed and excluded under #3060 until the
+pair construction in #3077 graduates the actual corrected outputs.
+
 | Case | Native distance; parameters | Rust distance; parameters | Independent classification |
 |---|---|---|---|
 | `analytic_face_cyl_x_5_15` | 0.80000000000000004; (1.5707963267948966, 0.69999999999999996) | 1.063014581273465; (1.5707963267948966, 0) | Matches exact point-face maximum; native value is suboptimal even along the silhouette. |
-| `analytic_face_cyl_x_6_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | Both distances remain 0.5 at valid pairs; changed representatives. Below unrestricted face maximum 1.5811388300841898; no new scalar regression and no C++ defect established. |
-| `analytic_face_cyl_x_7_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | Both distances remain 0.5 at valid pairs; changed representatives. Below unrestricted face maximum 1.5811388300841898; no new scalar regression and no C++ defect established. |
+| `analytic_face_cyl_x_6_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | KNOWN WRONG: 0.5 is suboptimal. The admissible opposite-endpoint pair attains the exact maximum sqrt(2.5)=1.5811388300841898. Excluded under #3060; the pair construction is repaired in #3077, not this parent. |
+| `analytic_face_cyl_x_7_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | KNOWN WRONG: 0.5 is suboptimal. The admissible opposite-endpoint pair attains the exact maximum sqrt(2.5)=1.5811388300841898. Excluded under #3060; the pair construction is repaired in #3077, not this parent. |
 | `analytic_face_halfcyl_x_5_15` | 0.80000000000000004; (1.5707963267948966, 0.69999999999999996) | 1.063014581273465; (1.5707963267948966, 0) | Matches exact point-face maximum; native value is suboptimal even along the silhouette. |
-| `analytic_face_halfcyl_x_6_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | Both distances remain 0.5 at valid pairs; changed representatives. Below unrestricted face maximum 1.5811388300841898; no new scalar regression and no C++ defect established. |
-| `analytic_face_halfcyl_x_7_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | Both distances remain 0.5 at valid pairs; changed representatives. Below unrestricted face maximum 1.5811388300841898; no new scalar regression and no C++ defect established. |
+| `analytic_face_halfcyl_x_6_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | KNOWN WRONG: 0.5 is suboptimal. The admissible opposite-endpoint pair attains the exact maximum sqrt(2.5)=1.5811388300841898. Excluded under #3060; the pair construction is repaired in #3077, not this parent. |
+| `analytic_face_halfcyl_x_7_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | KNOWN WRONG: 0.5 is suboptimal. The admissible opposite-endpoint pair attains the exact maximum sqrt(2.5)=1.5811388300841898. Excluded under #3060; the pair construction is repaired in #3077, not this parent. |
 | `analytic_face_cone_x_5_15` | 0.85980762113533138; (0.49999999999999989, 0.27009618943233427) | 1.2039996853283075; (0.5, 1) | Matches exact point-face maximum; native value is suboptimal. |
 | `analytic_face_sphere_band_5_15` | empty | 0.86054198087056166; (0.65499056183776805, 0.50000000000000011) | Reported-distance gap 1.314667583729e-5 exceeds query tolerance; approximate-silhouette output, not a strict corrected-result claim. |
 | `analytic_face_sphere_quarter_5_15` | empty | 0.76157731058639078; (1, 0.50000000000000011) | Matches exact point-face maximum; native empty. |

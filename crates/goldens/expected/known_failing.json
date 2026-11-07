@@ -14,6 +14,10 @@
     "gen2585": "tangency-labs/solidcore#3060: reported projected maximum is suboptimal (about 0.000128676797868 versus feasible 0.9962268759220879); an endpoint/parameter update does not fix the curve-pair maximum"
   },
   "intersect.topology_solver_p2": {
+    "analytic_face_cyl_x_6_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 0.5, but an admissible opposite-endpoint pair attains sqrt(2.5)=1.5811388300841898; stacked PR #3077 repairs the pair construction",
+    "analytic_face_cyl_x_7_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 0.5, but an admissible opposite-endpoint pair attains sqrt(2.5)=1.5811388300841898; stacked PR #3077 repairs the pair construction",
+    "analytic_face_halfcyl_x_6_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 0.5, but an admissible opposite-endpoint pair attains sqrt(2.5)=1.5811388300841898; stacked PR #3077 repairs the pair construction",
+    "analytic_face_halfcyl_x_7_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 0.5, but an admissible opposite-endpoint pair attains sqrt(2.5)=1.5811388300841898; stacked PR #3077 repairs the pair construction",
     "analytic_face_sphere_band_5_15": "tangency-labs/solidcore#2967: approximate-silhouette maximum 0.8605419808705617 misses the exact 0.860555127546399 by 1.314667583729e-5, exceeding the requested 1e-5; the separate accuracy fix is #2968"
   },
   "offset.offset_executive_p2": {
