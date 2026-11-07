@@ -2005,6 +2005,7 @@ fn keeps(net: &Net, out: &Net, side: BoxSide) -> Result<bool> {
 mod analytic;
 mod ball;
 mod blend;
+mod local_iso;
 mod measure;
 mod sides;
 pub use sides::{ExtendedSides, SideExtension};

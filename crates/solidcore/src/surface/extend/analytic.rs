@@ -384,20 +384,15 @@ fn measured(
     (a, b): (Point2, Point2),
     f: &Frame,
     iso: Iso,
-    (far, half): (Vec3, Vec3),
-    start: Option<(&BSplineSurface, Point2)>,
+    (far, half): (Point2, Point2),
+    bound: f64,
 ) -> Result<(f64, f64)> {
-    let (source, from) = start.unwrap_or((s, a));
-    let chord = if start.is_some() && !matches!(iso, Iso::Ruling) {
-        super::measure::chord_between(source, from, s, b)?
-    } else {
-        super::measure::chord(s, a, b)?
-    };
+    let (chord, chord_err) = super::measure::chord(s, a, b)?;
     if matches!(iso, Iso::Ruling) {
-        return Ok(chord);
+        return Ok((chord, chord_err + 4.0 * bound));
     }
-    let (x0, err) = super::measure::point(source, from, f.origin)?;
-    let (x1, _) = super::measure::point(s, b, f.origin)?;
+    let (x0, err) = super::measure::point(s, a, f.origin)?;
+    let (x1, err1) = super::measure::point(s, b, f.origin)?;
     let local = Frame {
         origin: Vec3::ZERO,
         ..*f
@@ -405,12 +400,19 @@ fn measured(
     let Some((centre, n, radius)) = circle(&local, iso, x0)? else {
         return Err(SolidError::sm_err(OP));
     };
-    let n = if (half - far).cross(source.evaluate_point(from)? - half).dot(n) < 0.0 {
-        n * -1.0
-    } else {
-        n
+    let nerr = if matches!(iso, Iso::Parallel) { gamma(8) } else {
+        let v = f.axis.cross(x0);
+        let ev = (2.0 * err + gamma(16) * x0.length()) * (1.0 + gamma(8));
+        if v.length() > ev {
+            (2.0 * ev / (v.length() - ev) + gamma(16)) * (1.0 + gamma(8))
+        } else { f64::INFINITY }
     };
-    let long = (x0 - centre).cross(x1 - centre).dot(n) < 0.0;
+    let (far, ef) = super::measure::point(s, far, f.origin)?;
+    let (half, eh) = super::measure::point(s, half, f.origin)?;
+    let es = (ef + eh + err + gamma(4) * (far.length() + half.length() + x0.length()))
+        * (1.0 + gamma(8));
+    let source_sense = super::measure::turn_sign(half - far, x0 - half, n, es, nerr);
+    let n = if source_sense.0 { n * -1.0 } else { n };
     let radius_err = if matches!(iso, Iso::Parallel) {
         // gamma_16: axis dot (3 products, 2 sums), projection (3 products,
         // 3 differences), norm (3 squares, 2 sums, sqrt), and bound arithmetic.
@@ -419,7 +421,19 @@ fn measured(
     } else {
         0.0 // the sphere/tube radius is definition data, not computed from endpoints
     };
-    super::measure::arc(chord, (radius, radius_err), long)
+    // Retain the original 4*construction contribution, but pass it through
+    // chord/radius conditioning: a fixed post-asin addition is not sufficient
+    // near a diameter. Endpoint displacement is <= bound, so these inputs
+    // conservatively cover both endpoint and projected-centre perturbations.
+    let eu = (4.0 * (err + err1) + radius_err
+        + (2.0 * nerr + nerr * nerr) * (x0.length() + centre.length())
+        + gamma(32) * (x0.length() + x1.length() + centre.length()) + 4.0 * bound)
+        * (1.0 + gamma(16));
+    let mut sense = super::measure::turn_sign(x0 - centre, x1 - centre, n, eu, nerr);
+    sense.1 &= source_sense.1;
+    super::measure::oriented_arc(
+        (chord, chord_err + 4.0 * bound), (radius, radius_err + 4.0 * bound), sense,
+    )
 }
 
 /// The widened analytic path uses the same local chord and arc as `extend_side`.
@@ -429,54 +443,52 @@ pub(super) fn widened_across(
     (s, dom, side): (&Surface, &crate::geom::extent2d::Extent2d, BoxSide),
 ) -> Result<Across> {
     let support = AnalyticSupport::check(k, s)?;
-    let (origin, axis, along) = match support.implicit() {
-        Implicit::Plane { origin, normal } => (origin, normal, Iso::Ruling),
-        Implicit::Cone { origin, axis, .. } => (origin, axis, Iso::Ruling),
-        Implicit::Sphere { centre, radius } => {
-            let AnalyticSupport::Sphere { placement, .. } = support else {
-                return Err(SolidError::sm_err(OP));
-            };
-            (
-                centre,
-                placement.x_axis().cross(placement.y_axis()),
-                Iso::Meridian { radius },
-            )
-        }
-        Implicit::Torus {
-            centre,
-            axis,
-            major,
-            minor,
-        } => (centre, axis, Iso::Tube { major, minor }),
-    };
-    let f = Frame {
-        origin,
-        axis,
-        apex: None,
-        size: 0.0,
-        quarter: 0.0,
-        tube_left: 0.0,
-    };
-    let iso = if round_the_axis(s, side) == Some(true) {
-        Iso::Parallel
-    } else {
-        along
-    };
     let form = crate::blend::fillet_section::station::as_b_spline(k, s)?
         .ok_or_else(|| SolidError::sm_err(OP))?;
     let middle = side.point(dom, 0.5);
     let end = side.at(&knot_box(&form)?);
-    let to = if side.is_u() {
-        Point2::new(end, middle.y)
-    } else {
-        Point2::new(middle.x, end)
-    };
-    let source_form = crate::blend::fillet_section::station::as_b_spline(k, source)?
-        .ok_or_else(|| SolidError::sm_err(OP))?;
+    let to = if side.is_u() { Point2::new(end, middle.y) } else { Point2::new(middle.x, end) };
     let from = source_side.point(source_dom, 0.5);
-    let sense = source_iso(&source_form, source_dom, source_side, from)?;
-    Ok(super::measure::across(measured(
-        &form, (middle, to), &f, iso, sense, Some((&source_form, from)),
+    // These are the very floating-point STEP parameters used by analytic point
+    // evaluation. They select the definition's points; no world-coordinate net
+    // subtraction or inverse mapping in the rebuilt form selects the old point.
+    let a = source.convert_uv_from_nurbs_to_step(k, from)?;
+    let b = s.convert_uv_from_nurbs_to_step(k, to)?;
+    let parallel = round_the_axis(s, side) == Some(true);
+    let (radius, radius_err, delta) = match support.implicit() {
+        Implicit::Cone { radius, tan_angle, .. } => {
+            if !parallel {
+                return Ok(super::measure::across(super::measure::chord(&form, middle, to)?));
+            }
+            let term = tan_angle * a.y;
+            let r = radius + term;
+            (r, gamma(4) * (radius.abs() + term.abs()), b.x - a.x)
+        }
+        Implicit::Sphere { radius, .. } => {
+            if parallel {
+                let latitude = a.y.to_radians();
+                let r = radius * latitude.cos();
+                // |cos'| <= 1; two angle-conversion operations, cos's one ulp,
+                // product and evaluation of the bound (Higham §§3.1–3.4).
+                (r, gamma(8) * radius * (1.0 + latitude.abs()), b.x - a.x)
+            } else { (radius, 0.0, b.y - a.y) }
+        }
+        Implicit::Torus { major, minor, .. } => {
+            if parallel {
+                let latitude = a.y.to_radians();
+                let term = minor * latitude.cos();
+                (major + term, gamma(12) * (major.abs() + minor * (1.0 + latitude.abs())), b.x - a.x)
+            } else { (minor, 0.0, b.y - a.y) }
+        }
+        Implicit::Plane { .. } => {
+            return Ok(super::measure::across(super::measure::chord(&form, middle, to)?));
+        }
+    };
+    let angle = delta.to_radians().abs();
+    // One difference and the two operations converting degrees to radians.
+    let angle_err = gamma(4) * angle;
+    Ok(super::measure::across(super::measure::circle_from_angle(
+        (radius, radius_err), (angle, angle_err),
     )?))
 }
 
@@ -538,17 +550,15 @@ fn extend_side(
             Point2::new(middle.x, x)
         }
     };
-    let sense = source_iso(cur, &dom, side, middle)?;
-    let measure = |s: &BSplineSurface| -> Result<(f64, f64)> {
-        measured(s, (at(s, 0.0), at(s, 1.0)), f, iso, sense, None)
+    let sense = source_iso(&dom, side, middle);
+    let measure = |s: &BSplineSurface, bound: f64| -> Result<(f64, f64)> {
+        measured(s, (at(s, 0.0), at(s, 1.0)), f, iso, sense, bound)
     };
     let value = |e: f64| -> Result<Option<f64>> {
-        made(e)?.map(|(s, _)| measure(&s).map(|m| m.0)).transpose()
+        made(e)?.map(|(s, _)| measure(&s, 0.0).map(|m| m.0)).transpose()
     };
     let across_of = |s: &BSplineSurface, bound: f64| -> Result<Across> {
-        let (length, rounding) = measure(s)?;
-        // The construction contribution is retained, not relabelled as resolution.
-        Ok(super::measure::across((length, rounding + 4.0 * bound)))
+        Ok(super::measure::across(measure(s, bound)?))
     };
     // the cap, from the side's middle point and the iso's other end inside the source
     let x_side = cur.evaluate_point(middle)?;
