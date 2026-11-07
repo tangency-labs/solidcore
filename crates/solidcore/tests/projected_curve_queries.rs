@@ -2025,3 +2025,225 @@ mod surface_wrappers {
         }
     }
 }
+
+mod linear_wrappers {
+    //! Defining joins survive affine projections and reversed zero offsets.
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use solidcore::{
+        curve::{
+            curve::{p1::GlobalPointSolveOptions, Curve},
+            offset_curve::OffsetCurve,
+            projected_curve::{OwnsCurve, ProjectedCurve},
+        },
+        geom::{
+            extent1d::Extent1d,
+            global_solver::{SolutionRequested, SolverOperation},
+            solution_array::{ObjectKind, SolutionObject},
+        },
+        math::Vec3,
+        nurbs::{
+            b_spline_curve::{p1::BSplineCurve, ProjectionType},
+            crv_basic::Curve as Net,
+            math::{CPoint, NOW},
+        },
+        Kernel,
+    };
+    #[derive(Clone, Copy, PartialEq)]
+    struct Handle;
+    impl SolutionObject for Handle {
+        fn kind(&self) -> ObjectKind {
+            ObjectKind::Other
+        }
+    }
+
+    fn base(maximize: bool, straight: bool) -> Curve {
+        let a = 1.0 / 1024.0;
+        let delta = if straight { 0.0 } else { 1.0 / 524288.0 };
+        let y = 1.0 + if maximize { -delta } else { delta };
+        Curve::from(BSplineCurve::from_nurb(
+            Net::new(
+                vec![
+                    CPoint::new(-a, y, 0.0, NOW),
+                    CPoint::new(0.0, 1.0, 0.0, NOW),
+                    CPoint::new(a, y, 0.0, NOW),
+                ],
+                1,
+                vec![0.0, 0.0, 0.5, 2.0, 2.0],
+            )
+            .unwrap(),
+            3,
+            false,
+        ))
+    }
+    fn wrap(base: Curve, kind: usize) -> Curve {
+        match kind {
+            0 => Curve::from(
+                ProjectedCurve::new(
+                    base,
+                    Some(Vec3::ZERO),
+                    Some(Vec3::Z),
+                    None,
+                    ProjectionType::Parallel,
+                    OwnsCurve::Yes,
+                )
+                .unwrap(),
+            ),
+            1 => Curve::from(
+                ProjectedCurve::new(
+                    base,
+                    Some(Vec3::ZERO),
+                    Some(Vec3::Y),
+                    Some(Vec3::X),
+                    ProjectionType::Rotation,
+                    OwnsCurve::Yes,
+                )
+                .unwrap(),
+            ),
+            _ => {
+                let mut offset = OffsetCurve::new(
+                    3,
+                    base,
+                    Extent1d::from_min_max(0.0, 2.0),
+                    Vec3::Z,
+                    0.0,
+                    true,
+                )
+                .unwrap();
+                if kind == 3 {
+                    let _ = offset.reverse_parameterization(&Extent1d::from_min_max(0.0, 2.0));
+                }
+                Curve::from(offset)
+            }
+        }
+    }
+    #[test]
+    fn projected_extrema_follow_linear_wrapper_defining_joins() {
+        let k = Kernel::default();
+        for maximize in [false, true] {
+            for kind in 0..4 {
+                let curve = wrap(base(maximize, false), kind);
+                let expected_t = if kind == 3 { 1.5 } else { 0.5 };
+                for requested in [SolutionRequested::Single, SolutionRequested::All] {
+                    let answers = curve
+                        .global_point_solve::<Handle>(
+                            &k,
+                            &Extent1d::from_min_max(0.0, 2.0),
+                            if maximize {
+                                SolverOperation::ProjectedMaximize
+                            } else {
+                                SolverOperation::ProjectedMinimize
+                            },
+                            Vec3::ZERO,
+                            1e-12,
+                            requested,
+                            &GlobalPointSolveOptions {
+                                opt_vectors: Some(&[Vec3::Z]),
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(
+                        answers.len(),
+                        1,
+                        "maximize={maximize} kind={kind} requested={requested:?}"
+                    );
+                    assert_eq!(answers.as_slice()[0].start.parameters[0], expected_t);
+                    assert_eq!(answers.as_slice()[0].start.solution_value, 1.0);
+                }
+            }
+        }
+    }
+    #[test]
+    fn linear_wrappers_do_not_emit_artificial_all_boundaries() {
+        for kind in 0..4 {
+            let curve = wrap(base(true, true), kind);
+            let answers = curve
+                .global_point_solve::<Handle>(
+                    &Kernel::default(),
+                    &Extent1d::from_min_max(0.0, 2.0),
+                    SolverOperation::ProjectedMaximize,
+                    Vec3::ZERO,
+                    1e-12,
+                    SolutionRequested::All,
+                    &GlobalPointSolveOptions {
+                        opt_vectors: Some(&[Vec3::Z]),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(answers.len(), 2, "kind={kind}");
+            assert!(answers
+                .as_slice()
+                .iter()
+                .all(|s| s.start.parameters[0] == 0.0 || s.start.parameters[0] == 2.0));
+        }
+    }
+    #[test]
+    fn reversed_offset_maps_knots_multiplicities_and_continuity_order() {
+        let k = Kernel::default();
+        let base = Curve::from(BSplineCurve::from_nurb(
+            Net::new(
+                (0..6)
+                    .map(|i| CPoint::new(f64::from(i), 0.0, 0.0, NOW))
+                    .collect(),
+                2,
+                vec![0.0, 0.0, 0.0, 0.5, 0.5, 1.0, 2.0, 2.0, 2.0],
+            )
+            .unwrap(),
+            3,
+            false,
+        ));
+        let (_, before) = base.calculate_continuities(&k, 0.5).unwrap();
+        let mut offset = OffsetCurve::new(
+            3,
+            base,
+            Extent1d::from_min_max(0.0, 2.0),
+            Vec3::Z,
+            0.0,
+            true,
+        )
+        .unwrap();
+        let _ = offset.reverse_parameterization(&Extent1d::from_min_max(0.0, 2.0));
+        assert_eq!(
+            offset.knots(&k, None).unwrap(),
+            (vec![0.0, 1.0, 1.5, 2.0], vec![3, 1, 2, 3])
+        );
+        let (_, after) = offset.calculate_continuities(&k, 0.5).unwrap();
+        assert_eq!(after, before.into_iter().rev().collect::<Vec<_>>());
+        let (knots, _) = offset
+            .knots(&k, Some(&Extent1d::from_min_max(1.25, 1.75)))
+            .unwrap();
+        assert!(knots.contains(&1.5));
+        assert!(knots.iter().all(|t| *t >= 1.25 && *t <= 1.75));
+    }
+    #[test]
+    fn reversed_offset_refuses_an_unrepresentable_defining_join() {
+        let base = Curve::from(BSplineCurve::from_nurb(
+            Net::new(
+                vec![
+                    CPoint::new(0.0, 0.0, 0.0, NOW),
+                    CPoint::new(1.0, 1.0, 0.0, NOW),
+                    CPoint::new(2.0, 0.0, 0.0, NOW),
+                ],
+                1,
+                vec![0.0, 0.0, 0.1, 1.0, 1.0],
+            )
+            .unwrap(),
+            3,
+            false,
+        ));
+        let mut offset = OffsetCurve::new(
+            3,
+            base,
+            Extent1d::from_min_max(0.0, 1.0),
+            Vec3::Z,
+            0.0,
+            true,
+        )
+        .unwrap();
+        let _ = offset.reverse_parameterization(&Extent1d::from_min_max(0.0, 1.0));
+        // The mirrored binary64 parameter does not evaluate at the source knot.
+        assert_ne!(1.0 - (1.0 - 0.1_f64), 0.1);
+        assert!(offset.knots(&Kernel::default(), None).is_err());
+    }
+}

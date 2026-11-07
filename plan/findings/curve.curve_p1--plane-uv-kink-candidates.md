@@ -49,3 +49,41 @@ All modes, returning exactly one solution at parameter 1 with scalar 1. The
 private defining-join test passes all five controls. The same public regression
 fails against the pre-fix library. Formatting and diff checks pass. Strict
 Clippy, compatibility tests and golden replay remain integrated-branch gates.
+
+
+## Linear wrapper follow-up (review 4503434212)
+
+The same defining corner is also lost through `ProjectedCurve` parallel/rotation
+maps and zero-distance `OffsetCurve`. The regression changes the internal knot
+to `.5` in the domain `[0,2]`; the geometry and exact derivative proof above are
+unchanged after each local affine reparameterization. Baseline maximum queries
+return `0.9999985694893212` instead of the exact join value 1. Reversing the offset
+moves that join to 1.5, but the original knot API incorrectly still reported .5.
+
+The boundary policy now recursively follows the actual fixed affine projection
+map and exact-zero offset parameter map, with the shared 32-level nesting bound.
+It does not infer smoothness from the angular continuity label. Offset knot
+queries map the requested interval into the base parameterization, reverse the
+returned knot/multiplicity order, and mirror the knot values back; continuity
+records reverse consistently. Nonfinite, nonordered, or non-invertible mirrored
+knots explicitly refuse. For example, a source knot .1 in `[0,1]` cannot be
+reported as .9 while claiming its evaluator maps back to the exact defining knot:
+`1-(1-.1)` differs from .1 in binary64. This guard does not spend tolerance.
+
+The focused public controls cover four wrappers, min/max, Single/All, reversed
+knot multiplicities/continuity order and trimmed knot queries. Before the final
+roundtrip guard, all 35 projected-query integration tests pass; that guard's
+additional control and final static/integrated checks remain pending.
+
+A separate broad-retention control remains a confirmed limitation: a straight
+parallel-projected spline queried with All and retention 1 returns its true two
+endpoint maxima plus a strict minimum and three nonstationary SingleValue points.
+The defining right-span objective is `1+((t-.5)/1536)^2`, which is strictly
+increasing after .5. Tight retention isolates this wrapper boundary repair and
+returns only the two endpoints; it does not repair or justify the broad-retention
+classification. The independent reproducer is retained for separate issue work.
+
+This checkpoint does not yet resolve the remaining stored-spline analytic labels
+or nonlinear composition policy. In particular, ellipse/hyperbola/parabola
+labels evaluate their stored spline and require a definition-based proof; a
+label is not itself proof of a smooth native join.

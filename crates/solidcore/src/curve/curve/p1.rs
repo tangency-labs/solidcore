@@ -28,6 +28,8 @@
 //!   propagate solve errors rather than publishing uncertified partial results.
 //!   Native joins are omitted only after defining continuity/collinearity or
 //!   one-sided objective-sign proofs, never from an approximate G1 label alone.
+//! - **Wrapper join proof.** Affine-wrapper recursion follows the owned geometry
+//!   tree with the shared 32-level nesting bound.
 //! - **Projected endpoint extrema.** Eligible finite boundaries are candidates
 //!   independently of the stationary-point search. Finding a stationary
 //!   point does not establish that it beats the interval endpoints.
@@ -1403,8 +1405,35 @@ fn omit_projected_boundary(curve: &Curve, t: f64, continuity: ContinuityType) ->
     if (continuity as i32) < (ContinuityType::G1 as i32) {
         return false;
     }
+    omit_projected_definition_join(curve, t, 0)
+}
+
+/// Linear wrappers preserve a defining tangent identity. Recursion follows the
+/// geometry ownership tree and is bounded by the shared 32-level nesting limit.
+fn omit_projected_definition_join(curve: &Curve, t: f64, depth: usize) -> bool {
+    if depth > crate::surface::surface::p2::MAX_GEOMETRY_NESTING {
+        return false;
+    }
     match curve.kind() {
         CurveKind::BSpline(_) => exact_native_spline_join(curve, t, false),
+        CurveKind::Projected(projected) => {
+            use crate::nurbs::b_spline_curve::ProjectionType;
+            match projected.proj_type() {
+                ProjectionType::Parallel | ProjectionType::Rotation | ProjectionType::Unknown => {
+                    // These point evaluators are fixed affine maps of the same
+                    // native parameter, including Unknown's parallel point map.
+                    omit_projected_definition_join(projected.curve(), t, depth + 1)
+                }
+                // Perspective regularity needs a separate denominator proof;
+                // its preexisting policy is not certified by this linear case.
+                ProjectionType::Perspective => true,
+            }
+        }
+        CurveKind::Offset(offset) if offset.offset_distance() == 0.0 => {
+            offset.base_curve().is_some_and(|base| {
+                omit_projected_definition_join(base, offset.base_parameter(t), depth + 1)
+            })
+        }
         CurveKind::CrvOnSurf(on_surface) => {
             if on_surface.surface().procedural_definition().is_some() {
                 return false;
@@ -1443,9 +1472,20 @@ fn omit_projected_boundary(curve: &Curve, t: f64, continuity: ContinuityType) ->
             });
             inside && exact_native_spline_join(uv, t, false)
         }
-        // Other curve kinds retain their existing boundary policy; this proof
-        // does not establish smoothness of their wrapped definitions.
-        _ => true,
+        // A line and a single Hermite polynomial have no internal joins.
+        CurveKind::Line(_) | CurveKind::Hermite(_) => true,
+        // These remaining evaluator classes retain their preexisting policy
+        // pending their separate defining-regularity audit. In particular, an
+        // analytic label alone does not prove its stored spline joins smooth.
+        CurveKind::Ellipse(_)
+        | CurveKind::Hyperbola(_)
+        | CurveKind::Parabola(_)
+        | CurveKind::Conic(_)
+        | CurveKind::Iso(_)
+        | CurveKind::Offset(_)
+        | CurveKind::CrvInVolume(_)
+        | CurveKind::TangentField(_)
+        | CurveKind::Composite(_) => true,
     }
 }
 
