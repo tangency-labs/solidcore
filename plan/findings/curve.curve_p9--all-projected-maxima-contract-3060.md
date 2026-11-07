@@ -95,6 +95,39 @@ ellipse All cases. Curved pairs need a complete boundary/interior stationary
 root construction or a separately proved recognized class in addition to a
 best-value bound.
 
+## Identical native NURBS follow-up
+
+The next recognized class uses exact equality of the stored native NURBS knot
+and homogeneous control arrays, clamped ends, strictly increasing active knots,
+and one continuous span containing the union of both clipped intervals. Its
+selector does not evaluate or sample a curve. Selected cases must certify the
+sign of each projected coordinate derivative over the entire union; uncertain
+intervals subdivide with a 4,096-visit/depth-20 bound. An algebraically zero row of
+the projection matrix is exempt, while an uncertain numerical zero is not.
+
+For ordered parameters, every projected coordinate difference increases as the
+parameters separate. Therefore the only constrained maxima can be the two
+opposite rectangle corners. If the intervals are disjoint, only the farther
+corner maximizes; if they overlap, both opposite corners may be local maxima
+and existing All retention decides which remain. Equal-parameter corners cannot
+maximize positive-length intervals of this strictly monotone projected curve.
+This is a completeness proof for this class, independent of the numerical value
+at any sampled parameter. Candidate evaluation, point-enclosure rounding,
+retention and ordered duplicate handling reuse the affine path's constructor.
+
+The frozen 75-input All audit (SHA256
+`af720baf0f5a030b8b4983846823b4b4aa57732ee324b71ddb826dbb15b3f3cb`)
+contains four identical native NURBS pairs. `gen0326` and `gen1674` are outside
+the class because they have repeated active knots; `gen2497` has a union spanning
+its internal 0.5 knot. Only `gen1839` selects. The other 74 inputs remain outside
+this dispatch boundary. Selected nonmonotone definitions outside this corpus
+must refuse, rather than fall through to the legacy implementation.
+
+The unchanged standalone public-API `gen1839` regression supplies the red/green
+acceptance check. Its original returned value is approximately 4.24e-12; the
+independent exact-sign oracle establishes the admissible opposite-corner
+maximum 4.408015599603469. The ellipse case `gen0472` remains separate.
+
 `SolutionType::RangeOfValues` stores two ends in joint parameter space;
 `Solution::classify_solution_end` and `GlobalSolve::combine_min_max` do not prove
 that an arbitrary unresolved parameter rectangle or nonlinear correspondence is

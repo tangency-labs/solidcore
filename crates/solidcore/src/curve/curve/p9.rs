@@ -22,7 +22,7 @@
 //! - **Projected Single maxima (#3060).** Definition enclosures and feasible
 //!   witnesses replace the incomplete stationary search; subdivision is bounded
 //!   to 32,768 boxes and depth 48 in `projected_pair`. Proof failures propagate.
-//!   A structural finite-affine All class shares the definition enclosures and
+//!   Structural affine and identical monotone NURBS All classes share the definition enclosures and
 //!   preserves the existing retention and ordered duplicate rules.
 //! - **Curves and kernel.** The solver's trees only name their curves by the
 //!   caller's handle ([`crate::geom::tree::Tree::owner_object`]), so the solver
@@ -1335,6 +1335,24 @@ impl Curve {
             && super::projected_pair_all::supports([self, other], [*interval, *other_interval])
         {
             return super::projected_pair_all::solve(
+                k,
+                [self, other],
+                [*interval, *other_interval],
+                opt(0)?,
+                dist_tol,
+                opts.handles,
+                opts.target_distance,
+            );
+        }
+
+        // Identical native NURBS in one continuous union span form a separate
+        // structural class. The whole-union derivative-sign proof must succeed;
+        // a selected uncertainty is never routed back to the legacy solver.
+        if op == Op::ProjectedMaximize
+            && requested == SolutionRequested::All
+            && super::projected_pair_monotone::supports([self, other], [*interval, *other_interval])
+        {
+            return super::projected_pair_monotone::solve(
                 k,
                 [self, other],
                 [*interval, *other_interval],

@@ -210,24 +210,6 @@ pub(super) fn solve<O: SolutionObject>(
     target: Option<f64>,
 ) -> Result<SolutionArray<O>> {
     kernel.check_cancelled(OP)?;
-    // Exactly one adaptation call, as in global_curve_solve: its stand-ins
-    // provide the natural domains used by ordered duplicate comparison.
-    if handles == [None, None] {
-        let [a, b] = curves;
-        return Ok(solve(
-            kernel,
-            curves,
-            intervals,
-            normal,
-            tolerance,
-            [
-                Some(OperandObject::Curve(0, a.natural_interval())),
-                Some(OperandObject::Curve(1, b.natural_interval())),
-            ],
-            target,
-        )?
-        .without_objects());
-    }
     if !(tolerance.is_finite()
         && tolerance >= 0.0
         && normal.x.is_finite()
@@ -263,6 +245,37 @@ pub(super) fn solve<O: SolutionObject>(
             ));
         }
     }
+    construct(&query, [pa, pb], tolerance, handles, target, corner_maximum)
+}
+
+/// Build and retain the complete corner set after the caller has proved that
+/// no non-corner maximum exists. The classifier must be sound for that class.
+pub(super) fn construct<O: SolutionObject>(
+    query: &Query<'_>,
+    pieces: [Piece; 2],
+    tolerance: f64,
+    handles: [Option<O>; 2],
+    target: Option<f64>,
+    classify: fn(&Query<'_>, [Piece; 2], f64, f64) -> Result<bool>,
+) -> Result<SolutionArray<O>> {
+    let [pa, pb] = pieces;
+    // Exactly one adaptation call, as in global_curve_solve: stand-ins supply
+    // the natural domains used by ordered duplicate comparison.
+    if handles == [None, None] {
+        let [a, b] = query.curves;
+        return Ok(construct(
+            query,
+            pieces,
+            tolerance,
+            [
+                Some(OperandObject::Curve(0, a.natural_interval())),
+                Some(OperandObject::Curve(1, b.natural_interval())),
+            ],
+            target,
+            classify,
+        )?
+        .without_objects());
+    }
     let mut corners: Vec<Candidate> = Vec::new();
     let mut upper = 0.0_f64;
     let mut lower = 0.0_f64;
@@ -290,7 +303,7 @@ pub(super) fn solve<O: SolutionObject>(
             continue;
         }
         let [s, t] = candidate.parameters;
-        if !corner_maximum(&query, [pa, pb], s, t)? {
+        if !classify(query, [pa, pb], s, t)? {
             continue;
         }
         // Retention slack is not a demand for sub-rounding optimization.
@@ -323,14 +336,14 @@ pub(super) fn solve<O: SolutionObject>(
     retained.sort_by(|a, b| b.reported.total_cmp(&a.reported));
     let mut accumulation = AllSolutions {
         base: GlobalSolver::new(),
-        curves,
+        curves: query.curves,
         handles,
     };
     accumulation.base.operation = SolverOperation::ProjectedMaximize;
     accumulation.base.solution_requested = SolutionRequested::All;
     accumulation.base.tolerance_3d = tolerance;
     accumulation.base.best_answer_so_far_sq = 0.0;
-    accumulation.base.fixes = kernel.fixes;
+    accumulation.base.fixes = query.kernel.fixes;
     for candidate in retained {
         let mut answer = Solution::new();
         answer.num_objects = 2;
