@@ -1539,7 +1539,6 @@ pub(super) struct AffineDefinition {
     isolated_end: Option<[Ivl; 3]>,
 }
 impl AffineDefinition {
-<<<<<<< HEAD
     /// Enclose one continuous affine piece and its derivative without refitting it.
     pub(super) fn jet_over(&self, t: Ivl) -> ([Ivl; 3], [Ivl; 3]) {
         if self.interval.min() == self.interval.max() {
@@ -1550,7 +1549,8 @@ impl AffineDefinition {
         let fraction = (t - Ivl::from(self.interval.min())) / span;
         let derivative = iv_sub(self.end, self.start).map(|x| x / span);
         (iv_lerp(self.start, self.end, fraction), derivative)
-=======
+    }
+
     /// Enclose the mathematical endpoint difference from defining factors before
     /// rounded world-space endpoint evaluations can erase a short direction.
     fn difference(&self, curve: &Curve, interval: Extent1d) -> Option<[Ivl; 3]> {
@@ -1659,7 +1659,6 @@ impl AffineDefinition {
             denominator,
         );
         (bound.lo.is_finite() && bound.hi.is_finite()).then_some(bound)
->>>>>>> 3c70d4733
     }
 
     /// Enclose the affine point at the caller's raw parameter.
