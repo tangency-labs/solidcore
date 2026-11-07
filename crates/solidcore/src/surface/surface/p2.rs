@@ -127,8 +127,8 @@
 //!   `surface.plane_p2`, `STEPInversion` needs the point solvers of
 //!   `surface.surface_p1`) and [`SurfOfRevolution`] (units
 //!   `surface.surf_of_revolution_p1` and `_p3`: the inherited `SmBSplineSurface`
-//!   methods run on its B-spline part, `Reverse` and `SwapUV` then rebuild its analytic
-//!   data through the virtual `RebuildSTEPFromNURBParameters`; `STEPInversion`,
+//!   methods run on its B-spline part, `Reverse` then rebuilds its analytic data through
+//!   the virtual `RebuildSTEPFromNURBParameters` and `SwapUV` keeps it (WR-701); `STEPInversion`,
 //!   `AdjustSTEPUVDomain` and `TrimWithDomain` belong to `surface.surf_of_revolution_p2`;
 //!   `Reverse`, `Reparameterize`, `SwapUV`, `Transform`, the parameter conversions and
 //!   `DropPointFast` take the kernel for it); the other analytic and generated surfaces
@@ -3369,9 +3369,10 @@ impl Surface {
         }
     }
 
-    /// Swaps the `u` and `v` directions (`SwapUV`; a surface of revolution runs the
-    /// B-spline swap, whose virtual `ToggleSwapUVBit` flips its swap flag and whose
-    /// `SetCanonical` rebuilds its analytic data, status ignored).
+    /// Swaps the `u` and `v` directions (`SwapUV`; a cone, sphere, torus or surface of
+    /// revolution keeps its definition with its swap flag flipped and its polar converter
+    /// made again on the transposed net, WR-701; a net the converter refuses fails the swap
+    /// with the surface unchanged).
     ///
     /// Notifies nobody: `Surface::swap_uv_notifying` sends the edit notifications.
     ///
@@ -8999,7 +9000,7 @@ mod swap_definition_tests {
 
     /// WR-701: a swap whose polar converter cannot be made on the transposed net (every sweep
     /// iso circle degenerate) fails with nothing swapped and nothing notified: the cone,
-    /// sphere and torus are bit for bit as they were.
+    /// sphere, torus and surface of revolution are bit for bit as they were.
     #[test]
     fn a_swap_the_polar_converter_refuses_leaves_the_surface_as_it_was() {
         let k = Kernel::default();
@@ -9023,10 +9024,25 @@ mod swap_definition_tests {
         let mut torus =
             Torus::create_canonical(&k, &frame, 4.0, 1.5, TorusOptions::default(), None).unwrap();
         collapse_onto_axis(torus.base.base_mut());
+        let line = crate::primitive::api_curves::create_line_segment(
+            Point3::new(2.0, 0.0, 0.0),
+            Point3::new(2.0, 0.0, 3.0),
+        )
+        .unwrap();
+        let mut revolution = SurfOfRevolution::create_canonical(
+            &k,
+            crate::curve::curve::Curve::from(line),
+            Point3::ZERO,
+            Vec3::Z,
+            false,
+        )
+        .unwrap();
+        collapse_onto_axis(revolution.base_mut());
         for (what, mut s) in [
             ("cone", Surface::from(cone)),
             ("sphere", Surface::from(sphere)),
             ("torus", Surface::from(torus)),
+            ("surface of revolution", Surface::from(revolution)),
         ] {
             let before = format!("{s:?}");
             let mut events = 0;
