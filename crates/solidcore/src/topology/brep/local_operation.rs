@@ -143,7 +143,7 @@ fn local_operation_on(
     // is in the list to be replaced (turned to the original's side), else a copy of its own.
     let all_faces = bp1::faces(b, None)?;
     let mut given: Vec<Option<Surface>> = surfaces.into_iter().map(Some).collect();
-    let mut new_list = Vec::with_capacity(all_faces.len());
+    let mut new_list = Vec::new();
     // (WR-534) where each given surface went in the new list
     let mut placed: Vec<Option<usize>> = vec![None; given.len()];
     // (not upstream) the faces whose surfaces move: a face given its own surface again keeps
@@ -509,7 +509,7 @@ fn uv_line(k: &Kernel, curve: &crate::curve::curve::Curve) -> Result<Option<UvLi
     let Some(nurb) = nurb else {
         return Ok(None);
     };
-    let mut points = Vec::with_capacity(nurb.cpts().len());
+    let mut points = Vec::new();
     for c in nurb.cpts() {
         if c.w == NOW {
             points.push(Point2::new(c.x, c.y));
@@ -639,7 +639,7 @@ fn seam_gap(
         };
         a.iter().copied().zip(b.iter().copied()).collect()
     } else {
-        let mut pairs = Vec::with_capacity(rows.len());
+        let mut pairs = Vec::new();
         for row in &rows {
             let (Some(&a), Some(&b)) = (row.first(), row.last()) else {
                 return Ok(None);
@@ -763,7 +763,7 @@ fn keeps_seams(k: &Kernel, b: &mut Brep, face: FaceId, surface: &Surface) -> Res
         if uses.len() <= 2 {
             continue;
         }
-        let mut lines = Vec::with_capacity(uses.len());
+        let mut lines = Vec::new();
         for &u in &uses {
             let line = if let Some(c) = eu1::uv_trim_curve(b, u)?.0 {
                 uv_line(k, c)?
