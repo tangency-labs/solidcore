@@ -83,7 +83,11 @@ An isolated upper-knot value remains a separate candidate from the left limit.
 The review corrections separate retention slack from enclosure rounding, derive
 analytic-line directions from mapped endpoints, refuse an interior minimum that
 has no representable interior parameter, and refuse projected requests not covered
-by the cached domain. Focused validation is being refreshed for these changes.
+by the cached domain. The optimized projected-query integration suite passes
+all 19 tests with these changes. The new zero-slack and collapsed-line tests
+both fail with status 1021 against the previous library and pass with the fix;
+the existing truly unrepresentable-minimum refusal still passes. Internal cache
+and adjacent-float regressions, strict checks, and the goldens are being refreshed.
 
 ![Narrow parameter span and representable candidates](figures/projected-affine-parameter-conditioning.png)
 ![Isolated upper-knot value and left limit](figures/projected-upper-knot-limit.png)

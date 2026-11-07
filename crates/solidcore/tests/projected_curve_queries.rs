@@ -102,6 +102,92 @@ mod affine_spans {
         }
     }
 
+    #[test]
+    fn collapsed_analytic_line_has_constant_projected_extrema() {
+        use solidcore::curve::line::Line;
+        let mut line =
+            Line::create_line_segment(3, Vec3::new(2.0, 3.0, 0.0), Vec3::new(5.0, 3.0, 0.0), None)
+                .unwrap();
+        line.set_analytic_domain(Extent1d::from_min_max(0.0, 0.0));
+        let curve = Curve::from(line);
+        for op in [
+            SolverOperation::ProjectedMinimize,
+            SolverOperation::ProjectedMaximize,
+        ] {
+            let answers = curve
+                .global_point_solve::<Object>(
+                    &Kernel::default(),
+                    &curve.natural_interval(),
+                    op,
+                    Vec3::ZERO,
+                    0.0,
+                    SolutionRequested::All,
+                    &GlobalPointSolveOptions {
+                        opt_vectors: Some(&[Vec3::Z]),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(answers.len(), 1);
+            assert_eq!(
+                answers.as_slice()[0].solution_type,
+                SolutionType::RangeOfValues
+            );
+            assert!((answers.as_slice()[0].start.solution_value - 13.0_f64.sqrt()).abs() < 1e-14);
+        }
+    }
+
+    #[test]
+    fn zero_retention_slack_accepts_affine_minimum_to_rounding() {
+        let points = [
+            (0.1569346301508998, -0.5329538213524829, -0.8439542626476992),
+            (0.4224662792522742, -0.4068072031595056, -0.7199688610446469),
+            (0.6052455395473925, -0.3885960084138218, -0.5099311278223793),
+            (0.7831613767269248, -0.01515768701313519, -0.701567737379753),
+        ]
+        .into_iter()
+        .map(|(x, y, z)| CPoint::new(x, y, z, solidcore::nurbs::math::NOW))
+        .collect();
+        let knots = vec![
+            0.0,
+            0.0,
+            0.2628985868293973,
+            0.8036901450210183,
+            1.3482261889778533,
+            1.3482261889778533,
+        ];
+        let curve = Curve::from(BSplineCurve::from_nurb(
+            NurbCurve::new(points, 1, knots).unwrap(),
+            3,
+            false,
+        ));
+        let answers = curve
+            .global_point_solve::<Object>(
+                &Kernel::default(),
+                &curve.natural_interval(),
+                SolverOperation::ProjectedMinimize,
+                Vec3::new(0.5501272357521876, -0.3940877155300753, -0.5732694057512258),
+                0.0,
+                SolutionRequested::All,
+                &GlobalPointSolveOptions {
+                    opt_vectors: Some(&[Vec3::new(
+                        0.7405015371827215,
+                        0.6291959064853571,
+                        0.23615669520912666,
+                    )]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let best = answers
+            .as_slice()
+            .iter()
+            .min_by(|a, b| a.start.solution_value.total_cmp(&b.start.solution_value))
+            .unwrap();
+        assert!((best.start.parameters[0] - 0.6406108473689742).abs() < 2e-15);
+        assert!(best.start.solution_value < 2e-15);
+    }
+
     impl SolutionObject for Object {
         fn kind(&self) -> ObjectKind {
             ObjectKind::Other

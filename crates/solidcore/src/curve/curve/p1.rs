@@ -23,8 +23,9 @@
 //!   fraction and an outward-rounded objective certificate, including raw tiny
 //!   knot spans. Interior full-multiplicity upper knots are isolated right-valued
 //!   candidates beside a left span with its upper limit excluded; query bounds are intersected
-//!   exactly. Projected extrema propagate solve errors rather than publishing
-//!   uncertified partial results.
+//!   exactly. Certificates account for their own rounding separately from
+//!   retention slack. Projected extrema refuse uncovered cache domains and
+//!   propagate solve errors rather than publishing uncertified partial results.
 //! - **Projected endpoint extrema.** Eligible finite boundaries are candidates
 //!   independently of the stationary-point search. Finding a stationary
 //!   point does not establish that it beats the interval endpoints.
@@ -1178,20 +1179,14 @@ fn affine_definition(curve: &Curve, interval: Extent1d) -> Option<AffineDefiniti
             let scale = step * Ivl::from(line.line_scale());
             [x + scale * dx, y + scale * dy, z + scale * dz]
         };
-        let v = line.line_vector();
+        let a = line.evaluate_point(interval.min());
+        let b = line.evaluate_point(interval.max());
         return Some(AffineDefinition {
             start: endpoint(interval.min()),
             end: endpoint(interval.max()),
             interval,
             isolated_end: None,
-            direction_points: (
-                [0.0; 3],
-                if line.line_scale() == 0.0 {
-                    [0.0; 3]
-                } else {
-                    [v.x, v.y, v.z]
-                },
-            ),
+            direction_points: ([a.x, a.y, a.z], [b.x, b.y, b.z]),
         });
     }
     let CurveKind::BSpline(spline) = curve.kind() else {
@@ -1355,9 +1350,6 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             return Err(affine_refusal());
         }
         let foot = if length.lo <= 0.0 {
-            if length.hi > tolerance {
-                return Err(affine_refusal());
-            }
             // Division by an enclosure containing zero cannot locate the foot.
             // Enclose the whole span instead; the candidate-gap check below
             // still has to certify the requested accuracy, including a distinct
@@ -1404,7 +1396,14 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         // Smooth joins belong to their adjoining stationary search. They need
         // not become artificial endpoint answers of this leaf.
         if parameters.is_empty() {
-            return Ok(true);
+            // A smooth affine maximum belongs to adjoining leaves. An interior
+            // minimum, however, cannot disappear merely because no binary64
+            // parameter lies inside this span.
+            return if maximize {
+                Ok(true)
+            } else {
+                Err(affine_refusal())
+            };
         }
         let mut candidates = Vec::new();
         for t in parameters {
@@ -1445,7 +1444,19 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             } else {
                 best_bound.hi - optimum.lo
             };
-            if !gap.is_finite() || gap > tolerance {
+            // Retention slack is not a demand for sub-rounding optimization.
+            // Subtract only the uncertainty already enclosed by the arithmetic;
+            // an excess beyond these enclosures still needs the caller's slack.
+            let rounding = if maximize {
+                let upper_rounding = candidates
+                    .iter()
+                    .map(|(_, _, b)| b.hi - b.lo)
+                    .fold(0.0_f64, f64::max);
+                (best_bound.hi - best_bound.lo) + upper_rounding
+            } else {
+                (best_bound.hi - best_bound.lo) + (optimum.hi - optimum.lo)
+            };
+            if !gap.is_finite() || !rounding.is_finite() || gap > tolerance + rounding {
                 return Err(affine_refusal());
             }
         }
@@ -2183,7 +2194,8 @@ impl Curve {
     /// local solve; [`SolidError::Unported`] from unported callees. Projected
     /// minimum/maximum queries propagate tree-solve errors, including
     /// `SM_ERR_NOT_WITHIN_TOLERANCE` when an affine optimum cannot be certified
-    /// at a representable parameter. Other operations retain the legacy policy
+    /// at a representable parameter or the cache does not cover the requested
+    /// interval. Other operations retain the legacy policy
     /// of ignoring ordinary tree-solve failures unless status propagation is enabled.
     pub fn global_point_solve<O: SolutionObject>(
         &self,
@@ -2307,6 +2319,19 @@ impl Curve {
             });
         }
         let cache = cache.as_mut().ok_or(SolidError::null_pointer(OP_GLOBAL))?;
+        if matches!(
+            op,
+            SolverOperation::ProjectedMinimize | SolverOperation::ProjectedMaximize
+        ) && !interval.is_contained_by(cache.interval(), 0.0)
+        {
+            // A result over only the cached intersection cannot certify the
+            // caller's whole request. Do not silently discard its remainder.
+            return Err(SolidError::Upstream {
+                operation: OP_GLOBAL,
+                code: crate::error::SM_ERR_NOT_WITHIN_TOLERANCE,
+                entity: None,
+            });
+        }
 
         // Analytical Curve Optimization
         if op == SolverOperation::Minimize || op == SolverOperation::Intersect {
@@ -2837,6 +2862,97 @@ mod tests {
         ));
     }
     use super::*;
+
+    #[test]
+    fn projected_query_refuses_incomplete_cached_domain() {
+        use crate::curve::curve_cache::CurveCacheOptions;
+        use crate::topology::ObjectHandle;
+        let k = Kernel::default();
+        let curve = Curve::from(BSplineCurve::create_line_segment(3, Vec3::ZERO, Vec3::X).unwrap());
+        for op in [
+            SolverOperation::ProjectedMinimize,
+            SolverOperation::ProjectedMaximize,
+        ] {
+            let result = curve.global_point_solve::<ObjectHandle>(
+                &k,
+                &Extent1d::from_min_max(0.0, 2.0),
+                op,
+                Vec3::X * 2.0,
+                1e-9,
+                SolutionRequested::Single,
+                &GlobalPointSolveOptions {
+                    opt_vectors: Some(&[Vec3::Z]),
+                    ..Default::default()
+                },
+            );
+            assert!(
+                matches!(result, Err(e) if e.kind() == crate::error::ErrorKind::NotWithinTolerance)
+            );
+        }
+        let mut cache = Some(CurveCache::<ObjectHandle>::new(
+            curve.clone(),
+            Extent1d::from_min_max(0.0, 0.5),
+            CurveCacheOptions::default(),
+        ));
+        for op in [
+            SolverOperation::ProjectedMinimize,
+            SolverOperation::ProjectedMaximize,
+        ] {
+            let result = curve.global_point_solve_cached(
+                &k,
+                &Extent1d::from_min_max(0.0, 1.0),
+                op,
+                Vec3::X,
+                1e-9,
+                SolutionRequested::Single,
+                &GlobalPointSolveOptions {
+                    opt_vectors: Some(&[Vec3::Z]),
+                    ..Default::default()
+                },
+                &mut cache,
+            );
+            assert!(
+                matches!(result, Err(e) if e.kind() == crate::error::ErrorKind::NotWithinTolerance)
+            );
+        }
+    }
+
+    #[test]
+    fn smooth_adjacent_float_span_cannot_drop_an_interior_minimum() {
+        use crate::topology::ObjectHandle;
+        let k = Kernel::default();
+        let lo = 1.0;
+        let hi = next_parameter_up(lo);
+        let spline = crate::nurbs::crv_basic::Curve::new(
+            vec![
+                crate::nurbs::math::CPoint::new(-1.0, 1.0, 0.0, 1.0),
+                crate::nurbs::math::CPoint::new(1.0, 1.0, 0.0, 1.0),
+            ],
+            1,
+            vec![lo, lo, hi, hi],
+        )
+        .unwrap();
+        let curve = Curve::from(BSplineCurve::from_nurb(spline, 3, false));
+        let point_tree = Tree::<ObjectHandle>::new(None);
+        let curve_tree = Tree::<ObjectHandle>::new(None);
+        let interval = Extent1d::from_min_max(lo, hi);
+        let mut solver = CpGlobalSolver::new(&k, &point_tree, &curve_tree, interval);
+        solver.base.operation = SolverOperation::ProjectedMinimize;
+        solver.base.tolerance_3d = 1e-12;
+        solver.base.opt_vectors = vec![Vec3::Z];
+        let result = solver.projected_affine(
+            &k,
+            &curve,
+            interval,
+            [ContinuityType::G1; 2],
+            Vec3::ZERO,
+            &[None; crate::geom::global_solver::MAX_SOLVER_TREES],
+            None,
+        );
+        assert!(
+            matches!(result, Err(e) if e.kind() == crate::error::ErrorKind::NotWithinTolerance)
+        );
+    }
 
     /// tangency-labs/solidcore#527 (WR-383): a forward range whose end sits 0.001 off
     /// the crossing; the local intersection moves the end by 0.001 of the range, which
