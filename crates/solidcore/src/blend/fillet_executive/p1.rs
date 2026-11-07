@@ -71,7 +71,9 @@
 //!   the bit. The extension returning no curve at all (its `Ok(None)`: the parameter lies
 //!   inside the NURB's own bounds, possible only if they disagreed with
 //!   `natural_interval`) is a `NULL` dereference upstream and `SM_ERR_NULL_POINTER`
-//!   ([`SolidError::null_pointer`]) here.
+//!   ([`SolidError::null_pointer`]) here. A continued law whose radius or slope is not
+//!   finite (it overflowed) is refused ([`RoundRefusal::LawRadiusUnusable`], naming the
+//!   station); upstream passes it on.
 //! - `GetClassType` / `GetClassTypeString` (the `SM_COMMON` statics) are not ported.
 //! - The out-parameter `dValues[3]` is the returned `[f64; 3]`.
 //! - Error info: the overloads of `NoteError` and `NoteFilletError` have their own
@@ -120,6 +122,7 @@ use crate::blend::fillet_executive::p3::{
 };
 use crate::blend::fillet_geom::p1::{FilStatus, FilletCornerType, FilletEdgeType, FilletErrorType};
 pub use crate::blend::fillet_standard_solver::p1::{FilletLaw, FilletLawKind};
+use crate::blend::round_room::{self, RoundRefusal};
 use crate::boolean::topology_intersector::p1::TopologyIntersector;
 use crate::error::EntityRef;
 use crate::error::{Result, SolidError};
@@ -202,14 +205,15 @@ impl FilletLaw {
     /// A linear law evaluates anywhere. A B-spline law maps the parameter through the
     /// edge map onto the law curve; a parameter within `SM_EFF_ZERO * (1 + |min| +
     /// |max|)` outside the curve's domain snaps to the end, a parameter further out
-    /// extends the curve (`C-infinity`, to twice the overshoot and at least a tenth of
-    /// the domain) and keeps the extension for later evaluations.
+    /// continues the curve as its end span's polynomial (to twice the overshoot and at
+    /// least a tenth of the domain) and keeps the extension for later evaluations.
     ///
     /// # Errors
     ///
     /// `SM_ERR` for the base law and for a zero-length `interval` of a B-spline law;
-    /// the errors of [`BSplineCurve::create_extended_curve`] and
-    /// [`BSplineCurve::evaluate`].
+    /// [`SolidError::RoundRefused`] ([`RoundRefusal::LawRadiusUnusable`]) where a B-spline
+    /// law continued past its curve gives a radius or slope that is not finite; the errors of [`BSplineCurve::create_continued_curve`]
+    /// and [`BSplineCurve::evaluate`].
     pub fn evaluate(
         &mut self,
         parameter: f64,
@@ -385,6 +389,24 @@ fn bspline_evaluate(
         deriv1 = -deriv1;
     }
     let deriv2 = x(2)? / (param_scale * param_scale);
+
+    // A law continued past its curve's ends is its end span's polynomial (#2706). Where
+    // that overflows, the radius is one the solver cannot use: it is refused, naming the
+    // station, rather than passed on. A continued radius that is finite is passed on even
+    // when it is zero or below: past the edge's ends the solver only traces the round's
+    // run-on, which the end faces trim away, and the round of a law positive along its
+    // edge builds whatever its continuation does out there.
+    let continued = !law_curve.natural_interval().contains_value(law_t, 0.0);
+    let usable = value.is_finite() && deriv1.is_finite() && deriv2.is_finite();
+    if continued && !usable {
+        return Err(round_room::refused(
+            OP_EVAL,
+            RoundRefusal::LawRadiusUnusable {
+                at: (parameter - d_min) / (d_max - d_min),
+                radius: value,
+            },
+        ));
+    }
 
     Ok([value, deriv1, deriv2])
 }
@@ -1890,6 +1912,78 @@ mod tests {
         for t in [-5.0, 0.0, 10.0, 20.0, 25.0] {
             assert_eq!(law.evaluate(t, &ivl, false).expect("eval"), [3.0, 0.0, 0.0]);
         }
+        // the cubic of four equal radii 2 (the goldens' bspline_constant_radius_zero_tangent)
+        // is the constant 2 with no slope on and past the curve, both ways (to rounding: the
+        // start's continuation is 2 + 4e-16), and its continuation is that point over the
+        // longer interval
+        let mut law = bspline(
+            radius_curve(&[2.0; 4], 3, 0.0, 1.0),
+            Extent1d::from_min_max(0.0, 1.0),
+        );
+        let ivl = Extent1d::from_min_max(0.0, 1.0);
+        for t in [-0.5, 0.0, 0.5, 1.0, 1.5] {
+            for reverse in [false, true] {
+                let v = law.evaluate(t, &ivl, reverse).expect("eval");
+                assert!(
+                    close(v[0], 2.0) && close(v[1], 0.0) && close(v[2], 0.0),
+                    "at {t}: {v:?}"
+                );
+            }
+        }
+        let ext = law.extended_curve().expect("continued");
+        let nurb = ext.gw_nurb().expect("nurb");
+        assert!(nurb
+            .cpts()
+            .iter()
+            .all(|p| close(p.x, 2.0) && p.y == 0.0 && p.z == 0.0));
+    }
+
+    #[test]
+    fn a_continued_radius_that_overflows_is_refused() {
+        // r from 1 to 1e308 over the edge: continued as its line, 1 + (1e308 - 1) u
+        // overflows past u = 1.8, so at the station 2 (law parameter 2) the radius is
+        // infinite: refused, naming the station
+        let mut law = bspline(
+            radius_curve(&[1.0, 1e308], 1, 0.0, 1.0),
+            Extent1d::from_min_max(0.0, 1.0),
+        );
+        let ivl = Extent1d::from_min_max(0.0, 10.0);
+        assert!(law.evaluate(5.0, &ivl, false).is_ok());
+        match law.evaluate(20.0, &ivl, false) {
+            Err(SolidError::RoundRefused {
+                refusal: RoundRefusal::LawRadiusUnusable { at, radius },
+                ..
+            }) => {
+                assert!(close(at, 2.0), "{at}");
+                assert!(!radius.is_finite(), "{radius}");
+            }
+            other => panic!("{other:?}"),
+        }
+        // reversed, the station -1 of the edge is the law's 2
+        assert!(matches!(
+            law.evaluate(-10.0, &ivl, true),
+            Err(SolidError::RoundRefused {
+                refusal: RoundRefusal::LawRadiusUnusable { .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_continued_radius_below_zero_is_passed_on() {
+        // r from 1 to 0.1 over the edge, continued as its line 1 - 0.9 u: zero at u = 1.11
+        // and -0.08 at the station 1.2. The solver traces the round's run-on there, which
+        // the end faces trim away, so the value is the line's, not a refusal.
+        let mut law = bspline(
+            radius_curve(&[1.0, 0.1], 1, 0.0, 1.0),
+            Extent1d::from_min_max(0.0, 1.0),
+        );
+        let ivl = Extent1d::from_min_max(0.0, 10.0);
+        let v = law.evaluate(12.0, &ivl, false).expect("eval");
+        assert!(
+            close(v[0], -0.08) && close(v[1], -0.09) && v[2] == 0.0,
+            "{v:?}"
+        );
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
