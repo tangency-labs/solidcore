@@ -3,9 +3,10 @@
 //! Not upstream. Candidate generation is deliberately independent of this check:
 //! every knot rectangle must fit inside the candidate point's own arithmetic
 //! enclosure. Caller tolerance selects retained answers, not solve accuracy.
-//! The mean-value enclosure uses the existing outward-rounded NURBS partials.
-//! Deviations: no recursion; at most 16,384 boxes and 48 bisections along a path.
-//! Native candidate refinement uses at most 48 active-set Newton steps.
+//! The global proof bounds a homogeneous Bernstein residual over every knot patch.
+//! Deviations: no recursion; global certification supports degree at most 8 per
+//! axis, 4,096 cells, and depth 64. Higher degrees explicitly refuse. Native
+//! candidate refinement uses at most 48 active-set Newton steps.
 
 use crate::blend::fillet_section::certificate::{knot_cuts, nurbs_partials_over_piece};
 use crate::blend::fillet_section::interval::Ivl;
@@ -18,8 +19,6 @@ use crate::math::Vec2;
 use crate::math::Vec3;
 
 const OP: &str = "intersect::topology_solver::projected_bound";
-const MAX_BOXES: usize = 16_384;
-const MAX_DEPTH: usize = 48;
 
 fn refused(reason: &'static str) -> SolidError {
     SolidError::Unsupported {
@@ -393,19 +392,6 @@ fn curve_point_enclosure(
     Ok(norm_squared(projected(relative(position, point), V3::from_vec3(normal))).sqrt())
 }
 
-#[derive(Clone, Copy)]
-struct Cell {
-    u: Ivl,
-    v: Ivl,
-    ku: usize,
-    kv: usize,
-    depth: usize,
-}
-
-fn dot(a: V3<Ivl>, b: V3<Ivl>) -> Ivl {
-    (a.x * b.x + a.y * b.y) + a.z * b.z
-}
-
 fn cross(a: V3<Ivl>, b: V3<Ivl>) -> V3<Ivl> {
     V3 {
         x: a.y * b.z - a.z * b.y,
@@ -630,144 +616,8 @@ pub(super) fn projected_box_distance(
     norm_squared(projected(delta, V3::from_vec3(normal))).sqrt()
 }
 
-/// Enclose the largest objective value in a cell. A strict derivative sign
-/// moves its maximizer to that side before evaluation; this is an interval
-/// theorem over the complete cell, not a sampled direction or extra slack.
-fn bound(net: &Nurbs, mut cell: Cell, point: Vec3, normal: Vec3) -> Result<Ivl> {
-    let normal_ivl = V3::from_vec3(normal);
-    let p = nurbs_partials_over_piece(
-        net, cell.ku, cell.kv, cell.u.lo, cell.u.hi, cell.v.lo, cell.v.hi, 1,
-    )?;
-    let q = projected(relative(p.at(0, 0), point), normal_ivl);
-    let du = Ivl::from(2.0) * dot(q, projected(p.at(1, 0), normal_ivl));
-    let dv = Ivl::from(2.0) * dot(q, projected(p.at(0, 1), normal_ivl));
-    let original = cell;
-    if du.lo > 0.0 {
-        cell.u = Ivl::from(cell.u.hi);
-    } else if du.hi < 0.0 {
-        cell.u = Ivl::from(cell.u.lo);
-    }
-    if dv.lo > 0.0 {
-        cell.v = Ivl::from(cell.v.hi);
-    } else if dv.hi < 0.0 {
-        cell.v = Ivl::from(cell.v.lo);
-    }
-    if cell.u.lo == cell.u.hi && cell.v.lo == cell.v.hi {
-        // Keep this knot rectangle's one-sided definition at repeated knots.
-        let corner = nurbs_partials_over_piece(
-            net, cell.ku, cell.kv, cell.u.lo, cell.u.hi, cell.v.lo, cell.v.hi, 0,
-        )?;
-        return Ok(norm_squared(projected(relative(corner.at(0, 0), point), normal_ivl)).sqrt());
-    }
-    let p = if cell.u != original.u || cell.v != original.v {
-        nurbs_partials_over_piece(
-            net, cell.ku, cell.kv, cell.u.lo, cell.u.hi, cell.v.lo, cell.v.hi, 1,
-        )?
-    } else {
-        p
-    };
-    let q = projected(relative(p.at(0, 0), point), normal_ivl);
-    let direct = norm_squared(q);
-    let (u, v) = (cell.u.mid(), cell.v.mid());
-    let middle = nurbs_partials_over_piece(net, cell.ku, cell.kv, u, u, v, v, 0)?;
-    let at_middle = norm_squared(projected(relative(middle.at(0, 0), point), normal_ivl));
-    let du = Ivl::from(2.0) * dot(q, projected(p.at(1, 0), normal_ivl));
-    let dv = Ivl::from(2.0) * dot(q, projected(p.at(0, 1), normal_ivl));
-    let centred = at_middle + du * (cell.u - Ivl::from(u)) + dv * (cell.v - Ivl::from(v));
-    Ok(Ivl::new(direct.lo.max(centred.lo), direct.hi.min(centred.hi)).sqrt())
-}
-
-/// Prove an upper bound on the projected distance over the supplied rectangle.
-/// Acceptance is U <= C.hi, where C encloses the returned candidate metric.
-/// No caller retention slack or another evaluation's uncertainty widens C.
-/// This alone does NOT certify candidate feasibility, trimming, or an analytic
-/// definition's agreement with this net; callers must establish those separately.
-pub(super) fn maximum_is_bounded(
-    k: &Kernel,
-    net: &Nurbs,
-    domain: &Extent2d,
-    point: Vec3,
-    normal: Vec3,
-    upper: f64,
-) -> Result<bool> {
-    if !upper.is_finite()
-        || upper < 0.0
-        || ![domain.min.x, domain.min.y, domain.max.x, domain.max.y]
-            .iter()
-            .all(|x| x.is_finite())
-        || domain.min.x >= domain.max.x
-        || domain.min.y >= domain.max.y
-    {
-        return Ok(false);
-    }
-    let us = knot_cuts(&net.u, net.p, net.nu, domain.min.x, domain.max.x, 0)?;
-    let vs = knot_cuts(&net.v, net.q, net.nv, domain.min.y, domain.max.y, 0)?;
-    // Closed span bounds include the left limit at an upper domain boundary.
-    // A full-multiplicity interior knot can instead have a different native
-    // right-valued endpoint. Until its singleton boundary piece is enumerated,
-    // refuse rather than omit that actual point from the whole-face proof.
-    let upper_jump = |knots: &[f64], degree: usize, count: usize, t: f64| {
-        knots.get(count).is_some_and(|end| t < *end)
-            && knots.iter().filter(|&&knot| knot == t).count() > degree
-    };
-    if upper_jump(&net.u, net.p, net.nu, domain.max.x)
-        || upper_jump(&net.v, net.q, net.nv, domain.max.y)
-    {
-        return Ok(false);
-    }
-    let mut visited = 0;
-    for &(ua, ub, ku) in &us {
-        for &(va, vb, kv) in &vs {
-            let mut pending = vec![Cell {
-                u: Ivl::new(ua, ub),
-                v: Ivl::new(va, vb),
-                ku,
-                kv,
-                depth: 0,
-            }];
-            while let Some(cell) = pending.pop() {
-                k.check_cancelled(OP)?;
-                visited += 1;
-                if visited > MAX_BOXES {
-                    return Ok(false);
-                }
-                match bound(net, cell, point, normal) {
-                    Ok(value) if value.lo <= value.hi && value.hi <= upper => continue,
-                    Ok(value) if value.lo > upper => return Ok(false),
-                    Err(e @ SolidError::Cancelled { .. }) => return Err(e),
-                    // A denominator not separated from zero may become provable
-                    // after subdivision. An unresolved box never counts as passed.
-                    _ => {}
-                }
-                if cell.depth == MAX_DEPTH {
-                    return Ok(false);
-                }
-                let split_u =
-                    (cell.u.hi - cell.u.lo) / (ub - ua) >= (cell.v.hi - cell.v.lo) / (vb - va);
-                let range = if split_u { cell.u } else { cell.v };
-                let middle = range.mid();
-                if !(middle > range.lo && middle < range.hi) {
-                    return Ok(false);
-                }
-                let mut left = Cell {
-                    depth: cell.depth + 1,
-                    ..cell
-                };
-                let mut right = left;
-                if split_u {
-                    left.u.hi = middle;
-                    right.u.lo = middle;
-                } else {
-                    left.v.hi = middle;
-                    right.v.lo = middle;
-                }
-                pending.push(right);
-                pending.push(left);
-            }
-        }
-    }
-    Ok(true)
-}
+/// The whole-domain proof is independent of the returned point's arithmetic.
+pub(super) use super::projected_residual::maximum_is_bounded;
 
 #[cfg(test)]
 mod tests {
@@ -1064,11 +914,29 @@ mod tests {
     }
 
     #[test]
-    fn unresolved_rounding_and_invalid_domains_refuse() {
+    fn exact_zero_projection_succeeds_but_invalid_bounds_refuse() {
         let k = Kernel::default();
         let net = hidden_peak();
         let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
-        assert!(!maximum_is_bounded(&k, &net, &domain, Vec3::ZERO, Vec3::ZERO, 0.0).unwrap());
+        // N=0 makes every homogeneous projected numerator identically zero.
+        // Unlike the former mean-value arithmetic floor, the residual proves
+        // this exact identity without adding any candidate or caller allowance.
+        assert!(maximum_is_bounded(&k, &net, &domain, Vec3::ZERO, Vec3::ZERO, 0.0).unwrap());
+        for invalid_upper in [-1.0, f64::NAN, f64::INFINITY] {
+            assert!(
+                !maximum_is_bounded(&k, &net, &domain, Vec3::ZERO, Vec3::ZERO, invalid_upper)
+                    .unwrap()
+            );
+        }
+        assert!(!maximum_is_bounded(
+            &k,
+            &net,
+            &domain,
+            Vec3::new(f64::NAN, 0.0, 0.0),
+            Vec3::ZERO,
+            0.0
+        )
+        .unwrap());
         let invalid = Extent2d::from_bounds(0.0, 0.0, f64::INFINITY, 1.0);
         assert!(!maximum_is_bounded(
             &k,
