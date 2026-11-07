@@ -401,10 +401,6 @@ fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expecte
     );
     let point = surface.evaluate_point(&k, uv).unwrap();
     let measured = normal.cross(point - query).cross(normal).length();
-    eprintln!(
-        "certified projected maximum: normal={normal:?}, reported={:.17e}, exact={expected:.17e}",
-        solution.start.solution_value,
-    );
     let net = crate::blend::fillet_section::station::Nurbs::of(
         &crate::blend::fillet_section::station::as_b_spline(&k, surface)
             .unwrap()
@@ -612,7 +608,6 @@ fn check_maximum_after_near_seam_vertex(operation: SolverOperation) {
     .unwrap();
     assert_eq!(answer.len(), 1);
     let actual = answer.as_slice()[0].start.solution_value;
-    println!("{operation:?}: actual={actual:.17e}, expected={expected:.17e}");
     assert!(
         (actual - expected).abs() <= tolerance,
         "{operation:?}: actual={actual}, expected={expected}"
@@ -712,10 +707,6 @@ fn check_zero_slack_plane_candidate(normal: Vec3) {
     );
     let point = surface.evaluate_point(&k, uv).unwrap();
     let measured = normal.cross(point - query).cross(normal).length();
-    eprintln!(
-        "certified projected maximum: normal={normal:?}, reported={:.17e}, exact={expected:.17e}",
-        solution.start.solution_value,
-    );
     // Closed form: the farthest projected corners are (0.5,+/-0.5,0).
     // Candidate construction includes the exact trim endpoints. The explicit
     // caller slack is zero; all remaining room comes from arithmetic bounds.
