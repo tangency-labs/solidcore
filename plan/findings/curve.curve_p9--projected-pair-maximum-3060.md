@@ -28,7 +28,7 @@ The enumeration contract and completeness remain separate work.
 ## Design research
 
 Neumaier, *Complete Search in Continuous Global Optimization and Constraint
-Satisfaction*, sections 11?12, gives the mean-value enclosure (27) and the
+Satisfaction*, sections 11 and 12, gives the mean-value enclosure (27) and the
 branch-and-bound invariant: discard a parameter box only when its bound cannot
 beat an established feasible candidate. Local stationary solves alone do not
 establish global optimality. [Paper](https://arnold-neumaier.at/glopt/mss/Neu04.pdf).
@@ -52,3 +52,29 @@ as their definition. Supported exactness classes and refusals will be explicit.
 This belongs entirely to the kernel. #2791's N-D evaluation-state correction
 is separate; this work does not change it. The branch includes #2968 and #2840
 so their existing fixes and enclosures are reused rather than duplicated.
+
+
+## Implemented Single path (work in progress)
+
+The Single solver now constructs feasible parameter pairs and encloses every
+parameter rectangle with interval value and mean-value derivative bounds. Only a
+proved upper bound within the original distance tolerance may prune a rectangle.
+The operation keeps the kernel double-cross metric, including non-unit normals.
+Incumbent filtering returns no answer only when the entire certified maximum is
+below the cutoff; an ambiguous cutoff refuses. Cancellation and proof failures
+propagate independently of the legacy error-passing flag.
+
+Definition enclosures cover native positive-weight B-splines (degree at most 18,
+so the Taylor helper's factorials remain exact integers), Hermite power
+coefficients, analytic lines, and ellipses whose native rational form passes the
+existing `curve_on_quadrics` exact-class certificate used by record construction.
+An analytic label alone is not accepted: a changed radius with a stale net is
+refused. The new helper reuses that existing policy rather than a sampled
+recognizer. Other definition kinds are still unsupported.
+
+Six targeted tests pass locally: constrained corners; trimmed projection at
+normal scales 0, 0.001, 1, and 1000 with nonzero Z; same-object disjoint intervals
+and incumbent cutoffs; cancellation and precision refusal under both legacy
+flags; the rational gen1839 **Single variant**; and a valid ellipse versus a stale
+analytic net. The original gen1839 All row remains a separate obligation. Full
+case and downstream audits remain pending.

@@ -19,6 +19,9 @@
 //! | [`Curve::is_on_positive_side_of_planes`]          | `SmCurve::IsOnPositiveSideOfPlanes`              |
 //!
 //! Deviations:
+//! - **Projected Single maxima (#3060).** Definition enclosures and feasible
+//!   witnesses replace the incomplete stationary search; subdivision is bounded
+//!   to 32,768 boxes and depth 48 in `projected_pair`. Proof failures propagate.
 //! - **Curves and kernel.** The solver's trees only name their curves by the
 //!   caller's handle ([`crate::geom::tree::Tree::owner_object`]), so the solver
 //!   carries the curves and the kernel ([`CcGlobalSolver::with_curves`]); a solver
@@ -1250,7 +1253,10 @@ impl Curve {
     /// [`crate::limits::MAX_COORDINATE_MAGNITUDE`] (module docs); those of the
     /// line/line intersection and of the signed angle minimum. Errors of the global
     /// solve itself are ignored (upstream ignores `SolveIt`'s status), except
-    /// [`SolidError::Unported`].
+    /// [`SolidError::Unported`]. A projected `Single` maximum instead constructs
+    /// feasible witnesses and bounds the entire bounded parameter domain; an
+    /// unsupported definition or unresolved bound is an explicit error, regardless
+    /// of the legacy error-passing flag.
     pub fn global_curve_solve<O: SolutionObject>(
         &self,
         k: &Kernel,
@@ -1293,6 +1299,21 @@ impl Curve {
                 .copied()
                 .ok_or(SolidError::invalid_input(OP_GCS, "missing option vector"))
         };
+
+        // A projected Single maximum needs a whole-domain certificate. In
+        // particular, endpoint candidates cannot be filtered by an unconstrained
+        // stationary solve. Proof refusals propagate regardless of legacy flags.
+        if op == Op::ProjectedMaximize && requested == SolutionRequested::Single {
+            return super::projected_pair::solve(
+                k,
+                [self, other],
+                [*interval, *other_interval],
+                opt(0)?,
+                dist_tol,
+                opts.handles,
+                opts.target_distance,
+            );
+        }
 
         // (not upstream) see the module docs: coordinates past 1e150
         for curve in [self, other] {
@@ -2044,6 +2065,218 @@ mod tests {
                 pa.distance(pb)
             );
         }
+    }
+
+    #[test]
+    fn projected_pair_maximum_respects_projection_scale_and_trimmed_domains() {
+        let k = Kernel::default();
+        let a = segment([-1.0, 0.0, -8.0], [1.0, 0.0, 12.0]);
+        let b = segment([-0.5, 0.5, 20.0], [0.5, 0.5, -40.0]);
+        let ia = Extent1d::from_min_max(0.25, 0.75);
+        let ib = Extent1d::from_min_max(0.1, 0.9);
+        for scale in [0.001, 1.0, 1000.0, 0.0] {
+            let normal = [Vec3::new(0.0, 0.0, scale)];
+            let tolerance = 1e-8 * (scale * scale).max(1.0);
+            let opts = CurveSolveOptions {
+                handles: handles(&a, &b),
+                opt_vectors: Some(&normal),
+                ..CurveSolveOptions::default()
+            };
+            let sols = a
+                .global_curve_solve(
+                    &k,
+                    &ia,
+                    &b,
+                    &ib,
+                    SolverOperation::ProjectedMaximize,
+                    tolerance,
+                    &opts,
+                    SolutionRequested::Single,
+                )
+                .unwrap();
+            let found = &sols.as_slice()[0];
+            let [ta, tb] = [found.start.parameters[0], found.start.parameters[1]];
+            assert!(ia.contains_value(ta, 0.0) && ib.contains_value(tb, 0.0));
+            let delta = a.evaluate_point(&k, ta).unwrap() - b.evaluate_point(&k, tb).unwrap();
+            let measured = normal[0].cross(delta).cross(normal[0]).length();
+            assert!((found.start.solution_value - measured).abs() <= tolerance);
+            let expected = 1.06_f64.sqrt() * scale * scale;
+            assert!(
+                (measured - expected).abs() <= tolerance,
+                "scale={scale}, got={measured}"
+            );
+        }
+    }
+
+    #[test]
+    fn projected_pair_maximum_same_curve_distinct_intervals_and_target() {
+        let k = Kernel::default();
+        let a = segment([-1.0, 0.0, 8.0], [1.0, 0.0, -12.0]);
+        let ia = Extent1d::from_min_max(0.1, 0.2);
+        let ib = Extent1d::from_min_max(0.7, 0.9);
+        let normal = [Vec3::new(0.0, 0.0, 1.0)];
+        for (target, count) in [(None, 1), (Some(1.5), 1), (Some(2.0), 0)] {
+            let opts = CurveSolveOptions {
+                handles: handles(&a, &a),
+                opt_vectors: Some(&normal),
+                target_distance: target,
+            };
+            let sols = a
+                .global_curve_solve(
+                    &k,
+                    &ia,
+                    &a,
+                    &ib,
+                    SolverOperation::ProjectedMaximize,
+                    1e-8,
+                    &opts,
+                    SolutionRequested::Single,
+                )
+                .unwrap();
+            assert_eq!(sols.len(), count);
+            for found in sols.as_slice() {
+                assert!((found.start.solution_value - 1.6).abs() <= 1e-8);
+                assert!(ia.contains_value(found.start.parameters[0], 0.0));
+                assert!(ib.contains_value(found.start.parameters[1], 0.0));
+            }
+        }
+    }
+
+    #[test]
+    fn projected_pair_maximum_cancellation_and_precision_refusal_propagate() {
+        let a = segment([-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
+        let normal = [Vec3::new(0.0, 0.0, 1.0)];
+        for pass_on in [false, true] {
+            let mut k = Kernel::default();
+            k.fixes.query_statuses_pass_on = pass_on;
+            let opts = CurveSolveOptions {
+                handles: handles(&a, &a),
+                opt_vectors: Some(&normal),
+                ..CurveSolveOptions::default()
+            };
+            let solve = |k: &Kernel, tol| {
+                a.global_curve_solve(
+                    k,
+                    &a.natural_interval(),
+                    &a,
+                    &a.natural_interval(),
+                    SolverOperation::ProjectedMaximize,
+                    tol,
+                    &opts,
+                    SolutionRequested::Single,
+                )
+            };
+            assert!(matches!(
+                solve(&k, 0.0),
+                Err(SolidError::Unsupported { .. })
+            ));
+            let token = crate::kernel::CancelToken::new();
+            token.cancel();
+            k.set_cancel_token(token);
+            assert!(matches!(solve(&k, 1e-8), Err(SolidError::Cancelled { .. })));
+        }
+    }
+
+    #[test]
+    fn projected_pair_maximum_rational_quadratic_single_variant_1839() {
+        use crate::nurbs::math::CPoint;
+        // Single variant: the original generated record requests All and stays open.
+        let k = Kernel::default();
+        let a = Curve::from(
+            BSplineCurve::from_data(
+                3,
+                2,
+                5,
+                2,
+                &[
+                    CPoint::new(11.842545634155265, 7.344713691606567, 5.46251826429733, 1.0),
+                    CPoint::new(
+                        6.776096256477461,
+                        10.257732173030126,
+                        5.881478943491939,
+                        0.829018189211171,
+                    ),
+                    CPoint::new(
+                        1.8974778199934033,
+                        11.021078891759203,
+                        6.655645433105123,
+                        1.0,
+                    ),
+                ],
+                &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            )
+            .unwrap(),
+        );
+        let ia = Extent1d::from_min_max(0.11409671825899509, 0.43561427937496744);
+        let ib = Extent1d::from_min_max(0.03474215986040488, 0.4670833692125368);
+        let normal = [Vec3::new(0.0, 0.0, 1.0)];
+        let opts = CurveSolveOptions {
+            handles: handles(&a, &a),
+            opt_vectors: Some(&normal),
+            ..CurveSolveOptions::default()
+        };
+        let sols = a
+            .global_curve_solve(
+                &k,
+                &ia,
+                &a,
+                &ib,
+                SolverOperation::ProjectedMaximize,
+                1e-4,
+                &opts,
+                SolutionRequested::Single,
+            )
+            .unwrap();
+        let found = &sols.as_slice()[0];
+        assert!((found.start.solution_value - 4.40801559960347).abs() <= 1e-4);
+        assert!(ia.contains_value(found.start.parameters[0], 0.0));
+        assert!(ib.contains_value(found.start.parameters[1], 0.0));
+    }
+
+    #[test]
+    fn projected_pair_maximum_ellipse_definition_and_stale_form() {
+        use crate::curve::ellipse::{Ellipse, EllipseOptions};
+        let k = Kernel::default();
+        let mut ellipse = Ellipse::new(
+            &k,
+            Vec3::new(0.0, 0.0, 5.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Extent1d::from_min_max(0.0, 180.0),
+            2.0,
+            1.0,
+            &EllipseOptions {
+                dim: 3,
+                nurb: None,
+                inside_out: false,
+            },
+        )
+        .unwrap();
+        let normal = [Vec3::new(0.0, 0.0, 1.0)];
+        let a = Curve::from(ellipse.clone());
+        let solve = |a: &Curve| {
+            a.global_curve_solve(
+                &k,
+                &a.natural_interval(),
+                a,
+                &a.natural_interval(),
+                SolverOperation::ProjectedMaximize,
+                1e-6,
+                &CurveSolveOptions {
+                    handles: handles(a, a),
+                    opt_vectors: Some(&normal),
+                    ..CurveSolveOptions::default()
+                },
+                SolutionRequested::Single,
+            )
+        };
+        let sols = solve(&a).unwrap();
+        assert!((sols.as_slice()[0].start.solution_value - 4.0).abs() <= 1e-6);
+        ellipse.set_radius(9.0); // Deliberately leaves the old net attached.
+        assert!(matches!(
+            solve(&Curve::from(ellipse)),
+            Err(SolidError::Unsupported { .. })
+        ));
     }
 
     #[test]

@@ -1142,7 +1142,7 @@ enum AffineDirection {
     },
 }
 
-struct AffineDefinition {
+pub(super) struct AffineDefinition {
     start: [Ivl; 3],
     end: [Ivl; 3],
     interval: Extent1d,
@@ -1150,6 +1150,18 @@ struct AffineDefinition {
     isolated_end: Option<[Ivl; 3]>,
 }
 impl AffineDefinition {
+    /// Enclose one continuous affine piece and its derivative without refitting it.
+    pub(super) fn jet_over(&self, t: Ivl) -> ([Ivl; 3], [Ivl; 3]) {
+        if self.interval.min() == self.interval.max() {
+            // The restricted definition is a single point; its extension here is constant.
+            return (self.start, [Ivl::from(0.0); 3]);
+        }
+        let span = Ivl::from(self.interval.max()) - Ivl::from(self.interval.min());
+        let fraction = (t - Ivl::from(self.interval.min())) / span;
+        let derivative = iv_sub(self.end, self.start).map(|x| x / span);
+        (iv_lerp(self.start, self.end, fraction), derivative)
+    }
+
     /// Enclose the affine point at the caller's raw parameter.
     fn point(&self, t: f64) -> [Ivl; 3] {
         let fraction = (Ivl::from(t) - Ivl::from(self.interval.min()))
@@ -1179,7 +1191,7 @@ impl AffineDefinition {
 }
 
 /// Enclose an analytic line or an equal-weight linear span, preserving isolated upper-knot values.
-fn affine_definition(curve: &Curve, interval: Extent1d) -> Option<AffineDefinition> {
+pub(super) fn affine_definition(curve: &Curve, interval: Extent1d) -> Option<AffineDefinition> {
     if let CurveKind::Line(line) = curve.kind() {
         let point = iv_point(line.line_point());
         let vector = iv_point(line.line_vector());

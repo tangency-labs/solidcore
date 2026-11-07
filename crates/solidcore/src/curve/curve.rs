@@ -16,6 +16,7 @@ pub mod p6;
 pub mod p7;
 pub mod p8;
 pub mod p9;
+mod projected_pair;
 
 pub use p2::{
     knots_ignoring_status, Curve, CurveEvaluate, CurveKind, CurvePropertyType, KnotsWithStatus,
