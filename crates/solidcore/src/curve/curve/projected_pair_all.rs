@@ -277,23 +277,17 @@ pub(super) fn construct<O: SolutionObject>(
         .without_objects());
     }
     let mut corners: Vec<Candidate> = Vec::new();
-    let mut upper = 0.0_f64;
     let mut lower = 0.0_f64;
-    let mut point_rounding = 0.0_f64;
     for s in [pa.range.lo, pa.range.hi] {
         for t in [pb.range.lo, pb.range.hi] {
             let candidate = query.candidate(s, t)?;
-            upper = upper.max(candidate.upper);
             lower = lower.max(candidate.lower);
-            point_rounding =
-                point_rounding.max((Ivl::from(candidate.upper) - Ivl::from(candidate.lower)).hi);
             corners.push(candidate);
         }
     }
     // The optional target seeds the incumbent just as in GlobalSolve; it is
     // a cutoff, not a claim that this rectangle attains that value.
     let incumbent = target.map_or(0.0, f64::abs);
-    let upper = upper.max(incumbent);
     let lower = lower.max(incumbent);
 
     let exclude = (Ivl::from(lower) - Ivl::from(tolerance)).lo;
@@ -306,19 +300,9 @@ pub(super) fn construct<O: SolutionObject>(
         if !classify(query, [pa, pb], s, t)? {
             continue;
         }
-        // Retention slack is not a demand for sub-rounding optimization.
-        // The only allowance here is the uncertainty already enclosed by
-        // point evaluations, following projected_affine in p1. Never use a
-        // geometric rectangle width or an arbitrary absolute/relative floor.
-        let own_rounding = (Ivl::from(candidate.upper) - Ivl::from(candidate.lower)).hi;
-        let gap = (Ivl::from(upper) - Ivl::from(candidate.lower)).hi;
-        let allowance =
-            (Ivl::from(tolerance) + Ivl::from(point_rounding) + Ivl::from(own_rounding)).hi;
-        if !gap.is_finite() || !allowance.is_finite() || gap > allowance {
-            return Err(refused(
-                "maximum gap exceeds its point arithmetic enclosure",
-            ));
-        }
+        // Classification proves this exact parameter corner is a constrained
+        // maximum. Construction has no geometric optimization error to absorb;
+        // the existing accumulator below applies reported-value All retention.
         if let Some(target) = target {
             let cutoff = Ivl::from(target.abs()) - Ivl::from(tolerance);
             if candidate.upper < cutoff.lo {
