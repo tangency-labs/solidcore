@@ -332,7 +332,7 @@ pub fn find_brep_region_of_other_face(
         else {
             continue;
         };
-        // a face found coincident here is coincident only when its surface is (WR-754)
+        // a face found coincident here is coincident only when its surface is (WR-755)
         if let (Some(fu), false) = (sector.coincident_faceuse, sector.zero_sector) {
             let face = eu::faceuse_face(brep, fu)?.ok_or_else(|| SolidError::null_pointer(OP))?;
             let other_face =

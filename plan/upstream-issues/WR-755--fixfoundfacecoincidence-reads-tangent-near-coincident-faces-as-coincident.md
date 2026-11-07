@@ -1,4 +1,4 @@
-#### WR-754. The merge reads two faces as coincident when they only share a tangent edge, so a fillet against a fillet a hair apart is classified on the wrong side
+#### WR-755. The merge reads two faces as coincident when they only share a tangent edge, so a fillet against a fillet a hair apart is classified on the wrong side
 - **Severity:** Wrong result (open or invalid body, or status 1001, on a boolean of two nearly coincident filleted bodies)
 - **Area:** Boolean (merge, face coincidence)
 - **Location:** at the pin `3fd5b95`: `source/SMLib/src/SmMerge.cpp:2129` (`FixFoundFaceCoincidence`) and the radial-sector search it relies on. A mated edge's radial sector compares the two faces only at the edge, and the faces of the other body found coincident there are taken as coincident faces.
