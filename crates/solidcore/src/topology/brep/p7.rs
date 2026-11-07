@@ -1201,11 +1201,16 @@ pub fn make_face_with_curve_owners(
 /// parameters) and is lifted as the others are, but made no edge, whatever it lifts to on
 /// `surface`: the next curve starts at the vertex the one before it ends at (where the
 /// slot closes the loop, the last curve ends at the loop's first vertex). It has no owner.
+/// The join is topological: where the slot lifts to more than a point, the edges either
+/// side end apart from the vertex they share, and the caller closes that gap. The local
+/// operation intersects those edges again with the faces beside them, and its soundness
+/// gate checks the body. Crate-private for that reason: nothing outside the crate can make
+/// a face whose edges end off their vertices.
 ///
 /// # Errors
 /// As [`make_face_with_curves`].
 #[allow(clippy::too_many_arguments)]
-pub fn make_face_with_curve_owners_at_vertices(
+pub(crate) fn make_face_with_curve_owners_at_vertices(
     k: &mut Kernel,
     b: &mut Brep,
     region: Option<RegionId>,
