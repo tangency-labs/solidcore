@@ -2,13 +2,29 @@
 
 PR #3081 implements the finite All construction for identical native noncircular
 open ellipse arcs. Public integration e1930057d passes 38 focused tests, including
-the original gen0472 request. The frozen cohort audit and golden graduation are
-pending; this does not close #3060's remaining general curved-pair cases.
+the original gen0472 request. The frozen cohort audit changes only gen0472, whose corrected actual runner
+output is now graduated into the goldens; this does not close #3060's remaining
+general curved-pair cases.
 
 ![Original ellipse All pair and a larger admissible pair, same view.](figures/projected-ellipse-witness-3060.png)
 
 The dashed chord measures the returned pair at left and the larger witness at right;
 this is measured geometry, not a claim that the new root construction is complete.
+
+## Verified public before/after
+
+![Actual frozen public output before/after at identical view and scale.](figures/projected-ellipse-repair-3060.png)
+
+The original output contains two swapped pairs at `5.010571561172592`. The
+corrected output contains two swapped pairs at `6.3274724936037545`, with native
+parameters `(1, 0.38120962513757384)` and its swap. The complete finite root
+construction certifies these points; caller retention remains `1e-5`.
+
+The frozen 75-case All audit at 751666c9b has exactly one changed case, gen0472,
+zero new refusals and zero decoding errors; every input is unchanged. The actual
+filtered runner bless adds one golden, with zero broken cases. Only gen0472 is
+removed from inherited known failures, leaving 44 unrepaired All cases under
+#3060. The historical 45-row counterexample artifact remains baseline evidence.
 
 ## Existing failure and a stronger feasible witness
 
@@ -147,6 +163,7 @@ Independent review checked the edge proof, interior reduction, strict point
 construction, outward regrouping and public dispatch boundary.
 
 Strict `cargo clippy -p solidcore --lib --tests -- -D warnings` passes at the
-same public integration checkpoint. The 75-case scope audit, filtered golden
-graduation and final broader gates are pending. No sampled rendering or independent optimization is
+same public integration checkpoint. The 75-case scope audit and filtered golden
+graduation pass as detailed above. Final parent propagation and broader gates
+remain pending. No sampled rendering or independent optimization is
 used as a completeness certificate. Remaining general All cases stay under #3060.
