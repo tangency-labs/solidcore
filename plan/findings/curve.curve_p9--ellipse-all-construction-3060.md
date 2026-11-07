@@ -3,6 +3,11 @@
 This is a design note, not a new dispatch or a certified root implementation.
 `gen0472` remains open until complete finite enumeration is implemented and audited.
 
+![Original ellipse All pair and a larger admissible pair, same view.](figures/projected-ellipse-witness-3060.png)
+
+The dashed chord measures the returned pair at left and the larger witness at right;
+this is measured geometry, not a claim that the new root construction is complete.
+
 ## Existing failure and a stronger feasible witness
 
 The native ellipse has radii `a=4.723327346620286`,
@@ -87,3 +92,30 @@ stationary point. The quartic and identical-pair reduction above are direct
 algebraic derivations for this maximum problem. Complete interval root exclusion
 would follow the bounded-search principles already cited in the main #3060
 finding; no sampled search or approximate quartic solver alone is a certificate.
+
+## Test-only native edge isolation prototype
+
+The separate follow-up has a bounded interval edge isolator, still outside
+production dispatch. On every native knot piece it encloses
+`g=(P-Q) dot P'` and `g'=P' dot P'+(P-Q) dot P''` after the complete double-cross
+projection. A nonzero g excludes stationarity; positive g' excludes a maximum.
+Strict opposite endpoint signs and negative g' prove exactly one strict maximum.
+Interval Newton intersections then contract that already established root.
+The returned root bracket remains geometric uncertainty, separate from every
+point-evaluation rounding allowance. Unresolved endpoint identities, repeated
+roots, non-finite enclosures or exhausted fixed budgets refuse.
+
+For a nondegenerate noncircular projected identical ellipse, minor-axis antipodes
+are saddle points of the pair objective. Only the major-axis antipodes can be
+interior pair maxima. Those points are also the strict maxima of projected
+squared distance to the ellipse center, so the same complete native 1D root
+construction can locate them without guessing an angular parameter conversion.
+A future finite construction must still prove the exact conic class and regular
+traversal, classify edge/corner inward derivatives, pair the opposite center
+maxima, bound their objective enclosures, and apply the shared All retention
+and ordered duplicate rules. The edge prototype alone does not fix gen0472.
+
+The first three focused prototype tests pass, including the original native edge
+root and Taylor objective enclosure. Strict library/tests Clippy and changed-file
+formatting pass. Independent read-only review found the current edge proof sound;
+multiple-root subdivision coverage is the next regression before production.
