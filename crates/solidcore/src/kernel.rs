@@ -162,6 +162,8 @@ pub struct WorkCounters {
     face_pairs: Cell<u64>,
     loops_classified: Cell<u64>,
     wall_body_copies: Cell<u64>,
+    coincident_curves_classified: Cell<u64>,
+    containment_edge_drops: Cell<u64>,
 }
 
 impl WorkCounters {
@@ -190,11 +192,29 @@ impl WorkCounters {
         self.wall_body_copies.get()
     }
 
+    /// Edge curves of two coincident faces that `FaceIntersect` classifies on both: those
+    /// of each face within reach of the other face's box. Not upstream (the fork's counters
+    /// have none).
+    #[must_use]
+    pub fn coincident_curves_classified(&self) -> u64 {
+        self.coincident_curves_classified.get()
+    }
+
+    /// Edge curves the loop containment test (`query::loop::contains_uv_point`) drops the
+    /// test point onto: those whose box, grown by the edge's tolerance, reaches the point.
+    /// Not upstream (upstream drops it onto every edge of the loop it walks).
+    #[must_use]
+    pub fn containment_edge_drops(&self) -> u64 {
+        self.containment_edge_drops.get()
+    }
+
     /// Zeroes every count (`SmWorkCounters::Reset`).
     pub fn reset(&self) {
         self.face_pairs.set(0);
         self.loops_classified.set(0);
         self.wall_body_copies.set(0);
+        self.coincident_curves_classified.set(0);
+        self.containment_edge_drops.set(0);
     }
 
     /// Counts one face pair examined for intersection.
@@ -212,6 +232,18 @@ impl WorkCounters {
     pub(crate) fn add_wall_body_copy(&self) {
         self.wall_body_copies
             .set(self.wall_body_copies.get().saturating_add(1));
+    }
+
+    /// Counts one edge curve of coincident faces classified on both.
+    pub(crate) fn add_coincident_curve_classified(&self) {
+        self.coincident_curves_classified
+            .set(self.coincident_curves_classified.get().saturating_add(1));
+    }
+
+    /// Counts one drop of a containment test's point onto an edge curve.
+    pub(crate) fn add_containment_edge_drop(&self) {
+        self.containment_edge_drops
+            .set(self.containment_edge_drops.get().saturating_add(1));
     }
 }
 
