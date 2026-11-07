@@ -1901,6 +1901,12 @@ pub trait GlobalSolve<'t, O: SolutionObject + 't> {
         solve_branch(self, branch)
     }
 
+    /// Start a fresh [`Self::solve_it`] request before its answer-array replacement
+    /// or traversal. This is called once per request, including one that later
+    /// fails validation or is cancelled; individual branch calls do not invoke it.
+    /// Solvers with request-local proof history can clear it here.
+    fn begin_solve(&mut self) {}
+
     /// `SolveIt`: runs the solve described by `request` from the top nodes of
     /// the trees, accumulating into `solutions` (whose existing entries are
     /// kept).
@@ -1916,6 +1922,7 @@ pub trait GlobalSolve<'t, O: SolutionObject + 't> {
         solutions: &mut SolutionArray<O>,
     ) -> Result<()> {
         const OP: &str = "geom::global_solver::GlobalSolve::solve_it";
+        self.begin_solve();
         let SolveRequest {
             operation,
             solution_requested,

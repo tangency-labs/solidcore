@@ -933,6 +933,12 @@ impl<'t, O: SolutionObject + 't> GlobalSolve<'t, O> for TopologySolver<'t, '_, O
         &mut self.base
     }
 
+    fn begin_solve(&mut self) {
+        // A new request may replace both domains and operation. Branch/tree
+        // accumulation deliberately does not pass through this fresh boundary.
+        self.projected_pair_domains = super::projected_pair_domains::Ledger::default();
+    }
+
     fn solve_branch(&mut self, branch: &Branch) -> Result<()> {
         let managed = super::projected_pair_domains::Ledger::eligible(&self.base)
             && self.base.num_trees == 2

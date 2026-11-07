@@ -275,7 +275,7 @@ fn check_surface(
             outside.start.solution_value * outside.start.solution_value;
         solver.base.solutions.add(&outside);
     }
-    if matches!(mode, 11..=13) {
+    if matches!(mode, 11..=13 | 15..=19) {
         solver.base.trees[0] = Some(&query_tree);
         solver.base.trees[1] = Some(&face_tree);
         solver.base.num_trees = 2;
@@ -296,6 +296,68 @@ fn check_surface(
             return;
         }
         crate::geom::global_solver::GlobalSolve::solve_branch(&mut solver, &branch).unwrap();
+        if matches!(mode, 15..=19) {
+            use crate::geom::global_solver::{GlobalSolve, SolveRequest};
+            use crate::geom::solution_array::SolutionArray;
+            assert!(solver.projected_pair_domains.active);
+            solver.local_solver.as_mut().unwrap().interval = Extent1d::from_min_max(0.2, 0.8);
+            if mode == 19 {
+                // Intentional branch accumulation must preserve the first full
+                // interval and its larger attained maximum.
+                GlobalSolve::solve_branch(&mut solver, &branch).unwrap();
+                let value = solver.base.solutions.get(0).unwrap().start.solution_value;
+                assert!((value - expected).abs() <= 8.0 * f64::EPSILON * expected);
+                return;
+            }
+            let vectors = [normal * 2.0];
+            let request = SolveRequest {
+                operation: if mode == 16 {
+                    SolverOperation::Minimize
+                } else {
+                    SolverOperation::ProjectedMaximize
+                },
+                solution_requested: SolutionRequested::Single,
+                tolerance_3d: 1e-5,
+                best_answer_so_far_sq: 0.0,
+                opt_vectors: &vectors,
+            };
+            let mut answers = SolutionArray::new();
+            if mode == 17 {
+                answers.add(solver.base.solutions.get(0).unwrap());
+            }
+            if mode == 16 {
+                solver.base.trees[1] = None;
+            }
+            if mode == 18 {
+                let token = crate::kernel::CancelToken::new();
+                token.cancel();
+                solver.base.cancel = Some(token);
+            }
+            let result = GlobalSolve::solve_it(&mut solver, &request, &mut answers);
+            if mode == 16 {
+                assert!(result.is_err());
+                assert!(!solver.projected_pair_domains.active);
+                return;
+            }
+            if mode == 17 {
+                assert!(matches!(result, Err(crate::SolidError::Unsupported { .. })));
+                return;
+            }
+            if mode == 18 {
+                assert!(matches!(result, Err(crate::SolidError::Cancelled { .. })));
+                // The newly captured trim can be active, but no old full-domain
+                // candidate survives the fresh request reset.
+                solver.base.cancel = None;
+                GlobalSolve::solve_it(&mut solver, &request, &mut answers).unwrap();
+            } else {
+                result.unwrap();
+            }
+            let answer = answers.get(0).unwrap();
+            assert!((0.2..=0.8).contains(&answer.start.param(0).unwrap()));
+            let exact = ((0.6_f64 * 0.6 + 1.0).sqrt() + 0.25) * 4.0;
+            assert!((answer.start.solution_value - exact).abs() <= 8.0 * f64::EPSILON * exact);
+            return;
+        }
     } else if matches!(mode, 0 | 5 | 6 | 7 | 8 | 9 | 10) {
         let named_face = Some(CacheObject::Surface(face));
         let result = local.solve_it(
@@ -586,4 +648,25 @@ fn affine_endpoint_budget_is_checked_before_collecting_large_definition() {
 #[test]
 fn native_pair_ledger_preserves_unrelated_single_tree_and_culled_minimum_entries() {
     check_torus_mode(360.0, 1.0, false, Extent1d::from_min_max(0.0, 1.0), 14);
+}
+
+#[test]
+fn native_pair_fresh_request_replaces_domains_and_projection_options() {
+    check_torus_mode(360.0, 1.0, false, Extent1d::from_min_max(0.0, 1.0), 15);
+}
+#[test]
+fn native_pair_fresh_ineligible_error_clears_old_active_history() {
+    check_torus_mode(360.0, 1.0, false, Extent1d::from_min_max(0.0, 1.0), 16);
+}
+#[test]
+fn native_pair_fresh_request_refuses_uncertified_supplied_answer_history() {
+    check_torus_mode(360.0, 1.0, false, Extent1d::from_min_max(0.0, 1.0), 17);
+}
+#[test]
+fn native_pair_cancelled_fresh_request_can_be_retried_without_stale_history() {
+    check_torus_mode(360.0, 1.0, false, Extent1d::from_min_max(0.0, 1.0), 18);
+}
+#[test]
+fn native_pair_explicit_branch_accumulation_preserves_prior_domain() {
+    check_torus_mode(360.0, 1.0, false, Extent1d::from_min_max(0.0, 1.0), 19);
 }

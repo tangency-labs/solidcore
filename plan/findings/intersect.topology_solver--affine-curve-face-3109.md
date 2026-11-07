@@ -131,8 +131,24 @@ cone sqrt(3), and both sphere controls at 1.5. The subsequent focused cycle
 passed all 23 tests, adding trait/raw/partial entry guards, external-incumbent
 empty/accepted/ambiguous controls, cancellation, the 128/129-span budget boundary,
 and unchanged single-tree/cull behavior for an unrelated minimum query. The
-strict library/tests lint check also passes. Fresh `GlobalSolve::solve_it` reuse
-needs a separate lifecycle reset before this checkpoint is complete: branch
-accumulation must preserve history, while a new request must not inherit old
-domains or an active certificate. Dedicated reuse controls are pending.
+strict library/tests lint check also passes. The separate fresh-request lifecycle
+below preserves branch accumulation while preventing a new request from inheriting
+old domains or an active certificate.
 Affected-unit output/refusal accounting and final broad gates remain pending.
+
+
+## Fresh-request lifecycle
+
+`GlobalSolve::begin_solve` is a default no-op hook called once at the start of
+`solve_it`, before validation, answer-array replacement or traversal. The topology
+solver clears its pair ledger there even if the new operation is not eligible.
+Explicit branch calls and tracked tree phases do not invoke the hook, preserving
+intentional accumulation across their original domains. Supplied answers without
+recorded provenance still refuse when the native certificate is activated.
+
+All 28 focused native/domain tests and all 15 generic global-solver tests pass.
+The five new controls cover a fresh empty answer array with changed curve trim and
+projection normal, an early error on a noneligible request, supplied-answer
+provenance, cancellation followed by retry, and explicit branch accumulation.
+The final strict library/tests lint rerun also passes. The affected-unit
+output/refusal audit, final native output artifacts and broad gates remain pending.
