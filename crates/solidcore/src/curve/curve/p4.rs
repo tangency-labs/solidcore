@@ -28,7 +28,7 @@
 //! | `EvalFunction for` [`FindCurveDistanceExtrema`]   | `SmFindCurveDistanceExtremaEFO::Evaluate` (co-ported in [`crate::curve::curve_cache`]) |
 //!
 //! Deviations:
-//! - **Projected maximum derivative (#2840).** Negating the projected
+//! - **Projected maximum derivative.** Negating the projected
 //!   stationary equation also negates its derivative, so Newton steps use
 //!   the derivative of the function they are solving.
 //! - **Base bodies.** The virtual `IsClosed`, `IsDegenerate` and `ApproximatePolarBox`

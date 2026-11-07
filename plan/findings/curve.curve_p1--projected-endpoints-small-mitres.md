@@ -44,7 +44,7 @@ when a maximum was requested, so finding one must not suppress the boundaries.
 Each endpoint is admitted only after its distance evaluates successfully. A
 failed endpoint evaluation returns its error locally, rather than admitting an
 error code as a numeric distance.
-The outer legacy status policy is unchanged. Two further corrections are necessary
+Projected extrema propagate failures; other operations retain their legacy status policy. Two further corrections are necessary
 to preserve better interior candidates:
 
 - The objective is `D(V)=|N cross V cross N|`. Writing `q=N dot N`, this is
@@ -71,65 +71,344 @@ Bernstein coefficient signs establish a unique stationary root, located by
 bisection. The certificates use f64 arithmetic with large sign margins, not
 formal outward-rounded interval arithmetic.
 
-## Independent checks and references
+## Affine certificate and review corrections
 
-The four elbow regressions require Level2 validity and the closed-form volume.
-Direct solver regressions cover 1,024 combinations of analytic/B-spline lines,
-scales, frames, orientation, full/subinterval domains, interior/exterior query
-feet, min/max and Single/All requests. Twelve quadratic Bezier cases use the
-exact curve `C(t)=(t,t^2,0)` and its differentiated squared-distance polynomial.
-They check returned parameters, distances and curve evaluations. Parameters and
-distances use `1e-9` relative comparison with a documented `1e-12` absolute floor;
-the elbow volume check retains the existing `1e-4` relative oracle.
+On each degree-one span, project the endpoints with `N cross (C-P) cross N`.
+The squared norm is a convex quadratic in the local fraction. Its clamped
+stationary fraction supplies the minimum; eligible boundaries supply the maximum.
+Outward-rounded intervals enclose the objective and candidates. Parameter
+neighbors are checked in the original knot coordinates, without rebuilding knots.
+An isolated upper-knot value remains a separate candidate from the left limit.
 
+The review corrections separate retention slack from enclosure rounding, use
+exact factors of the mapped analytic-line direction, refuse an interior minimum
+that has no representable interior parameter, and refuse projected requests not
+covered by the cached domain. Zero-slack and collapsed-line regressions fail with
+status 1021 before their fixes. The true unrepresentable-minimum refusal remains
+covered, including an adjacent-float span whose fixture explicitly preserves raw
+knots. The 14 internal cache/affine tests passed after that fixture correction.
+
+For an analytic line, the mapped endpoint difference factors as
+`scale * (b-a) * V`, times a nonzero query/natural-span ratio for bounded maps.
+Zero factors are checked before multiplication; otherwise exact parallelism of
+`V` decides whether the projection is constant. Subtracting rounded endpoint
+positions is insufficient: it can lose true parallelism or erase a tiny
+transverse component. Both additional regressions fail against `e71a2e1b9`
+and pass with the factorized proof. All 21 projected-query tests pass in the
+current debug and optimized builds.
+
+![Narrow parameter span and representable candidates](figures/projected-affine-parameter-conditioning.png)
+![Isolated upper-knot value and left limit](figures/projected-upper-knot-limit.png)
+
+The raw span `[1, 1+1.5e-12]` runs from `(-1,0)` to `(1,1)`.
+For query `(0,0.3)`, the exact distance is `0.4/sqrt(5)` and the local
+fraction is `0.46`. Every representable parameter near that foot misses the
+minimum by more than `1e-12`; the regression requires `NotWithinTolerance`.
+Conversely, `intersect.topology_solver_p1/gen1646` has an ordinary interior
+minimum near `t=0.6406108473689742`. Its exact distance is approximately
+`1.5495187277368766e-16`; the nearest parameter's excess is only
+`1.247199610658913e-19`. Zero retention slack must not reject enclosure rounding.
+
+## Historical independent caller audits
+
+These tables preserve the independent geometry audit used to classify changes.
+They compare the pre-fix implementation/reference with the earlier candidate,
+not a claim that every row has been revalidated at the current head. Current
+golden updates must be checked against these oracles. Historical C++ parity
+counts, temporary replay programs, and redundant validation snapshots are omitted.
+
+### Global curve extrema
+
+| Case (seed) | Operation | Oracle parameter | Oracle distance | Returned (parameter, distance) | Query tolerance |
+|---|---|---:|---:|---|---:|
+| gen0002 (7577099422542515487) | max | 0.82584407876161592 | 9.2486752805868271 | (0.82584407876161836, 9.2486752805868271) | 0.050000000000000003 |
+| gen0069 (7577099422542515554) | max | 4.2339767627157618 | 8.8901767919182184 | (4.2339767627157618, 8.8901767919182149) | 1.0000000000000001e-05 |
+| gen0159 (7577099422542515644) | max | 1.1388624755787422 | 1.033541203184561 | (1.1388624755787422, 1.033541203184561) | 0.001 |
+| gen0268 (7577099422542515753) | max | 1 | 95.282075215491702 | (1, 95.282075215491687) | 0.050000000000000003 |
+| gen0312 (7577099422542515797) | max | 0.98007941619113514 | 28.24679060307276 | (0.98007941619113648, 28.246790603072732) | 1.0000000000000001e-05 |
+| gen0419 (7577099422542515904) | max | 1 | 332.06684015374111 | (1, 332.06684015374105) | 1.0000000000000001e-05 |
+| gen0429 (7577099422542515914) | max | 0 | 22.540316380568978 | (0, 22.540316380568978) | 0.050000000000000003 |
+| gen0478 (7577099422542515963) | max | 0.74580880176850051 | 4.7619030295801066 | (0.74580880176850051, 4.7619030295801057) | 0.050000000000000003 |
+| gen0572 (7577099422542516057) | min | 0.50726013537654158 | 0.0071576915035326616 | (0.5072601353765418, 0.0071576915035326634); (0.57557342760196972, 0.016737875986831931); (0.41501895441540232, 0.02270442517931608) | 0.050000000000000003 |
+| gen0660 (7577099422542516145) | max | 0.30484065810692851 | 1.4420595249547048 | (0.30484065810692407, 1.4420595249547044) | 9.9999999999999995e-07 |
+| gen0757 (7577099422542516242) | max | 4.0683848792589856 | 10.557927271679802 | (4.0683848792589856, 10.557927271679803) | 0.001 |
+| gen0869 (7577099422542516354) | max | 1 | 14.774212810947542 | (1, 14.774212810947549) | 9.9999999999999995e-07 |
+| gen0877 (7577099422542516362) | max | 1 | 10.649300098095047 | (1, 10.649300098095045) | 9.9999999999999995e-07 |
+| gen0903 (7577099422542516388) | max | 1.2914264682598677 | 5.3562304943464323 | (1.2914264682598677, 5.3562304943464323) | 0.050000000000000003 |
+| gen0909 (7577099422542516394) | min | 0 | 0.57314391403148002 | (0, 0.57314391403147991); (1, 0.57314391403147935) | 0.001 |
+| gen0975 (7577099422542516460) | max | 9.8285191721035368 | 2.3115157576033059 | (9.8285191721035368, 2.3115157576033067) | 0.050000000000000003 |
+| gen1092 (7577099422542516577) | max | 0.64427276589930793 | 1.9538402164155868 | (0.64427276589930793, 1.9538402164155864) | 9.9999999999999995e-07 |
+| gen1110 (7577099422542516595) | max | 13.726611511845006 | 2.3980925297368407 | (13.726611511845006, 2.3980925297368416) | 0.050000000000000003 |
+| gen1256 (7577099422542516741) | max | 0.011215716748249243 | 9.3518785127959543 | (0.01121571674824913, 9.3518785127959525); (0, 9.3476106799938581) | 0.050000000000000003 |
+| gen1273 (7577099422542516758) | min | 0.53904519426058628 | 0.065254951376831793 | (0.53904519426058628, 0.065254951376831904) | 0.001 |
+| gen1302 (7577099422542516787) | max | 0.52441072279730427 | 44.199638754463066 | (0.52441072279730372, 44.199638754463066) | 0.001 |
+| gen1448 (7577099422542516933) | max | -3.0423314947687778 | 12.294570408306024 | (-3.0423314947687778, 12.29457040830604) | 9.9999999999999995e-07 |
+| gen1457 (7577099422542516942) | min | 0.20373517220503479 | 4.3438322141615755 | (0.20373517220503476, 4.3438322141615746); (0, 4.3797147977505153); (1, 4.3797147977505162) | 0.050000000000000003 |
+| gen1520 (7577099422542517005) | min | 2.3849086148836021 | 33.78937905650686 | (2.3849086148836021, 33.789379056506853) | 1.0000000000000001e-05 |
+| gen1548 (7577099422542517033) | min | 0 | 0.75822411532265421 | (0, 0.75822411532265399) | 1.0000000000000001e-05 |
+| gen1554 (7577099422542517039) | max | 0.27476145569451182 | 83.934191046689563 | (0.27476145569451182, 83.934191046689577) | 0.050000000000000003 |
+| gen1621 (7577099422542517106) | max | 0.0049847243869219106 | 22.088438326716776 | (0.0049847243869220884, 22.088438326716776); (0, 22.085041647697494) | 0.050000000000000003 |
+| gen1657 (7577099422542517142) | min | 0 | 0.38028968742366376 | (0, 0.3802896874236637) | 0.050000000000000003 |
+| gen1695 (7577099422542517180) | max | 0 | 39.869632717513085 | (0, 39.869632717513078) | 1.0000000000000001e-05 |
+| gen1699 (7577099422542517184) | min | 5.7177741326260971 | 1.3941829382067272 | (5.7177741326260971, 1.3941829382067421) | 1.0000000000000001e-05 |
+| gen1732 (7577099422542517217) | min | 4.86141236791868 | 1.5611572970102852 | (4.86141236791868, 1.5611572970102852) | 9.9999999999999995e-07 |
+| gen1872 (7577099422542517357) | min | 0.38506387034726092 | 7.3549564229763522 | (0.38506387034726092, 7.3549564229763549) | 9.9999999999999995e-07 |
+| gen1876 (7577099422542517361) | max | -2.6326022132199061 | 1.3914285882969526 | (-2.6326022132199061, 1.3914285882969528) | 9.9999999999999995e-07 |
+| gen2021 (7577099422542517506) | max | 1 | 28.857905823233743 | (1, 28.857905823233743) | 1.0000000000000001e-05 |
+| gen2092 (7577099422542517577) | max | 0.074766904398441178 | 8.0542139867220648 | (0.074766904398441164, 8.0542139867220666) | 9.9999999999999995e-07 |
+| gen2126 (7577099422542517611) | max | 2.8100032256169061 | 5.556128313677057 | (2.8100032256169061, 5.556128313677057) | 1.0000000000000001e-05 |
+| gen2196 (7577099422542517681) | max | 0.065963146865898742 | 7.9738378188486898 | (0.06596314686589877, 7.9738378188486907) | 0.050000000000000003 |
+| gen2218 (7577099422542517703) | max | 3.0261404497837283 | 3.5683265921762812 | (3.0261404497837283, 3.5683265921762817) | 1.0000000000000001e-05 |
+| gen2292 (7577099422542517777) | min | 0 | 4.5142803266087412 | (0, 4.5142803266087421) | 1.0000000000000001e-05 |
+| gen2361 (7577099422542517846) | max | 0.066619966966377911 | 4.6198607072580273 | (0.066619966966380756, 4.6198607072580273) | 9.9999999999999995e-07 |
+| gen2524 (7577099422542518009) | max | 0.51610626441624408 | 0.16452101103224909 | (0.5161062644162443, 0.16452101103224887) | 9.9999999999999995e-07 |
+| gen2525 (7577099422542518010) | min | 6.5843795421782971 | 11.549815628097759 | (6.5843795421782971, 11.549815628097758) | 1.0000000000000001e-05 |
+| gen2740 (7577099422542518225) | max | 0.12365865927611254 | 39.766866097214823 | (0.12365865927611258, 39.766866097214823) | 0.001 |
+| gen2874 (7577099422542518359) | min | 5.8559804627410896 | 42.294050545981108 | (5.8559804627410896, 42.294050545981115) | 9.9999999999999995e-07 |
+| gen2942 (7577099422542518427) | max | 1 | 1.2588335544914846 | (1, 1.2588335544914846) | 0.050000000000000003 |
+
+### Affine callers
+
+| Case | Original tolerance | `09495e082` result `(parameter, distance)` | Affine candidate result | Interpretation |
+|---|---:|---|---|---|
+| gen0073 | 1e-6 | `(7.424378115297849, 2.4569516620450993)` | `(7.424378115297848, 2.4569516620450993)` | Same interior analytic minimum; one adjacent parameter representation changes. |
+| gen1172 | 0.05 | `(0.2860207154511576, 6.678445460217803e-17)` | `(0.28602071545115765, 0)` | Near-zero evaluation cancellation at a neighboring parameter; a strict relative distance mismatch remains. |
+| gen2450 | 1e-6 | `(2.554070753458807, 0.2700249248626431)` | `(2.5540707534588063, 0.27002492486264307)` | Same interior analytic minimum; parameter and distance rounding change. |
+| gen2883 | 0.001 | Empty | Range `[0.9300363540079557, 1]`, both endpoint distances zero | Correct constant-zero range on the requested interval intersected with the stored domain; the requested extrapolated remainder is not covered. |
+
+### Local derivative and convergence
+
+| Case | Native result (t, distance) | Rust result (t, distance) | Independent classification |
+|---|---|---|---|
+| gen0042 | not found | (2.568630556952937, 53.05559091626183) | New stationary minimum; normalized stationarity residual 1.7e-16. |
+| gen0773 | not found | (0.02253138757000629, 33.08376518405103) | New stationary minimum; a separate maximum also exists. |
+| gen1144 | (0.2424349354598795, 47.30990639718397) | (0.7897693109735117, 37.0895839403429) | Both valid roots; native maximum, Rust minimum. Changed basin, not a false native result. |
+| gen1760 | (6.160833635900556, 1702.746539725838) | not found | Native valid maximum; Rust misses it from this guess. Lost local convergence. |
+| gen2335 | not found | (0.2057706791318854, 1.526401246903282) | New stationary minimum. |
+| gen2938 | (-1.416959240152698, 842.2781967874612) | (-1.635855706635469, 223.8362336456594) | Both valid roots; native maximum, Rust minimum. Changed basin, not a false native result. |
+| gen2940 | (0.08124076285751645, 38.51742584776892) | not found | Native valid maximum; Rust misses it from this guess. Lost local convergence. |
+| p4 case | Native derivative | Rust derivative | Qualification |
+|---|---:|---:|---|
+| circle_property_21 | 0.64309503671411716 | -0.64309503671411716 | Matches independent smooth derivative |
+| circle_property_21_null | 0.64309503671411716 | -0.64309503671411716 | Matches independent smooth derivative |
+| gen0343 | 48.320386438490615 | -48.320386438490615 | Matches independent smooth derivative |
+| gen0446 | 2.0158575156101239 | -2.0158575156101239 | Matches independent smooth derivative |
+| gen0563 | 11113.792108902107 | -11113.792108902107 | Matches independent smooth derivative |
+| gen0617 | 176.17894853692081 | -176.17894853692081 | Matches independent smooth derivative |
+| gen0643 | 1328.1240378492116 | -1328.1240378492116 | Matches independent smooth derivative |
+| gen0650 | 3.4752650729169097 | -3.4752650729169097 | Matches independent smooth derivative |
+| gen1002 | 0.63172316674649853 | -0.63172316674649853 | Matches independent smooth derivative |
+| gen1281 | -4.1947955102473973 | 4.1947955102473973 | Matches independent smooth derivative |
+| gen1345 | 6.1274307413620921 | -6.1274307413620921 | Matches independent smooth derivative |
+| gen1477 | -0.0042756974771357694 | 0.0042756974771357694 | Regularized zero tangent; sign only |
+| gen1506 | 20.304791431505773 | -20.304791431505773 | Matches independent smooth derivative |
+| gen1529 | 2313.4048875158164 | -2313.4048875158164 | Matches independent smooth derivative |
+| gen1555 | 74.387085994451468 | -74.387085994451468 | Matches independent smooth derivative |
+| gen1785 | 17493.959292360487 | -17493.959292360487 | Matches independent smooth derivative |
+| gen1866 | -11.485183439048484 | 11.485183439048484 | Matches independent smooth derivative |
+| gen2407 | 1.999531352594077 | -1.999531352594077 | Matches independent smooth derivative |
+| gen2432 | -2090.9202731335936 | 2090.9202731335936 | Matches independent smooth derivative |
+| gen2812 | 79.95773918004042 | -79.95773918004042 | Matches independent smooth derivative |
+| gen2828 | -267.3591805617487 | 267.3591805617487 | Matches independent smooth derivative |
+
+### Property stationary points (not a global extrema contract)
+
+| Case | Query tolerance | Returned parameter(s) | Returned distance(s), local classification | Stored-domain maximum | Within query tolerance of maximum? |
+|---|---:|---|---|---:|---|
+| gen0204 | 0.1 | 0.9197458834128428 | 18.671389006901112, maximum | 33.337131619534404 | No |
+| gen0247 | 0.1 | 5.320326948805733 | 3.4109831271925235, maximum | 3.4109831271925244 | Yes |
+| gen0275 | 0.001 | 0.14871522759066944 | 29.774575607750659, maximum | 29.774575607750652 | Yes |
+| gen0409 | 0.001 | 0.9575602192205206 | 4.6250196404095325, maximum | 4.625019640409532 | Yes |
+| gen0509 | 0.001 | 0.9117265070172493 | 23.757505575290121, maximum | 23.757505575290114 | Yes, stored domain only |
+| gen0735 | 0.1 | 0.6111736501042818 | 5.4676116781299413, minimum | 5.951094520215661 | No |
+| gen0834 | 0.1 | 0.9198480289454729 | 5.0668265331752576, maximum | 5.066826533175257 | Yes |
+| gen0933 | 1e-6 | 5.667762158756711 | 0.54203280602605997, maximum | 4.969521868984223 | No |
+| gen0936 | 0.001 | 3.0095743060512032 | 5.3749025326382576, maximum | 5.3749025326382585 | Yes |
+| gen1531 | 1e-6 | 0.6484668221329991 | 0.50654672270561063, maximum | 4.593165426545604 | No |
+| gen1986 | 0.1 | 0.7060548169794392; 0.8337434617502735; 0.5623663475572159 | 0.086458069614975125, maximum; 0.012748673309883067, minimum; 0, minimum | 0.9576757302466963 | No |
+| gen2049 | 0.001 | 1.6134778029167118 | 14.493501816701414, maximum | 14.493501816701421 | Yes |
+| gen2341 | 1e-6 | 0.7483245754106941 | 13.228091125875489, minimum | 14.63657324597678 | No |
+| gen2394 | 0.1 | 0.89496412675213 | 0, minimum | 3.1331587642464043 | No |
+| gen2665 | 0.001 | 0.8132747916059548 | 6.621699366041069, maximum | 6.621699366041071 | Yes |
+| gen2945 | 1e-6 | 0.1020561860909834 | 29.698809299538972, maximum | 29.698809299538972 | Yes |
+
+### Curve-pair maxima: known incorrect answers remain
+
+| Case | Original tolerance | Native result | Candidate result | Independent conclusion |
+|---|---:|---|---|---|
+| circle_projected_max | 1e-5 | Two distances 4.5, parameters near `(0.5,0)` and `(0.5,1)` | Same distances, exact parameters `(0.5,0)` and `(0.5,1)` | Both attain the maximum: center separation 3 plus radii 1 and 0.5 gives the triangle bound 4.5. Parameter-rounding differences at the closed seam remain native mismatches, not incorrect geometry. |
+| gen0472 | 1e-5 | Two distances 5.0105715611725925; one parameter near zero | Two distances 5.010571561172592; exact zero replaces the near-zero parameter | Neither is a global maximum. Admissible ellipse angles 0 and 90 degrees give distance 5.346613700814649. |
+| gen0844 | 0.5 | Distance 0 at `(2.340415323454198,2.340415323454198)` | Distance 0 at `(1.63857830683894,1.63857830683894)` | Neither is a maximum. Corner `(-2.44896896704292,3.043140518489156)` gives 10.979584714079621. |
+| gen1839 | 0.0001 | One coincident pair, distance 0 | Original pair plus two pairs with distances about 4.24e-12 and 2.51e-15 | Neither candidate set contains a maximum. Corner `(0.43561427937496744,0.03474215986040488)` gives 4.40801559960347. |
+| gen2050 | 0.0001 | One pair, distance about 6.1371363e-8 | Original pair plus two endpoint pairs of the same small distance | Neither candidate set contains a maximum. Corner `(0.42689846142600174,0.30573599521598394)` gives 40.00123197279587. |
+| gen2187 | 1e-6 | One pair, distance 0.09955759757712898 | Original pair plus two endpoint pairs of the same small distance | Neither candidate set contains a maximum. Corner `(3.254294670614625,-3.304387257364806)` gives 6.310837322899527. |
+| gen2585 | 0.5 | One pair, distance about 0.000128676797868 | Original pair plus two endpoint pairs of the same small distance | Neither candidate set contains a maximum. Corner `(0.6795950883084139,1.0610357492278748)` gives 0.9962268759220879, exceeding the returned distance by more than the original tolerance. |
+
+### Topology query callers
+
+| Case | Native distance | Rust distance | Query tolerance |
+|---|---:|---:|---:|
+| `gen2326` | `0.00040060002529845016` | `0.00018873029626767892` | `0.0001` |
+| `gen2603` | `0.30420753099174874` | `0.0027330816133098457` | `1e-6` |
+| `gen2818` | `68417.76422059476` | `23547.453225929043` | `100` |
+
+### Analytic face and subdivided callers
+
+| Case | Native distance; parameters | Rust distance; parameters | Independent classification |
+|---|---|---|---|
+| `analytic_face_cyl_x_5_15` | 0.80000000000000004; (1.5707963267948966, 0.69999999999999996) | 1.063014581273465; (1.5707963267948966, 0) | Matches exact point-face maximum; native value is suboptimal even along the silhouette. |
+| `analytic_face_cyl_x_6_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | Both distances remain 0.5 at valid pairs; changed representatives. Below unrestricted face maximum 1.5811388300841898; no new scalar regression and no C++ defect established. |
+| `analytic_face_cyl_x_7_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | Both distances remain 0.5 at valid pairs; changed representatives. Below unrestricted face maximum 1.5811388300841898; no new scalar regression and no C++ defect established. |
+| `analytic_face_halfcyl_x_5_15` | 0.80000000000000004; (1.5707963267948966, 0.69999999999999996) | 1.063014581273465; (1.5707963267948966, 0) | Matches exact point-face maximum; native value is suboptimal even along the silhouette. |
+| `analytic_face_halfcyl_x_6_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | Both distances remain 0.5 at valid pairs; changed representatives. Below unrestricted face maximum 1.5811388300841898; no new scalar regression and no C++ defect established. |
+| `analytic_face_halfcyl_x_7_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | Both distances remain 0.5 at valid pairs; changed representatives. Below unrestricted face maximum 1.5811388300841898; no new scalar regression and no C++ defect established. |
+| `analytic_face_cone_x_5_15` | 0.85980762113533138; (0.49999999999999989, 0.27009618943233427) | 1.2039996853283075; (0.5, 1) | Matches exact point-face maximum; native value is suboptimal. |
+| `analytic_face_sphere_band_5_15` | empty | 0.86054198087056166; (0.65499056183776805, 0.50000000000000011) | Reported-distance gap 1.314667583729e-5 exceeds query tolerance; approximate-silhouette output, not a strict corrected-result claim. |
+| `analytic_face_sphere_quarter_5_15` | empty | 0.76157731058639078; (1, 0.50000000000000011) | Matches exact point-face maximum; native empty. |
+| `analytic_face_torus_x_5_15` | 1.3756803885793853; (0.49997295102453776, 0.75) | 1.5652926944322216; (0.5, 0.97356185800456529) | Reported-distance gap 1.949364369036e-6 is within query tolerance, but exceeds 1e-9 relative; approximate-silhouette output. |
+| `analytic_face_torus_x_6_15` | 1.25; (0.50000000000000011, 0, 4.1645158291059437e-15) | 1.25; (0.5, 0, 0) | Both distances remain 1.25 at valid pairs; only rounding-sized parameter movement. Below unrestricted face maximum 1.6642135623730951; no new scalar regression and no C++ defect established. |
+| `analytic_face_torus_x_7_15` | 1.25; (0.50000000000000011, 0, 4.1645158291059437e-15) | 1.25; (0.5, 0, 0) | Both distances remain 1.25 at valid pairs; only rounding-sized parameter movement. Below unrestricted face maximum 1.6642135623730951; no new scalar regression and no C++ defect established. |
+| `analytic_face_torus_half_x_5_15` | empty | 1.5652946437965907; (1, 0.97379278043265505) | Matches exact point-face maximum; native empty. |
+| `analytic_face_torus_half_x_6_15` | 1.25; (0.50000000000000011, 0, 4.1645158291059437e-15) | 1.25; (0.5, 0, 0) | Both distances remain 1.25 at valid pairs; only rounding-sized parameter movement. Below unrestricted face maximum 1.6642135623730951; no new scalar regression and no C++ defect established. |
+| `analytic_face_torus_half_x_7_15` | 1.25; (0.50000000000000011, 0, 4.1645158291059437e-15) | 1.25; (0.5, 0, 0) | Both distances remain 1.25 at valid pairs; only rounding-sized parameter movement. Below unrestricted face maximum 1.6642135623730951; no new scalar regression and no C++ defect established. |
+| Case | Native count | Rust count | Native best | Rust / oracle best | Added only endpoints |
+|---|---:|---:|---:|---:|---|
+| `static_operation_matrix_1_15_0_0` | 1 | 1 | 0.10000000000000001 | 1.7 | yes |
+| `static_operation_matrix_1_15_0_1` | 1 | 1 | 0.10000000000000001 | 1.7 | yes |
+| `static_operation_matrix_1_15_1_0` | 1 | 1 | 0.10000000000000001 | 1.7 | yes |
+| `static_operation_matrix_1_15_1_1` | 1 | 1 | 0.10000000000000001 | 1.7 | yes |
+| `subdivided_1_14_1_12_11_2_1` | 5 | 12 | 0.5 | 0.5 | yes |
+| `subdivided_1_14_1_12_11_2_3` | 5 | 12 | 0.5 | 0.5 | yes |
+| `subdivided_1_14_1_12_11_50_1` | 5 | 12 | 0.5 | 0.5 | yes |
+| `subdivided_1_14_1_12_11_50_3` | 5 | 12 | 0.5 | 0.5 | yes |
+| `subdivided_1_14_1_40_30_2_1` | 16 | 40 | 0.5 | 0.5 | yes |
+| `subdivided_1_14_1_40_30_2_3` | 16 | 40 | 0.5 | 0.5 | yes |
+| `subdivided_1_14_1_40_30_50_1` | 16 | 40 | 0.5 | 0.5 | yes |
+| `subdivided_1_14_1_40_30_50_3` | 16 | 40 | 0.5 | 0.5 | yes |
+| `subdivided_1_14_1000_12_11_2_1` | 1 | 3 | 500 | 500 | yes |
+| `subdivided_1_14_1000_12_11_2_3` | 1 | 3 | 500 | 500 | yes |
+| `subdivided_1_14_1000_12_11_50_1` | 1 | 3 | 500 | 500 | yes |
+| `subdivided_1_14_1000_12_11_50_3` | 1 | 3 | 500 | 500 | yes |
+| `subdivided_1_14_1000_40_30_2_1` | 4 | 12 | 500 | 500 | yes |
+| `subdivided_1_14_1000_40_30_2_3` | 4 | 12 | 500 | 500 | yes |
+| `subdivided_1_14_1000_40_30_50_1` | 4 | 12 | 500 | 500 | yes |
+| `subdivided_1_14_1000_40_30_50_3` | 4 | 12 | 500 | 500 | yes |
+| `subdivided_1_14_1e+06_12_11_2_1` | 1 | 3 | 500000 | 500000 | yes |
+| `subdivided_1_14_1e+06_12_11_2_3` | 1 | 3 | 500000 | 500000 | yes |
+| `subdivided_1_14_1e+06_12_11_50_1` | 1 | 3 | 500000 | 500000 | yes |
+| `subdivided_1_14_1e+06_12_11_50_3` | 1 | 3 | 500000 | 500000 | yes |
+| `subdivided_1_14_1e+06_40_30_2_1` | 4 | 12 | 500000 | 500000 | yes |
+| `subdivided_1_14_1e+06_40_30_2_3` | 4 | 12 | 500000 | 500000 | yes |
+| `subdivided_1_14_1e+06_40_30_50_1` | 4 | 12 | 500000 | 500000 | yes |
+| `subdivided_1_14_1e+06_40_30_50_3` | 4 | 12 | 500000 | 500000 | yes |
+
+### Trimming callers: unresolved outputs are not blessed
+
+| Case | Native result | Candidate result | Assessment |
+|---|---|---|---|
+| `pat_misses` | Error 1001 | 26 faces, 48 edges, 24 vertices | Keeping the entire filleted box is supported by the side proof below. |
+| `pat_plain_misses` | Error 1001 | 6 faces, 12 edges, 8 vertices | Keeping the entire plain box is supported by the same proof. |
+| `gen0070` | 1 face, 4 edges, 4 vertices | Empty | Unresolved; no independent proof supports deleting every face. |
+| `gen0084` | 3 faces, 9 edges, 7 vertices | 5 faces, 16 edges, 12 vertices | Unresolved, with opposite-side retained vertices documented below. |
+| `gen0086` | 2 faces, 7 edges, 6 vertices | 3 faces, 11 edges, 9 vertices | Unresolved; larger face count is not evidence of correctness. |
+
+### Endpoint side and tolerant visibility
+
+`topology.brep_p1/find_side_6`: for the projected cubic
+`C(t)=(3t,6t-15t^2+9t^3)`, query `(-1,0)`, the unique minimum is at `t=0`.
+The tangent/offset cross product is positive, proving left (`right=false`).
+The pre-fix output was status 1001/UNSURE; success/false is correct.
+
+`blend.hcr/gen0392`: the square-wire interval starts at
+`0.014419226325001276`. Its distance from vertex 0 is
+`0.0008*t = 1.153538106000102e-5`, within the existing combined zone `2e-5`.
+The change Unknown -> Vertex therefore follows the tolerant classification
+contract; it does not claim exact coincidence or increase a tolerance.
+
+### Remaining limitations
+
+The sphere-band maximum `0.8605419808705617` is short of the exact
+`0.860555127546399` by `1.314667583729e-5`, exceeding the `1e-5` request.
+This belongs to #2967/#2968, separately from the endpoint fix.
+The six nonmaximum curve-pair outputs and unresolved finite-trim outputs above
+must not be blessed as correct. The trim replay showed tied/opposing votes;
+more retained faces, or an empty result, is not a correctness proof.
+
+## References and durable regressions
+
+The tests are consolidated into `crates/solidcore/tests/projected_curve_queries.rs`
+and `crates/solidcore/tests/wr_660_planar_path_pose.rs`. The former keeps the
+closed-form line/quadratic, raw-knot, bounds, and endpoint oracles; the latter
+checks the actual elbow's Level2 validity and analytic volume.
+
+- Boyd and Vandenberghe, *Convex Optimization*, section 4.2.3: constrained extrema
+  include boundaries, not only stationary points.
 - Miller and Goldman, *Using Tangent Balls to Find Plane Sections of Natural
-  Quadrics* (1992), pp. 72-75: the cylinder/plane section has semiaxes `r` and
-  `r/abs(axis dot normal)`, hence `r` and `sqrt(2)*r` here.
-  <https://people.eecs.ku.edu/~jrmiller/Papers/TangentBalls.pdf>
-- Boyd and Vandenberghe, *Convex Optimization*, section 4.2.3, and the associated
-  Stanford lecture: a constrained optimum at the boundary need not be a stationary
-  point. This is the reason the existing endpoint selection must produce a candidate.
-  <https://see.stanford.edu/materials/lsocoee364a/transcripts/ConvexOptimizationI-Lecture05.html>
-- Boyd and Mattingley, *Branch and Bound Methods*, section 1: exclusion requires
-  a bound on the same objective as the incumbent. The sphere-image derivation above
-  supplies that bound for the existing double-cross metric.
-  <https://web.stanford.edu/class/ee364b/lectures/bb_notes.pdf>
-- MIT OpenCourseWare, *Newton's Method*: the update divides the function by its
-  derivative. Changing the sign of only one reverses that update.
-  <https://ocw.mit.edu/courses/18-s997-introduction-to-matlab-programming-fall-2011/pages/root-finding/newtons-method/>
+  Quadrics* (1992), pp. 72-75: cylinder/plane ellipse semiaxes `r` and
+  `r/abs(axis dot normal)`.
+- The repository's `docs/definitions-and-certificates.md`, section 4.2: rounded
+  interval enclosures include arithmetic error and are not sample estimates.
 
-The standalone pinned C++ reproduction confirms that both analytic and B-spline
-lines return success with zero projected extrema for an exterior query point.
-[WR-753](../upstream-issues/WR-753--projected-curve-endpoints-discarded.md)
-records the exact inputs, expected endpoints, native outputs and build identity.
-Full difftest results and final validation are recorded in the pull request;
-Rust-only tests are not counted as evidence of C++ parity.
+## Goldens migration after numerical review
 
-## Changed-case audit and limits
+The reviewed run updates or adds 201 records (190 existing, 11 new fixtures).
+The exact old/new serialized values are in the corresponding golden-file diff;
+small within-comparison rounding changes are retained too. Eleven records are
+excluded instead of blessed: six disproved pair maxima under #3060, four
+unverified finite-cutter keep/delete results under #3061, and the sphere-band
+accuracy failure under #2967. The existing #2794 records owned by #2811 are kept.
 
-The revised candidate's [45 changed global-query cases](curve.curve_p1--projected-extrema-audit-2840.md)
-have independently checked polynomial extrema. Every returned candidate is within
-the original query tolerance on the cached domain. The out-of-bounds request in
-`gen0975` is explicitly qualified: neither cache searches its extrapolated portion.
-No claim of complete requested-domain correctness is made for that case.
+| Unit | Updated/added | Geometric or API justification |
+|---|---:|---|
+| blend.hcr | 1 | gen0392's constrained endpoint is 1.153538106000102e-5 from the vertex, within the existing 2e-5 classification zone; Unknown becomes Vertex. |
+| curve.curve_p1 | 61 | Per-span stationary-root and boundary audit above; affine enclosures; newly uncovered requests return 1021 rather than a result over a strict subset. Six fixtures exercise endpoints and local/global distinctions. |
+| curve.curve_p4 | 24 | Negating the maximization stationary function also negates its derivative. For circle_property_21, +0.64309503671411716 becomes -0.64309503671411716. Three line fixtures check the scaled derivative directly. |
+| curve.curve_p5 | 7 | Correct derivatives change local Newton basins and convergence. Returned roots were independently checked; gen1760 and gen2940 explicitly report nonconvergence, not a falsely certified maximum. |
+| curve.curve_p7 | 16 | Added roots satisfy the stationary polynomial; this property-analysis path is not asserted to return the constrained global maximum. The independent classifications above disclose minima and secondary maxima. |
+| curve.curve_p9 | 1 | circle_projected_max keeps distance 4.5 = center separation 3 + radii 1 + 0.5; seam parameters become exact endpoints. All six suboptimal pair cases are excluded under #3060. |
+| geom.global_solver | 2 | New scaled-normal fixtures verify disk radii and center distances use the same double-cross metric as the incumbent. |
+| intersect.topology_solver_p1 | 42 | Valid endpoint additions/rounding are retained; incomplete domains return 1021. gen1646 now completes all three calls with reported distance 0 and t=0.6406108473689741, within its arithmetic enclosure of the near-zero true distance. Reported 0 is not an assertion of exact incidence. |
+| intersect.topology_solver_p2 | 40 | Closed-form cylinder/cone/sphere/torus audits and unchanged-best subdivision endpoint additions above. The torus point-face maximum differs from the exact oracle by 1.949364369036e-6, within its 1e-5 request. The sphere-band case is excluded. |
+| primitive.api_trim_ops | 2 | pat_misses and pat_plain_misses retain the complete box, proved by the finite-cutter side inequality below. Four unverified finite-cutter outputs are excluded under #3061. |
+| topology.brep_p1 | 1 | find_side_6 changes 1001/UNSURE to success/left, by the endpoint tangent cross product above. |
+| topology.brep_p10 | 4 | The raw-knot lens is entirely reference-side: KeepPoint retains one face and DeletePoint retains none, for both narrow knot widths. |
 
-[WR-754](../upstream-issues/WR-754--projected-extrema-pruning-metric.md) confirms
-native pruning counterexamples; [WR-755](../upstream-issues/WR-755--projected-maximization-derivative-sign.md)
-confirms the derivative sign. The [local convergence audit](curve.curve_p4--projected-derivative-local-convergence-2840.md)
-names all changed evaluator and local-search cases, including two valid native
-roots missed from the same starting guesses after the correction. Their global
-queries still find the independently calculated maxima. Those local differences
-are not classified as C++ defects.
+For the two missed-box trim cases, the cutter is
+`x(t)=100+3t`, `y(t)=-2+21t-36t^2+19t^3`, `0<=t<=1`.
+The box and reference project into `0<=qx<=10`, `0<=qy<=5`.
+The squared-distance derivative divided by two is bounded below by
+`3*(x-qx)+(y-qy)*y' >= 270-147 = 123 > 0`, so the nearest point is the
+first endpoint. Its side expression `3*(qy+2)-21*(qx-100)` is positive
+throughout the box and at the reference. The filleted box is a subset.
 
-The shared bounds use the objective of supported curve-point and curve-curve
-projected searches. Separate topology pre-pruning and unsupported projected
-surface-pair paths are not repaired here. The existing wrapper's status-suppression
-policy also remains unchanged; propagating endpoint errors locally is not a claim
-that every enclosing legacy caller propagates them.
+For the raw-knot lens, both forward boundaries have `x=-1+2s`, with
+`y_upper=0.2s+0.8s^2` and `y_lower=-0.2s+1.2s^2` for `0<=s<=1`.
+They lie below the cutting segment `y=s` in the interior. The reference
+`(-1.5,-1)` is on that same side, proving retained-face counts 1/0 for
+KeepPoint/DeletePoint. The affine tests independently check the underlying
+minimum; correct face votes alone are not used as its certificate.
 
-The full sweep also changes 43 direct topology-subsolver fixtures. Their
-[case-by-case audit](intersect.topology_solver_p2--projected-extrema-callers-2840.md)
-includes a newly returned sphere-band value whose error from the exact surface
-maximum exceeds the requested tolerance. The existing face path measures an
-approximated silhouette. That result remains an unresolved accuracy limitation;
-neither its tolerance nor the parity gate is relaxed to declare this work green.
+The fresh finite-trim case gen0018 is TrimProjectParallel on a filleted box,
+with a finite arc and DeletePoint. It returns 27 faces / 60 edges / 33 vertices;
+its record changes from 1587 to 1703 values. It is explicitly unverified under
+#3061, alongside gen0070, gen0084 and gen0086, not silently blessed.
+
+Validation on the factorized line-direction implementation: formatting, strict
+workspace/all-target Clippy, WASM, and all 21 projected-query integration tests
+pass. The complete golden sweep passes all 283 units with no unexpected changes
+or broken cases, using the documented known-failure exclusions. The full Rust
+suite passes 5235/5235 tests, with 47 skipped, using CI's pinned Nextest 0.9.150
+and goldens profile (overflow checks and debug assertions enabled). This includes
+all 14 internal affine/cache tests. The doctest command also succeeds; the crate
+currently has no executable doctests. The earlier sequential debug/optimized
+integration runs were superseded by this complete CI-profile run.
+
+The kernel rig remains blocked by the unchanged 180-second deadline for
+`fillets/cov-fillet-section-curvature-boss-root-r2`, already tracked on main in
+#2989. It graded 368 cases: 285 pass, one timeout, 69 unsupported and 13
+known-failing; 711 cases were not run. A case-only replay also timed out at
+180.03 seconds. Other validation jobs were paused during that replay, but were
+running at its start; this is not a controlled main-versus-PR timing comparison
+and does not establish regression attribution. The captured union-case replay
+passes. No deadline, tolerance, fixture or classification was changed to hide
+the timeout. Hosted CI separately requires repository-admin workflow approval.
