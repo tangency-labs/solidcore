@@ -419,9 +419,9 @@ pub(super) fn solve<O: SolutionObject>(
         if !target.is_finite() {
             return Err(refused("projected maximum target must be finite"));
         }
-        let cutoff = target.abs() - tolerance;
-        if best.reported < cutoff {
-            if global_upper < cutoff {
+        let cutoff = Ivl::from(target.abs()) - Ivl::from(tolerance);
+        if best.lower < cutoff.hi {
+            if global_upper < cutoff.lo {
                 return Ok(SolutionArray::new());
             }
             return Err(refused("maximum enclosure straddles the incumbent cutoff"));
