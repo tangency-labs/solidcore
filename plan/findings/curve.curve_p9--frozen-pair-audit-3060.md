@@ -117,3 +117,9 @@ python plan/findings/diagnostics/plot_projected_pair_audit_3060.py
 ```
 
 At ab5107e26, 22 focused tests and library/tests strict Clippy pass; at 8948e0bc2, 30 focused tests and library/tests strict Clippy pass; Linux full formatting passes. Broad workspace gates and affected golden migration are recorded separately when complete.
+
+The remaining 45 rows are now independently confirmed through the actual Rust
+constructors/evaluator, admissible domains and target rules in the
+[unrepaired-case exclusion audit](curve.curve_p9--unrepaired-all-rust-witnesses-3060.md).
+All are unchanged before/after the scoped fix; 44 are newly documented exclusions
+and gen0472 was already known. No unverified search result is used to exclude a case.
