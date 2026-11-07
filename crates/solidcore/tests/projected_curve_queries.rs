@@ -24,6 +24,49 @@ mod affine_spans {
     struct Object;
 
     #[test]
+    fn ordinary_long_line_reference_minimum_is_representable() {
+        let curve = Curve::from(
+            BSplineCurve::create_line_segment(
+                3,
+                Vec3::new(-100.0, 0.5, 100.0),
+                Vec3::new(100.0, 0.5, 100.0),
+            )
+            .unwrap(),
+        );
+        for requested in [SolutionRequested::Single, SolutionRequested::All] {
+            let answers = curve
+                .global_point_solve::<Object>(
+                    &Kernel::default(),
+                    &curve.natural_interval(),
+                    SolverOperation::ProjectedMinimize,
+                    Vec3::new(0.0, 10.0, 100.0),
+                    EFF_ZERO_SQRT,
+                    requested,
+                    &GlobalPointSolveOptions {
+                        opt_vectors: Some(&[-Vec3::Z]),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(answers.len(), 1);
+            let native = curve
+                .evaluate_point(
+                    &Kernel::default(),
+                    answers.as_slice()[0].start.parameters[0],
+                )
+                .unwrap();
+            // Canonical ordering may retain a neighbouring parameter whose
+            // objective rounds to the same minimum. Grade the native metric,
+            // rather than requiring a particular representative of that tie.
+            assert_eq!(
+                (native.x * native.x + (native.y - 10.0) * (native.y - 10.0)).sqrt(),
+                9.5
+            );
+            assert_eq!(answers.as_slice()[0].start.solution_value, 9.5);
+        }
+    }
+
+    #[test]
     fn near_constant_affine_projection_certifies_candidates_without_dividing_by_zero() {
         let next = f64::from_bits(1.0_f64.to_bits() + 1);
         for isolated_upper in [false, true] {
@@ -1494,6 +1537,194 @@ mod g1_joins {
         fn kind(&self) -> ObjectKind {
             ObjectKind::Curve
         }
+    }
+
+    #[test]
+    fn projected_single_preserves_own_enclosure_across_affine_leaves() {
+        for maximize in [false, true] {
+            let points = if maximize {
+                [
+                    (1e8, 1e7, 0.0),
+                    (1e8, 1e7, 0.0),
+                    (0.0, 1e-10, 0.0),
+                    (0.0, 1e-10, 0.0),
+                ]
+            } else {
+                [
+                    (1e8, 1e8, 0.0),
+                    (-2e8, -2e8, 0.0),
+                    (1e-9, 0.0, 0.0),
+                    (1e-9, 0.0, 1.0),
+                ]
+            };
+            let curve = Curve::from(BSplineCurve::from_nurb(
+                NurbCurve::new(
+                    points
+                        .into_iter()
+                        .map(|(x, y, z)| CPoint::new(x, y, z, NOW))
+                        .collect(),
+                    1,
+                    vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0],
+                )
+                .unwrap(),
+                3,
+                false,
+            ));
+            let normal = if maximize {
+                Vec3::new(1.0, 0.1, 0.0)
+            } else {
+                Vec3::Z
+            };
+            let operation = if maximize {
+                SolverOperation::ProjectedMaximize
+            } else {
+                SolverOperation::ProjectedMinimize
+            };
+            let options = GlobalPointSolveOptions {
+                opt_vectors: Some(&[normal]),
+                ..Default::default()
+            };
+            let interval = Extent1d::from_min_max(0.0, 2.0);
+            let answers = curve
+                .global_point_solve::<Handle>(
+                    &Kernel::default(),
+                    &interval,
+                    operation,
+                    Vec3::ZERO,
+                    0.0,
+                    SolutionRequested::Single,
+                    &options,
+                )
+                .unwrap();
+            assert_eq!(answers.len(), 1);
+            // Minimum: the first span crosses the origin at exact t=1/3.
+            // Maximum: exact binary64 .1 gives |1e8*.1-1e7|=1e8/(5*2^55),
+            // so its true projected value exceeds the second span's 1e-10.
+            // Scalar sorting alone selects t=1 in both cases, whose narrow
+            // own enclosure excludes the actual global extremum.
+            assert!(
+                answers.as_slice()[0].start.parameters[0] < 1.0,
+                "maximize={maximize}"
+            );
+            // Preserve All's canonical retention/range merging rather than
+            // inventing a new set when reported ordering is uncertifiable.
+            assert!(curve
+                .global_point_solve::<Handle>(
+                    &Kernel::default(),
+                    &interval,
+                    operation,
+                    Vec3::ZERO,
+                    0.0,
+                    SolutionRequested::All,
+                    &options
+                )
+                .is_err());
+            if maximize {
+                // Maximize seeds its incumbent with target², so negative
+                // targets have the same magnitude as positive targets.
+                let target_options = GlobalPointSolveOptions {
+                    target_distance: Some(-5e-11),
+                    ..options
+                };
+                assert!(curve
+                    .global_point_solve::<Handle>(
+                        &Kernel::default(),
+                        &interval,
+                        operation,
+                        Vec3::ZERO,
+                        0.0,
+                        SolutionRequested::Single,
+                        &target_options
+                    )
+                    .is_err());
+                let excluded_options = GlobalPointSolveOptions {
+                    target_distance: Some(-1e-3),
+                    ..options
+                };
+                assert!(curve
+                    .global_point_solve::<Handle>(
+                        &Kernel::default(),
+                        &interval,
+                        operation,
+                        Vec3::ZERO,
+                        0.0,
+                        SolutionRequested::Single,
+                        &excluded_options
+                    )
+                    .unwrap()
+                    .is_empty());
+            } else {
+                let target_options = GlobalPointSolveOptions {
+                    target_distance: Some(5e-10),
+                    ..options
+                };
+                assert!(
+                    curve
+                        .global_point_solve::<Handle>(
+                            &Kernel::default(),
+                            &interval,
+                            operation,
+                            Vec3::ZERO,
+                            0.0,
+                            SolutionRequested::Single,
+                            &target_options
+                        )
+                        .is_err(),
+                    "a rounded report outside the target cannot certify an empty true-zero minimum"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn projected_all_refuses_an_omitted_rounding_equivalent_minimum() {
+        let curve = Curve::from(BSplineCurve::from_nurb(
+            NurbCurve::new(
+                vec![
+                    CPoint::new(0.0, 0.0, 0.0, NOW),
+                    CPoint::new(0.0, 0.0, 1.0, NOW),
+                    CPoint::new(1e8, 1e8, 0.0, NOW),
+                    CPoint::new(-2e8, -2e8, 0.0, NOW),
+                ],
+                1,
+                vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0],
+            )
+            .unwrap(),
+            3,
+            false,
+        ));
+        let interval = Extent1d::from_min_max(0.0, 2.0);
+        let options = GlobalPointSolveOptions {
+            opt_vectors: Some(&[Vec3::Z]),
+            ..Default::default()
+        };
+        let k = Kernel::default();
+        // The retained zero range is an accurate global minimum, but the
+        // second span also has exact minimum0 at t=4/3. Its rounded report is
+        // larger and canonical zero-slack filtering drops it. Checking only
+        // the first retained answer would silently claim an incomplete set.
+        assert!(curve
+            .global_point_solve::<Handle>(
+                &k,
+                &interval,
+                SolverOperation::ProjectedMinimize,
+                Vec3::ZERO,
+                0.0,
+                SolutionRequested::Single,
+                &options
+            )
+            .is_ok());
+        assert!(curve
+            .global_point_solve::<Handle>(
+                &k,
+                &interval,
+                SolverOperation::ProjectedMinimize,
+                Vec3::ZERO,
+                0.0,
+                SolutionRequested::All,
+                &options
+            )
+            .is_err());
     }
 
     fn polyline(height: f64) -> Curve {

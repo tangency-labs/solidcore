@@ -3741,6 +3741,8 @@ pub struct CpGlobalSolver<'t, O> {
     /// The caller's `SmTol::GetZoneTol3d(const SmObject*)` of the solution handles
     /// ([`GlobalSolve::object_zone_tol_3d`]); `None` defers.
     pub zone_tol_3d: Option<ObjectZoneTol<'t, O>>,
+    /// Private proof state for a complete affine projected Single/All construction.
+    pub(super) projected_affine_selection: Option<super::p1::ProjectedAffineSelection<O>>,
 }
 
 impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
@@ -3758,6 +3760,7 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             interval,
             curve: None,
             zone_tol_3d: None,
+            projected_affine_selection: None,
         }
     }
 
@@ -3778,6 +3781,13 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
     /// Those of the base test and of the tree queries; [`SolidError::Unported`] once
     /// the curve span data is needed.
     pub fn may_contain_answers(&self, branch: &Branch) -> Result<bool> {
+        if let Some(selection) = &self.projected_affine_selection {
+            // Cached sphere bounds and a rounded incumbent report cannot prove
+            // exclusion at the final candidate's own arithmetic enclosure.
+            // The certified native-piece construction runs once, before
+            // any scalar culling.
+            return Ok(selection.pending_spans.is_some());
+        }
         // Use general BranchMayContainAnswers() check for all cases but NORMALIZE
         if self.base.operation != SolverOperation::Normalize {
             return self.base.branch_may_contain_answers(branch);
