@@ -8968,3 +8968,81 @@ mod made_kind_tests {
         assert!(torus_of(&copy).base().base().gw_nurb().is_some());
     }
 }
+
+#[cfg(test)]
+mod swap_definition_tests {
+    use super::*;
+    use crate::geom::axis2_placement::Axis2Placement;
+    use crate::math::{Point3, Vec3};
+    use crate::nurbs::b_spline_surface::p1::CanonicalSurfaceData;
+    use crate::surface::torus::TorusOptions;
+
+    /// `b`'s net with every control point moved onto its surface's axis (z through the
+    /// origin), weights and knots kept: every sweep iso circle of the net is degenerate.
+    fn collapse_onto_axis(b: &mut BSplineSurface) {
+        let c = b.canonical().unwrap();
+        let points: Vec<Point3> = c
+            .control_points
+            .iter()
+            .map(|p| Point3::new(0.0, 0.0, p.z))
+            .collect();
+        b.set_canonical(&CanonicalSurfaceData {
+            u_degree: c.u_degree,
+            v_degree: c.v_degree,
+            control_points: &points,
+            form: c.form,
+            u_multiplicities: &c.u_multiplicities,
+            v_multiplicities: &c.v_multiplicities,
+            u_knots: &c.u_knots,
+            v_knots: &c.v_knots,
+            knot_type: c.knot_type,
+            weights: Some(&c.weights),
+            uv_domain: None,
+        })
+        .unwrap();
+    }
+
+    /// WR-701: a swap whose polar converter cannot be made on the transposed net (every sweep
+    /// iso circle degenerate) fails with nothing swapped and nothing notified: the cone,
+    /// sphere and torus are bit for bit as they were.
+    #[test]
+    fn a_swap_the_polar_converter_refuses_leaves_the_surface_as_it_was() {
+        let k = Kernel::default();
+        let frame = Axis2Placement::default();
+        let mut cone = Cone::new_cylinder_bounded(
+            Point3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+            2.0,
+            0.0,
+            360.0,
+            3.0,
+            false,
+            false,
+            false,
+        );
+        cone.make_nurb(&k).unwrap();
+        collapse_onto_axis(cone.base_mut());
+        let mut sphere = Sphere::create_canonical(&k, &frame, 2.0).unwrap();
+        collapse_onto_axis(sphere.base.base_mut());
+        let mut torus =
+            Torus::create_canonical(&k, &frame, 4.0, 1.5, TorusOptions::default(), None)
+                .unwrap();
+        collapse_onto_axis(torus.base.base_mut());
+        for (what, mut s) in [
+            ("cone", Surface::from(cone)),
+            ("sphere", Surface::from(sphere)),
+            ("torus", Surface::from(torus)),
+        ] {
+            let before = format!("{s:?}");
+            let mut events = 0;
+            let r = s.swap_uv_notifying(&k, &mut |_, _, _| {
+                events += 1;
+                Ok(())
+            });
+            assert!(r.is_err(), "{what}: the converter accepts the collapsed net");
+            assert_eq!(events, 0, "{what}: notified a swap that failed");
+            assert_eq!(format!("{s:?}"), before, "{what}: changed by a failed swap");
+        }
+    }
+}
