@@ -18,6 +18,8 @@
 //! | [`subdivide_face_at_discontinuities`] | `SmBrep::SubdivideFaceAtDiscontinuities`     |
 //!
 //! Deviations:
+//! - Certified projection failures propagate from face-side voting; they are not
+//!   treated as ordinary on-curve ambiguity when deciding which faces to remove.
 //! - **Out-params -> return values.** `rpNewShells` / `rpNewRegions` are returned in a
 //!   [`ClosureSplit`].
 //! - **Arena model.** Upstream stores the new objects' addresses in the B-rep data
@@ -2215,6 +2217,15 @@ fn project_and_trim_body(
     remove_faces(k, b, notify, &to_delete)
 }
 
+// A failed certificate is not an on-curve vote. Keep the existing ambiguity
+// policy, but never use an uncertified projection to choose faces for deletion.
+fn projected_side_vote(result: Result<i32>) -> Result<Option<i32>> {
+    match result {
+        Err(error) if error.kind() == crate::error::ErrorKind::NotWithinTolerance => Err(error),
+        other => ignored(other),
+    }
+}
+
 /// Classifies each face against the plane of the projected curve: by the votes of
 /// its vertices, else of its edges' mid-points, else by a ray along the projection
 /// direction.
@@ -2248,7 +2259,9 @@ fn faces_to_delete(
         for &v in &vertices {
             let rec = b.vertex(v)?;
             let tol1 = 5.0 * (rec.tolerance + tol);
-            if let Some(side) = ignored(find_side_of_curve(k, curve, rec.point, direction, tol1))? {
+            if let Some(side) =
+                projected_side_vote(find_side_of_curve(k, curve, rec.point, direction, tol1))?
+            {
                 if side == 1 {
                     right_votes += 1;
                 } else if side == 0 {
@@ -2269,7 +2282,9 @@ fn faces_to_delete(
                     .ok_or(SolidError::null_pointer(OP_PROJECT))?;
                 let tol1 = 5.0 * (rec.tolerance + tol);
                 let p = c.evaluate_point(k, rec.interval.evaluate(0.5))?;
-                if let Some(side) = ignored(find_side_of_curve(k, curve, p, direction, tol1))? {
+                if let Some(side) =
+                    projected_side_vote(find_side_of_curve(k, curve, p, direction, tol1))?
+                {
                     if side != 0 {
                         right_votes += 1;
                     } else {
@@ -2341,7 +2356,7 @@ fn faces_to_delete(
             };
             let p = point_from_solution(k, b, first, 1)?;
             let tol1 = 5.0 * (b.face(face)?.tolerance + tol);
-            match ignored(find_side_of_curve(k, curve, p, direction, tol1))? {
+            match projected_side_vote(find_side_of_curve(k, curve, p, direction, tol1))? {
                 Some(side) => face_right_side = side,
                 // Surface is on opposite side as point: the closest point is under
                 // the curve.
@@ -2912,6 +2927,39 @@ fn required_subdivision_iso_line<T>(result: Result<T>) -> Result<T> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn projected_vote_preserves_refusal_and_control_signals() {
+        use crate::error::{ErrorKind, SolidError, SM_ERR_NOT_WITHIN_TOLERANCE};
+        let errors = [
+            SolidError::Upstream {
+                code: SM_ERR_NOT_WITHIN_TOLERANCE,
+                operation: "projection",
+                entity: None,
+            },
+            SolidError::Cancelled {
+                operation: "projection",
+            },
+            SolidError::PreparationRequired {
+                operation: "projection",
+            },
+            SolidError::Unported {
+                upstream: "projection",
+                unit: "curve.curve_p1",
+            },
+        ];
+        for error in errors {
+            let kind = error.kind();
+            let original = error.to_string();
+            let returned = projected_side_vote(Err(error)).unwrap_err();
+            assert_eq!(returned.kind(), kind);
+            assert_eq!(returned.to_string(), original);
+        }
+        assert_eq!(projected_side_vote(Ok(1)).unwrap(), Some(1));
+        let ambiguity = SolidError::sm_err("projection");
+        assert_eq!(ambiguity.kind(), ErrorKind::Failed);
+        assert_eq!(projected_side_vote(Err(ambiguity)).unwrap(), None);
+    }
+
     use super::*;
 
     #[test]

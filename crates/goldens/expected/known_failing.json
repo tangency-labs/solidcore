@@ -17,7 +17,11 @@
     "analytic_face_cyl_x_6_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 0.5, but an admissible opposite-endpoint pair attains sqrt(2.5)=1.5811388300841898; stacked PR #3077 repairs the pair construction",
     "analytic_face_cyl_x_7_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 0.5, but an admissible opposite-endpoint pair attains sqrt(2.5)=1.5811388300841898; stacked PR #3077 repairs the pair construction",
     "analytic_face_halfcyl_x_6_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 0.5, but an admissible opposite-endpoint pair attains sqrt(2.5)=1.5811388300841898; stacked PR #3077 repairs the pair construction",
-    "analytic_face_halfcyl_x_7_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 0.5, but an admissible opposite-endpoint pair attains sqrt(2.5)=1.5811388300841898; stacked PR #3077 repairs the pair construction"
+    "analytic_face_halfcyl_x_7_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 0.5, but an admissible opposite-endpoint pair attains sqrt(2.5)=1.5811388300841898; stacked PR #3077 repairs the pair construction",
+    "analytic_face_torus_half_x_6_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 1.25, below the admissible native pair (0,0,0) at sqrt(41)/4=1.6007810593582121; the parent does not repair the pair construction",
+    "analytic_face_torus_half_x_7_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 1.25, below the admissible native pair (0,0,0) at sqrt(41)/4=1.6007810593582121; the parent does not repair the pair construction",
+    "analytic_face_torus_x_6_15": "tangency-labs/solidcore#3109: projected curve/face maximum reports 1.25, below the admissible native pair (0,0,0) at sqrt(41)/4=1.6007810593582121; the parent does not repair the pair construction",
+    "analytic_face_torus_x_7_15": "tangency-labs/solidcore#3109: projected curve/face maximum reports 1.25, below the admissible native pair (0,0,0) at sqrt(41)/4=1.6007810593582121; the parent does not repair the pair construction"
   },
   "offset.offset_executive_p2": {
     "fuzz00108": "tangency-labs/solidcore#3023: the edge's arc crosses its closed offset curve's seam, no interval gives it; the edge is left bad and status is success",
