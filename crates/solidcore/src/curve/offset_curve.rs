@@ -27,7 +27,7 @@
 //!
 //! Deviations:
 //! - Reversed defining knots, query intervals and continuity order follow the
-//!   evaluator's mirrored parameter map; non-invertible or unordered knots refuse.
+//!   evaluator's mirrored parameter map; nonfinite or unordered knots refuse.
 //! - **Nesting.** `new` returns `InvalidInput` when the base curve would nest
 //!   deeper than [`MAX_GEOMETRY_NESTING`](crate::surface::surface::p2::MAX_GEOMETRY_NESTING)
 //!   (32; upstream fixtures nest at most 3), which bounds the recursive dispatch,
@@ -637,11 +637,13 @@ impl OffsetCurve {
 
     /// The defining knots in this offset's parameterization, optionally limited
     /// to `interval` (`GetKnots`). Reversal mirrors the query and knot order.
+    /// Reflected parameters are rounded metadata; they need not map back exactly
+    /// through the evaluator. A numerical certificate must check that separately.
     ///
     /// # Errors
     ///
     /// Those of the base curve's `GetKnots`, or `InvalidInput` when the mirrored
-    /// knots are nonfinite, unordered or do not map back to the defining knot.
+    /// knots are nonfinite or unordered.
     pub fn knots(&self, k: &Kernel, interval: Option<&Extent1d>) -> Result<(Vec<f64>, Vec<usize>)> {
         if !self.is_reversed() {
             return self.base()?.knots(k, interval);
@@ -664,14 +666,7 @@ impl OffsetCurve {
         knots.reverse();
         multiplicities.reverse();
         for knot in &mut knots {
-            let mirrored = self.base_parameter(*knot);
-            if self.base_parameter(mirrored) != *knot {
-                return Err(SolidError::invalid_input(
-                    OP_BASE,
-                    "reversed defining knot does not roundtrip through the evaluator map",
-                ));
-            }
-            *knot = mirrored;
+            *knot = self.base_parameter(*knot);
         }
         if knots.iter().any(|t| !t.is_finite())
             || knots

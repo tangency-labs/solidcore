@@ -2295,6 +2295,17 @@ mod linear_wrappers {
                 )
                 .unwrap(),
             ),
+            4 => Curve::from(
+                ProjectedCurve::new(
+                    base,
+                    Some(Vec3::ZERO),
+                    Some(Vec3::Z),
+                    Some(Vec3::Z),
+                    ProjectionType::Perspective,
+                    OwnsCurve::Yes,
+                )
+                .unwrap(),
+            ),
             _ => {
                 let mut offset = OffsetCurve::new(
                     3,
@@ -2316,7 +2327,7 @@ mod linear_wrappers {
     fn projected_extrema_follow_linear_wrapper_defining_joins() {
         let k = Kernel::default();
         for maximize in [false, true] {
-            for kind in 0..4 {
+            for kind in 0..5 {
                 let curve = wrap(base(maximize, false), kind);
                 let expected_t = if kind == 3 { 1.5 } else { 0.5 };
                 for requested in [SolutionRequested::Single, SolutionRequested::All] {
@@ -2351,7 +2362,7 @@ mod linear_wrappers {
     }
     #[test]
     fn linear_wrappers_do_not_emit_artificial_all_boundaries() {
-        for kind in 0..4 {
+        for kind in 0..5 {
             let curve = wrap(base(true, true), kind);
             let answers = curve
                 .global_point_solve::<Handle>(
@@ -2413,7 +2424,7 @@ mod linear_wrappers {
         assert!(knots.iter().all(|t| *t >= 1.25 && *t <= 1.75));
     }
     #[test]
-    fn reversed_offset_refuses_an_unrepresentable_defining_join() {
+    fn reversed_offset_metadata_keeps_a_rounded_defining_join() {
         let base = Curve::from(BSplineCurve::from_nurb(
             Net::new(
                 vec![
@@ -2440,7 +2451,73 @@ mod linear_wrappers {
         let _ = offset.reverse_parameterization(&Extent1d::from_min_max(0.0, 1.0));
         // The mirrored binary64 parameter does not evaluate at the source knot.
         assert_ne!(1.0 - (1.0 - 0.1_f64), 0.1);
-        assert!(offset.knots(&Kernel::default(), None).is_err());
+        assert_eq!(
+            offset.knots(&Kernel::default(), None).unwrap(),
+            (vec![0.0, 0.9, 1.0], vec![2, 1, 2])
+        );
+    }
+
+    #[test]
+    fn reversed_offset_projected_query_refuses_an_unrepresentable_break() {
+        let base = Curve::from(BSplineCurve::from_nurb(
+            Net::new(
+                vec![
+                    CPoint::new(0.0, 0.0, 0.0, NOW),
+                    CPoint::new(1.0, 1.0, 0.0, NOW),
+                    CPoint::new(2.0, 0.0, 0.0, NOW),
+                ],
+                1,
+                vec![0.0, 0.0, 0.1, 1.0, 1.0],
+            )
+            .unwrap(),
+            3,
+            false,
+        ));
+        let mut offset = OffsetCurve::new(
+            3,
+            base,
+            Extent1d::from_min_max(0.0, 1.0),
+            Vec3::Z,
+            0.0,
+            true,
+        )
+        .unwrap();
+        let _ = offset.reverse_parameterization(&Extent1d::from_min_max(0.0, 1.0));
+        let k = Kernel::default();
+        let curve = Curve::from(offset);
+        for outer in [false, true] {
+            let c = if outer {
+                wrap(curve.clone(), 0)
+            } else {
+                curve.clone()
+            };
+            for op in [
+                SolverOperation::ProjectedMinimize,
+                SolverOperation::ProjectedMaximize,
+            ] {
+                for requested in [SolutionRequested::Single, SolutionRequested::All] {
+                    let result = c.global_point_solve::<Handle>(
+                        &k,
+                        &Extent1d::from_min_max(0.0, 1.0),
+                        op,
+                        Vec3::ZERO,
+                        1e-12,
+                        requested,
+                        &GlobalPointSolveOptions {
+                            opt_vectors: Some(&[Vec3::Z]),
+                            ..Default::default()
+                        },
+                    );
+                    assert!(matches!(
+                        result,
+                        Err(solidcore::SolidError::Upstream {
+                            code: solidcore::error::SM_ERR_NOT_WITHIN_TOLERANCE,
+                            ..
+                        })
+                    ));
+                }
+            }
+        }
     }
 }
 
@@ -2533,6 +2610,369 @@ mod stored_spline_labels {
             assert_eq!(answers.len(), 1, "kind={kind}");
             assert_eq!(answers.as_slice()[0].start.parameters[0], 0.5);
             assert_eq!(answers.as_slice()[0].start.solution_value, 1.0);
+        }
+    }
+}
+
+mod nonlinear_wrapper_joins {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use solidcore::{
+        curve::{
+            curve::{p1::GlobalPointSolveOptions, Curve},
+            offset_curve::OffsetCurve,
+        },
+        geom::{
+            extent1d::Extent1d,
+            global_solver::{SolutionRequested, SolverOperation},
+            solution_array::{ObjectKind, SolutionObject},
+        },
+        math::Vec3,
+        nurbs::{
+            b_spline_curve::p1::BSplineCurve,
+            crv_basic::Curve as Net,
+            math::{CPoint, NOW},
+        },
+        Kernel,
+    };
+    #[derive(Clone, Copy, PartialEq)]
+    struct H;
+    impl SolutionObject for H {
+        fn kind(&self) -> ObjectKind {
+            ObjectKind::Other
+        }
+    }
+    #[test]
+    fn nonzero_offset_cusp_remains_a_projected_maximum() {
+        let k = Kernel::default();
+        let base = Curve::from(BSplineCurve::from_nurb(
+            Net::new(
+                vec![
+                    CPoint::new(-2., 2., 0., NOW),
+                    CPoint::new(-1., 0., 0., NOW),
+                    CPoint::new(0., 0., 0., NOW),
+                    CPoint::new(1., 0., 0., NOW),
+                    CPoint::new(2., 0., 0., NOW),
+                ],
+                2,
+                vec![0., 0., 0., 1., 1., 2., 2., 2.],
+            )
+            .unwrap(),
+            3,
+            false,
+        ));
+        let curve = Curve::from(
+            OffsetCurve::new(3, base, Extent1d::from_min_max(0., 2.), Vec3::Z, -2., true).unwrap(),
+        );
+        assert_eq!(curve.evaluate_point(&k, 1.).unwrap(), Vec3::new(0., 2., 0.));
+
+        for req in [SolutionRequested::Single, SolutionRequested::All] {
+            let ans = curve.global_point_solve::<H>(
+                &k,
+                &Extent1d::from_min_max(0.9, 1.1),
+                SolverOperation::ProjectedMaximize,
+                Vec3::new(1., 2., 0.),
+                1e-12,
+                req,
+                &GlobalPointSolveOptions {
+                    opt_vectors: Some(&[Vec3::Z]),
+                    ..Default::default()
+                },
+            );
+            let answers = ans.unwrap();
+            assert_eq!(answers.len(), 1);
+            assert_eq!(answers.as_slice()[0].start.parameters[0], 1.);
+            assert_eq!(answers.as_slice()[0].start.solution_value, 1.);
+        }
+    }
+}
+
+mod native_iso_joins {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use solidcore::{
+        curve::{
+            curve::{p1::GlobalPointSolveOptions, Curve},
+            iso_curve::IsoCurve,
+        },
+        geom::{
+            extent1d::Extent1d,
+            global_solver::{SolutionRequested, SolverOperation},
+            solution_array::{ObjectKind, SolutionObject},
+        },
+        math::Vec3,
+        nurbs::{
+            b_spline_surface::{BSplineSurface, SurfParamType},
+            math::CPoint,
+            srf_basic::Surface as Net,
+        },
+        Kernel,
+    };
+    #[derive(Clone, Copy, PartialEq)]
+    struct H;
+    impl SolutionObject for H {
+        fn kind(&self) -> ObjectKind {
+            ObjectKind::Other
+        }
+    }
+    #[test]
+    fn native_isocurve_uses_its_varying_defining_knots() {
+        let k = Kernel::default();
+        let a = 1.0 / 1024.0;
+        let y = 1.0 - 1.0 / 524288.0;
+        let rows = [0., 0.5, 1.]
+            .into_iter()
+            .map(|z| {
+                vec![
+                    CPoint::new(-a, y, z, 1.),
+                    CPoint::new(0., 1., z, 1.),
+                    CPoint::new(a, y, z, 1.),
+                ]
+            })
+            .collect();
+        let surface = BSplineSurface::from_nurb(
+            Net::new(
+                rows,
+                1,
+                1,
+                vec![0., 0., 0.5, 1., 1.],
+                vec![0., 0., 0.5, 2., 2.],
+            )
+            .unwrap(),
+            false,
+        );
+        let curve = Curve::from(IsoCurve::new(surface, SurfParamType::U, 0.5, false, true));
+        assert_eq!(
+            curve.evaluate_point(&k, 0.5).unwrap(),
+            Vec3::new(0., 1., 0.5)
+        );
+        let a = curve.global_point_solve::<H>(
+            &k,
+            &Extent1d::from_min_max(0., 2.),
+            SolverOperation::ProjectedMaximize,
+            Vec3::ZERO,
+            1e-12,
+            SolutionRequested::All,
+            &GlobalPointSolveOptions {
+                opt_vectors: Some(&[Vec3::Z]),
+                ..Default::default()
+            },
+        );
+        let answers = a.unwrap();
+        assert_eq!(answers.len(), 1);
+        assert_eq!(answers.as_slice()[0].start.parameters[0], 0.5);
+        assert_eq!(answers.as_slice()[0].start.solution_value, 1.);
+    }
+}
+
+mod affine_volume_joins {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use solidcore::{
+        curve::{
+            crv_in_volume::CrvInVolume,
+            curve::{p1::GlobalPointSolveOptions, Curve},
+        },
+        geom::{
+            extent1d::Extent1d,
+            global_solver::{SolutionRequested, SolverOperation},
+            solution_array::{ObjectKind, SolutionObject},
+            transform::Transform,
+        },
+        math::Vec3,
+        nurbs::{
+            b_spline_curve::p1::BSplineCurve,
+            crv_basic::Curve as Net,
+            math::{CPoint, NOW},
+        },
+        surface::volume::p1::{Volume, VolumeKind},
+        Kernel,
+    };
+    #[derive(Clone, Copy, PartialEq)]
+    struct H;
+    impl SolutionObject for H {
+        fn kind(&self) -> ObjectKind {
+            ObjectKind::Other
+        }
+    }
+    #[test]
+    fn affine_volume_retains_the_source_defining_join() {
+        let k = Kernel::default();
+        let a = 1.0 / 1024.0;
+        let y = 1.0 - 1.0 / 524288.0;
+        for in_param in [false, true] {
+            let base = Curve::from(BSplineCurve::from_nurb(
+                Net::new(
+                    vec![
+                        CPoint::new(-a, y, 0., NOW),
+                        CPoint::new(0., 1., 0., NOW),
+                        CPoint::new(a, y, 0., NOW),
+                    ],
+                    1,
+                    vec![0., 0., 0.5, 2., 2.],
+                )
+                .unwrap(),
+                3,
+                false,
+            ));
+            let curve = Curve::from(
+                CrvInVolume::new(
+                    base,
+                    in_param,
+                    Volume::new(VolumeKind::Transform(Transform::IDENTITY)),
+                    0,
+                    3,
+                )
+                .unwrap(),
+            );
+            assert_eq!(
+                curve.evaluate_point(&k, 0.5).unwrap(),
+                Vec3::new(0., 1., 0.)
+            );
+            let ans = curve.global_point_solve::<H>(
+                &k,
+                &Extent1d::from_min_max(0., 2.),
+                SolverOperation::ProjectedMaximize,
+                Vec3::ZERO,
+                1e-12,
+                SolutionRequested::All,
+                &GlobalPointSolveOptions {
+                    opt_vectors: Some(&[Vec3::Z]),
+                    ..Default::default()
+                },
+            );
+            let answers = ans.unwrap();
+            assert_eq!(answers.len(), 1);
+            assert_eq!(answers.as_slice()[0].start.parameters[0], 0.5);
+            assert_eq!(answers.as_slice()[0].start.solution_value, 1.);
+        }
+    }
+}
+
+mod tangent_field_coverage {
+    //! Endpoint-strip transitions are absent from the inherited UV knot list.
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use solidcore::{
+        curve::{
+            crv_in_volume::CrvInVolume,
+            crv_on_surf::CrvOnSurf,
+            curve::{p1::GlobalPointSolveOptions, Curve},
+            offset_curve::OffsetCurve,
+            projected_curve::{OwnsCurve, ProjectedCurve},
+            tangent_field::{TangentDirType, TangentFieldCurve},
+        },
+        geom::{
+            extent1d::Extent1d,
+            extent2d::Extent2d,
+            global_solver::{SolutionRequested, SolverOperation},
+            solution_array::{ObjectKind, SolutionObject},
+            transform::Transform,
+        },
+        math::{Vec2, Vec3},
+        nurbs::b_spline_curve::{p1::BSplineCurve, ProjectionType},
+        surface::{
+            plane::Plane,
+            surface::p2::Surface,
+            volume::p1::{Volume, VolumeKind},
+        },
+        Kernel,
+    };
+    #[derive(Clone, Copy, PartialEq)]
+    struct H;
+    impl SolutionObject for H {
+        fn kind(&self) -> ObjectKind {
+            ObjectKind::Other
+        }
+    }
+    fn plane(x: Vec3, y: Vec3) -> Surface {
+        Surface::from(Plane::new(
+            Vec3::ZERO,
+            x,
+            y,
+            Vec2::new(1., 1.),
+            &Extent2d::from_points(Vec2::new(-2., -2.), Vec2::new(2., 2.)),
+        ))
+    }
+    #[test]
+    fn tangent_field_cannot_report_uncertified_empty_or_partial_success() {
+        let k = Kernel::default();
+        let uv = Curve::from(BSplineCurve::create_line_segment(3, Vec3::ZERO, Vec3::X).unwrap());
+        let field = Curve::from(
+            TangentFieldCurve::new(
+                &k,
+                uv,
+                plane(Vec3::Y, Vec3::Z),
+                TangentDirType::Interpolate,
+                Vec3::X,
+                Vec3::X,
+                None,
+            )
+            .unwrap(),
+        );
+        assert_eq!(field.evaluate_point(&k, 0.).unwrap(), Vec3::X);
+        assert_eq!(field.evaluate_point(&k, 0.5).unwrap(), Vec3::ZERO);
+        assert_eq!(field.knots(&k, None).unwrap().0, vec![0., 1.]);
+        for kind in 0..5 {
+            let curve = match kind {
+                0 => field.clone(),
+                1 => Curve::from(
+                    ProjectedCurve::new(
+                        field.clone(),
+                        Some(Vec3::ZERO),
+                        Some(Vec3::Z),
+                        None,
+                        ProjectionType::Parallel,
+                        OwnsCurve::Yes,
+                    )
+                    .unwrap(),
+                ),
+                2 => Curve::from(
+                    OffsetCurve::new(
+                        3,
+                        field.clone(),
+                        Extent1d::from_min_max(0., 1.),
+                        Vec3::Z,
+                        0.,
+                        true,
+                    )
+                    .unwrap(),
+                ),
+                3 => Curve::from(
+                    CrvInVolume::new(
+                        field.clone(),
+                        true,
+                        Volume::new(VolumeKind::Transform(Transform::IDENTITY)),
+                        0,
+                        3,
+                    )
+                    .unwrap(),
+                ),
+                _ => Curve::from(
+                    CrvOnSurf::new(&k, field.clone(), plane(Vec3::X, Vec3::Y), None, 0).unwrap(),
+                ),
+            };
+            assert_eq!(curve.evaluate_point(&k, 0.).unwrap(), Vec3::X);
+            assert_eq!(curve.evaluate_point(&k, 0.5).unwrap(), Vec3::ZERO);
+            for (lo, hi) in [(0., 1.), (0., 1e-8), (0.2, 0.8)] {
+                for operation in [
+                    SolverOperation::ProjectedMinimize,
+                    SolverOperation::ProjectedMaximize,
+                ] {
+                    for requested in [SolutionRequested::Single, SolutionRequested::All] {
+                        let result = curve.global_point_solve::<H>(
+                            &k,
+                            &Extent1d::from_min_max(lo, hi),
+                            operation,
+                            2. * Vec3::X,
+                            1e-12,
+                            requested,
+                            &GlobalPointSolveOptions {
+                                opt_vectors: Some(&[Vec3::Z]),
+                                ..Default::default()
+                            },
+                        );
+                        assert!(matches!(result,Err(solidcore::SolidError::Upstream{code:solidcore::error::SM_ERR_NOT_WITHIN_TOLERANCE,..})),
+                            "kind={kind}, interval=({lo},{hi}), operation={operation:?}, requested={requested:?}");
+                    }
+                }
+            }
         }
     }
 }
