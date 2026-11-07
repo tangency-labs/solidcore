@@ -21,9 +21,9 @@
 //! Deviations:
 //! - **Projected Single maxima (#3060).** Definition enclosures and feasible
 //!   witnesses replace the incomplete stationary search; subdivision is bounded
-//!   to 32,768 boxes and depth 48 in `projected_pair`. Proof failures propagate.
+//!   to 32,768 boxes and depth 128 in `projected_pair`. Proof failures propagate.
 //!   Structural affine and identical monotone NURBS All classes share the definition enclosures and
-//!   preserves the existing retention and ordered duplicate rules.
+//!   preserve the existing retention and ordered duplicate rules.
 //! - **Curves and kernel.** The solver's trees only name their curves by the
 //!   caller's handle ([`crate::geom::tree::Tree::owner_object`]), so the solver
 //!   carries the curves and the kernel ([`CcGlobalSolver::with_curves`]); a solver
