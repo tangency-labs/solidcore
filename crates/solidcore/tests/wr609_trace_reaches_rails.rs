@@ -92,11 +92,13 @@ fn variable_round_reach(fix: bool) -> Vec<(f64, [[bool; 2]; 2])> {
     out
 }
 
+/// The same volume with and without the flag: 5822.595815, its sections the ball's exact
+/// circles (upstream's approximated arcs gave 5822.58649, 0.0093 less material kept).
 #[test]
 fn variable_round_traced_farther_comes_out_the_same() {
     for fix in [false, true] {
         let v = variable_round_volume(fix);
-        assert!((v - 5822.58649).abs() < 5e-6, "flag {fix}: volume {v}");
+        assert!((v - 5822.595815).abs() < 5e-6, "flag {fix}: volume {v}");
     }
 }
 

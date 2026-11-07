@@ -793,15 +793,18 @@ fn assert_passes(case: &Case, k: &mut Kernel) {
     );
 }
 
-/// The fork's mark: "the round's sections are the balls' great circles, not the circles the
-/// balls' envelope touches them along: 0.0166 off the cone, volume 11955.6466 against
-/// 11956.2224".
+/// The fork's mark, its sections now the exact circles: "the round's sections are the balls'
+/// great circles, not the circles the balls' envelope touches them along: 0.0166 off the
+/// cone, volume 11955.6466 against 11956.2224". The fork's mark is of upstream's approximated
+/// arcs; the ball's exact circle (WR-708) takes 0.0168 off the cone and 11955.6489, the
+/// 0.0023 more material that the exact circles of the linear round on its cone keep too
+/// (`wr685_variable_round_touch_circle`: 11956.2224336 against the arcs' 11956.2199136).
 fn assert_variable_mark(k: &mut Kernel) {
     let g = grade(&named(VARIABLE), k);
     println!("{VARIABLE}: {g:?}");
     assert!(g.failed.is_none(), "{g:?}");
-    assert!((g.off - 0.0166).abs() <= 0.0001, "{g:?}");
-    assert!((g.volume - 11955.6466).abs() <= 1e-4, "{g:?}");
+    assert!((g.off - 0.0168).abs() <= 0.0001, "{g:?}");
+    assert!((g.volume - 11955.6489).abs() <= 1e-4, "{g:?}");
     assert_eq!(g.problems.len(), 2, "{g:?}");
     assert_eq!(g.seams, [(1, 1), (1, 1)], "{g:?}");
 }
@@ -813,15 +816,13 @@ fn with_solidcraft_s_fixes_the_chords_and_circles_have_the_fork_s_marks() {
     }
 }
 
-/// The mark is the fork's at ea59e9c, the great circles of approximated arcs.
-/// `fillet_gn_section_generator` brings the fork's later touch circles and
-/// `fillet_exact_arc_sections` its later exact circles (523bc25), tested with those ports
-/// (`wr685_variable_round_touch_circle`, `wr708_exact_arc_sections`), so both stay off here.
+/// The mark is the fork's at ea59e9c, the great circles (of exact circles, see
+/// [`assert_variable_mark`]). `fillet_gn_section_generator` brings the fork's later touch
+/// circles, tested with that port (`wr685_variable_round_touch_circle`), so it stays off here.
 #[test]
 fn with_solidcraft_s_fixes_the_variable_round_has_the_fork_s_mark() {
     let mut k = solidcraft_kernel();
     k.fixes.fillet_gn_section_generator = false;
-    k.fixes.fillet_exact_arc_sections = false;
     assert_variable_mark(&mut k);
 }
 
@@ -1310,37 +1311,27 @@ fn holds_case() -> Case {
 
 /// `cf1c08b` + `0389af2`: the progressive cubic law `[2, 2, 6, 3, 0]` lies on the union of its
 /// balls, passes `Level2`, has the volume of its balls' envelope ([`HOLDS_VOLUME`]), and is G1
-/// along both seams; with SolidCraft's fixes its exact circles take one arc count and its end
-/// point their weights (`fillet_exact_arc_spans`, WR-711).
+/// along both seams; its exact circles take one arc count and its end point their weights
+/// (WR-711). Its exact circles are skinned between the trace's stations, so the round stays
+/// on its balls only where the stations follow the law (`fillet_variable_span_follows_fillet`,
+/// the fork's 4438859): without it the G^n kernel's round is 5.0e-4 off them and its volume
+/// 1.2e-7 over the envelope's (upstream's approximated arcs, which a round no longer takes,
+/// were within the grade there).
 #[test]
 fn the_progressive_cubic_variable_round_lies_on_its_balls_union_and_is_g1() {
     let case = holds_case();
-    assert_passes(&case, &mut gn_kernel());
+    let mut k = gn_kernel();
+    k.fixes.fillet_variable_span_follows_fillet = true;
+    assert_passes(&case, &mut k);
     assert_passes(&case, &mut solidcraft_kernel());
 }
 
-/// WR-711: with WR-708's exact circles but without `fillet_exact_arc_spans`, the progressive
-/// cubic round is the fork's (523bc25, 5e8c9c1): 1.966e-3 off its balls' union, its
-/// sections sweeping across 91 degrees one and two arcs; with it, 8.2e-5 off, nearer than
-/// the approximated arcs' 1.0e-4, and within 3e-8 of the envelope's volume.
+/// WR-711: the progressive cubic round's exact circles take one arc count: 8.2e-5 off its
+/// balls' union, nearer than the approximated arcs' 1.0e-4, and within 3e-8 of the
+/// envelope's volume (the fork's 523bc25 and 5e8c9c1, without it: 1.966e-3 off).
 #[test]
 fn wr711_exact_circles_of_one_arc_count_keep_the_progressive_round_on_its_balls() {
     let case = holds_case();
-    let mut off = solidcraft_kernel();
-    off.fixes.fillet_exact_arc_spans = false;
-    let g_off = grade(&case, &mut off);
-    println!("spans off: {g_off:?}");
-    assert!(g_off.failed.is_none(), "{g_off:?}");
-    near(g_off.off, 1.966_136e-3, 1e-8, "the fork's distance off");
-    // the fork's 5957.716621492882 at SmApiBrepComputeVolume's 1e-8; the grade integrates
-    // at 1e-7
-    near(
-        g_off.volume,
-        5_957.716_621_492_882,
-        1e-5,
-        "the fork's volume",
-    );
-
     let g_on = grade(&case, &mut solidcraft_kernel());
     println!("spans on: {g_on:?}");
     assert!(
@@ -1354,10 +1345,13 @@ fn wr711_exact_circles_of_one_arc_count_keep_the_progressive_round_on_its_balls(
     );
 }
 
-/// `cf1c08b` + `0389af2`: the folded cubic law `[2, 2, 40, 3, 2]` builds folded (far off the
-/// union of its balls) when `fillet_gn_section_generator` is off, and is refused when on.
+/// `cf1c08b` + `0389af2`: the folded cubic law `[2, 2, 40, 3, 2]` is refused as a fold (naming
+/// the radius) only with `fillet_gn_section_generator`. Without it nothing judges the fold:
+/// upstream's approximated arcs built it folded, far off the union of its balls; the exact
+/// circles' folded sheet reaches every face of the body, and the crease trim refuses it
+/// without a reason.
 #[test]
-fn the_folded_cubic_variable_round_leaves_its_balls_union_without_fix_and_is_refused_with_fix() {
+fn the_folded_cubic_variable_round_is_refused_as_a_fold_only_with_the_fix() {
     let folds_law = [2.0, 2.0, 40.0, 3.0, 2.0];
     let folds_curve = greville_cubic_curve(folds_law);
     let case = Case {
@@ -1376,18 +1370,11 @@ fn the_folded_cubic_variable_round_leaves_its_balls_union_without_fix_and_is_ref
         fitted: true,
         size: 1.0,
     };
-    // the fork before its G^n section had upstream's approximated arcs, not 523bc25's exact
-    // circle (`fillet_exact_arc_sections`, WR-708), which comes after it
     let mut k_off = solidcraft_kernel();
     k_off.fixes.fillet_gn_section_generator = false;
-    k_off.fixes.fillet_exact_arc_sections = false;
     let g_off = grade(&case, &mut k_off);
-    assert!(g_off.failed.is_none(), "{g_off:?}");
-    assert!(
-        g_off.off > 1.0,
-        "expected folded surface far off balls union: {g_off:?}"
-    );
-    assert!(!g_off.problems.is_empty(), "{g_off:?}");
+    let failed = g_off.failed.as_deref().unwrap_or_default();
+    assert!(failed.contains("trim_at_creases"), "{g_off:?}");
 
     let g_on = grade(&case, &mut solidcraft_kernel());
     assert!(

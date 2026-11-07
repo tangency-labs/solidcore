@@ -451,7 +451,8 @@ fn solidcraft_kernel() -> Kernel {
 
 /// The fork's behaviour these cases reach, and no other fix: the round as its definition
 /// (`fillet_round_as_definition`) on the G^n section generator, whose circle is a definition
-/// only where it is the ball's exact circle (`fillet_exact_arc_sections`); and the trace and
+/// only where it is the ball's exact circle (as every circular round's section is); and the
+/// trace and
 /// ends the fork's net is certified over, the variable round's spans tested against its law
 /// (`fillet_variable_span_follows_fillet`, the fork's 4438859), with the blend corner's End at
 /// each end of the edge.
@@ -459,7 +460,6 @@ fn fork_kernel() -> Kernel {
     let mut k = Kernel::new(&KernelOptions::default());
     k.fixes.fillet_gn_section_generator = true;
     k.fixes.fillet_round_as_definition = true;
-    k.fixes.fillet_exact_arc_sections = true;
     k.fixes.fillet_variable_span_follows_fillet = true;
     k
 }

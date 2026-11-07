@@ -65,10 +65,7 @@ fn edge_between(k: &Kernel, b: &Brep, p: Point3, q: Point3) -> (EdgeId, bool) {
 }
 
 /// The kernel: every fix on (the fork's own behaviour) when `fork`, else upstream's; the
-/// G^n section generator as `gn`. Without it the kernel is the fork before d01d7b0, whose
-/// rounds' sections are still upstream's approximated arcs: the exact circle
-/// (`fillet_exact_arc_sections`, WR-708, the fork's 523bc25) comes after the G^n section
-/// and is off with it.
+/// G^n section generator as `gn`.
 fn kernel(fork: bool, gn: bool) -> Kernel {
     let mut k = Kernel::default();
     let mut fixes = if fork {
@@ -77,26 +74,7 @@ fn kernel(fork: bool, gn: bool) -> Kernel {
         UpstreamFixes::default()
     };
     fixes.fillet_gn_section_generator = gn;
-    if !gn {
-        fixes.fillet_exact_arc_sections = false;
-    }
     k.fixes = fixes;
-    k
-}
-
-/// The fork at d01d7b0 (and 58d03ef): every fix but the exact circle of 523bc25
-/// (`fillet_exact_arc_sections`, WR-708).
-fn kernel_d01d7b0() -> Kernel {
-    let mut k = kernel(true, true);
-    k.fixes.fillet_exact_arc_sections = false;
-    k
-}
-
-/// The fork at 5e8c9c1 (and 523bc25): every fix but WR-711's one arc count of the exact
-/// circles (`fillet_exact_arc_spans`), which comes after them.
-fn kernel_5e8c9c1() -> Kernel {
-    let mut k = kernel(true, true);
-    k.fixes.fillet_exact_arc_spans = false;
     k
 }
 
@@ -198,22 +176,20 @@ fn a_linear_round_is_the_balls_cone() {
     // the fork's 5e8c9c1 build (SmFilletExecutive as SmApiVariableRadiusFillet runs it,
     // SmApiBrepComputeVolume at 1e-8): 11956.222433581395 (523bc25: 11956.222433581312),
     // its sections the balls' exact circles; to the last digit here
-    let v = cone_round(kernel_5e8c9c1());
+    let v = cone_round(kernel(true, true));
     assert!(rel(v, 11956.222433581395) < 1e-9, "{v}");
-    // the fork's d01d7b0 and 58d03ef builds, the approximated arcs: 11956.219913611159
-    let v = cone_round(kernel_d01d7b0());
-    assert!(rel(v, 11956.219913611159) < 1e-9, "{v}");
 }
 
 #[test]
 fn a_linear_round_keeps_the_great_circles_without_the_fix() {
     for fork in [false, true] {
         let v = cone_round(kernel(fork, false));
-        // the great circles leave the cone: 44.353 removed, 1.3% over the cone's 43.778
-        // (SolidCraft's measurement of solidcore before the fix)
+        // the great circles leave the cone: 44.351 removed, 1.3% over the cone's 43.778
+        // (SolidCraft's measurement of solidcore before the fix, of upstream's approximated
+        // arcs: 44.353; the exact circles keep 0.0024 more, as on the cone)
         let removed = 12000.0 - v;
         eprintln!("fork fixes {fork}, no G^n section: {v} removed {removed}");
-        assert!((removed - 44.353).abs() < 1e-3, "{removed}");
+        assert!((removed - 44.351).abs() < 1e-3, "{removed}");
         assert!(rel(v, CONE_VOLUME) > 1e-5, "{v}");
     }
 }
@@ -241,32 +217,30 @@ fn folding_balls_are_refused_naming_the_radius() {
     );
 }
 
+/// Without the fix the great circles never fold, so nothing refuses the law as a fold: with
+/// upstream's approximated arcs the round built, 726.56 removed against the union of the
+/// balls' 332.2 (the fork's capi test, before d622107: 726.53); its exact circles' sheet
+/// reaches every face of the body, and the crease trim refuses it with no reason.
 #[test]
-fn folding_balls_build_folded_without_the_fix() {
-    // the great circles never fold: the round builds, 726.56 removed against the union of
-    // the balls' 332.2 (the fork's capi test, before d622107: 726.53)
-    let v = spline_round(kernel(true, false), FOLDS).expect("builds");
-    eprintln!("no G^n section: {v} removed {}", 6000.0 - v);
-    assert!((6000.0 - v - 726.5).abs() < 0.5, "{v}");
+fn folding_balls_are_not_refused_as_a_fold_without_the_fix() {
+    let (err, reason) = spline_round(kernel(true, false), FOLDS).expect_err("refused");
+    eprintln!("no G^n section: {err}");
+    assert_eq!(reason, None);
+    assert!(err.contains("reaches every face of the body"), "{err}");
 }
 
+/// The progressive law's round is within 3.1e-8 of its balls' envelope (5957.718502, the
+/// quadrature of `fork_ea59e9c_section_orders`' `HOLDS_VOLUME`): its exact circles take one
+/// arc count (WR-711). The fork's 5e8c9c1, whose circles change arc count, gives
+/// 5957.716621492882, 3.2e-7 under it.
 #[test]
 fn a_progressive_spline_round_builds() {
-    // the fork's 5e8c9c1 and 523bc25 builds, the exact circles: 5957.716621492882 (here
-    // 2.2e-13 off)
-    let v = spline_round(kernel_5e8c9c1(), HOLDS).expect("builds");
+    let v = spline_round(kernel(true, true), HOLDS).expect("builds");
     eprintln!(
-        "{v} vs 5957.716621492882, rel {}",
-        rel(v, 5957.716621492882)
+        "{v} vs the envelope's 5957.718502, rel {}",
+        rel(v, 5957.718502)
     );
-    assert!(rel(v, 5957.716621492882) < 1e-9, "{v}");
-    // the fork's d01d7b0 and 58d03ef builds, the approximated arcs: 5957.7178399654949
-    let v = spline_round(kernel_d01d7b0(), HOLDS).expect("builds");
-    eprintln!(
-        "{v} vs 5957.7178399654949, rel {}",
-        rel(v, 5957.7178399654949)
-    );
-    assert!(rel(v, 5957.7178399654949) < 1e-9, "{v}");
+    assert!(rel(v, 5957.718502) < 3.1e-8, "{v}");
 }
 
 /// The box 10 x 20 x 30 after the linear law `r0` to `r1` from y = 0 rounds its top edge
@@ -306,25 +280,10 @@ fn a_cliff_overflows_variable_round_holds_its_law_on_its_touch_circles() {
         (2.0, 30.0, 5184.0573578203966),
         (2.0, 50.0, 4693.6093103438334),
     ] {
-        let v = cliff_round(kernel_5e8c9c1(), r0, r1);
+        let v = cliff_round(kernel(true, true), r0, r1);
         eprintln!("{r0} -> {r1}: {v:?} fork {fork}");
         let v = v.expect("builds");
         assert!(rel(v, fork) < 1e-12, "{r0} -> {r1}: {v} vs {fork}");
-    }
-    // the fork's d01d7b0 and 58d03ef builds, the approximated arcs
-    for (r0, r1, fork) in [
-        (2.0, 11.0, 5802.4277529973015),
-        (11.0, 2.0, 5802.4277531390981),
-        (2.0, 20.0, 5503.8406897389505),
-        (2.0, 30.0, 5184.0105363417642),
-        (2.0, 50.0, 4693.4880446800344),
-    ] {
-        let v = cliff_round(kernel_d01d7b0(), r0, r1);
-        eprintln!("{r0} -> {r1}: {v:?} fork {fork}");
-        let v = v.expect("builds");
-        // within 1.4e-8 (2 -> 20): the subtraction's volume; the sections match the fork
-        // to 1e-15 on the cone and the spline round
-        assert!(rel(v, fork) < 1e-7, "{r0} -> {r1}: {v} vs {fork}");
     }
 }
 
