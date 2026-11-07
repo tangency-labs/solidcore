@@ -1,0 +1,30 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="900" height="350" viewBox="0 0 900 350">
+<style>text{font:14px sans-serif;fill:#17212b}.title{font-size:18px;font-weight:bold}.domain{fill:#dbeafe;stroke:#2563eb;stroke-width:1.5}.line{stroke:#334155;stroke-width:3}.witness{stroke:#dc2626;stroke-width:2}.dot{fill:#dc2626}</style>
+<rect width="900" height="350" fill="white"/>
+<text x="20" y="27" class="title">Projected domains and attained maxima — curve and edge entries</text>
+<g transform="translate(0,0)">
+<text x="35" y="65" class="title">Cone along X</text>
+<path class="domain" d="M102.5 217.424 L197.5 272.272 L197.5 107.728 L102.5 162.576 Z"/>
+<line class="line" x1="55" y1="190" x2="245" y2="190"/>
+<line class="witness" x1="55" y1="190" x2="197.5" y2="107.728"/>
+<circle class="dot" cx="55" cy="190" r="4"/><circle class="dot" cx="197.5" cy="107.728" r="4"/>
+<text x="35" y="305">h ∈ [0.5, 1.5]; ideal maximum √3</text>
+</g>
+<g transform="translate(300,0)">
+<text x="35" y="65" class="title">Sphere band</text>
+<path class="domain" fill-rule="evenodd" d="M197.5 190 A47.5 47.5 0 1 0 102.5 190 A47.5 47.5 0 1 0 197.5 190 M173.75 190 A23.75 23.75 0 1 1 126.25 190 A23.75 23.75 0 1 1 173.75 190"/>
+<line class="line" x1="55" y1="190" x2="245" y2="190"/>
+<line class="witness" x1="55" y1="190" x2="197.5" y2="190"/>
+<circle class="dot" cx="55" cy="190" r="4"/><circle class="dot" cx="197.5" cy="190" r="4"/>
+<text x="35" y="305">latitude ±60°; ideal maximum 1.5</text>
+</g>
+<g transform="translate(600,0)">
+<text x="35" y="65" class="title">Sphere quarter</text>
+<path class="domain" d="M197.5 190 A47.5 47.5 0 0 0 102.5 190 L116.412 190 A33.588 33.588 0 0 1 183.588 190 Z"/>
+<line class="line" x1="55" y1="190" x2="245" y2="190"/>
+<line class="witness" x1="55" y1="190" x2="197.5" y2="190"/>
+<circle class="dot" cx="55" cy="190" r="4"/><circle class="dot" cx="197.5" cy="190" r="4"/>
+<text x="35" y="305">longitude 0–180°; ideal max 1.5</text>
+</g>
+<text x="20" y="335">Blue: ideal XY projection. Dark: X segment [−1,1]. Red: maximizing pair. Native rounding is certified separately.</text>
+</svg>
