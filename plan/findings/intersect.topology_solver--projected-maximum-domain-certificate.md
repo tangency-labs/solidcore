@@ -64,12 +64,25 @@ double-cross metric, including non-unit normals. The former projected sphere
 test used an unscaled plane distance and could discard the face after seeing a
 vertex value scaled by `|N|^2`; the public traversal test exposed this at normal
 length 1000. Outward-rounded box bounds replace that mismatched comparison.
+The pruning comparison keeps the caller's tolerance around the current best,
+so requests for all answers do not discard an answer within that tolerance.
+The regression at half the tolerance fails without this margin; an answer two
+tolerances away is still culled for both projected minimum and maximum.
 Earlier
 child-branch pair-query measurements are investigation results, not evidence
 that this certificate covers those operations.
 
-Focused validation: all 27 topology-solver tests pass, including local and public
+Focused validation covers local and public
 B-rep traversal for the analytic fixtures. The sphere result is
 `0.860555127546399068` against analytic `0.860555127546398957`; the original
 inaccurate scalar is refused by the independent whole-domain bound.
 The full-suite and golden results are recorded in the PR description.
+
+![The same sphere query before and after: the old reported maximum lies outside the caller's tolerance, while the new value agrees with the analytic maximum.](figures/projected-maximum-comparison-2967.png)
+
+The upper panels show the same analytic projection and maximizing point; the
+lower panels magnify the exact distance function near its maximum and overlay
+the measured scalar. The drawing is explanatory evidence, not the certificate.
+The original scalar is recorded in issue #2967; the new scalar is from the
+regression output. The plotting source is
+`diagnostics/projected_maximum_comparison_2967.py`.

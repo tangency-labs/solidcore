@@ -606,10 +606,11 @@ impl<'t, 'a, O: SolutionObject + 't> TopologySolver<'t, 'a, O> {
                 let best =
                     crate::blend::fillet_section::interval::Ivl::from(s.best_answer_so_far_sq)
                         .sqrt();
+                let budget = crate::blend::fillet_section::interval::Ivl::from(tol);
                 let excluded = if s.operation == SolverOperation::ProjectedMinimize {
-                    distance.lo > best.hi
+                    distance.lo > (best + budget).hi
                 } else {
-                    distance.hi < best.lo
+                    distance.hi < (best - budget).lo
                 };
                 Ok(!excluded)
             }
@@ -2661,6 +2662,33 @@ pub(crate) mod tests {
         let c = Extent3d::from_bounds(1.2, 0.0, 0.0, 2.0, 1.0, 1.0);
         assert!(ts.may_contain_answer(&a, &b).unwrap());
         assert!(!ts.may_contain_answer(&a, &c).unwrap());
+    }
+
+    #[test]
+    fn projected_box_culling_retains_answers_within_query_tolerance() {
+        let k = Kernel::default();
+        let sc = scene();
+        let origin = Extent3d::from_bounds(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+        for (operation, sign) in [
+            (SolverOperation::ProjectedMinimize, 1.0),
+            (SolverOperation::ProjectedMaximize, -1.0),
+        ] {
+            let ts: TopologySolver<'_, '_, Obj> = TopologySolver::new(
+                &k,
+                &sc,
+                operation,
+                SolutionRequested::All,
+                1e-5,
+                1.0,
+                &[Vec3::new(0.0, 0.0, 2.0)],
+            );
+            // The double-cross metric scales a transverse distance by four.
+            for (offset, retained) in [(5e-6, true), (2e-5, false)] {
+                let x = (1.0 + sign * offset) / 4.0;
+                let point = Extent3d::from_bounds(x, 0.0, 0.0, x, 0.0, 0.0);
+                assert_eq!(ts.may_contain_answer(&origin, &point).unwrap(), retained);
+            }
+        }
     }
 
     #[test]
