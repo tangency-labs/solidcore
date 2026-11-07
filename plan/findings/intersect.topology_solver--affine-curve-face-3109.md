@@ -316,9 +316,16 @@ The full Windows golden comparison is **not green**: 2,575 cases, four changed,
 zero added/removed/broken, and the two existing full-torus exclusions. The four
 changes are `analytic_face_sphere_band_{6,7}_{14,3}`, outside the new projected
 maximum operation 15. Operation 14 retains scalar zero but chooses the other
-periodic seam parameter; operation 3 chooses the symmetric opposite minimum,
-with a one-ULP scalar difference. A fresh Windows immediate-parent replay is
-required to determine attribution; these outputs have not been blessed. The
+periodic seam parameter; operation 3 chooses the symmetric opposite endpoint
+candidate, with a one-ULP scalar difference. Both operation-3 endpoint answers
+are independently disproved by the native admissible pair
+`t=0.6250000000000001`, `UV=(0,1)`: the curve point is
+`(0.2500000000000002,0,0)`, the face point is
+`(0.2500000000000002,0,-0.5669872981077808)`, and their distance
+`0.5669872981077808` is below the reported `0.9142135623730951`.
+This ordinary-minimum defect is outside the projected-maximum construction.
+A fresh Windows immediate-parent replay is required to determine attribution;
+these outputs have not been blessed. The
 native fourteen-record audit includes both currently excluded full-torus cases,
 so their proof coverage does not depend on the golden exclusions.
 

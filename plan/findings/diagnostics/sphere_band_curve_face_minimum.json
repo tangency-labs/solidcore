@@ -1,0 +1,174 @@
+{
+  "kernel_head": "c341e5309ab39973277f13ed30fc6a4e4c6a04f2",
+  "kernel_rlib_sha256": "2f600bf05200db5743ad00f2497918208ef4cdc49733f38529a4e43edef2eaaa",
+  "platform": "Windows",
+  "source_fixture": "fixtures/intersect.topology_solver_p2/static-analytic-faces.json",
+  "cases": [
+    {
+      "name": "analytic_face_sphere_band_6_3",
+      "upstream_ref": "source/SMLib/src/SmTopologySolver.cpp:33-108 (sm_GetFaceSilhouettes), 661 (SmTLSPointFace::SolveIt), 944, 1412, 1803, 1859",
+      "inputs": {
+        "op": "static",
+        "request": 0,
+        "tolerance": 1e-05,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "included": true,
+        "entry": 6,
+        "operation": 3,
+        "swap": false,
+        "faces": [
+          {
+            "kind": "sphere",
+            "center": [
+              0.0,
+              0.0,
+              -1.0
+            ],
+            "x": [
+              1.0,
+              0.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "radius": 0.5,
+            "lon": [
+              0.0,
+              360.0
+            ],
+            "lat": [
+              -60.0,
+              60.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ]
+      }
+    },
+    {
+      "name": "analytic_face_sphere_band_7_3",
+      "upstream_ref": "source/SMLib/src/SmTopologySolver.cpp:33-108 (sm_GetFaceSilhouettes), 661 (SmTLSPointFace::SolveIt), 944, 1412, 1803, 1859",
+      "inputs": {
+        "op": "static",
+        "request": 0,
+        "tolerance": 1e-05,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "included": true,
+        "entry": 7,
+        "operation": 3,
+        "swap": false,
+        "faces": [
+          {
+            "kind": "sphere",
+            "center": [
+              0.0,
+              0.0,
+              -1.0
+            ],
+            "x": [
+              1.0,
+              0.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "radius": 0.5,
+            "lon": [
+              0.0,
+              360.0
+            ],
+            "lat": [
+              -60.0,
+              60.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ]
+      }
+    }
+  ],
+  "reported": 0.9142135623730951,
+  "returned_parameters": [
+    0.0,
+    0.5,
+    0.8728334524848751
+  ],
+  "native_witness": {
+    "admissible": true,
+    "curve_point": [
+      0.2500000000000002,
+      0.0,
+      0.0
+    ],
+    "native_distance": 0.5669872981077808,
+    "surface_point": [
+      0.2500000000000002,
+      0.0,
+      -0.5669872981077808
+    ],
+    "t": 0.6250000000000001,
+    "uv": [
+      0.0,
+      1.0
+    ]
+  },
+  "public_query_reproduced": true,
+  "claims_exact_global_minimum": false,
+  "parent_attribution_pending": true
+}
