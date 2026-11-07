@@ -16,15 +16,18 @@ use common::*;
 use std::f64::consts::PI;
 use std::io::Read as _;
 
+use solidcore::blend::definition_check::surface_kind_name;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::kernel::Kernel;
 use solidcore::query::api_queries::{edge_closest_point, face_bounding_box};
+use solidcore::surface::procedural_blend::{BlendRef, ProceduralBlend};
+use solidcore::surface::surface::SurfaceKind;
 use solidcore::topology::api_files::write_brep_to_file;
 use solidcore::topology::brep_data_write::FromBrepEnv;
-use solidcore::topology::loopuse;
 use solidcore::topology::topology::NotifyRecords;
 use solidcore::topology::EdgeuseId;
-use solidcore::{EdgeId, FaceId, Vec3};
+use solidcore::topology::{edge, loopuse};
+use solidcore::{EdgeId, FaceId, Point2, Vec3};
 use solidcore_record::brep::Brep as Record;
 
 use solidcore_ops::{
@@ -293,7 +296,112 @@ fn a_variable_round_with_a_corner_in_its_law_is_its_balls_union() {
             vertex_at(&b, p);
         }
         assert!(b.check(CheckLevel::All).unwrap().is_valid());
+        // every face the split makes is the round's definition, not a trace of it: each piece
+        // between the law's corners a rolling-ball round of its own piece of the law, and each
+        // dip's zone the corner ball's patch
+        let (k, made) = kernel_copy(&b);
+        let corners: Vec<f64> = knots
+            .windows(2)
+            .filter(|w| w[0] != w[1])
+            .map(|w| w[0])
+            .collect();
+        let corners = [corners.as_slice(), &[1.0]].concat();
+        let dips = (1..radii.len() - 1)
+            .filter(|&i| radii[i] < radii[i - 1] && radii[i] < radii[i + 1])
+            .count();
+        let piece_round = LawPieces::new(from, middle, rails, radii[0]);
+        let (mut pieces, mut zones) = (Vec::new(), 0);
+        for &f in made.face_list() {
+            let s = made.face(f).unwrap().surface.as_ref().unwrap();
+            match s.procedural_blend() {
+                _ if matches!(s.kind(), SurfaceKind::Plane(_)) => {}
+                Some(BlendRef::Procedural(pb)) => {
+                    // the piece whose law every point of the definition rolls
+                    let law = (0..radii.len() - 1).find(|&i| {
+                        let r = |y: f64| {
+                            let c = (y - corners[i]) / (corners[i + 1] - corners[i]);
+                            radii[i] + c * (radii[i + 1] - radii[i])
+                        };
+                        definition_points(&k, pb)
+                            .iter()
+                            .all(|&p| piece_round.off(p, r) < 1e-6)
+                    });
+                    pieces.push(law);
+                }
+                // (the copy keeps the zone's ball patch, not the corner definition beside it)
+                None if surface_kind_name(s) == "ball-patch" => zones += 1,
+                _ => panic!("{radii:?} from {from:?}: {:?}", surface_kind_name(s)),
+            }
+        }
+        pieces.sort_unstable();
+        let want: Vec<Option<usize>> = (0..radii.len() - 1).map(Some).collect();
+        assert_eq!(pieces, want, "{radii:?} from {from:?}");
+        assert_eq!(zones, dips, "{radii:?} from {from:?}");
     }
+}
+
+/// A round of a linear radius law along a box's straight edge, between its two faces at a
+/// right angle: the ball of radius r(y) at the edge's fraction y lies r(y) in from each face.
+struct LawPieces {
+    from: Vec3,
+    along: Vec3,
+    inward: Vec3,
+}
+
+impl LawPieces {
+    /// The edge from `from` through its middle `middle`, its start's rail ends `rails` at
+    /// radius `r0`.
+    fn new(from: [f64; 3], middle: [f64; 3], rails: [[f64; 3]; 2], r0: f64) -> Self {
+        let v = |p: [f64; 3]| Vec3::new(p[0], p[1], p[2]);
+        let from = v(from);
+        let [a, b] = rails.map(|p| (v(p) - from) / r0);
+        Self {
+            from,
+            along: (v(middle) - from) * 2.0,
+            inward: a + b,
+        }
+    }
+
+    /// How far `p` is off the envelope of the balls of radius `r(y)` centred at
+    /// C(y) = from + y along + r(y) inward: h(y) = |p − C(y)|² − r(y)² is at least 0 for
+    /// every y exactly where p is outside every ball, and 0 where it touches one. For a linear
+    /// `r` it is a quadratic in y whose leading coefficient is |along|² + r′² > 0 (the edge is
+    /// square to its faces' normals), so a ternary search over the edge and a length past each
+    /// end finds its least value, which is 2 r (|p − C| − r) to first order: halved over r, a
+    /// distance.
+    fn off(&self, p: Vec3, r: impl Fn(f64) -> f64) -> f64 {
+        let h = |y: f64| {
+            let d = p - (self.from + self.along * y + self.inward * r(y));
+            d.x * d.x + d.y * d.y + d.z * d.z - r(y) * r(y)
+        };
+        let (mut lo, mut hi) = (-1.0, 2.0);
+        for _ in 0..200 {
+            let (a, b) = (lo + (hi - lo) / 3.0, hi - (hi - lo) / 3.0);
+            if h(a) < h(b) {
+                hi = b;
+            } else {
+                lo = a;
+            }
+        }
+        let y = 0.5 * (lo + hi);
+        (h(y) / (2.0 * r(y))).abs()
+    }
+}
+
+/// Points of `pb`'s definition, on a 5 x 5 grid of its net.
+fn definition_points(k: &Kernel, pb: &ProceduralBlend) -> Vec<Vec3> {
+    let d = pb.net().natural_uv_domain();
+    let (lo, hi) = (d.min(), d.max());
+    let mut out = Vec::new();
+    for i in 0..5 {
+        for j in 0..5 {
+            let (a, b) = (f64::from(i) / 4.0, f64::from(j) / 4.0);
+            let uv = Point2::new(lo.x + a * (hi.x - lo.x), lo.y + b * (hi.y - lo.y));
+            let st = pb.definition_parameters(uv);
+            out.push(pb.evaluate_definition(k, st.x, st.y, 0, 0).unwrap()[0][0]);
+        }
+    }
+    out
 }
 
 /// Select the cube's edge along x at y = z = 20, with its record Order.
@@ -530,13 +638,17 @@ fn nearest_edge(b: &Body, p: [f64; 3]) -> usize {
 
 /// A tangent chain chamfered 1 and 2 is one chamfer: the tilted cylinder's elliptical rim, in
 /// two arcs whose middles have different wedges (the kernel case
-/// `2893-chamfer-two-distances-elliptical-rim`), measured at the widest. Its one pair of
-/// offsets puts the ball's centre on the cylinder of radius 5 less the wall's offset, at the
+/// `2893-chamfer-two-distances-elliptical-rim`), measured at the narrowest wedge at which no
+/// station folds: the wedge opens to 90 degrees plus the tilt at the rim's far tip, inside an
+/// arc, and the smallest setback there keeps 1000 edge tolerances. Its one pair of offsets
+/// puts the ball's centre on the cylinder of radius 5 less the wall's offset, at the
 /// top's offset under the plane z = 10, so the top's rail is that cylinder's ellipse there,
 /// lifted to the plane: semi-axes `R` along y and `R sqrt(5) / 2` along x, centred at
 /// x = 10 less half the top's offset (the axis runs 1 along x to 2 along z).
 #[test]
-fn a_tangent_chain_is_one_chamfer_measured_at_its_widest_wedge() {
+#[allow(clippy::disallowed_methods)] // the test's closed form, not ops computing geometry
+fn a_tangent_chain_is_one_chamfer_measured_where_no_station_folds() {
+    const SQRT_5: f64 = 2.236_067_977_499_79;
     all_fixes();
     let case = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -562,19 +674,21 @@ fn a_tangent_chain_is_one_chamfer_measured_at_its_widest_wedge() {
         ),
     ];
     assert_ne!(rim[0], rim[1]);
-    // each arc's faces at its middle: the top's normal is up, the wall's leans `wall`, so
-    // their wedge's cosine is -wall, and the widest is the wall's leaning up most
-    let (mut top, mut wall) = (0, f64::NEG_INFINITY);
-    for e in rim {
-        let [a, b] = edge_faces_along(&b, e, up).unwrap();
-        let (t, w) = if a.1 > b.1 { (a, b) } else { (b, a) };
-        assert!(rel(t.1, 1.0) < 1e-12);
-        top = t.0;
-        wall = wall.max(w.1);
-    }
-    let (c, s) = (-wall, (1.0 - wall * wall).sqrt());
+    let [a, c] = edge_faces_along(&b, rim[0], up).unwrap();
+    let top = if a.1 > c.1 { a.0 } else { c.0 };
+    let (_k, before) = kernel_copy(&b);
+    let tolerance = rim
+        .iter()
+        .map(|&e| edge::tolerance(&before, before.edge_list()[e]).unwrap())
+        .fold(0.0, f64::max);
+    // at the widest wedge cos w = -1 / sqrt 5, sin w = 2 / sqrt 5; `unfolded_wedge`'s bound
+    let (cos_w, sin_w) = (-1.0 / SQRT_5, 2.0 / SQRT_5);
+    let c = (1.0 + 2.0 * cos_w - 1000.0 * tolerance * sin_w) / (2.0 + cos_w);
+    let s = c.acos().sin();
     let (r_top, r_wall) = ((2.0 - c) / s, (1.0 - 2.0 * c) / s);
     chamfer_sides(&b, &rim, &[top, top], 1.0, ChamferSecond::Distance(2.0)).unwrap();
+    let report = b.check(CheckLevel::All).unwrap();
+    assert!(report.is_valid(), "{report:?}");
     let (k, made) = kernel_copy(&b);
     let bx = made
         .face_list()
@@ -585,12 +699,12 @@ fn a_tangent_chain_is_one_chamfer_measured_at_its_widest_wedge() {
         })
         .unwrap();
     let radius = 5.0 - r_wall;
-    let half_x = radius * 5.0_f64.sqrt() / 2.0;
-    assert!(rel(bx.max().y, radius) < 1e-8, "{}", bx.max().y);
-    assert!(rel(bx.min().y, -radius) < 1e-8, "{}", bx.min().y);
+    let half_x = radius * SQRT_5 / 2.0;
+    assert!(rel(bx.max().y, radius) < 1e-7, "{}", bx.max().y);
+    assert!(rel(bx.min().y, -radius) < 1e-7, "{}", bx.min().y);
     let middle = 10.0 - r_top / 2.0;
-    assert!(rel(bx.max().x, middle + half_x) < 1e-8, "{}", bx.max().x);
-    assert!(rel(bx.min().x, middle - half_x) < 1e-8, "{}", bx.min().x);
+    assert!(rel(bx.max().x, middle + half_x) < 1e-7, "{}", bx.max().x);
+    assert!(rel(bx.min().x, middle - half_x) < 1e-7, "{}", bx.min().x);
 }
 
 #[test]
