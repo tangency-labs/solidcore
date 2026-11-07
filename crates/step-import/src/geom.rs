@@ -228,5 +228,34 @@ mod tests {
             ..c
         };
         assert_eq!(bspline_point(&c, 0.5), None);
+        // an interior NaN knot: the evaluated bounds are finite and ordered
+        let c = BSplineCurve {
+            points: vec![[0.0; 3], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+            knots: vec![0.0, f64::NAN, 1.0],
+            mults: vec![2, 1, 2],
+            ..c
+        };
+        assert_eq!(bspline_point(&c, 0.5), None);
+    }
+
+    #[test]
+    fn bspline_with_multiplicity_out_of_range_has_no_point() {
+        // a multiplicity of 0, and one above degree + 1 (the reader's `check_knots`
+        // refuses both)
+        let c = BSplineCurve {
+            degree: 1,
+            points: vec![[0.0; 3], [1.0, 0.0, 0.0]],
+            weights: None,
+            knots: vec![0.0, 0.5, 1.0],
+            mults: vec![2, 0, 2],
+        };
+        assert_eq!(bspline_point(&c, 0.5), None);
+        let c = BSplineCurve {
+            points: vec![[0.0; 3], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+            knots: vec![0.0, 1.0],
+            mults: vec![3, 2],
+            ..c
+        };
+        assert_eq!(bspline_point(&c, 0.5), None);
     }
 }
