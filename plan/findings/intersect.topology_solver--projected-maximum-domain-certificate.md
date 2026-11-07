@@ -104,6 +104,11 @@ capsule distance `sqrt(0.2^2 + 1.3^2) + 0.25`. The UV changes from
 success status and one solution; the tests independently check the surface
 value, UV feasibility and whole-domain bound.
 
+![The torus's capsule projection and magnified distance function before and after, using identical axes.](figures/projected-torus-comparison-2967.png)
+
+The torus's old scalar was already within the requested tolerance, but measuring
+the surface definition removes its extra fit error and shifts the maximizing UV.
+
 The box cases were independently reconstructed with 80-digit decimal arithmetic
 from the binary64 inputs. Project each corner of the box difference by the
 double-cross map, enclose each component, then bound its norm and compare with
@@ -152,3 +157,9 @@ The query normal is Z. No tolerance or acceptance floor was changed.
 The minimum distances are unchanged: point/vertices `0.7615773105863908` (12
 vertices) or `0.4242640687119285` (40); line/vertices `0.5`; vertices/vertices
 `0.13975424859373686`. The changed digests reflect the restored answer sets.
+
+![For the 12-vertex point query, before returns three points while after returns all eleven within the same tolerance circle.](figures/projected-tolerance-answers-2967.png)
+
+This representative `subdivided_0_14_1_12_11_2_1` view uses the fixture's actual
+vertices and query. The old returned vertex IDs are `7, 8, 3`; the new set is
+IDs `1` through `11`. Vertex `0` remains outside the tolerance circle.
