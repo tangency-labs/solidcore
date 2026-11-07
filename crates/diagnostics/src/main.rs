@@ -172,6 +172,7 @@ fn list(s: &str) -> Result<Vec<usize>, String> {
 mod tests {
     use super::*;
 
+    /// Wireframe is opt-in and preserves the requested camera and edge styling.
     #[test]
     fn wireframe_is_explicit_and_preserves_view_and_edge_tolerance() {
         let default = parse(["body.smb".to_owned()].into_iter()).unwrap();
@@ -195,6 +196,7 @@ mod tests {
         assert_eq!(options.style.edges_above, 0.002);
     }
 
+    /// An edge-only image remains visible and reports unattempted face meshing.
     #[test]
     fn wireframe_draws_edges_and_reports_unattempted_faces() {
         let body = body::Body {
