@@ -67,6 +67,14 @@ BPOLY*, ACM TOMS 27 (2001), §§1, 3.3, 4.2,
 The rational blend classification is already documented in `generic-blend.md`
 §4. No new compatibility flag, retry, fitted spine or relaxed certificate is added.
 
+![Global power coefficients flow to nearly cancelling signed terms in the weight and then to a Bernstein conversion that cannot recover lost bits. Local endpoint directions flow to quadratic polar controls and then to Bernstein products for the numerator and weight, followed by an independent coefficient certificate.](blend.fillet_exact--2508-nodal-bernstein/cancellation-mechanism.svg)
+
+Nearly equal positive and negative power terms amplify coefficient-rounding error
+in the residual weight; the local Bernstein construction avoids that expansion.
+[Editable VectorCraft source](blend.fillet_exact--2508-nodal-bernstein/cancellation-mechanism.vectorcraft),
+drawn with VectorCraft 0.22.0 and exported as SVG with live Helvetica text
+(`outlineText: false`) after inspecting its rendered preview.
+
 ## Evidence and reproduction
 
 The direct spine regression now checks all 16 segments against both quadric
@@ -169,8 +177,9 @@ the high-corner setback-eight case. This change neither removes nor blesses them
 
 CodeRabbit and the maintainer requested coverage of the other quadric kinds the
 nodal classifier accepts. The follow-up is based on main
-`99ed57c4d4f4cd77d942ac6cd2e4d09f612acb20` and changes tests and documentation;
-the numerical construction is unchanged.
+`99ed57c4d4f4cd77d942ac6cd2e4d09f612acb20` and adds regression coverage,
+documentation and shared construction helpers. The extraction preserves the
+construction's arithmetic and traversal.
 
 Four fixtures have independently derived intersection points:
 
@@ -189,21 +198,50 @@ construction; the last uses `l=z+x`, `h=z-x`, so `lh=y^2` and
 
 The new identity test verifies **512 additional segments**: four pairs, both
 support orders, both branch charts, both parameter directions and 16 segments.
-The round test builds the production contact rows into a patch, classifies actual
-analytic support surfaces and exercises `keep_round_if_proved`, the zero-bound
-certificate and JSON rebuild. It verifies **64 retained definitions**: four
+The round test classifies actual analytic support surfaces and calls the same
+`NodalArc::segments` and `rational_spine_parts` helpers as the solver: all 16
+segments, the midpoint weight sign, endpoint-weight normalization, bounded
+positive-weight subdivision, row assembly, knot placement, rails and leader.
+There is no separate test assembly. It then exercises `keep_round_if_proved`,
+the zero-bound certificate and JSON rebuild. It verifies **64 retained definitions**: four
 pairs, both support orders, four normal-sign pairs and two common contact
 directions. With `side_i` the normal sign and `d=+1` or `-1`, the feasible contacts
 are `contact_i=d*side_i`, and the signed support offsets are `-r*contact_i`;
 `r=1/8`. Independent samples check the ball radius and both rails on their faces.
 This also reaches the contact-row branch for two cones. The existing full-body
-pipe regression continues to cover the complete fillet operation.
+pipe regression continues to cover the complete fillet operation. Independent
+endpoint-correspondence checks exclude a constant node that would satisfy both
+quadric equations vacuously; they keep the original nodal test's endpoint bar.
 
-Both new tests pass, as do fmt and strict workspace clippy. The optimized kernel
-suite, existing exact-round regressions, wasm and affected goldens are checked
-for the updated head and reported in the PR description.
+Validation of the shared production path was run at code revision
+`f2208043ef64697e45965f2d9007795d11b71817`, on the `99ed57c4d` base above.
+The following commit adds only this record update and the figure; it changes
+no checked Rust or Python code. The earlier full-workspace results in the
+previous section belong to their explicitly named older bases.
 
-The missing test/helper docstrings are added as requested by CodeRabbit. In the
-two Python evidence scripts, removing docstrings from their syntax trees gives
-the same executable trees as revision `9e47df04a`. Their execution behavior is
-unchanged; the maintainer's separate security review remains for its follow-up.
+- Optimized kernel unit suite: **3,627 passed, four ignored**, including both
+  new tests and all 64 full-construction definition checks.
+- Existing exact-round integration targets: **24 passed**.
+- Fmt, strict workspace/all-target clippy, wasm, panic-site inventory against
+  `99ed57c4d`, record IDs, frozen archives and diff whitespace: pass.
+- The three affected goldens: **1,774 cases, zero changed/added/removed/broken**.
+  No expected output or threshold was changed.
+
+```text
+PASS blend.fillet_solver_p4 cases=651 changed=0 added=0 removed=0 broken=0 known_failing=0
+PASS blend.fillet_geom_p3 cases=325 changed=0 added=0 removed=0 broken=0 known_failing=0
+PASS blend.fillet_executive_p3 cases=798 changed=0 added=0 removed=0 broken=0 known_failing=4
+goldens: 3 unit(s), 3 passed, 0 failed
+```
+
+All four known failures already occur in this base: the earlier three and
+`stubs4-delete-edge-sphere_diff_3cylinders-e2-r0.5` (issue #3053).
+
+The missing test/helper docstrings are added as requested by CodeRabbit; its
+review of `666a05b6a` reports **100% documentation coverage**. At that revision,
+both Python scripts' executable syntax trees were identical to `9e47df04a`
+after removing docstrings. Revision `f2208043e` also adds an explicit usage
+guard to `observe.py`: six invalid invocations, including with `python -O`,
+exit with usage without reaching compilation or execution. Valid invocations'
+build/run behavior is unchanged. The maintainer's separate security review
+remains for its stated follow-up.
