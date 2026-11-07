@@ -500,3 +500,122 @@ fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expecte
         global.as_slice()
     );
 }
+
+fn check_maximum_after_near_seam_vertex(operation: SolverOperation) {
+    let mut k = Kernel::default();
+    let mut torus = Torus::new(
+        &k,
+        Vec3::ZERO,
+        Vec3::X,
+        Vec3::Y,
+        Extent2d::from_bounds(0.0, 0.0, 360.0, 360.0),
+        1.0,
+        0.25,
+        TorusOptions::default(),
+    )
+    .unwrap();
+    torus.make_nurb(&k).unwrap();
+    let surface = Surface::from(torus);
+    let domain = surface.natural_uv_domain_with_nurb(&k).unwrap();
+    let mut b = new_brep(&mut k, USE_DEFAULT, USE_DEFAULT).unwrap();
+    let mut state = ArenaNotifyState::new(&b);
+    let mut env = state.env(None);
+    let mut marks = Marks::default();
+    let keys = |f| arena_identity(CacheObject::Face(f));
+    let mut fenv = FaceBuildEnv {
+        env: &mut env,
+        marks: &mut marks,
+        this_face: &keys,
+    };
+    let face = create_face_from_surface(&mut k, &mut b, Some(surface), &domain, &mut fenv).unwrap();
+    let vertices = crate::topology::brep::p1::vertices(&b, None).unwrap();
+    assert_eq!(vertices.len(), 1);
+    assert_eq!(
+        b.vertex(vertices[0]).unwrap().point,
+        Vec3::new(1.25, 0.0, 0.0)
+    );
+    let mut preparation = crate::query::brep::RayPreparation::default();
+    {
+        let objects = BrepObjects {
+            preparation: Some(&preparation),
+            brep: &b,
+            brep_id: BrepId::from_index(0),
+            cache: None,
+            keys: &arena_identity,
+            owner_of: &|_| None,
+        };
+        let mut context = objects.surface_solve_context().unwrap();
+        assert!(matches!(
+            context.build_surface_cache(
+                &k,
+                b.face(face).unwrap().surface.as_ref().unwrap(),
+                Some(CacheObject::Surface(face))
+            ),
+            Err(crate::SolidError::PreparationRequired { .. })
+        ));
+    }
+    let request = preparation.take_request().unwrap();
+    preparation.prepare(&k, &mut b, request).unwrap();
+    let mut cache =
+        crate::topology::brep_cache::BrepCache::new(crate::geom::a_object::BREP_TYPE).unwrap();
+    cache
+        .build_trees(
+            &k,
+            crate::topology::brep_cache::CacheSource::Brep(&b),
+            |o| o,
+            &arena_identity,
+        )
+        .unwrap();
+    let objects = BrepObjects {
+        preparation: Some(&preparation),
+        brep: &b,
+        brep_id: BrepId::from_index(0),
+        cache: Some(&cache),
+        keys: &arena_identity,
+        owner_of: &|_| None,
+    };
+    let tolerance = 1e-6;
+    let offset = if operation == SolverOperation::DirectedMaximize {
+        tolerance / 2.0
+    } else {
+        0.0
+    };
+    let query = Vec3::new(1.25 + offset, 0.0, 0.0);
+    // Every torus point has norm at most R+r=1.25. The triangle bound
+    // |C-query| <= 1.25+|query| is attained at (-1.25,0,0). That point
+    // also lies on the directed X line in the Z projection, so the same
+    // closed form applies to both operations.
+    let expected = 2.5 + offset;
+    let vectors = [Vec3::Z, Vec3::X];
+    let answer = TopologySolver::brep_point_solve(
+        &k,
+        &objects,
+        Some(CacheObject::Brep),
+        query,
+        crate::intersect::topology_solver::p2::TopologySolveOptions {
+            operation,
+            requested: SolutionRequested::Single,
+            tolerance_3d: tolerance,
+            best_answer_so_far_sq: 0.0,
+            opt_vectors: &vectors,
+        },
+    )
+    .unwrap();
+    assert_eq!(answer.len(), 1);
+    let actual = answer.as_slice()[0].start.solution_value;
+    println!("{operation:?}: actual={actual:.17e}, expected={expected:.17e}");
+    assert!(
+        (actual - expected).abs() <= tolerance,
+        "{operation:?}: actual={actual}, expected={expected}"
+    );
+}
+
+#[test]
+fn distance_maximum_does_not_stop_at_coincident_seam_vertex() {
+    check_maximum_after_near_seam_vertex(SolverOperation::Maximize);
+}
+
+#[test]
+fn directed_maximum_does_not_stop_at_nearby_seam_vertex() {
+    check_maximum_after_near_seam_vertex(SolverOperation::DirectedMaximize);
+}
