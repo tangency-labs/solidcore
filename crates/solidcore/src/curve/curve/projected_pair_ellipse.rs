@@ -214,6 +214,11 @@ fn edge_value_over(
     let [small, middle, large] = components;
     let grouped = (((small + linear) + quadratic) + middle) + large;
     let squared = Ivl::new(original.lo.max(grouped.lo), original.hi.min(grouped.hi));
+    if !finite(squared) {
+        return Err(refused(
+            "root Taylor enclosures have no finite intersection",
+        ));
+    }
     let value = squared.sqrt();
     if !finite(value) {
         return Err(refused("root objective has no finite Taylor enclosure"));
@@ -364,7 +369,11 @@ fn candidate_over(query: &Query<'_>, a: Piece, b: Piece) -> Result<MaximumCandid
     let mut objective = if a.range.lo == a.range.hi && b.range.lo == b.range.hi {
         Ivl::new(point.lower, point.upper)
     } else {
-        query.bound(Cell { a, b, depth: 0 })?.sqrt()
+        let squared = query.bound(Cell { a, b, depth: 0 })?;
+        if !finite(squared) {
+            return Err(refused("root objective has no finite squared enclosure"));
+        }
+        squared.sqrt()
     };
     // Root isolation width is geometric. A second-order enclosure keeps its
     // remaining contribution explicit, rather than calling it point rounding.
