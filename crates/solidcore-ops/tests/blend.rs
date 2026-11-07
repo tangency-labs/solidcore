@@ -206,6 +206,23 @@ fn rounds_turn_round_a_boss_edge_mitred_or_swept() {
         assert_eq!(b.counts().unwrap()[0], faces, "{turn:?}");
         let v = b.volume(1e-10).unwrap();
         assert!(rel(v, 12500.0 + 40.0 * a + corners) < 1e-9, "{turn:?}: {v}");
+        // swept, the four corners' faces are exact horn tori (R = r = 1), as the kernel reads
+        // the body back; mitred, there are none. That each blend face answers
+        // procedural_blend() is the kernel's definition ledger
+        // (crates/solidcore/tests/issue_2489_blend_faces_are_definitions.rs, the boss base with
+        // mitred and swept turns): an ops body reads back through its .smb, which keeps the
+        // exact rounds' and corners' forms but not their definitions
+        let (_, made) = kernel_copy(&b);
+        let tori: Vec<(f64, f64)> = made
+            .face_list()
+            .iter()
+            .filter_map(|&f| match made.face(f).unwrap().surface.as_ref()?.kind() {
+                SurfaceKind::Torus(t) => Some((t.major_radius(), t.minor_radius())),
+                _ => None,
+            })
+            .collect();
+        let want = if turn == Turn::Swept { 4 } else { 0 };
+        assert_eq!(tori, vec![(1.0, 1.0); want], "{turn:?}");
     }
     let swept = |b: &Body, order: &Order, kind, edges: &[usize], sizes: &[f64]| {
         blend_ordered(
