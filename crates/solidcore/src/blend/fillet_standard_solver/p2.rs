@@ -147,7 +147,7 @@ use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::b_spline_surface_n_lib::p2::{EvaluateFlags, OrientType};
 use crate::nurbs::knots::Side;
-use crate::surface::offset_surface::SS_UNKNOWN;
+use crate::surface::offset_surface::{extends_as_itself, SS_UNKNOWN};
 use crate::surface::surface::p3::{out_of_bounds_enabled, set_out_of_bounds_enabled};
 use crate::surface::surface::Surface;
 use crate::topology::edgeuse::p1 as edgeuse;
@@ -706,7 +706,16 @@ fn cr_initial_body<S: ConstantRadiusOps + ?Sized>(
         // to get a better guess
         let uv_guess = Point2::new(srf2_guess_uv.x, srf2_guess_uv.y);
         let mut domain = base2.natural_uv_domain_with_nurb(k)?;
-        solver.setup_offset_extension(k, base2, &mut domain)?; // expands sDomain
+        // Not upstream (#3045): an offset continued as itself (`fixes.offset_extension_as_itself`)
+        // is a whole circle, not upstream's tangent extension that stays near the face. A drop
+        // onto its far side seeds the solve at a second solution outside the face, a rail end
+        // the face does not hold; the drop stays on the face's own domain there.
+        let as_itself = k.fixes.offset_extension_from_base
+            && k.fixes.offset_extension_as_itself
+            && extends_as_itself(k, base2);
+        if !as_itself {
+            solver.setup_offset_extension(k, base2, &mut domain)?; // expands sDomain
+        }
 
         if let Some((sol_uv, dist)) = offset_local_point_solve(k, surface2, &domain, pnt, uv_guess)?
         {
@@ -2952,7 +2961,7 @@ fn rolled_on<'a>(
                     base.kind(),
                     crate::surface::surface::SurfaceKind::SurfOfRevolution(_)
                 )
-                && crate::surface::offset_surface::extends_as_itself(k, base) =>
+                && extends_as_itself(k, base) =>
         {
             extended
         }
