@@ -1,0 +1,59 @@
+# Projected point/face maximum: whole-domain certificate
+
+The reported operation is a single projected point/face maximum. Its candidate
+curves now evaluate `S(uv(t))`; an independent fitted spatial curve is not measured.
+This removes the original extra fit error but is not, by itself, a certificate.
+
+## Construction
+
+For `Q(x) = N cross x cross N`, bound `f(u,v) = |Q(S(u,v)-P)|^2` on every
+nonempty knot rectangle of the face domain. Existing outward-rounded NURBS
+partials supply intervals for `S`, `S_u`, and `S_v`. Intersect the direct squared
+norm enclosure with the mean-value enclosure
+
+`f(c) + 2 Q(S-P).Q(S_u) (U-c_u) + 2 Q(S-P).Q(S_v) (V-c_v)`.
+
+The centre evaluation is also an interval evaluation. The rectangle is convex,
+so the mean-value formula encloses every value without assuming a stationary
+point was found. Knot rectangles are checked separately. Subdivision is
+iterative and deterministic, with cancellation, a 16,384-box budget and a
+48-bisection path limit. A failed denominator enclosure is subdivided; a box
+that remains unresolved is never accepted.
+
+Every box must prove its distance upper bound at most the reported scalar plus
+the caller's tolerance, with that threshold rounded inward. This accounts for
+missed branches without certifying or replacing the tracer. The method follows
+the mean-value inclusion principle of interval analysis; see equation (27) in
+[Neumaier, Complete Search in Continuous Global Optimization and Constraint Satisfaction](https://arnold-neumaier.at/glopt/mss/Neu04.pdf),
+section 11, and
+[Patrikalakis, Maekawa and Cho, interval arithmetic](https://web.mit.edu/hyperbook/Patrikalakis-Maekawa-Cho/node45.html).
+
+## Definition and feasibility
+
+Plain NURBS definitions and the existing checked analytic exactness classes are
+eligible. Procedural blend/sweep definitions and unsupported surface classes
+refuse; their displayed net cannot substitute for their definition.
+
+A newly returned face candidate must be a single point within the UV rectangle.
+The stored trim boundary must consist of one connected four-edge loop whose
+edges are full, clamped, degree-one, two-control-point UV segments joining the
+four exact rectangle corners. The tolerance-based rectangular flag is never
+used as proof. The metric at the returned UV is enclosed independently, and the
+entire enclosure must agree with the reported scalar within the tolerance.
+A previous answer on another object is retained as the caller's already
+established feasible bound; this local certificate proves that this face cannot
+improve it by more than the tolerance.
+
+Failure restores the solver state from before candidate generation and returns
+`Unsupported`, rather than publishing an unproved candidate. The certificate
+uses no enlarged tolerance or sampled accuracy floor.
+
+## Scope
+
+This change is deliberately restricted to `PointFace`/`VertexFace`,
+`ProjectedMaximize`, `Single`. Curve/face and face/face queries, other operations,
+and requests enumerating all extrema retain the parent implementation. Earlier
+child-branch pair-query measurements are investigation results, not evidence
+that this certificate covers those operations.
+
+Validation results are recorded in the PR description after the tests complete.

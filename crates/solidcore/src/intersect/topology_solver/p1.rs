@@ -27,10 +27,14 @@
 //! | `GlobalSolve::identical_solutions` for [`TopologySolver`], `TopologyDomains` (private) | `SmGlobalSolver::IdenticalSolutions` (not overridden upstream: the solutions' `SmObject*` resolve through [`TopologyObjects`]) |
 //!
 //! Deviations:
-//! - **Silhouette measurements.** Queries evaluate trimmed UV silhouettes on the
+//! - **Single projected point/face maxima.** These queries evaluate trimmed UV silhouettes on the
 //!   source surface, avoiding the independent 3D fit's extra measurement error.
 //!   The tracing tolerance is expressed in geometric units using the norm of the
 //!   double-cross projection, rather than ten times the query tolerance.
+//!   A single projected point/face maximum additionally checks an outward-rounded
+//!   bound over the whole face domain, with exact rectangular trim feasibility
+//!   for a new face candidate. An unavailable or unresolved certificate refuses
+//!   and restores the solver state. Other operation classes are not certified here.
 //! - **Objects.** Tree objects and solution objects are a caller-chosen handle `O`
 //!   (upstream `SmObject*`; a null pointer is `None`). Everything the solvers read
 //!   through those pointers (the curve behind a tree object, a vertex's point and
@@ -117,7 +121,7 @@ use crate::query::face::p2::{
     point_classify_prepared, point_classify_requested, PointClassifyOptions,
 };
 use crate::surface::surface::p2::{surface_cache, Surface, B_SPLINE_SURFACE_TYPE};
-use crate::surface::surface_cache::p1::{AltCacheKey, AltSrfCacheType, SurfaceCache};
+use crate::surface::surface_cache::p1::{AltCacheKey, AltSrfCacheType};
 use crate::surface::trim_srf_cache::POINT_CLASS_UNKNOWN;
 use crate::topology::face::p2::create_curves_by_trimming_snapshot;
 
@@ -1652,23 +1656,41 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
                 ts.add_sorted_solution(&sol, SortKey::BySolutionValue, true)?;
             } // end for each solution
         } else if ts.base.projected_operation {
-            let opt_vectors = ts.base.opt_vectors.clone();
-            let (trim_3d_curves, trim_uv_curves) =
-                face_silhouettes(ts.kernel, objects, face, &opt_vectors, tol)?;
-            // When we reach here there should be silhouette curves in sTrim3DCurves
-            // We can use these to do measurement to the surface.  Please note that
-            // the edges bounding the face would have already been measured.
-            for (curve, uv_curve) in trim_3d_curves.iter().zip(&trim_uv_curves) {
-                let mut sub: LocalSolver<'_, O> =
-                    LocalSolver::new(LocalSolverKind::PointCurve, self.swap_order, self.shape);
-                sub.curve_owner = Some(face);
-                sub.interval = curve.natural_interval();
-                sub.surface_curve = Some(uv_curve);
-                sub.point = self.point;
-                sub.point_vertex = self.point_vertex;
-                // (the temporary curve has no handle)
-                sub.point_curve(k, ts, curve, None)?;
+            let certified_maximum = op == SolverOperation::ProjectedMaximize
+                && ts.base.solution_requested == SolutionRequested::Single;
+            let before = certified_maximum.then(|| ts.base.clone());
+            let result: Result<()> = (|| {
+                let opt_vectors = ts.base.opt_vectors.clone();
+                let (trim_3d_curves, trim_uv_curves) = if certified_maximum {
+                    projected_face_candidates(ts.kernel, objects, face, &opt_vectors, tol)?
+                } else {
+                    face_silhouettes(ts.kernel, objects, face, &opt_vectors, tol)?
+                };
+                // When we reach here there should be silhouette curves in sTrim3DCurves
+                // We can use these to do measurement to the surface.  Please note that
+                // the edges bounding the face would have already been measured.
+                for (curve, uv_curve) in trim_3d_curves.iter().zip(&trim_uv_curves) {
+                    let mut sub: LocalSolver<'_, O> =
+                        LocalSolver::new(LocalSolverKind::PointCurve, self.swap_order, self.shape);
+                    sub.curve_owner = Some(face);
+                    sub.interval = curve.natural_interval();
+                    sub.surface_curve = Some(uv_curve);
+                    sub.point = self.point;
+                    sub.point_vertex = self.point_vertex;
+                    // (the temporary curve has no handle)
+                    sub.point_curve(k, ts, curve, None)?;
+                }
+                if certified_maximum {
+                    super::projected_bound::certify(k, objects, face, self.point, &ts.base)?;
+                }
+                Ok(())
+            })();
+            if result.is_err() {
+                if let Some(before) = before {
+                    ts.base = before;
+                }
             }
+            result?;
         } else {
             let best = best_answer_so_far(&ts.base);
             let mut sign = 1.0;
@@ -1958,9 +1980,7 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
 /// `sm_GetFaceSilhouettes`: the face's trimmed silhouette curves for the view
 /// vector `opt_vectors[0]` (3D curves and their UV trim curves), taken from the
 /// surface cache's alternate caches or made and cached there (silhouette curves of
-/// the surface to a projection-scaled tolerance and 20 degrees, trimmed by the face).
-/// The returned 3D curves evaluate the trimmed UV curves on the source surface;
-/// the fitted 3D curves remain construction/trimming aids in the cache.
+/// the surface to ten times `tolerance_3d` and 20 degrees, trimmed by the face).
 /// The surface cache is the one the caller's
 /// [`TopologyObjects::surface_solve_context`] makes for the face's surface (else the
 /// per-call [`surface_cache`]); either is this call's copy, so the alternate caches
@@ -1978,6 +1998,17 @@ pub(super) fn face_silhouettes<O: SolutionObject>(
     opt_vectors: &[Vec3],
     tolerance_3d: f64,
 ) -> Result<(Vec<Curve>, Vec<Curve>)> {
+    face_silhouettes_at_tolerance(k, objects, face, opt_vectors, tolerance_3d * 10.0)
+}
+
+/// Candidate construction shared with the existing pair-query silhouette path.
+fn face_silhouettes_at_tolerance<O: SolutionObject>(
+    k: &Kernel,
+    objects: &dyn TopologyObjects<O>,
+    face: O,
+    opt_vectors: &[Vec3],
+    approx_tol: f64,
+) -> Result<(Vec<Curve>, Vec<Curve>)> {
     // locals and temporaries
     let surface = objects.face_surface(face)?;
     let srf = objects.surface(surface)?;
@@ -1989,24 +2020,6 @@ pub(super) fn face_silhouettes<O: SolutionObject>(
         .first()
         .ok_or(null_deref(OP_FACE_SIL, "no view vector"))?;
 
-    // N x d x N has operator norm |N|^2. A geometric tracing tolerance
-    // cannot be used unchanged as a tolerance in this projected metric.
-    // This sets the tracer's requested accuracy; it does not turn its sampled
-    // span checks into a certified bound on the UV trace.
-    let projection_scale = view.length_squared();
-    // A contracting projection must not loosen the geometric tolerance: the
-    // tracer also uses it to decide whether a geometric segment exists.
-    let approx_tol = tolerance_3d / projection_scale.max(1.0);
-    if !projection_scale.is_finite()
-        || !approx_tol.is_finite()
-        || approx_tol < 0.0
-        || (tolerance_3d > 0.0 && approx_tol == 0.0)
-    {
-        return Err(SolidError::invalid_input(
-            OP_FACE_SIL,
-            "projection tracing tolerance is not representable",
-        ));
-    }
     let angle_tol = 20.0 * PI / 180.0;
     let key = AltCacheKey {
         vec: Some(view),
@@ -2014,18 +2027,21 @@ pub(super) fn face_silhouettes<O: SolutionObject>(
         ..AltCacheKey::default()
     };
 
-    // Read both hit paths through the same surface-evaluated representation.
-    if let Some(curves) = cached_silhouette_measurement_curves(
-        k,
-        &cache,
-        srf,
-        objects.face_uv_domain(face)?,
+    // when silhouette curves to these tolerances have been made - get copies
+    if let Some(copies) = cache.has_cached_curves(
+        AltSrfCacheType::TrimmedSilhouette,
         approx_tol,
         angle_tol,
         &key,
+        true,
+        true,
     )? {
-        return Ok(curves);
+        return Ok((
+            copies.curves_3d.unwrap_or_default(),
+            copies.curves_uv.unwrap_or_default(),
+        ));
     }
+
     // No cached trimmed silhouette curves in existance -- create them
     // (SM_CAST_PTR(SmBSplineSurface, pSurface): every kind derived from it; upstream
     // dereferences NULL for any other kind)
@@ -2088,48 +2104,72 @@ pub(super) fn face_silhouettes<O: SolutionObject>(
         Some(trim_uv),
     )?;
 
-    cached_silhouette_measurement_curves(
-        k,
-        &cache,
-        srf,
-        objects.face_uv_domain(face)?,
-        approx_tol,
-        angle_tol,
-        &key,
-    )?
-    .ok_or(SolidError::sm_err(OP_FACE_SIL))
-}
-
-/// Measure on S(uv(t)), rather than the independent fitted 3D silhouette.
-/// The UV trace and its trimming still carry their construction error; lifting
-/// removes the additional 3D fitting error, not the need to bound that UV error.
-pub(super) fn cached_silhouette_measurement_curves<O: SolutionObject>(
-    k: &Kernel,
-    cache: &SurfaceCache<O>,
-    surface: &Surface,
-    domain: Extent2d,
-    approx_tol: f64,
-    angle_tol: f64,
-    key: &AltCacheKey,
-) -> Result<Option<(Vec<Curve>, Vec<Curve>)>> {
-    let Some(copies) = cache.has_cached_curves(
+    // Don't clean up here we just use the curves that were created
+    match cache.has_cached_curves(
         AltSrfCacheType::TrimmedSilhouette,
         approx_tol,
         angle_tol,
-        key,
-        false,
+        &key,
         true,
-    )?
-    else {
-        return Ok(None);
-    };
-    // Keep the cache API's partial-copy behavior for requested UV curves.
-    let uv_curves = copies.curves_uv.unwrap_or_default();
-    let curves = uv_curves
-        .iter()
-        .map(|uv| CrvOnSurf::new(k, uv.clone(), surface.clone(), Some(domain), 0).map(Curve::from))
-        .collect::<Result<Vec<_>>>()?;
-    Ok(Some((curves, uv_curves)))
+        true,
+    )? {
+        Some(copies) => Ok((
+            copies.curves_3d.unwrap_or_default(),
+            copies.curves_uv.unwrap_or_default(),
+        )),
+        None => Err(SolidError::sm_err(OP_FACE_SIL)),
+    }
+}
+
+/// Candidates for the certified single projected point/face maximum.
+fn projected_face_candidates<O: SolutionObject>(
+    k: &Kernel,
+    objects: &dyn TopologyObjects<O>,
+    face: O,
+    opt_vectors: &[Vec3],
+    tolerance: f64,
+) -> Result<(Vec<Curve>, Vec<Curve>)> {
+    let view = *opt_vectors
+        .first()
+        .ok_or(null_deref(OP_FACE_SIL, "no view vector"))?;
+    // The metric is |N x d x N|, whose operator norm is |N|^2.
+    // This only guides construction; the whole-domain check certifies the result.
+    let scale = view.length_squared();
+    let approx_tol = tolerance / scale.max(1.0);
+    if !scale.is_finite()
+        || !approx_tol.is_finite()
+        || approx_tol < 0.0
+        || (tolerance > 0.0 && approx_tol == 0.0)
+    {
+        return Err(SolidError::invalid_input(
+            OP_FACE_SIL,
+            "projection tracing tolerance is not representable",
+        ));
+    }
+    let (_, uv) = face_silhouettes_at_tolerance(k, objects, face, opt_vectors, approx_tol)?;
+    let surface = objects.surface(objects.face_surface(face)?)?;
+    let curves = lift_silhouette_measurements(k, &uv, surface, objects.face_uv_domain(face)?)?;
+    Ok((curves, uv))
+}
+
+/// Lift candidates onto the original surface; no fitted 3D curve is measured.
+pub(super) fn lift_silhouette_measurements(
+    k: &Kernel,
+    uv: &[Curve],
+    surface: &Surface,
+    domain: Extent2d,
+) -> Result<Vec<Curve>> {
+    uv.iter()
+        .map(|curve| {
+            Ok(Curve::from(CrvOnSurf::new(
+                k,
+                curve.clone(),
+                surface.clone(),
+                Some(domain),
+                0,
+            )?))
+        })
+        .collect()
 }
 
 /// `pFace->GetSurface()->GlobalPointSolve(uv_domain, op, point, tol,

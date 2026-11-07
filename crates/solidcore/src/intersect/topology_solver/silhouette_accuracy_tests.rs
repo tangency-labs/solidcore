@@ -68,11 +68,19 @@ fn cached_silhouette_measurements_use_the_source_surface() {
             Some(vec![uv]),
         )
         .unwrap();
-    let (curves, uv_curves) = super::p1::cached_silhouette_measurement_curves(
-        &k, &cache, &surface, domain, 1e-5, 0.25, &key,
-    )
-    .unwrap()
-    .unwrap();
+    let copies = cache
+        .has_cached_curves(
+            AltSrfCacheType::TrimmedSilhouette,
+            1e-5,
+            0.25,
+            &key,
+            true,
+            true,
+        )
+        .unwrap()
+        .unwrap();
+    let uv_curves = copies.curves_uv.unwrap();
+    let curves = super::p1::lift_silhouette_measurements(&k, &uv_curves, &surface, domain).unwrap();
     assert_eq!((curves.len(), uv_curves.len()), (1, 1));
     let point = curves[0].evaluate_point(&k, 0.5).unwrap();
     let uv_point = uv_curves[0].evaluate_point(&k, 0.5).unwrap();
@@ -85,11 +93,17 @@ fn cached_silhouette_measurements_use_the_source_surface() {
     );
     assert_eq!(point.z, 0.0);
     // No matching tolerance is a cache miss, not an empty successful query.
-    assert!(super::p1::cached_silhouette_measurement_curves(
-        &k, &cache, &surface, domain, 1e-6, 0.25, &key,
-    )
-    .unwrap()
-    .is_none());
+    assert!(cache
+        .has_cached_curves(
+            AltSrfCacheType::TrimmedSilhouette,
+            1e-6,
+            0.25,
+            &key,
+            true,
+            true,
+        )
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -188,6 +202,7 @@ fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expecte
     };
     let face = create_face_from_surface(&mut k, &mut b, Some(surface.clone()), &domain, &mut fenv)
         .unwrap();
+    assert!(super::projected_bound::is_exact_rectangle(&k, &b, face, &domain).unwrap());
     let mut preparation = crate::query::brep::RayPreparation::default();
     {
         let objects = BrepObjects {
@@ -242,6 +257,42 @@ fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expecte
     );
     let point = surface.evaluate_point(&k, uv).unwrap();
     let measured = normal.cross(point - query).cross(normal).length();
+    eprintln!(
+        "certified projected maximum: normal={normal:?}, reported={:.17e}, exact={expected:.17e}",
+        solution.start.solution_value,
+    );
+    let net = crate::blend::fillet_section::station::Nurbs::of(
+        surface.analytic_base_with_nurb(&k).unwrap(),
+    )
+    .unwrap();
+    let enclosed = super::projected_bound::value_at(&net, uv, query, normal).unwrap();
+    assert!(enclosed.lo <= measured && measured <= enclosed.hi);
+    assert!(
+        super::projected_bound::maximum_is_bounded(
+            &k,
+            &net,
+            &domain,
+            query,
+            normal,
+            measured + tol * 0.9,
+        )
+        .unwrap(),
+        "whole-domain bound did not close: normal={normal:?}"
+    );
+    if normal == Vec3::new(0.0, 0.0, 1.0) && expected > 0.86 && expected < 0.87 {
+        assert!(
+            !super::projected_bound::maximum_is_bounded(
+                &k,
+                &net,
+                &domain,
+                query,
+                normal,
+                0.8605419808705617 + tol,
+            )
+            .unwrap(),
+            "the inaccurate original result must not be certified"
+        );
+    }
     assert!(
         (solution.start.solution_value - expected).abs() <= tol,
         "value={}, expected={expected}",
@@ -252,4 +303,19 @@ fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expecte
         "value={}, surface measurement={measured}",
         solution.start.solution_value
     );
+    // A plausible scalar is not enough: it must agree with the returned point.
+    for delta in [-2.0 * tol, 2.0 * tol] {
+        let mut incorrect = solver.base.clone();
+        let mut changed = *solution;
+        changed.start.solution_value += delta;
+        incorrect.solutions.set_at(0, &changed).unwrap();
+        assert!(super::projected_bound::certify(
+            &k,
+            &objects,
+            CacheObject::Face(face),
+            query,
+            &incorrect,
+        )
+        .is_err());
+    }
 }
