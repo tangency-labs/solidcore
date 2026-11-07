@@ -25,12 +25,73 @@ fn cached_silhouette_measurements_use_the_source_surface() {
     use crate::curve::curve::Curve;
     use crate::nurbs::b_spline_curve::BSplineCurve;
     use crate::surface::plane::Plane;
-    use crate::surface::surface::p4::NoObject;
     use crate::surface::surface_cache::p1::{
         AltCacheKey, AltSrfCacheType, SurfaceCache, SurfaceCacheOptions,
     };
 
-    let k = Kernel::default();
+    struct CachedContext<'a>(&'a SurfaceCache<CacheObject>);
+    impl crate::surface::surface::p1::SurfaceSolveContext<CacheObject> for CachedContext<'_> {
+        fn build_surface_cache(
+            &mut self,
+            _k: &Kernel,
+            _surface: &Surface,
+            _handle: Option<CacheObject>,
+        ) -> crate::Result<SurfaceCache<CacheObject>> {
+            self.0.map_handles(Ok)
+        }
+        fn face_queries(
+            &self,
+        ) -> Option<&dyn crate::surface::surface_cache::face_context::FaceQueries<CacheObject>>
+        {
+            None
+        }
+    }
+    struct CachedObjects<'a> {
+        base: BrepObjects<'a>,
+        cache: &'a SurfaceCache<CacheObject>,
+    }
+    macro_rules! delegate {
+        ($name:ident, $ret:ty) => {
+            fn $name(&self, object: CacheObject) -> $ret {
+                self.base.$name(object)
+            }
+        };
+    }
+    impl TopologyObjects<CacheObject> for CachedObjects<'_> {
+        fn surface_solve_context(
+            &self,
+        ) -> Option<Box<dyn crate::surface::surface::p1::SurfaceSolveContext<CacheObject> + '_>>
+        {
+            Some(Box::new(CachedContext(self.cache)))
+        }
+        delegate!(curve, crate::Result<&Curve>);
+        delegate!(analytic_curve_handle, Option<CacheObject>);
+        delegate!(vertex_point, crate::Result<Vec3>);
+        delegate!(vertex_tolerance, crate::Result<f64>);
+        delegate!(curve_edge, crate::Result<Option<CacheObject>>);
+        delegate!(edge_curve, crate::Result<Option<CacheObject>>);
+        delegate!(
+            edge_interval,
+            crate::Result<crate::geom::extent1d::Extent1d>
+        );
+        delegate!(edge_tolerance, crate::Result<f64>);
+        delegate!(surface_face, crate::Result<Option<CacheObject>>);
+        delegate!(face_surface, crate::Result<CacheObject>);
+        delegate!(surface, crate::Result<&Surface>);
+        delegate!(face_uv_domain, crate::Result<Extent2d>);
+        delegate!(face_tolerance, crate::Result<f64>);
+        delegate!(surface_owner, crate::Result<Option<CacheObject>>);
+        delegate!(shape_member, crate::geom::object::ShapeMember);
+        delegate!(
+            face_entity,
+            Option<(&crate::topology::Brep, crate::topology::FaceId)>
+        );
+        fn object_zone_tol_3d(&self, k: &Kernel, object: CacheObject) -> crate::Result<f64> {
+            self.base.object_zone_tol_3d(k, object)
+        }
+    }
+
+    let mut k = Kernel::default();
     let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
     let surface = Surface::from(Plane::new(
         Vec3::ZERO,
@@ -46,12 +107,12 @@ fn cached_silhouette_measurements_use_the_source_surface() {
     let fit = Curve::from(
         BSplineCurve::create_line_segment(
             3,
-            Vec3::new(0.0, 0.25, 10.0),
-            Vec3::new(1.0, 0.25, 10.0),
+            Vec3::new(10.0, 0.25, 10.0),
+            Vec3::new(11.0, 0.25, 10.0),
         )
         .unwrap(),
     );
-    let mut cache: SurfaceCache<NoObject> =
+    let mut cache: SurfaceCache<CacheObject> =
         SurfaceCache::new(surface.clone(), domain, SurfaceCacheOptions::default());
     let key = AltCacheKey {
         vec: Some(Vec3::new(0.0, 0.0, 1.0)),
@@ -62,7 +123,7 @@ fn cached_silhouette_measurements_use_the_source_surface() {
         .add_curves_to_cache(
             AltSrfCacheType::TrimmedSilhouette,
             1e-5,
-            0.25,
+            20.0 * std::f64::consts::PI / 180.0,
             &key,
             Some(vec![fit]),
             Some(vec![uv]),
@@ -72,7 +133,7 @@ fn cached_silhouette_measurements_use_the_source_surface() {
         .has_cached_curves(
             AltSrfCacheType::TrimmedSilhouette,
             1e-5,
-            0.25,
+            20.0 * std::f64::consts::PI / 180.0,
             &key,
             true,
             true,
@@ -110,13 +171,97 @@ fn cached_silhouette_measurements_use_the_source_surface() {
         .has_cached_curves(
             AltSrfCacheType::TrimmedSilhouette,
             1e-6,
-            0.25,
+            20.0 * std::f64::consts::PI / 180.0,
             &key,
             true,
             true,
         )
         .unwrap()
         .is_none());
+
+    // Exercise the production PointFace path with the same poisoned cache.
+    // The fit is displaced in X as well as Z, so measuring it under normal Z
+    // would produce a value greater than 10 instead of the native sqrt(2).
+    let mut b = new_brep(&mut k, USE_DEFAULT, USE_DEFAULT).unwrap();
+    let mut state = ArenaNotifyState::new(&b);
+    let mut env = state.env(None);
+    let mut marks = Marks::default();
+    let keys = |f| arena_identity(CacheObject::Face(f));
+    let mut fenv = FaceBuildEnv {
+        env: &mut env,
+        marks: &mut marks,
+        this_face: &keys,
+    };
+    let face = create_face_from_surface(&mut k, &mut b, Some(surface.clone()), &domain, &mut fenv)
+        .unwrap();
+    // Prepare the real trim curves before substituting only the silhouette
+    // cache; bypassing preparation would leave no defining UV boundary.
+    let mut preparation = crate::query::brep::RayPreparation::default();
+    {
+        let objects = BrepObjects {
+            preparation: Some(&preparation),
+            brep: &b,
+            brep_id: BrepId::from_index(0),
+            cache: None,
+            keys: &arena_identity,
+            owner_of: &|_| None,
+        };
+        let mut context = objects.surface_solve_context().unwrap();
+        assert!(matches!(
+            context.build_surface_cache(
+                &k,
+                b.face(face).unwrap().surface.as_ref().unwrap(),
+                Some(CacheObject::Surface(face))
+            ),
+            Err(crate::SolidError::PreparationRequired { .. })
+        ));
+    }
+    let request = preparation.take_request().unwrap();
+    preparation.prepare(&k, &mut b, request).unwrap();
+    assert!(super::projected_bound::is_exact_rectangle(&k, &b, face, &domain).unwrap());
+    let objects = CachedObjects {
+        base: BrepObjects {
+            preparation: None,
+            brep: &b,
+            brep_id: BrepId::from_index(0),
+            cache: None,
+            keys: &arena_identity,
+            owner_of: &|_| None,
+        },
+        cache: &cache,
+    };
+    let mut solver = TopologySolver::new(
+        &k,
+        &objects,
+        SolverOperation::ProjectedMaximize,
+        SolutionRequested::Single,
+        1e-5,
+        0.0,
+        &[Vec3::Z],
+    );
+    let mut local = LocalSolver::new(LocalSolverKind::PointFace, false, None);
+    local.set_point(Vec3::ZERO);
+    local
+        .solve_it(&k, &mut solver, None, Some(CacheObject::Surface(face)))
+        .unwrap();
+    assert_eq!(solver.base.solutions.len(), 1);
+    let chosen = &solver.base.solutions.as_slice()[0];
+    assert_eq!(chosen.start.solution_value, 2.0_f64.sqrt());
+    assert_eq!(
+        (
+            chosen.start.param(0).unwrap(),
+            chosen.start.param(1).unwrap()
+        ),
+        (1.0, 1.0)
+    );
+    super::projected_bound::certify(
+        &k,
+        &objects,
+        CacheObject::Face(face),
+        Vec3::ZERO,
+        &solver.base,
+    )
+    .unwrap();
 }
 
 #[test]
@@ -419,7 +564,7 @@ fn projected_full_sphere_pole_seeds_remain_only_proposals() {
 }
 
 /// Exact native constructors and query values of static-analytic-faces.json's
-/// seven entry=5, operation=15 regressions, including the VertexFace dispatch.
+/// seven entry=5, operation=15 regressions, including the `VertexFace` dispatch.
 #[test]
 fn native_vertex_face_proposals_cover_the_seven_analytic_fixtures() {
     use crate::geom::axis2_placement::Axis2Placement;
