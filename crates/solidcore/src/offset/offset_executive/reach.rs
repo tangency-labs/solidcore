@@ -51,7 +51,6 @@ use crate::math::{Point2, EFF_ZERO};
 use crate::nurbs::b_spline_surface::p1::SurfParamType;
 use crate::nurbs::b_spline_surface::p2::IsoCurveOptions;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
-use crate::nurbs::knots::Side;
 use crate::nurbs::math::{CPoint, NOW, NOZ};
 use crate::nurbs::nurbs_crv::create_bez_segments;
 use crate::surface::extend::{ExtendedSides, SideExtension};
@@ -446,7 +445,7 @@ struct SplineFace {
 ///
 /// Those of the form's data ([`Nurbs::of`]) and of the face.
 fn spline_face(b: &Brep, face: FaceId, surface: &Surface) -> Result<Option<SplineFace>> {
-    let crate::surface::surface::SurfaceKind::BSpline(form) = surface.kind() else {
+    let SurfaceKind::BSpline(form) = surface.kind() else {
         return Ok(None);
     };
     let dom = b.face(face)?.uv_domain;
