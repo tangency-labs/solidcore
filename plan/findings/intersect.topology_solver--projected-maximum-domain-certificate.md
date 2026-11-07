@@ -334,10 +334,17 @@ Reproducible evidence:
 Run `python plan/findings/diagnostics/native_face_proposal_seven_check.py`.
 Optionally compile the evaluator against the audited kernel rlib and pass
 `--native-exe <evaluator>` to re-evaluate all four native points. The captured
-public evaluator linked `33c941ad4` (the torus/revolution definitions and residual
-are identical to `0a085981d`), with immutable rlib SHA256
+public evaluator linked a preserved host artifact with SHA256
 `3695c1f4be98facfb38467381cec46b0269b6a9f16d512c1efd36fc4b8127379`.
-It performs no solver call and introduces no tolerance.
+Its exact source revision is **not established** by a regular-library build log
+or fingerprint; the focused `--lib` test and Clippy runs do not establish that
+provenance. Separately, Git comparison verifies that the torus/revolution source
+and residual are identical between `0a085981d` and `33c941ad4`; this does not bind
+the preserved binary to either revision. The replay is therefore corroborating
+native-evaluator evidence, not an exact-head artifact certificate. Exact-head
+acceptance evidence remains the `0a085981d` runner and focused native-point and
+whole-face certificate tests. The standalone evaluator performs no solver call
+and introduces no tolerance.
 
 The exact-head full unit run contains 2575 cases, exactly these seven golden
 changes, no additions/removals and no broken case. The saved expected records
