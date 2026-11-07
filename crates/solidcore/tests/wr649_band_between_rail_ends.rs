@@ -181,14 +181,17 @@ fn wr649_without_the_band_check() {
 // (1-pi/4)*r^2 and first moment (5/6-pi/4)*r^3. A chamfer's are d^2/2 and d^3/6.
 // The floor adds material on the inward side; the rim removes it outward.
 
+/// Load the original captured operand with the rig's fix set.
 fn input() -> (Kernel, Brep) {
     input_from_bytes(include_bytes!("data/issue_2903_shelled_box_rim.smb"))
 }
 
+/// Load the edited-height capture with the rig's fix set.
 fn edited_input() -> (Kernel, Brep) {
     input_from_bytes(include_bytes!("data/issue_2903_edited_shelled_box_rim.smb"))
 }
 
+/// Read a fresh operand and enable definition logging without preparing its geometry.
 fn input_from_bytes(bytes: &[u8]) -> (Kernel, Brep) {
     let mut k = Kernel::default();
     let fixes: Vec<String> = serde_json::from_str(include_str!("kernel_cases/fixes.json")).unwrap();
@@ -212,10 +215,12 @@ fn input_from_bytes(bytes: &[u8]) -> (Kernel, Brep) {
     (k, b)
 }
 
+/// The original cavity's inner planar contour length.
 fn perimeter() -> f64 {
     152.0 + 6.0 * PI
 }
 
+/// The original rounded shell's volume, including its inner floor round.
 fn base_volume() -> f64 {
     let area = 1.0 - PI / 4.0;
     let moment = 5.0 / 6.0 - PI / 4.0;
@@ -225,6 +230,7 @@ fn base_volume() -> f64 {
         - 2.0 * PI * moment
 }
 
+/// Compare the measured volume with its independent closed form.
 fn volume_is(k: &Kernel, b: &mut Brep, expected: f64) {
     let measured = brep_volume_default(k, b, 1e-10).unwrap();
     assert!(
@@ -239,6 +245,7 @@ enum Kind {
     Chamfer,
 }
 
+/// Blend one rim chain and check every new strip's definition or recorded exception.
 fn rim(k: &mut Kernel, b: &mut Brep, point: Vec3, kind: Kind, size: f64) -> solidcore::Result<()> {
     let original_faces = b.face_list().to_vec();
     let picked = b
@@ -296,6 +303,10 @@ fn rim(k: &mut Kernel, b: &mut Brep, point: Vec3, kind: Kind, size: f64) -> soli
         .blend_face_log
         .as_ref()
         .map_or_else(Vec::new, |log| log.last().to_vec());
+    assert!(
+        !made.is_empty(),
+        "{kind:?} at {point:?}: the blend-face log recorded no strip"
+    );
     match kind {
         Kind::Round => {
             // Every strip is a definition: the round strips are exact-round
@@ -339,6 +350,7 @@ fn rim(k: &mut Kernel, b: &mut Brep, point: Vec3, kind: Kind, size: f64) -> soli
     Ok(())
 }
 
+/// The original capture is valid before any operation prepares its caches.
 #[test]
 fn captured_operand_is_valid_and_has_its_closed_form_volume() {
     let (mut k, mut b) = input();
@@ -356,6 +368,7 @@ fn captured_operand_is_valid_and_has_its_closed_form_volume() {
     volume_is(&k, &mut b, base_volume());
 }
 
+/// Check all four original rim seeds against the same topology and closed form.
 fn mirrors(kind: Kind) {
     let size: f64 = 0.47;
     let removed = match kind {
@@ -395,11 +408,13 @@ fn mirrors(kind: Kind) {
     assert!(refused.is_empty(), "{}", refused.join("\n"));
 }
 
+/// Every mirrored round seed builds all eight defined rim strips.
 #[test]
 fn a_round_builds_the_same_rim_from_all_four_mirror_seeds() {
     mirrors(Kind::Round);
 }
 
+/// Every mirrored chamfer seed preserves the four measured cone exceptions.
 #[test]
 fn a_chamfer_builds_the_same_rim_from_all_four_mirror_seeds() {
     mirrors(Kind::Chamfer);
@@ -412,12 +427,14 @@ fn a_chamfer_builds_the_same_rim_from_all_four_mirror_seeds() {
 // original display polylines. This tests the resulting geometry, not timeline
 // reference resolution. No floor round is present in this second capture.
 
+/// The edited shell's closed-form volume, with no floor round.
 fn edited_base_volume() -> f64 {
     let area = 1.0 - PI / 4.0;
     // Rounded outer area times full height, less rounded cavity area times depth.
     (70.0 * 50.0 - 4.0 * area * 6.0 * 6.0) * 33.0 - (66.0 * 46.0 - 4.0 * area * 4.0 * 4.0) * 31.0
 }
 
+/// The edited capture independently satisfies validity and its closed-form volume.
 #[test]
 fn captured_edited_operand_is_valid_and_has_its_closed_form_volume() {
     let (mut k, mut b) = edited_input();
@@ -435,6 +452,7 @@ fn captured_edited_operand_is_valid_and_has_its_closed_form_volume() {
     volume_is(&k, &mut b, edited_base_volume());
 }
 
+/// Check all four edited rim seeds on fresh operands.
 fn edited_mirrors(kind: Kind) {
     let size: f64 = 0.627;
     let length = 192.0 + 8.0 * PI;
@@ -472,11 +490,13 @@ fn edited_mirrors(kind: Kind) {
     assert!(refused.is_empty(), "{}", refused.join("\n"));
 }
 
+/// The edited operand's round strips retain their definitions at every mirror seed.
 #[test]
 fn a_round_builds_the_edited_rim_from_all_four_mirror_seeds() {
     edited_mirrors(Kind::Round);
 }
 
+/// The edited operand's chamfers retain the measured definition disposition.
 #[test]
 fn a_chamfer_builds_the_edited_rim_from_all_four_mirror_seeds() {
     edited_mirrors(Kind::Chamfer);
