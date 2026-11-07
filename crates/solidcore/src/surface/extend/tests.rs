@@ -2703,6 +2703,22 @@ fn a_huge_bilinear_sheet_extends_as_its_closed_form() {
     }
 }
 
+/// A straight analytic iso has a distance-sized rounding budget, even when the
+/// requested widening is much shorter than the cylinder's radius (#2980).
+#[test]
+fn a_cylinder_widens_by_small_distances_along_its_axis() {
+    let kk = k();
+    let s = unit_cylinder(&kk);
+    for d in [5e-9, 1e-8, 1e-7, 1e-6, 5e-6] {
+        let e = s
+            .extended_by_distance(&kk, &dom(&s), BoxSide::VMax, Continuity::Natural, d)
+            .unwrap_or_else(|err| panic!("by {d:e}: {err:?}"))
+            .unwrap_or_else(|| panic!("by {d:e}: not extended"));
+        meets(&e, d);
+        assert!(e.across.rounding <= 1e-6 * d, "{:?}", e.across);
+    }
+}
+
 /// Diagnostic matrix for #2980; retained to reproduce the before/after evidence.
 #[test]
 fn difference_form_certificate_table() {
