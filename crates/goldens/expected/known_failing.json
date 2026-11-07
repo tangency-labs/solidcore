@@ -94,5 +94,11 @@
     "nurb_fillet_face5_same": "tangency-labs/solidcore#3042: the Ruled product form reaches past the rows' end, the extended offset then returns a non-manifold body (at the raw kernel call; ops' finish refuses it NotSolid and keeps the body); refused as not exact before it",
     "nurb_fillet_face6_same": "tangency-labs/solidcore#3042: the Ruled product form reaches past the rows' end, the extended offset then returns a non-manifold body (at the raw kernel call; ops' finish refuses it NotSolid and keeps the body); refused as not exact before it",
     "nurb_fillet_face7_same": "tangency-labs/solidcore#3042: the Ruled product form reaches past the rows' end, the extended offset then returns a non-manifold body (at the raw kernel call; ops' finish refuses it NotSolid and keeps the body); refused as not exact before it"
+  },
+  "intersect.topology_solver_p2": {
+    "analytic_face_torus_half_x_6_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 1.25, below the admissible native pair (0,0,0) at sqrt(41)/4=1.6007810593582121; the parent does not repair the pair construction",
+    "analytic_face_torus_half_x_7_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 1.25, below the admissible native pair (0,0,0) at sqrt(41)/4=1.6007810593582121; the parent does not repair the pair construction",
+    "analytic_face_torus_x_6_15": "tangency-labs/solidcore#3109: projected curve/face maximum reports 1.25, below the admissible native pair (0,0,0) at sqrt(41)/4=1.6007810593582121; the parent does not repair the pair construction",
+    "analytic_face_torus_x_7_15": "tangency-labs/solidcore#3109: projected curve/face maximum reports 1.25, below the admissible native pair (0,0,0) at sqrt(41)/4=1.6007810593582121; the parent does not repair the pair construction"
   }
 }

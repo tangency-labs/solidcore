@@ -108,11 +108,9 @@
 {"case":"analytic_face_torus_half_x_5_8_rayfire","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":[0.00001,0.00001,0.00001,0.00001,0.00001,0.0],"status":[0.0]}}
 {"case":"analytic_face_torus_half_x_6_11","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[1006.1492689406418,1013.3508310593581,10061.0407772877]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_torus_half_x_6_14","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[1007.3750403565333,1011.3750403565333,10074.875014991467]],"n":20},"status":[0.0]}}
-{"case":"analytic_face_torus_half_x_6_15","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[1007.75005,1011.75005,10077.50015]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_torus_half_x_6_3","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[1007.75005,1011.75005,10078.50015]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_torus_half_x_7_11","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[5.149268940641788,16.350831059358214,51.04077728770145]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_torus_half_x_7_14","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[6.3750403565333364,14.375040356533336,64.87501499146671]],"n":20},"status":[0.0]}}
-{"case":"analytic_face_torus_half_x_7_15","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[6.75005,14.75005,67.50014999999999]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_torus_half_x_7_3","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[6.75005,14.75005,68.50014999999999]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_torus_half_x_8_11","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":[0.00001,0.00001,0.00001,0.00001,0.00001,0.0],"status":[0.0]}}
 {"case":"analytic_face_torus_half_x_8_14","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":[0.00001,0.00001,0.00001,0.00001,0.00001,0.0],"status":[0.0]}}
@@ -128,11 +126,9 @@
 {"case":"analytic_face_torus_x_5_8_rayfire","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":[0.00001,0.00001,0.00001,0.00001,0.00001,0.0],"status":[0.0]}}
 {"case":"analytic_face_torus_x_6_11","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[1006.1492689406418,1013.3508310593581,10061.0407772877]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_torus_x_6_14","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[1007.6250552553735,1011.6250552553735,10078.375223575229]],"n":20},"status":[0.0]}}
-{"case":"analytic_face_torus_x_6_15","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[1007.75005,1011.75005,10077.50015]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_torus_x_6_3","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[1007.50005,1011.50005,10075.00015]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_torus_x_7_11","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[5.149268940641788,16.350831059358214,51.04077728770145]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_torus_x_7_14","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[6.625055255373462,14.625055255373463,68.37522357522846]],"n":20},"status":[0.0]}}
-{"case":"analytic_face_torus_x_7_15","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[6.75005,14.75005,67.50014999999999]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_torus_x_7_3","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[6.50005,14.50005,65.00014999999999]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_torus_x_8_11","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":[0.00001,0.00001,0.00001,0.00001,0.00001,0.0],"status":[0.0]}}
 {"case":"analytic_face_torus_x_8_14","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":[0.00001,0.00001,0.00001,0.00001,0.00001,0.0],"status":[0.0]}}
