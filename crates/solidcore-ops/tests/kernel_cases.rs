@@ -53,7 +53,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 use solidcore_ops::blend::{
     blend_ordered, chamfer_sides_ordered, edge_faces_along_ordered, fillet_variable_ordered, Blend,
-    ChamferSecond, Corners, SetBack,
+    ChamferSecond, Corners, SetBack, Turn,
 };
 use solidcore_ops::boolean::{boolean, union_all, BooleanOp};
 use solidcore_ops::extend::{extend_sheet, Continuation};
@@ -935,16 +935,18 @@ fn call_with_copy(
                 &each,
                 &setbacks,
                 Corners::Filled,
+                Turn::Mitre,
             )
             .map(|_| ());
             in_place(Slot { order: None, ..s }, r)
         }
         "blend_dropping" => {
-            if p.get("turn").is_some() {
-                return Err(Stop::Unsupported(
-                    "blend_dropping with a corner turn: the ops blend takes none".to_owned(),
-                ));
-            }
+            // a trace older than SolidCraft's turn names none: its rounds turned mitred
+            let turn = match p.get("turn").map(Value::as_str) {
+                None | Some(Some("mitre")) => Turn::Mitre,
+                Some(Some("swept")) => Turn::Swept,
+                Some(_) => return Err(bad("turn")),
+            };
             let kind = match p["kind"].as_str() {
                 Some("round") => Blend::Round,
                 Some("curvature") => Blend::Curvature,
@@ -984,8 +986,17 @@ fn call_with_copy(
                     );
                 }
             }
-            let r = blend_ordered(&s.body, &order, kind, &unique, &each, &[], Corners::Filled)
-                .map(|_| ());
+            let r = blend_ordered(
+                &s.body,
+                &order,
+                kind,
+                &unique,
+                &each,
+                &[],
+                Corners::Filled,
+                turn,
+            )
+            .map(|_| ());
             in_place(Slot { order: None, ..s }, r)
         }
         "merge_faces" => {
@@ -2004,6 +2015,7 @@ fn filled_setback_ordered_api_rejects_foreign_entities_without_editing() {
                 distance: 8.0,
             }],
             Corners::Filled,
+            Turn::Mitre,
         );
         assert!(
             matches!(r, Err(solidcore_ops::Error::Argument)),
