@@ -95,8 +95,11 @@ endpoint. Selection keeps that upper endpoint monotone, so later candidates
 continue to cover all previously discarded rectangles. No caller slack, another
 point's interval width, or geometric box width is added. Retention slack remains
 only in the outward-rounded incumbent cutoff. An unresolved rectangle exhausts
-the documented finite budget with an explicit refusal. This strict checkpoint
-requires a fresh cohort replay before any corrected Single goldens are accepted.
+the documented finite budget with an explicit refusal. The strict refinement at 46bd74511 passes all 31 focused tests and the frozen
+35-case replay with no new refusals. It keeps endpoint contractions in the
+search state and permits 128 total bisections for two coordinates, with the
+32,768-box work cap unchanged. The refreshed frozen audit contains the final
+strict values; the earlier coarse Single outputs are superseded.
 
 
 

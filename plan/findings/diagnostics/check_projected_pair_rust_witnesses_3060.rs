@@ -210,11 +210,30 @@ fn solve_case(row: &Value) -> Result<Value> {
         &opts,
         requested,
     ) {
-        Ok(solutions) => Ok(
-            json!({"case":row["case"],"solutions":solutions.as_slice().iter().map(|s|
-            json!({"parameters":[s.start.parameters[0],s.start.parameters[1]],"value":s.start.solution_value})
-        ).collect::<Vec<_>>()}),
-        ),
+        Ok(solutions) => {
+            let requested_domains = [interval(&i["ivl1"])?, interval(&i["ivl2"])?];
+            let natural = [a.natural_interval(), b.natural_interval()];
+            let domains = requested_domains
+                .into_iter()
+                .zip(natural)
+                .map(|(r, n)| [r.min().max(n.min()), r.max().min(n.max())])
+                .collect::<Vec<_>>();
+            let mut checked = Vec::new();
+            for solution in solutions.as_slice() {
+                let parameters = [solution.start.param(0)?, solution.start.param(1)?];
+                let delta =
+                    a.evaluate_point(&k, parameters[0])? - b.evaluate_point(&k, parameters[1])?;
+                let measured = normal[0].cross(delta).cross(normal[0]).length();
+                let admissible = parameters
+                    .iter()
+                    .zip(&domains)
+                    .all(|(p, d)| d[0] <= *p && *p <= d[1]);
+                checked.push(json!({"parameters":parameters,"value":solution.start.solution_value,
+                    "native_measured":measured,"scalar_error":measured-solution.start.solution_value,
+                    "admissible":admissible}));
+            }
+            Ok(json!({"case":row["case"],"admissible_domains":domains,"solutions":checked}))
+        }
         Err(error) => Ok(json!({"case":row["case"],"solver_error":format!("{error:?}")})),
     }
 }

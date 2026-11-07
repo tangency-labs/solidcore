@@ -1,4 +1,4 @@
-# Frozen projected-pair audit at ab5107e26 and 8948e0bc2
+# Frozen projected-pair audit: strict Single construction at 46bd74511
 
 This record audits the scoped Single and finite affine All construction. It does not claim to close #3060. Baseline is the parent implementation; all inputs are frozen and replayed unchanged. No tolerance, expected output or exclusion is changed by this evidence commit.
 
@@ -6,44 +6,74 @@ This record audits the scoped Single and finite affine All construction. It does
 
 All 31 generated Single projected maximum requests among the 3,000 seeds, plus four cylinder fixtures, were replayed. There are 31 changed outputs, no new refusals and no decode errors. The three empty natural-domain intersections (gen2506, gen2915, gen2993) and the incumbent-filtered gen0717 remain unchanged. The OOB-enabled gen2915 result preserves existing cache-domain clipping; it does not certify extrapolation outside the natural interval.
 
-**Historical checkpoint, superseded for Single accuracy by 5c66fb436.** The tables
-and figures below preserve the ab5107/8948 audit for traceability; these Single
-outputs are not approved golden updates. A fresh strict-construction replay is
-pending. The independent All corner/monotonicity proofs are separate.
+The after data and figures now use the strict construction at `46bd74511`.
+The global objective upper bound fits the returned point's own independently
+computed arithmetic enclosure; its reported scalar lies inside that same
+interval. Caller retention slack and other point widths do not loosen this
+certificate. This follows the [maintainer contract](https://github.com/tangency-labs/solidcore/pull/2840#discussion_r4496188362).
 
-Every returned pair in this historical checkpoint is admissible, and independent native line/Hermite/homogeneous-rational evaluation agrees with the reported scalar within 7.11e-15. Independent grid/optimization search found no larger witness beyond caller slack; that search is a diagnostic, **not a completeness proof**. The old production invariant bounded the remaining geometric gap by retention slack; that does not meet the maintainer's solve-accuracy contract. Four cylinder maxima equal sqrt(2.5) and their returned parameters independently attain it.
+The final guard replay at 9402730dd has bitwise-identical inputs, outputs and
+solutions to 46bd74511 across both cohorts (only timing metadata differs).
+A separate [public Rust remeasurement](diagnostics/projected_pair_single_native_3060.jsonl)
+reconstructs all 31 generated inputs, reruns the public solver, then reevaluates
+every returned parameter through `Curve::evaluate_point`. It reports zero
+inadmissible parameters, zero solver/audit errors and exactly zero scalar
+remeasurement differences. The four cylinder rows have the independent analytic
+endpoint proof recorded below.
 
-Fourteen historical Single rows have independently found improvements inside caller slack. Those coarse candidates must not be blessed: retention slack does not authorize optimization error. The largest found gap is approximately 0.001340204 in gen1658, whose slack is 0.5. The strict correction removes slack from construction and requires the global bound to fit the returned point's own arithmetic enclosure, following the [maintainer contract](https://github.com/tangency-labs/solidcore/pull/2840#discussion_r4496188362).
+All returned parameters are admissible. Independent native line/Hermite/rational
+evaluation agrees with each reported scalar within 7.11e-15. Independent
+optimization's largest positive excess over an answer is 2.85e-14; those signed
+differences are shown below, not treated as an accuracy tolerance or proof.
+Completeness comes from the production interval invariant. Four cylinder maxima
+equal sqrt(2.5), independently attained by their returned endpoint parameters.
 
-| Case | Before values (status) | After values | Slack | Largest independently found improvement |
+The superseded ab5107 Single checkpoint allowed geometric error inside retention
+slack and must not be blessed. In particular its gen1658 value 8.000523649275099
+is replaced by 8.001863852854438 at
+(0.36164915060065483, 0.06248865022830497). The independent witness is
+8.00186385285444, a difference of 1.78e-15, instead of the old 0.001340204 gap.
+
+The first strict checkpoint exposed 19 subdivision-depth refusals. Keeping
+proved endpoint contractions in the search state and allowing 128 total
+bisections for two coordinates removed all 19, without changing the strict
+acceptance rule or the 32,768-box work cap. All 31 focused tests pass at 46bd74511,
+including identical answers for zero and large retention on an interior peak.
+The final-All retention guard at `9402730dd` passes 32 focused tests and both
+frozen cohorts with the same changed-case counts and no new refusals. It keeps
+existing sorting and duplicate policy, but refuses if the actual returned set
+cannot cover the complete objective bound or silently drops a distinct candidate
+whose exclusion from the retention band is unproved.
+
+| Case | Before values (status) | Strict after values | Retention slack | Independent search minus answer |
 |---|---|---|---|---|
-| gen0131 | 27.292406300295426 ([0]) | 38.353127377015475 | 0.01 | 3.499643547e-06 |
+| gen0131 | 27.292406300295426 ([0]) | 38.353130876659016 | 0.01 | 7.1054e-15 |
 | gen0144 | 70.88929067495704 ([0]) | 90.48291006330427 | 0.5 | 0 |
-| gen0155 | 37.87672736773793 ([0]) | 41.698189029504405 | 0.01 | 0.000177133632 |
+| gen0155 | 37.87672736773793 ([0]) | 41.69836616313635 | 0.01 | 1.4211e-14 |
 | gen0302 | empty ([0]) | 4.217760138079574 | 0.0001 | 0 |
-| gen0313 | 3.5885710823184898 ([0]) | 3.677514032092783 | 0.001 | 8.248222469e-06 |
-| gen0373 | 6.113465906772089 ([0]) | 8.28482615770044 | 1e-06 | 3.31673693e-08 |
-| gen0421 | 17.11468532354081 ([0]) | 17.114615887656527 | 0.01 | 6.943588429e-05 |
+| gen0313 | 3.5885710823184898 ([0]) | 3.677522280315252 | 0.001 | -4.4409e-16 |
+| gen0373 | 6.113465906772089 ([0]) | 8.284826190867808 | 1e-06 | 1.7764e-15 |
+| gen0421 | 17.11468532354081 ([0]) | 17.11468532354081 | 0.01 | 3.5527e-15 |
 | gen0445 | 2.1774745915837537 ([0]) | 10.052741867014833 | 1e-06 | 0 |
-| gen0743 | 83.90388228273946 ([0]) | 87.12927007129669 | 0.0001 | 3.70933094e-07 |
+| gen0743 | 83.90388228273946 ([0]) | 87.12927044222975 | 0.0001 | 2.8422e-14 |
 | gen0844 | 0.0 ([0]) | 10.979584714079621 | 0.5 | 0 |
-| gen0880 | 10.50084800781891 ([0]) | 10.50084768493114 | 0.0001 | 3.228877699e-07 |
+| gen0880 | 10.50084800781891 ([0]) | 10.500848007818902 | 0.0001 | 7.1054e-15 |
 | gen1086 | 17.609097780432535 ([0]) | 73.99422438322947 | 0.01 | 0 |
-| gen1116 | 9.918860532286931 ([0]) | 10.39940044414268 | 0.0001 | 6.122036211e-11 |
-| gen1458 | 1.1799020931977433 ([0]) | 1.7703234057949422 | 0.5 | 9.969708975e-05 |
-| gen1658 | empty ([0]) | 8.000523649275099 | 0.5 | 0.001340203579 |
+| gen1116 | 9.918860532286931 ([0]) | 10.3994004442039 | 0.0001 | 0 |
+| gen1458 | 1.1799020931977433 ([0]) | 1.7704231028846957 | 0.5 | 4.4409e-16 |
+| gen1658 | empty ([0]) | 8.001863852854438 | 0.5 | 1.7764e-15 |
 | gen1744 | empty ([0]) | 9.878574576753216 | 0.5 | 0 |
 | gen2017 | 19.071210555301338 ([0]) | 21.504888840235413 | 0.5 | 0 |
-| gen2131 | 65.62255209558627 ([0]) | 94.33068553136792 | 1e-05 | 1.497642188e-08 |
+| gen2131 | 65.62255209558627 ([0]) | 94.33068554634433 | 1e-05 | 1.4211e-14 |
 | gen2189 | 0.09248840291760957 ([0]) | 4.5154998991468 | 0.0001 | 0 |
-| gen2325 | 0.8055899438915088 ([0]) | 0.9235167127270163 | 1e-05 | 1.380251979e-07 |
-| gen2440 | 2.44769534587924 ([0]) | 8.615017213813696 | 0.001 | 6.146905207e-11 |
-| gen2603 | empty ([0]) | 7.017259270988454 | 1e-05 | 4.864872718e-07 |
-| gen2768 | 6.160254511384329 ([0]) | 8.199193821009183 | 0.001 | 5.69599368e-06 |
+| gen2325 | 0.8055899438915088 ([0]) | 0.9235168507522138 | 1e-05 | 4.4409e-16 |
+| gen2440 | 2.44769534587924 ([0]) | 8.615017213875161 | 0.001 | 3.5527e-15 |
+| gen2603 | empty ([0]) | 7.017259757475725 | 1e-05 | 8.8818e-16 |
+| gen2768 | 6.160254511384329 ([0]) | 8.199199517002864 | 0.001 | 0 |
 | gen2771 | 12.110728525770247 ([0]) | 18.087676035977736 | 0.001 | 0 |
-| gen2962 | 82.52299106097162 ([0]) | 107.269468795851 | 0.01 | 1.303067592e-07 |
+| gen2962 | 82.52299106097162 ([0]) | 107.26946892615773 | 0.01 | 2.8422e-14 |
 | gen2969 | empty ([0]) | 55.95810876408308 | 1e-05 | 0 |
-| gen2976 | 5.583408252286654 ([0]) | 9.516387163386291 | 0.01 | 1.074340616e-11 |
+| gen2976 | 5.583408252286654 ([0]) | 9.516387163397034 | 0.01 | 0 |
 | analytic_face_cyl_x_6_15 | 0.5 (None) | 1.5811388300841898 | fixture | 0 |
 | analytic_face_cyl_x_7_15 | 0.5 (None) | 1.5811388300841898 | fixture | 0 |
 | analytic_face_halfcyl_x_6_15 | 0.5 (None) | 1.5811388300841898 | fixture | 0 |
@@ -71,8 +101,8 @@ The distinct offset-circle compatibility fixture remains unchanged: two seam par
 
 ## Integrated identical-monotone All case
 
-The final 75-row replay at `8948e0bc2` has eight changes and no new refusals or
-decode errors. The sole additional change is original All `gen1839`:
+The 75-row replay at `46bd74511` preserves the eight changes from `8948e0bc2` and has no new refusals or
+decode errors. The sole addition to the original affine class is original All `gen1839`:
 three old values at or below 4.243690092983992e-12 become one value
 4.408015599603469 at native parameters
 (0.43561427937496744, 0.03474215986040488).
@@ -82,7 +112,7 @@ coordinates monotone on the complete union span; increasing ordered parameter
 separation increases the projected distance, so the extreme feasible pair is
 global. The production interval sign proof agrees. This is the original All
 request, not a Single variant. The independent public-API test and unchanged
-offset-circle compatibility test pass among the 30 focused tests.
+offset-circle compatibility test pass among the 31 focused tests.
 
 The planned golden migration can remove the five repaired #3060 exclusions:
 gen0844, gen1839, gen2050, gen2187 and gen2585. gen0472 remains open in #3081.
@@ -91,7 +121,7 @@ migration; unchanged, unverified All outputs are not blessed.
 
 ## Same-view geometry
 
-The curves below are independently evaluated from the stored definitions. Each row uses identical projection, limits and magnification before/after. Dashed segments join the returned pairs; markers identify the endpoints. Curve sampling is for rendering only and is not a certificate. Titles show maximum reported value and answer count; exact complete values are in the tables/data above.
+The after views below use strict Single checkpoint 46bd74511 and the unchanged certified finite All outputs. The curves are independently evaluated from the stored definitions. Each row uses identical projection, limits and magnification before/after. Dashed segments join the returned pairs; markers identify the endpoints. Curve sampling is for rendering only and is not a certificate. Titles show maximum reported value and answer count; exact complete values are in the tables/data above.
 
 ![Before and after projected curve pairs, group 1.](figures/projected-pair-audit-3060-1.png)
 
