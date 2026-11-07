@@ -28,7 +28,8 @@
 //!
 //! Deviations:
 //! - **Single projected point/face maxima.** These queries evaluate trimmed UV silhouettes on the
-//!   source surface, avoiding the independent 3D fit's extra measurement error.
+//!   source surface as UV proposals alongside native knot-cell seeds, avoiding
+//!   a temporary lifted-curve solve and the 3D fit's extra measurement error.
 //!   The tracing tolerance is expressed in geometric units using the norm of the
 //!   double-cross projection, rather than ten times the query tolerance.
 //!   A single projected point/face maximum additionally checks an outward-rounded
@@ -95,7 +96,6 @@
 //!   and `sign = 1.0`, matching `SmTLSPointCurve::SolveIt` and
 //!   `SmTLSPointFace::SolveIt`.
 
-use crate::curve::crv_on_surf::CrvOnSurf;
 use crate::curve::curve::p1::GlobalPointSolveOptions;
 use crate::curve::curve::p2::Curve;
 use crate::curve::curve::p8::CurveIntersectOptions;
@@ -1660,24 +1660,41 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
             let before = certified_maximum.then(|| ts.base.clone());
             let result: Result<()> = (|| {
                 let opt_vectors = ts.base.opt_vectors.clone();
-                let (trim_3d_curves, trim_uv_curves) = if certified_maximum {
-                    projected_face_candidates(ts.kernel, objects, face, &opt_vectors, tol)?
+                if certified_maximum {
+                    let hints =
+                        projected_face_candidate_uv(ts.kernel, objects, face, &opt_vectors, tol)?;
+                    for (uv, value) in super::projected_bound::native_candidates(
+                        k,
+                        objects,
+                        face,
+                        self.point,
+                        &opt_vectors,
+                        &hints,
+                    )? {
+                        let mut sol = Solution::default();
+                        named(&mut sol);
+                        sol.solution_type = SolutionType::SingleValue;
+                        *sol.start.param_mut(0)? = uv.x;
+                        *sol.start.param_mut(1)? = uv.y;
+                        sol.start.solution_value = value;
+                        ts.add_sorted_solution(&sol, SortKey::BySolutionValue, true)?;
+                    }
                 } else {
-                    face_silhouettes(ts.kernel, objects, face, &opt_vectors, tol)?
-                };
-                // When we reach here there should be silhouette curves in sTrim3DCurves
-                // We can use these to do measurement to the surface.  Please note that
-                // the edges bounding the face would have already been measured.
-                for (curve, uv_curve) in trim_3d_curves.iter().zip(&trim_uv_curves) {
-                    let mut sub: LocalSolver<'_, O> =
-                        LocalSolver::new(LocalSolverKind::PointCurve, self.swap_order, self.shape);
-                    sub.curve_owner = Some(face);
-                    sub.interval = curve.natural_interval();
-                    sub.surface_curve = Some(uv_curve);
-                    sub.point = self.point;
-                    sub.point_vertex = self.point_vertex;
-                    // (the temporary curve has no handle)
-                    sub.point_curve(k, ts, curve, None)?;
+                    let (trim_3d_curves, trim_uv_curves) =
+                        face_silhouettes(ts.kernel, objects, face, &opt_vectors, tol)?;
+                    for (curve, uv_curve) in trim_3d_curves.iter().zip(&trim_uv_curves) {
+                        let mut sub: LocalSolver<'_, O> = LocalSolver::new(
+                            LocalSolverKind::PointCurve,
+                            self.swap_order,
+                            self.shape,
+                        );
+                        sub.curve_owner = Some(face);
+                        sub.interval = curve.natural_interval();
+                        sub.surface_curve = Some(uv_curve);
+                        sub.point = self.point;
+                        sub.point_vertex = self.point_vertex;
+                        sub.point_curve(k, ts, curve, None)?;
+                    }
                 }
                 if certified_maximum {
                     super::projected_bound::refine_candidate(
@@ -2143,13 +2160,13 @@ fn face_silhouettes_at_tolerance<O: SolutionObject>(
 }
 
 /// Candidates for the certified single projected point/face maximum.
-fn projected_face_candidates<O: SolutionObject>(
+fn projected_face_candidate_uv<O: SolutionObject>(
     k: &Kernel,
     objects: &dyn TopologyObjects<O>,
     face: O,
     opt_vectors: &[Vec3],
     tolerance: f64,
-) -> Result<(Vec<Curve>, Vec<Curve>)> {
+) -> Result<Vec<Curve>> {
     let view = *opt_vectors
         .first()
         .ok_or(null_deref(OP_FACE_SIL, "no view vector"))?;
@@ -2168,7 +2185,6 @@ fn projected_face_candidates<O: SolutionObject>(
         ));
     }
     let (_, mut uv) = face_silhouettes_at_tolerance(k, objects, face, opt_vectors, approx_tol)?;
-    let surface = objects.surface(objects.face_surface(face)?)?;
     let domain = objects.face_uv_domain(face)?;
     // A constrained maximum can lie on a trim even when no silhouette reaches
     // it. Include the exact boundary independently of tree traversal order.
@@ -2178,28 +2194,7 @@ fn projected_face_candidates<O: SolutionObject>(
             uv.extend(boundary);
         }
     }
-    let curves = lift_silhouette_measurements(k, &uv, surface, domain)?;
-    Ok((curves, uv))
-}
-
-/// Lift candidates onto the original surface; no fitted 3D curve is measured.
-pub(super) fn lift_silhouette_measurements(
-    k: &Kernel,
-    uv: &[Curve],
-    surface: &Surface,
-    domain: Extent2d,
-) -> Result<Vec<Curve>> {
-    uv.iter()
-        .map(|curve| {
-            Ok(Curve::from(CrvOnSurf::new(
-                k,
-                curve.clone(),
-                surface.clone(),
-                Some(domain),
-                0,
-            )?))
-        })
-        .collect()
+    Ok(uv)
 }
 
 /// `pFace->GetSurface()->GlobalPointSolve(uv_domain, op, point, tol,
