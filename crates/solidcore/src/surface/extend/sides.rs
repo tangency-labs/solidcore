@@ -185,8 +185,14 @@ impl Surface {
                 let mut named = None;
                 for _ in 0..NAMING_HALVINGS {
                     tried *= 0.5;
-                    if self.extended_in_turn(k, asked, how, tried).is_ok() {
-                        named = Some(tried);
+                    // a distance works when some side extends at it: one below every side's
+                    // resolution leaves them all unchanged and extends nothing
+                    if let Ok(e) = self.extended_in_turn(k, asked, how, tried) {
+                        if e.sides.iter().any(|s| {
+                            matches!(s, SideExtension::Extended(_) | SideExtension::UpToLimit(_))
+                        }) {
+                            named = Some(tried);
+                        }
                         break;
                     }
                 }
