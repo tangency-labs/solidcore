@@ -1,7 +1,9 @@
-﻿# Finite ellipse maximum construction: research for the remaining All case
+﻿# Finite ellipse maximum construction for the original All case
 
-This is a design note, not a new dispatch or a certified root implementation.
-`gen0472` remains open until complete finite enumeration is implemented and audited.
+PR #3081 implements the finite All construction for identical native noncircular
+open ellipse arcs. Public integration e1930057d passes 38 focused tests, including
+the original gen0472 request. The frozen cohort audit and golden graduation are
+pending; this does not close #3060's remaining general curved-pair cases.
 
 ![Original ellipse All pair and a larger admissible pair, same view.](figures/projected-ellipse-witness-3060.png)
 
@@ -20,8 +22,8 @@ For the Z projection, independent rational-arc evaluation gives a feasible pair:
 - projected distance `6.327472493603755` (and the swapped pair).
 
 This is a numerical witness, not a root-completeness certificate. It is larger
-than the original issue's already sufficient STEP 0/90 witness. No expected
-output or known-failure exclusion is changed by this note.
+than the original issue's already sufficient STEP 0/90 witness. The corrected expected output must come from the public runner after the
+complete construction and affected-case audit, not from this numerical witness.
 
 ## Analytic reduction for one identical ellipse
 
@@ -57,7 +59,7 @@ set `A=Y-QW`. The derivative numerator of squared distance is
 most a quartic. This avoids guessing STEP-to-NURBS parameter conversion during
 certification and preserves the original requested intervals.
 
-## Safe next implementation boundary
+## Design boundary and excluded classes
 
 Reuse `curve_on_quadrics` for the analytic exact class, and the existing
 `conic_turn` certificate to establish a nonzero, nonreversing angular traversal.
@@ -69,10 +71,10 @@ rank loss, repeated roots, unresolved endpoint identity, or unproved angular
 coverage need explicit handling or refusal, never sampled enumeration.
 
 `geom::polynomial::solve_quartic` provides approximate root candidates, not
-certified isolation. A bounded interval/Bernstein root exclusion and uniqueness
-pass must cover every native arc piece, with point-enclosure rounding kept
-separate from retention slack. The existing finite-candidate accumulator should
-own retention and ordered duplicate rules.
+certified isolation. The implemented bounded interval exclusion and uniqueness pass covers every
+native arc piece, with point-enclosure rounding kept separate from retention
+slack. The existing finite-candidate accumulator owns retention and ordered
+duplicate rules.
 
 A line/ellipse maximum is convex in the line parameter, so it reduces to the
 two line endpoints and complete point/ellipse edge constructions. Different
@@ -89,80 +91,62 @@ section 2.1](https://www.geometrictools.com/Documentation/DistancePointEllipseEl
 derives the stationary normal equation for point/ellipse distance. Its closest-
 point monotone-root branch is not an algorithm for enumerating every farthest
 stationary point. The quartic and identical-pair reduction above are direct
-algebraic derivations for this maximum problem. Complete interval root exclusion
-would follow the bounded-search principles already cited in the main #3060
-finding; no sampled search or approximate quartic solver alone is a certificate.
+algebraic derivations for this maximum problem. Complete interval root exclusion follows the bounded-search principles already
+cited in the main #3060 finding; no sampled search or approximate quartic solver
+alone is a certificate.
 
-## Test-only native edge isolation prototype
+## Implemented finite construction
 
-The separate follow-up has a bounded interval edge isolator, still outside
-production dispatch. On every native knot piece it encloses
-`g=(P-Q) dot P'` and `g'=P' dot P'+(P-Q) dot P''` after the complete double-cross
-projection. A nonzero g excludes stationarity; positive g' excludes a maximum.
-Strict opposite endpoint signs and negative g' prove exactly one strict maximum.
-Interval Newton intersections then contract that already established root.
-The returned root bracket remains geometric uncertainty, separate from every
-point-evaluation rounding allowance. Unresolved endpoint identities, repeated
-roots, non-finite enclosures or exhausted fixed budgets refuse.
+The public All dispatcher selects identical native noncircular open ellipse
+arcs structurally, before attempting proof. The stored angular span must satisfy
+0 < span < 360 degrees; the actual native form separately passes the existing
+analytic exact-class and regular open-traversal checks. Positive projected Gram
+determinant and nonzero eigenvalue discriminant establish a nondegenerate,
+noncircular projected ellipse. Full-turn gen2263 and gen2689 remain outside this
+initial class, as does the distinct offset-circle compatibility fixture.
 
-For a nondegenerate noncircular projected identical ellipse, minor-axis antipodes
-are saddle points of the pair objective. Only the major-axis antipodes can be
-interior pair maxima. Those points are also the strict maxima of projected
-squared distance to the ellipse center, so the same complete native 1D root
-construction can locate them without guessing an angular parameter conversion.
-A future finite construction must still prove the exact conic class and regular
-traversal, classify edge/corner inward derivatives, pair the opposite center
-maxima, bound their objective enclosures, and apply the shared All retention
-and ordered duplicate rules. The edge prototype alone does not fix gen0472.
+Each native knot piece encloses `g=(P-Q) dot P'` and
+`g'=P' dot P'+(P-Q) dot P''` under the complete double-cross projection. Nonzero g
+excludes stationarity; positive g' excludes a maximum. Strict opposite endpoint
+signs and negative g' prove exactly one strict maximum. Interval Newton contracts
+that established root. All native edge pieces are covered, with a shared
+4,096-cell budget, depth 48 and 64 Newton contractions. Unresolved endpoint
+identity, repeated roots, projected degeneracy and exhausted work refuse.
 
-The first three focused prototype tests pass, including the original native edge
-root and Taylor objective enclosure. Strict library/tests Clippy and changed-file
-formatting pass. Independent read-only review found the current edge proof sound;
-multiple-root subdivision coverage is the next regression before production.
+Strict inward derivative signs classify corners and fixed-side edge maxima.
+For an identical noncircular projected ellipse, minor-axis antipodes are saddles;
+opposite major-axis points are the only distinct interior pair maxima. The
+same complete one-dimensional root construction finds these through maxima of
+squared distance to the center, without guessing a STEP-to-native mapping.
+Continuous internal native knots are required. Unknown classification refuses.
 
-## Finite-candidate prototype checkpoint
+Root-location uncertainty stays geometric. A Taylor objective enclosure includes
+its complete remainder. The remainder is grouped with the smallest squared
+component before the final sum, and intersected with the original independently
+valid bound. This removes avoidable full-scale rounding while every operation
+remains outward rounded; no term is discarded and no candidate interval is
+widened. Finite/nonempty intersections are checked before square root.
 
-The test-only prototype now enumerates strict constrained corners, all certified
-edge maxima whose fixed-side inward derivative is negative, and opposite roots
-of squared projected distance to the center. It requires identical native
-quadratic definitions, continuous internal knots, the existing nonreversing
-single-turn conic certificate, and strictly positive projected Gram determinant
-and eigenvalue discriminant. Circular, rank-lost or uncertain projections refuse.
-A shared finite visit budget covers every edge/center root solve and root-pair
-comparison. Closed-seam/endpoint identities still refuse rather than silently
-collapsing repeated parameter aliases.
+Each returned representative is one feasible parameter pair whose independently
+computed point interval contains both its reported scalar and the isolated root
+objective upper bound. Caller retention is never construction accuracy, following
+the [maintainer contract](https://github.com/tangency-labs/solidcore/pull/2840#discussion_r4496188362).
+A root whose complete objective bound lies outside the retention band can be
+excluded before constructing a rounded representative. Existing All sorting and
+ordered duplicate handling are reused. Final guards ensure the actual returned
+set still covers the complete objective bound and contains every unexcluded
+candidate under the existing duplicate equivalence. Ambiguous ordering refuses.
 
-Five focused tests and strict library/tests Clippy pass. The original gen0472
-candidate construction contains both ordered pairs near the stronger witness;
-its full objective bounds remain separate from feasible point rounding.
-Additional tests cover two isolated maxima with an intermediate minimum,
-repeated-root refusal, reversed traversal, non-unit projection, circular/rank-loss
-refusal and unresolved closed seams. Shared All retention/ordered deduplication,
-public dispatch, broad affected-case audit and full independent review remain
-pending; this checkpoint does not claim a production fix.
+## Validation status
 
+At e1930057d all 38 focused tests pass. Coverage includes original gen0472 with
+its original requested intervals, unit/non-unit normals, both legacy error flags,
+incumbent cutoff, selected rank-loss refusal, two isolated roots with an intervening
+minimum, repeated-root refusal, reversed traversal and closed-seam exclusion.
+Independent review checked the edge proof, interior reduction, strict point
+construction, outward regrouping and public dispatch boundary.
 
-## Strict construction and retention integration checkpoint
-
-The follow-up now reuses the existing All accumulator for reported-value retention
-and ordered duplicate handling. Each isolated root keeps a geometric objective
-bound, tightened by the edge Taylor enclosure when one operand is fixed. A
-representative is one actual feasible endpoint/midpoint pair, never a hull of
-several point intervals. Its reported scalar must lie in its own definition
-arithmetic enclosure, and the root objective upper bound must fit that same
-point enclosure before any retention is applied. Otherwise construction refuses.
-Caller tolerance is not an optimization budget, following the explicit
-[maintainer contract](https://github.com/tangency-labs/solidcore/pull/2840#discussion_r4496188362).
-
-The initial structural selector is identical native noncircular **open** ellipse
-arcs (stored STEP span strictly between 0 and 360 degrees); the numerical proof
-separately verifies actual regular open traversal. Full-turn gen2263 and gen2689
-remain outside this implemented class until seam/alias construction is covered.
-Exactly gen0472 selects among the frozen 75 All records. Distinct offset circles
-remain unselected. Selected projected circles, rank loss and root ambiguity
-produce explicit refusal, not fallback to the old solver.
-
-This checkpoint remains test-only. New strict solve regressions for original
-gen0472 at retention 0, 1e-5 and 0.5 are awaiting compilation; the earlier five-test
-result applies only to the previous prototype. Production dispatch and golden
-updates remain pending the strict tests, independent review and cohort replay.
+Strict `cargo clippy -p solidcore --lib --tests -- -D warnings` passes at the
+same public integration checkpoint. The 75-case scope audit, filtered golden
+graduation and final broader gates are pending. No sampled rendering or independent optimization is
+used as a completeness certificate. Remaining general All cases stay under #3060.
