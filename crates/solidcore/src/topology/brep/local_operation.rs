@@ -1385,6 +1385,44 @@ mod tests {
             .unwrap()
     }
 
+    /// A 20 mm cube's top given the tilted plane `z = 25 - 0.1 x - 0.2 y`, in closed form:
+    /// each top vertex is the exact meet of the plane with its two side planes, `(x, y, 25 -
+    /// 0.1 x - 0.2 y)`, to rounding at the part's scale; the bottom vertices, on kept faces
+    /// only, stay bit for bit; the volume is the base times the height over its centre,
+    /// `400 * 22 = 8800`.
+    #[test]
+    fn a_tilted_box_top_meets_its_sides_at_the_exact_plane_meets() {
+        let mut k = Kernel::default();
+        let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 20.0, 20.0, 20.0).unwrap();
+        let top = box_top(&k, &b);
+        let normal = Vec3::new(0.1, 0.2, 1.0);
+        let tilted = Surface::from(Plane::from_normal(Vec3::new(0.0, 0.0, 25.0), normal));
+        let why = refused_unchanged_or_returned(&mut k, &mut b, &[top], vec![tilted]);
+        assert_eq!(why, None);
+        let mut points: Vec<Point3> = b.vertices().iter().map(|(_, v)| v.point).collect();
+        points.sort_by(|p, q| (p.z, p.x, p.y).partial_cmp(&(q.z, q.x, q.y)).unwrap());
+        assert_eq!(points.len(), 8);
+        for (p, (x, y)) in
+            points[..4]
+                .iter()
+                .zip([(0.0, 0.0), (0.0, 20.0), (20.0, 0.0), (20.0, 20.0)])
+        {
+            assert_eq!(*p, Point3::new(x, y, 0.0), "a kept vertex moved");
+        }
+        for p in &points[4..] {
+            let z = 25.0 - 0.1 * p.x - 0.2 * p.y;
+            let on_sides = [p.x, p.y]
+                .iter()
+                .all(|c| c.abs() <= 1e-12 || (c - 20.0).abs() <= 1e-12);
+            assert!(
+                on_sides && (p.z - z).abs() <= 1e-12 * 25.0,
+                "{p:?} vs z {z}"
+            );
+        }
+        let (v, manifold) = volume_and_manifold(&k, &mut b);
+        assert!(manifold && (v - 8800.0).abs() <= 1e-9 * 8800.0, "{v}");
+    }
+
     /// WR-534 (the fork's tangency-labs/smlib@a1ee273): a 20 mm cube's top moved up by
     /// 60, further than the cube's size, is a sound 20 x 20 x 80 box with the opt-in.
     #[test]

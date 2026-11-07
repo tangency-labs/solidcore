@@ -2697,3 +2697,62 @@ fn a_ball_side_is_met_only_within_the_bisections_stop() {
         true
     ));
 }
+
+/// The bilinear sheet of the goldens case `extend_bilinear_huge_scale`, its corners 1e9
+/// apart, extended 1e7 on every side, against its closed form: a degree-1 net continued is
+/// the same bilinear polynomial, so the result evaluates as `S(u, v)` over the whole new
+/// domain (to rounding at the part's scale), and its iso lines are straight, so the length
+/// across each side is the straight distance from the old side to the new one, the 1e7 asked
+/// (to the solve's stop, 1e-9 of it). Neither check uses the extension's own measure.
+#[test]
+fn a_huge_bilinear_sheet_extends_as_its_closed_form() {
+    let p = [
+        [0.0, 0.0, 0.0],
+        [0.0, 1e9, 0.0],
+        [1e9, 0.0, 62_500_000.0],
+        [1e9, 1e9, 187_500_000.0],
+    ];
+    let s = spline(
+        &[
+            vec![
+                [p[0][0], p[0][1], p[0][2], 1.0],
+                [p[1][0], p[1][1], p[1][2], 1.0],
+            ],
+            vec![
+                [p[2][0], p[2][1], p[2][2], 1.0],
+                [p[3][0], p[3][1], p[3][2], 1.0],
+            ],
+        ],
+        1,
+        1,
+        &[0.0, 0.0, 1.0, 1.0],
+        &[0.0, 0.0, 1.0, 1.0],
+        false,
+    );
+    let closed = |u: f64, v: f64| {
+        let w = [(1.0 - u) * (1.0 - v), (1.0 - u) * v, u * (1.0 - v), u * v];
+        let c = |i: usize| w.iter().zip(&p).map(|(w, q)| w * q[i]).sum::<f64>();
+        Vec3::new(c(0), c(1), c(2))
+    };
+    let d = 1e7;
+    let e = s
+        .extended_sides(&k(), &BoxSide::ALL, Continuity::Natural, d)
+        .unwrap();
+    let nd = dom(&e.surface);
+    assert!(nd.min().x < 0.0 && nd.min().y < 0.0 && nd.max().x > 1.0 && nd.max().y > 1.0);
+    for (a, b) in [(0.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.5, 0.5), (0.03, 0.97)] {
+        let uv = nd.evaluate(a, b);
+        let got = e.surface.evaluate_point(&k(), uv).unwrap();
+        let want = closed(uv.x, uv.y);
+        assert!(got.distance(want) <= 1e-6, "{uv:?}: {got:?} vs {want:?}");
+    }
+    let across = [
+        closed(nd.min().x, 0.5).distance(closed(0.0, 0.5)),
+        closed(nd.max().x, 0.5).distance(closed(1.0, 0.5)),
+        closed(0.5, nd.min().y).distance(closed(0.5, 0.0)),
+        closed(0.5, nd.max().y).distance(closed(0.5, 1.0)),
+    ];
+    for l in across {
+        assert!((l - d).abs() <= 1e-9 * d, "across {l} vs {d}");
+    }
+}
