@@ -360,11 +360,14 @@ fn extend_side(
             return Ok(None);
         }
     }
-    let (e, capped) = match cap {
+    // the extension parameter, the length it was solved to (the distance or its cap; none
+    // where the turn's cap sets it) and whether the cap holds it short of the distance
+    let (e, goal, capped) = match cap {
         Cap::Arc(arc) => {
             let target = distance.min(r * arc);
             (
                 reach(&|e| value(e, false), target, range, least)?,
+                Some(target),
                 target < distance,
             )
         }
@@ -379,9 +382,10 @@ fn extend_side(
             };
             let target = distance.min(length);
             match at_turn {
-                Some((e_turn, l_turn)) if l_turn <= target => (e_turn, true),
+                Some((e_turn, l_turn)) if l_turn <= target => (e_turn, None, true),
                 _ => (
                     reach(&|e| value(e, false), target, range, least)?,
+                    Some(target),
                     target < distance,
                 ),
             }
@@ -389,8 +393,30 @@ fn extend_side(
     };
     let (grown, bound) = made(e)?.ok_or_else(|| SolidError::sm_err(OP))?;
     let across = across_of(&grown, bound)?;
+    // a length solved for is met, or the extension is refused naming a length that works
+    if goal.is_some_and(|goal| !solved_length_met(&across, bound, goal, e <= least)) {
+        return Err(refused(
+            ExtendRefusal::NotExact,
+            super::workable(Some(&across), bound),
+        ));
+    }
     certify_circle(&grown, side, middle, c, size)?;
     Ok(Some((grown, across, capped, bound)))
+}
+
+/// Whether the across length `across` of an extension whose construction bound is `bound`
+/// meets the length `goal` it was solved to: the measure exact at it (converged, its rounding
+/// within the owner's `1e-6` of it) and its middle within the bisection's stop of it, at or
+/// past it at the least step (`least_step`), which can be no shorter. A bisection that ran
+/// out before meeting it does not.
+pub(super) fn solved_length_met(across: &Across, bound: f64, goal: f64, least_step: bool) -> bool {
+    let off = across.enclosure.mid() - goal;
+    super::exact(across, bound, goal)
+        && if least_step {
+            off >= -MEET * goal
+        } else {
+            off.abs() <= MEET * goal
+        }
 }
 
 /// Where `f` reaches its target ([`solve`]).
