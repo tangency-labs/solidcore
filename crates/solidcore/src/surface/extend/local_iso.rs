@@ -75,3 +75,24 @@ pub(super) fn natural(source: &Local, side: BoxSide, origin: Vec3, e: f64) -> Re
         bound,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_common_frame_continuation_keeps_the_source_even_for_large_probes() {
+        let centre = Vec3::new(1e5, 1e5, 0.0);
+        let (surface, _, _) = crate::blend::blend_corner::ball::ball_triangle_patch(
+            centre, 2.0, &[Vec3::X, Vec3::Y, Vec3::Z], 0, false,
+        ).unwrap();
+        let net = surface.gw_nurb().unwrap();
+        for side in [BoxSide::UMin, BoxSide::UMax] {
+            let source = Local::of(net, side).unwrap();
+            for e in [source.least_step().unwrap(), 1.0, 1e12] {
+                let made = natural(&source, side, centre, e).unwrap().unwrap();
+                assert!(crate::surface::extend::keeps(net, made.world.gw_nurb().unwrap(), side).unwrap(), "{side:?} by {e:e}");
+            }
+        }
+    }
+}
