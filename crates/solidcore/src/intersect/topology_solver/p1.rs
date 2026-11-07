@@ -27,6 +27,17 @@
 //! | `GlobalSolve::identical_solutions` for [`TopologySolver`], `TopologyDomains` (private) | `SmGlobalSolver::IdenticalSolutions` (not overridden upstream: the solutions' `SmObject*` resolve through [`TopologyObjects`]) |
 //!
 //! Deviations:
+//! - **Single projected point/face maxima.** These queries evaluate trimmed UV silhouettes on the
+//!   source surface, avoiding the independent 3D fit's extra measurement error.
+//!   The tracing tolerance is expressed in geometric units using the norm of the
+//!   double-cross projection, rather than ten times the query tolerance.
+//!   A single projected point/face maximum additionally checks an outward-rounded
+//!   bound over the whole face domain, with exact rectangular trim feasibility
+//!   for a new face candidate. An unavailable or unresolved certificate refuses
+//!   and restores the solver state. Other operation classes are not certified here.
+//! - **Projected tree bounds.** Outward-rounded projected boxes use the queries'
+//!   double-cross metric, including its non-unit-normal scale; the upstream
+//!   projected sphere test compared an unscaled distance with scaled answers.
 //! - **Objects.** Tree objects and solution objects are a caller-chosen handle `O`
 //!   (upstream `SmObject*`; a null pointer is `None`). Everything the solvers read
 //!   through those pointers (the curve behind a tree object, a vertex's point and
@@ -84,6 +95,7 @@
 //!   and `sign = 1.0`, matching `SmTLSPointCurve::SolveIt` and
 //!   `SmTLSPointFace::SolveIt`.
 
+use crate::curve::crv_on_surf::CrvOnSurf;
 use crate::curve::curve::p1::GlobalPointSolveOptions;
 use crate::curve::curve::p2::Curve;
 use crate::curve::curve::p8::CurveIntersectOptions;
@@ -462,6 +474,9 @@ pub struct TopologySolver<'t, 'a, O> {
     pub objects: &'a dyn TopologyObjects<O>,
     /// `m_pLocalSolver`: the local solver of the running tree solve.
     pub local_solver: Option<LocalSolver<'a, O>>,
+    /// Faces whose upper bounds must be checked against a global point query's
+    /// final feasible candidate. `None` keeps direct local solves self-contained.
+    pub(super) deferred_projected_faces: Option<Vec<O>>,
 }
 
 impl<'t, 'a, O: SolutionObject + 't> TopologySolver<'t, 'a, O> {
@@ -521,6 +536,7 @@ impl<'t, 'a, O: SolutionObject + 't> TopologySolver<'t, 'a, O> {
             kernel,
             objects,
             local_solver: None,
+            deferred_projected_faces: None,
         }
     }
 
@@ -589,29 +605,19 @@ impl<'t, 'a, O: SolutionObject + 't> TopologySolver<'t, 'a, O> {
             }
 
             SolverOperation::ProjectedMinimize | SolverOperation::ProjectedMaximize => {
-                let s1 = box1.sphere_bound();
-                let s2 = box2.sphere_bound();
-                let proj_pnt = point_project_to_plane(s2.center, s1.center, opt_vector(s, 0)?);
-                if s.operation == SolverOperation::ProjectedMinimize {
-                    let min_proj_dist = proj_pnt.distance(s1.center) - s1.radius - s2.radius;
-                    if min_proj_dist > 0.0
-                        && min_proj_dist * min_proj_dist > s.best_answer_so_far_sq
-                    {
-                        return Ok(false);
-                    }
-                }
-                if s.operation == SolverOperation::ProjectedMaximize {
-                    let max_proj_dist = proj_pnt.distance(s1.center) + s1.radius + s2.radius;
-                    if max_proj_dist * max_proj_dist < s.best_answer_so_far_sq {
-                        return Ok(false);
-                    }
-                }
-
-                // If we were unable to elimiate using above sphere tests then
-                // we just skip out here with a TRUE.
-                Ok(true)
+                let distance =
+                    super::projected_bound::projected_box_distance(box1, box2, opt_vector(s, 0)?);
+                let best =
+                    crate::blend::fillet_section::interval::Ivl::from(s.best_answer_so_far_sq)
+                        .sqrt();
+                let budget = crate::blend::fillet_section::interval::Ivl::from(tol);
+                let excluded = if s.operation == SolverOperation::ProjectedMinimize {
+                    distance.lo > (best + budget).hi
+                } else {
+                    distance.hi < (best - budget).lo
+                };
+                Ok(!excluded)
             }
-
             // If we are doing a directed minimization we can use the bounding
             // box information to eliminate additional comparisons
             SolverOperation::DirectedMinimize
@@ -837,8 +843,10 @@ impl<'t, 'a, O: SolutionObject + 't> TopologySolver<'t, 'a, O> {
                 kernel: self.kernel,
                 objects: self.objects,
                 local_solver: None,
+                deferred_projected_faces: self.deferred_projected_faces.take(),
             };
             let result = scoped.solve_trees(&object_tree, tree2, local);
+            self.deferred_projected_faces = scoped.deferred_projected_faces;
             self.restore_base(scoped.base, tree2);
             result?;
         }
@@ -1647,23 +1655,50 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
                 ts.add_sorted_solution(&sol, SortKey::BySolutionValue, true)?;
             } // end for each solution
         } else if ts.base.projected_operation {
-            let opt_vectors = ts.base.opt_vectors.clone();
-            let (trim_3d_curves, trim_uv_curves) =
-                face_silhouettes(ts.kernel, objects, face, &opt_vectors, tol)?;
-            // When we reach here there should be silhouette curves in sTrim3DCurves
-            // We can use these to do measurement to the surface.  Please note that
-            // the edges bounding the face would have already been measured.
-            for (curve, uv_curve) in trim_3d_curves.iter().zip(&trim_uv_curves) {
-                let mut sub: LocalSolver<'_, O> =
-                    LocalSolver::new(LocalSolverKind::PointCurve, self.swap_order, self.shape);
-                sub.curve_owner = Some(face);
-                sub.interval = curve.natural_interval();
-                sub.surface_curve = Some(uv_curve);
-                sub.point = self.point;
-                sub.point_vertex = self.point_vertex;
-                // (the temporary curve has no handle)
-                sub.point_curve(k, ts, curve, None)?;
+            let certified_maximum = op == SolverOperation::ProjectedMaximize
+                && ts.base.solution_requested == SolutionRequested::Single;
+            let before = certified_maximum.then(|| ts.base.clone());
+            let result: Result<()> = (|| {
+                let opt_vectors = ts.base.opt_vectors.clone();
+                let (trim_3d_curves, trim_uv_curves) = if certified_maximum {
+                    projected_face_candidates(ts.kernel, objects, face, &opt_vectors, tol)?
+                } else {
+                    face_silhouettes(ts.kernel, objects, face, &opt_vectors, tol)?
+                };
+                // When we reach here there should be silhouette curves in sTrim3DCurves
+                // We can use these to do measurement to the surface.  Please note that
+                // the edges bounding the face would have already been measured.
+                for (curve, uv_curve) in trim_3d_curves.iter().zip(&trim_uv_curves) {
+                    let mut sub: LocalSolver<'_, O> =
+                        LocalSolver::new(LocalSolverKind::PointCurve, self.swap_order, self.shape);
+                    sub.curve_owner = Some(face);
+                    sub.interval = curve.natural_interval();
+                    sub.surface_curve = Some(uv_curve);
+                    sub.point = self.point;
+                    sub.point_vertex = self.point_vertex;
+                    // (the temporary curve has no handle)
+                    sub.point_curve(k, ts, curve, None)?;
+                }
+                if certified_maximum {
+                    if let Some(faces) = &mut ts.deferred_projected_faces {
+                        super::projected_bound::certify_candidate(
+                            k, objects, face, self.point, &ts.base,
+                        )?;
+                        if !faces.contains(&face) {
+                            faces.push(face);
+                        }
+                    } else {
+                        super::projected_bound::certify(k, objects, face, self.point, &ts.base)?;
+                    }
+                }
+                Ok(())
+            })();
+            if result.is_err() {
+                if let Some(before) = before {
+                    ts.base = before;
+                }
             }
+            result?;
         } else {
             let best = best_answer_so_far(&ts.base);
             let mut sign = 1.0;
@@ -1879,7 +1914,13 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
                     } else {
                         Some(&s.opt_vectors)
                     },
-                    requested: SolutionRequested::All,
+                    requested: if op == SolverOperation::ProjectedMaximize
+                        && s.solution_requested == SolutionRequested::Single
+                    {
+                        SolutionRequested::Single
+                    } else {
+                        SolutionRequested::All
+                    },
                 },
             )?
         };
@@ -1971,6 +2012,17 @@ pub(super) fn face_silhouettes<O: SolutionObject>(
     opt_vectors: &[Vec3],
     tolerance_3d: f64,
 ) -> Result<(Vec<Curve>, Vec<Curve>)> {
+    face_silhouettes_at_tolerance(k, objects, face, opt_vectors, tolerance_3d * 10.0)
+}
+
+/// Candidate construction shared with the existing pair-query silhouette path.
+fn face_silhouettes_at_tolerance<O: SolutionObject>(
+    k: &Kernel,
+    objects: &dyn TopologyObjects<O>,
+    face: O,
+    opt_vectors: &[Vec3],
+    approx_tol: f64,
+) -> Result<(Vec<Curve>, Vec<Curve>)> {
     // locals and temporaries
     let surface = objects.face_surface(face)?;
     let srf = objects.surface(surface)?;
@@ -1982,7 +2034,6 @@ pub(super) fn face_silhouettes<O: SolutionObject>(
         .first()
         .ok_or(null_deref(OP_FACE_SIL, "no view vector"))?;
 
-    let approx_tol = tolerance_3d * 10.0;
     let angle_tol = 20.0 * PI / 180.0;
     let key = AltCacheKey {
         vec: Some(view),
@@ -2082,6 +2133,66 @@ pub(super) fn face_silhouettes<O: SolutionObject>(
         )),
         None => Err(SolidError::sm_err(OP_FACE_SIL)),
     }
+}
+
+/// Candidates for the certified single projected point/face maximum.
+fn projected_face_candidates<O: SolutionObject>(
+    k: &Kernel,
+    objects: &dyn TopologyObjects<O>,
+    face: O,
+    opt_vectors: &[Vec3],
+    tolerance: f64,
+) -> Result<(Vec<Curve>, Vec<Curve>)> {
+    let view = *opt_vectors
+        .first()
+        .ok_or(null_deref(OP_FACE_SIL, "no view vector"))?;
+    // The metric is |N x d x N|, whose operator norm is |N|^2.
+    // This only guides construction; the whole-domain check certifies the result.
+    let scale = view.length_squared();
+    let approx_tol = tolerance / scale.max(1.0);
+    if !scale.is_finite()
+        || !approx_tol.is_finite()
+        || approx_tol < 0.0
+        || (tolerance > 0.0 && approx_tol == 0.0)
+    {
+        return Err(SolidError::invalid_input(
+            OP_FACE_SIL,
+            "projection tracing tolerance is not representable",
+        ));
+    }
+    let (_, mut uv) = face_silhouettes_at_tolerance(k, objects, face, opt_vectors, approx_tol)?;
+    let surface = objects.surface(objects.face_surface(face)?)?;
+    let domain = objects.face_uv_domain(face)?;
+    // A constrained maximum can lie on a trim even when no silhouette reaches
+    // it. Include the exact boundary independently of tree traversal order.
+    if let Some((b, f)) = objects.face_entity(face) {
+        if let Some(boundary) = super::projected_bound::exact_rectangle_boundary(k, b, f, &domain)?
+        {
+            uv.extend(boundary);
+        }
+    }
+    let curves = lift_silhouette_measurements(k, &uv, surface, domain)?;
+    Ok((curves, uv))
+}
+
+/// Lift candidates onto the original surface; no fitted 3D curve is measured.
+pub(super) fn lift_silhouette_measurements(
+    k: &Kernel,
+    uv: &[Curve],
+    surface: &Surface,
+    domain: Extent2d,
+) -> Result<Vec<Curve>> {
+    uv.iter()
+        .map(|curve| {
+            Ok(Curve::from(CrvOnSurf::new(
+                k,
+                curve.clone(),
+                surface.clone(),
+                Some(domain),
+                0,
+            )?))
+        })
+        .collect()
 }
 
 /// `pFace->GetSurface()->GlobalPointSolve(uv_domain, op, point, tol,
@@ -2572,6 +2683,33 @@ pub(crate) mod tests {
         let c = Extent3d::from_bounds(1.2, 0.0, 0.0, 2.0, 1.0, 1.0);
         assert!(ts.may_contain_answer(&a, &b).unwrap());
         assert!(!ts.may_contain_answer(&a, &c).unwrap());
+    }
+
+    #[test]
+    fn projected_box_culling_retains_answers_within_query_tolerance() {
+        let k = Kernel::default();
+        let sc = scene();
+        let origin = Extent3d::from_bounds(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+        for (operation, sign) in [
+            (SolverOperation::ProjectedMinimize, 1.0),
+            (SolverOperation::ProjectedMaximize, -1.0),
+        ] {
+            let ts: TopologySolver<'_, '_, Obj> = TopologySolver::new(
+                &k,
+                &sc,
+                operation,
+                SolutionRequested::All,
+                1e-5,
+                1.0,
+                &[Vec3::new(0.0, 0.0, 2.0)],
+            );
+            // The double-cross metric scales a transverse distance by four.
+            for (offset, retained) in [(5e-6, true), (2e-5, false)] {
+                let x = (1.0 + sign * offset) / 4.0;
+                let point = Extent3d::from_bounds(x, 0.0, 0.0, x, 0.0, 0.0);
+                assert_eq!(ts.may_contain_answer(&origin, &point).unwrap(), retained);
+            }
+        }
     }
 
     #[test]

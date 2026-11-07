@@ -8,3 +8,8 @@
 
 pub mod p1;
 pub mod p2;
+
+mod projected_bound;
+
+#[cfg(test)]
+mod silhouette_accuracy_tests;
