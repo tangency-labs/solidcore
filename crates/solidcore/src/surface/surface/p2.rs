@@ -9029,14 +9029,9 @@ mod swap_definition_tests {
             Point3::new(2.0, 0.0, 3.0),
         )
         .unwrap();
-        let mut revolution = SurfOfRevolution::create_canonical(
-            &k,
-            crate::curve::curve::Curve::from(line),
-            Point3::ZERO,
-            Vec3::Z,
-            false,
-        )
-        .unwrap();
+        let mut revolution =
+            SurfOfRevolution::create_canonical(&k, Curve::from(line), Point3::ZERO, Vec3::Z, false)
+                .unwrap();
         collapse_onto_axis(revolution.base_mut());
         for (what, mut s) in [
             ("cone", Surface::from(cone)),
