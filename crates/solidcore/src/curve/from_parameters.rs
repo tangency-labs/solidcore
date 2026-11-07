@@ -531,6 +531,34 @@ fn axes(f: &Frame) -> Result<(Point3, Vec3, Vec3)> {
     Ok((p3(f.origin), x, y))
 }
 
+/// Check an ellipse's attached rational form against its analytic support using
+/// the same exact-class certificate as record construction. Public curve
+/// parameters remain the attached form's parameters.
+pub(crate) fn ellipse_form_is_exact(e: &Ellipse) -> Result<bool> {
+    let placement = e.position();
+    let (o, x, y) = (placement.origin(), placement.x_axis(), placement.y_axis());
+    let (rx, ry) = (e.x_radius(), e.y_radius());
+    let ulps = 8.0 * f64::EPSILON;
+    if !(rx > 0.0
+        && ry > 0.0
+        && rx.is_finite()
+        && ry.is_finite()
+        && [o.x, o.y, o.z].iter().all(|x| x.is_finite())
+        && (x.length() - 1.0).abs() <= ulps
+        && (y.length() - 1.0).abs() <= ulps
+        && x.dot(y).abs() <= ulps)
+    {
+        return Ok(false);
+    }
+    let mut form = e.base().clone_exact();
+    for point in form.get_or_create_gw_nurb()?.cpts_mut() {
+        if point.z == NOZ {
+            point.z = 0.0;
+        }
+    }
+    curve_on_quadrics(&form, &quadrics(o, x, y, rx, ry, false))
+}
+
 /// The plane of a conic and its sphere (a circle) or elliptic cylinder (an ellipse), as
 /// quadrics `X.A.X + 2 b.X + c = 0`.
 fn quadrics(o: Point3, x: Vec3, y: Vec3, rx: f64, ry: f64, circle: bool) -> [QuadricEquation; 2] {
