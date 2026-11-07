@@ -2710,7 +2710,8 @@ fn difference_form_certificate_table() {
     for o in [0.0, 1e3, 1e5] {
         let pl = Axis2Placement::new(Vec3::new(o, o, 0.0), Vec3::Z, Vec3::X);
         let mut cone = Cone::create_canonical(&kk, &pl, 2.0, 1.0, 1.0, false, false).unwrap();
-        cone.adjust_step_uv_domain(&kk, &Extent2d::from_bounds(0.0, 0.0, 90.0, 1.0)).unwrap();
+        cone.adjust_step_uv_domain(&kk, &Extent2d::from_bounds(0.0, 0.0, 90.0, 1.0))
+            .unwrap();
         let cone = Surface::from(cone);
         let c = Vec3::new(o, o, 0.0);
         let (net, _, _) = crate::blend::blend_corner::ball::ball_triangle_patch(
@@ -2720,7 +2721,7 @@ fn difference_form_certificate_table() {
         for d in [1e-5, 1e-4, 1e-3] {
             let e = cone.extended_by_distance(&kk, &dom(&cone), BoxSide::UMin, Continuity::Natural, d);
             println!("TABLE cone o={o:e} d={d:e} {:?}", e.as_ref().map(|e| e.as_ref().map(|e| e.across.rounding)));
-            let e = ball.extended_sides(&kk, &dom(&ball), &[BoxSide::VMin], d);
+            let e = ball.extended_sides(&kk, &[BoxSide::VMin], Continuity::Natural, d);
             println!("TABLE ball o={o:e} d={d:e} {:?}", e.as_ref().map(|e| e.sides));
         }
     }
