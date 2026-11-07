@@ -4,7 +4,7 @@
 //! sections 11 and 12: only a feasible point supplies a lower bound, and every
 //! parameter rectangle must have an upper bound inside the returned feasible
 //! point's own arithmetic enclosure. Caller slack affects retention only.
-//! Deviations: iterative subdivision; at most 32,768 boxes, depth 48 and degree
+//! Deviations: iterative subdivision; at most 32,768 boxes, depth 128 and degree
 //! 18. Unsupported definitions and unresolved bounds return a typed refusal.
 
 use super::p1::{affine_definition, AffineDefinition};
@@ -22,7 +22,10 @@ use crate::nurbs::math::{NOW, NOZ};
 
 const OP: &str = "curve::curve::projected_pair";
 const MAX_BOXES: usize = 32_768;
-const MAX_DEPTH: usize = 48;
+// Two varying parameters can alternate splits. 128 allows more than 53 binary
+// refinements per coordinate before refusing, while MAX_BOXES bounds total work.
+// At representational adjacency the explicit no-subdivision check still refuses.
+const MAX_DEPTH: usize = 128;
 // The Taylor helper forms factorials in f64: through 18! they are exact integers.
 const MAX_DEGREE: usize = 18;
 
@@ -290,15 +293,14 @@ impl Query<'_> {
         })
     }
 
-    pub(super) fn bound(&self, cell: Cell) -> Result<Ivl> {
+    /// Contract only coordinates whose objective derivative has one sign over
+    /// the entire cell. Its maximum is unchanged, including endpoint limits.
+    fn maximum_cell(&self, mut cell: Cell) -> Result<Cell> {
         let [a, b] = &self.definitions;
         let n = V3::from_vec3(self.normal);
         let (pa, da) = a.jet(cell.a.range, cell.a.knot)?;
         let (pb, db) = b.jet(cell.b.range, cell.b.knot)?;
         let d = project(sub(pa, pb), n);
-        let direct = norm_squared(d);
-        // A fixed derivative sign proves the maximum occurs on that endpoint
-        // face. This is geometric contraction, not an arithmetic allowance.
         let ds = dot(d, project(da, n));
         let reverse_dt = dot(d, project(db, n));
         let dt = Ivl::new(-reverse_dt.hi, -reverse_dt.lo);
@@ -311,11 +313,19 @@ impl Query<'_> {
                 range
             }
         };
-        let ar = endpoint(cell.a.range, ds);
-        let br = endpoint(cell.b.range, dt);
-        let (ea, _) = a.jet(ar, cell.a.knot)?;
-        let (eb, _) = b.jet(br, cell.b.knot)?;
-        let contracted = norm_squared(project(sub(ea, eb), n));
+        cell.a.range = endpoint(cell.a.range, ds);
+        cell.b.range = endpoint(cell.b.range, dt);
+        Ok(cell)
+    }
+
+    pub(super) fn bound(&self, cell: Cell) -> Result<Ivl> {
+        let cell = self.maximum_cell(cell)?;
+        let [a, b] = &self.definitions;
+        let n = V3::from_vec3(self.normal);
+        let (pa, da) = a.jet(cell.a.range, cell.a.knot)?;
+        let (pb, db) = b.jet(cell.b.range, cell.b.knot)?;
+        let d = project(sub(pa, pb), n);
+        let direct = norm_squared(d);
         let s = cell.a.range.mid();
         let t = cell.b.range.mid();
         let (ca, _) = a.jet(Ivl::from(s), cell.a.knot)?;
@@ -325,7 +335,7 @@ impl Query<'_> {
             - Ivl::from(2.0) * dot(d, project(db, n)) * (cell.b.range - Ivl::from(t));
         Ok(Ivl::new(
             direct.lo.max(centered.lo),
-            direct.hi.min(centered.hi).min(contracted.hi),
+            direct.hi.min(centered.hi),
         ))
     }
 }
@@ -408,6 +418,10 @@ pub(super) fn solve<O: SolutionObject>(
                 if visited > MAX_BOXES {
                     return Err(refused("projected maximum exhausted its enclosure budget"));
                 }
+                // Keep certified endpoint contractions in the search state.
+                // Splitting a discarded monotone coordinate wastes depth and
+                // can exhaust the budget before the remaining root is isolated.
+                let cell = query.maximum_cell(cell)?;
                 for s in [cell.a.range.lo, cell.a.range.mid(), cell.a.range.hi] {
                     for t in [cell.b.range.lo, cell.b.range.mid(), cell.b.range.hi] {
                         let candidate = query.candidate(s, t)?;

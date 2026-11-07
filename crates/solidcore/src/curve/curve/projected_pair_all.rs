@@ -325,6 +325,15 @@ pub(super) fn accumulate<O: SolutionObject>(
         )?
         .without_objects());
     }
+    let required_upper = retained
+        .iter()
+        .map(|candidate| candidate.upper)
+        .fold(0.0_f64, f64::max);
+    let best_lower = retained
+        .iter()
+        .map(|candidate| candidate.lower)
+        .fold(0.0_f64, f64::max);
+    let exclusion_cutoff = (Ivl::from(best_lower) - Ivl::from(tolerance)).lo;
     retained.sort_by(|a, b| b.reported.total_cmp(&a.reported));
     let mut accumulation = AllSolutions {
         base: GlobalSolver::new(),
@@ -336,6 +345,7 @@ pub(super) fn accumulate<O: SolutionObject>(
     accumulation.base.tolerance_3d = tolerance;
     accumulation.base.best_answer_so_far_sq = 0.0;
     accumulation.base.fixes = query.kernel.fixes;
+    let mut constructed = Vec::new();
     for candidate in retained {
         let mut answer = Solution::new();
         answer.num_objects = 2;
@@ -349,6 +359,40 @@ pub(super) fn accumulate<O: SolutionObject>(
         *answer.start.param_mut(1)? = t;
         answer.start.solution_value = candidate.reported;
         accumulation.add_sorted_solution(&answer, SortKey::BySolutionValue, false)?;
+        constructed.push((candidate, answer));
+    }
+    let mut returned_upper = 0.0_f64;
+    for answer in accumulation.base.solutions.as_slice() {
+        let candidate = query.candidate(answer.start.param(0)?, answer.start.param(1)?)?;
+        returned_upper = returned_upper.max(candidate.upper);
+    }
+    // Reported-value sorting may discard the candidate with the largest true
+    // objective enclosure. A discarded point's rounding cannot certify output.
+    if !constructed.is_empty() && returned_upper < required_upper {
+        return Err(refused(
+            "All retention discarded the global objective enclosure",
+        ));
+    }
+    for (candidate, answer) in constructed {
+        if candidate.upper < exclusion_cutoff {
+            continue;
+        }
+        let mut represented = false;
+        for returned in accumulation.base.solutions.as_slice() {
+            if accumulation.identical_solutions(&answer, returned)?.0 == SolutionPairType::Identical
+            {
+                represented = true;
+                break;
+            }
+        }
+        // Global coverage alone cannot hide a different qualifying extremum.
+        // Preserve existing duplicate equivalence; otherwise a dropped candidate
+        // must be proved outside the band, not merely lower after f64 sorting.
+        if !represented {
+            return Err(refused(
+                "All retention has an unresolved maximum-band ordering",
+            ));
+        }
     }
     Ok(accumulation.base.solutions)
 }
@@ -396,6 +440,20 @@ mod tests {
             answers.as_slice()[1].start.parameters
         );
     }
+    #[test]
+    fn all_refuses_unresolved_reported_value_ordering_without_borrowing_rounding() {
+        let a = segment([-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
+        let b = segment([-0.5, 0.5, 0.0], [0.5 + 4.0 * f64::EPSILON, 0.5, 0.0]);
+        // The two exact constrained extrema differ by only a few ulps. A
+        // reported-value winner does not prove the other is outside zero slack
+        // when their definition intervals still overlap.
+        assert!(matches!(
+            run(&a, &b, 0.0),
+            Err(SolidError::Unsupported { .. })
+        ));
+        assert_eq!(run(&a, &b, 1e-8).unwrap().len(), 2);
+    }
+
     #[test]
     fn all_zero_retention_slack_accepts_its_own_arithmetic_enclosure() {
         let a = segment([-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]);

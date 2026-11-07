@@ -159,14 +159,75 @@ fn audit(row: &Value) -> Result<Value> {
   "disproves_best_beyond_slack":admissible&&meets_target&&measured.is_finite()&&gap>tolerance}),
     )
 }
+fn solve_case(row: &Value) -> Result<Value> {
+    use solidcore::curve::curve::p9::CurveSolveOptions;
+    use solidcore::geom::global_solver::{SolutionRequested, SolverOperation};
+    use solidcore::geom::solution_array::{ObjectKind, SolutionObject};
+    #[derive(Clone, Copy, PartialEq)]
+    struct Handle;
+    impl SolutionObject for Handle {
+        fn kind(&self) -> ObjectKind {
+            ObjectKind::Curve
+        }
+    }
+    let k = Kernel::default();
+    let i = &row["input"];
+    if i["op"] != "gcs" || i["sop"] != 15 {
+        return Err("not a projected curve-pair maximum".into());
+    }
+    let mut a = build(&k, &i["c1"])?;
+    if let Some(t) = i.get("transform1").filter(|v| !v.is_null()) {
+        a.transform(
+            &k,
+            &Axis2Placement::new(vector(&t[0])?, vector(&t[1])?, vector(&t[2])?),
+            None,
+        )?;
+    }
+    let other = if i["c2"].is_null() {
+        None
+    } else {
+        Some(build(&k, &i["c2"])?)
+    };
+    let b = other.as_ref().unwrap_or(&a);
+    let normal = [vector(&i["vecs"][0])?];
+    let opts = CurveSolveOptions::<Handle> {
+        handles: [None, None],
+        opt_vectors: Some(&normal),
+        target_distance: i["target"].as_f64(),
+    };
+    let requested = if i["requested"] == 0 {
+        SolutionRequested::Single
+    } else {
+        SolutionRequested::All
+    };
+    match a.global_curve_solve(
+        &k,
+        &interval(&i["ivl1"])?,
+        b,
+        &interval(&i["ivl2"])?,
+        SolverOperation::ProjectedMaximize,
+        number(&i["tol"])?,
+        &opts,
+        requested,
+    ) {
+        Ok(solutions) => Ok(
+            json!({"case":row["case"],"solutions":solutions.as_slice().iter().map(|s|
+            json!({"parameters":[s.start.parameters[0],s.start.parameters[1]],"value":s.start.solution_value})
+        ).collect::<Vec<_>>()}),
+        ),
+        Err(error) => Ok(json!({"case":row["case"],"solver_error":format!("{error:?}")})),
+    }
+}
+
 fn main() -> Result<()> {
     let path = std::env::args().nth(1).ok_or("usage: check INPUT.jsonl")?;
+    let solve = std::env::args().nth(2).is_some_and(|arg| arg == "--solve");
     for line in std::fs::read_to_string(path)?
         .lines()
         .filter(|s| !s.trim().is_empty())
     {
         let row: Value = serde_json::from_str(line.trim_start_matches('\u{feff}'))?;
-        match audit(&row) {
+        match if solve { solve_case(&row) } else { audit(&row) } {
             Ok(result) => println!("{result}"),
             Err(e) => println!(
                 "{}",
