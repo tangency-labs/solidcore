@@ -140,3 +140,29 @@ repeated-root refusal, reversed traversal, non-unit projection, circular/rank-lo
 refusal and unresolved closed seams. Shared All retention/ordered deduplication,
 public dispatch, broad affected-case audit and full independent review remain
 pending; this checkpoint does not claim a production fix.
+
+
+## Strict construction and retention integration checkpoint
+
+The follow-up now reuses the existing All accumulator for reported-value retention
+and ordered duplicate handling. Each isolated root keeps a geometric objective
+bound, tightened by the edge Taylor enclosure when one operand is fixed. A
+representative is one actual feasible endpoint/midpoint pair, never a hull of
+several point intervals. Its reported scalar must lie in its own definition
+arithmetic enclosure, and the root objective upper bound must fit that same
+point enclosure before any retention is applied. Otherwise construction refuses.
+Caller tolerance is not an optimization budget, following the explicit
+[maintainer contract](https://github.com/tangency-labs/solidcore/pull/2840#discussion_r4496188362).
+
+The initial structural selector is identical native noncircular **open** ellipse
+arcs (stored STEP span strictly between 0 and 360 degrees); the numerical proof
+separately verifies actual regular open traversal. Full-turn gen2263 and gen2689
+remain outside this implemented class until seam/alias construction is covered.
+Exactly gen0472 selects among the frozen 75 All records. Distinct offset circles
+remain unselected. Selected projected circles, rank loss and root ambiguity
+produce explicit refusal, not fallback to the old solver.
+
+This checkpoint remains test-only. New strict solve regressions for original
+gen0472 at retention 0, 1e-5 and 0.5 are awaiting compilation; the earlier five-test
+result applies only to the previous prototype. Production dispatch and golden
+updates remain pending the strict tests, independent review and cohort replay.
