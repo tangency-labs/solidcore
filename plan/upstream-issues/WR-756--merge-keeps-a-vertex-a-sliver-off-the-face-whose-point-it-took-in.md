@@ -1,4 +1,4 @@
-#### WR-755. `MergeIntoObject` keeps a vertex where it stood when its tolerance ball holds the other point, so the vertex can lie more than XSectTol3d off one of its faces and `SmVertex::AssertValid` test 1 fails
+#### WR-756. `MergeIntoObject` keeps a vertex where it stood when its tolerance ball holds the other point, so the vertex can lie more than XSectTol3d off one of its faces and `SmVertex::AssertValid` test 1 fails
 - **Severity:** Invalid result (a valid-volume body that fails `check(All)`: `SmVertex::Test #1 Bad Vertex Gap`, plus `SmBrep::Test #1/#3 Bad Gap` where the vertex tolerance was set to twice the gap)
 - **Area:** Boolean (point classification merge, vertex placement)
 - **Location:** at the pin `3fd5b95`: `source/SMLib/src/SmPointClass.cpp:1040-1059` (`SmPointClassification::MergeIntoObject`, the "use VertexPt location and ZoneTol3d" branch), against `source/SMLib/src/SmVertex.cpp:1720-1801` (`IsWithinXSectTol3dOfFaces`) and `SmVertex.cpp:2745-2751` (`AssertValid` test 1).
