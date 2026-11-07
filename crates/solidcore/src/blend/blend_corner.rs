@@ -230,7 +230,7 @@ impl BlendCorner {
 /// a Turn, Mitred. Not two solver edge uses among three or four: no event
 /// ([`BlendCornerEvent::None`]).
 ///
-/// Not the fork's (#2844): a Join is one section both blends reach. Where an edge stands
+/// Not the fork's: a Join is one section both blends reach. Where an edge stands
 /// between their faces on a side, that section ends where the rails cross it, and the two
 /// balls there are one only where the faces meet tangentially: their centres stand a radius
 /// off each face, so they lie the radius times the faces' angle apart. A sharp side edge
