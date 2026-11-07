@@ -69,12 +69,11 @@
 //!   `SmVector3d::CCWAngleBetween` (ignored in `sm_GetFilletRadius`) cannot fail there:
 //!   its projected vectors pass a `100 * SM_EFF_ZERO_SQ` length test before
 //!   `AngleBetween`, whose zero test is the smaller `SM_EFF_ZERO_SQ`.
-//! - **Status audit (#483, changed by #2009 to the fork's choice).** With
-//!   `fillet_corner_statuses`, as the fork does (tangency-labs/smlib 66b02de),
-//!   `sm_TestG1Continuity` finds no tangency when an end tangent cannot be evaluated,
-//!   and `CheckAndFixDegeneracy` refines a vertex's UV point only with a computed one.
-//!   The binormal evaluations and the G1 angle keep upstream's ignored status (the fork
-//!   keeps their `SE`). Off by default, the legacy fallbacks above remain.
+//! - **Status audit (#483, the fork's choice since #2009).** As the fork does
+//!   (tangency-labs/smlib 66b02de), `sm_TestG1Continuity` finds no tangency when an end
+//!   tangent cannot be evaluated, and `CheckAndFixDegeneracy` refines a vertex's UV
+//!   point only with a computed one. The binormal evaluations and the G1 angle keep
+//!   upstream's ignored status (the fork keeps their `SE`).
 //! - **Undefined inputs.** Where upstream dereferences null (an edge without a curve or
 //!   edge uses, an edge use without a radial, vertex use or edge) or indexes past the
 //!   curve array of `sm_CreateSrfOfRevolution`, the port returns
@@ -229,18 +228,6 @@ fn evaluate_tangent(k: &Kernel, curve: &Curve, t: f64) -> Result<Option<[Vec3; 2
     })
 }
 
-/// A tangent of [`evaluate_tangent`] in `sm_TestG1Continuity`: upstream ignores a failed
-/// evaluation and compares the unset `SM_UNDEF_DOUBLE` vectors; with
-/// `fillet_corner_statuses` (the fork's change, tangency-labs/smlib 66b02de) a tangent
-/// that cannot be evaluated is no tangency (`None`).
-fn g1_tangent(k: &Kernel, pv: Option<[Vec3; 2]>) -> Option<[Vec3; 2]> {
-    match pv {
-        Some(pv) => Some(pv),
-        None if k.fixes.fillet_corner_statuses => None,
-        None => Some([Vec3::UNDEF, Vec3::UNDEF]),
-    }
-}
-
 /// `pEU->EvaluateBinormal(t, FALSE, pnt, bin, pOptTangent, pOptNormal)` with the
 /// status ignored (`SE`): binormal, tangent and face use normal, `SM_UNDEF_DOUBLE`
 /// vectors when it fails.
@@ -275,8 +262,9 @@ fn edge_of(b: &Brep, eu: EdgeuseId, op: &'static str) -> Result<EdgeId> {
 /// # Errors
 ///
 /// [`SolidError::InvalidInput`] for an edge without a curve (upstream dereferences
-/// null). With `fillet_corner_statuses`, an end tangent that cannot be evaluated gives
-/// `(false, None)` (the fork's change, tangency-labs/smlib 66b02de).
+/// null). An end tangent that cannot be evaluated gives `(false, None)` (the fork's
+/// change, tangency-labs/smlib 66b02de; upstream compared the unset `SM_UNDEF_DOUBLE`
+/// vectors).
 pub fn test_g1_continuity(
     k: &Kernel,
     b: &Brep,
@@ -299,8 +287,8 @@ pub fn test_g1_continuity(
         ivl1.max()
     };
 
-    // get Edge1 tangent at vertex
-    let Some(pv1) = g1_tangent(k, evaluate_tangent(k, crv1, param1)?) else {
+    // get Edge1 tangent at vertex (fork 66b02de: none is no tangency)
+    let Some(pv1) = evaluate_tangent(k, crv1, param1)? else {
         return Ok((false, None));
     };
 
@@ -313,8 +301,8 @@ pub fn test_g1_continuity(
         ivl2.min()
     };
 
-    // get Edge2 tangent at vertex
-    let Some(pv2) = g1_tangent(k, evaluate_tangent(k, crv2, param2)?) else {
+    // get Edge2 tangent at vertex (fork 66b02de: none is no tangency)
+    let Some(pv2) = evaluate_tangent(k, crv2, param2)? else {
         return Ok((false, None));
     };
 
@@ -2175,19 +2163,14 @@ impl FilletCorner {
                 // when filletVertexuse->Rail->Face == origVertexuse->Face
                 let fu = vertexuse::faceuse(target, vu)?.ok_or_else(null)?;
                 if eu1::faceuse_face(target, fu)? == Some(face) {
-                    // refine the filletVertex->TsectPnt->UVpoint position (the
-                    // projection's status is not checked: a failure leaves sUV's
-                    // SM_UNDEF_DOUBLE members; with fillet_corner_statuses, as the fork
-                    // 66b02de, only a computed point refines the position)
+                    // refine the filletVertex->TsectPnt->UVpoint position (upstream
+                    // does not check the projection's status and writes sUV's
+                    // SM_UNDEF_DOUBLE members; as the fork 66b02de, only a computed
+                    // point refines the position)
                     let uv = ignored(
                         vertexuse::compute_uv_point(k, target, vu, true).map(Some),
                         None,
                     )?;
-                    let uv = match uv {
-                        Some(uv) => Some(uv),
-                        None if k.fixes.fillet_corner_statuses => None,
-                        None => Some(Point2::UNDEF),
-                    };
                     let srf = if rail_index == 0 {
                         SrfIndex::First
                     } else {
@@ -3647,15 +3630,9 @@ mod tests {
         let _evaluation_fails = curve
             .evaluate(&k, b.edge(e).unwrap().interval.min(), 1, true, true)
             .unwrap_err();
-        // upstream tests the unset (SM_UNDEF_DOUBLE, about 1e-61) tangents, which are
-        // shorter than SM_EFF_ZERO, so it too finds no tangency: the fork's change gives
-        // the same outcome by its own reason
-        assert_eq!(
-            test_g1_continuity(&k, &b, Some(v), Some(e), Some(e), 2.0).unwrap(),
-            (false, None)
-        );
-        // fork 66b02de: a tangent that cannot be evaluated is no tangency
-        k.fixes.fillet_corner_statuses = true;
+        // fork 66b02de: a tangent that cannot be evaluated is no tangency (upstream
+        // tested the unset SM_UNDEF_DOUBLE tangents, about 1e-61, shorter than
+        // SM_EFF_ZERO, and found none either)
         assert_eq!(
             test_g1_continuity(&k, &b, Some(v), Some(e), Some(e), 2.0).unwrap(),
             (false, None)

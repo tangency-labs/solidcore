@@ -120,8 +120,8 @@
 //!   knots and extension of a UV curve) see the B-spline part.
 //! - **Code behind stubs** is ported as upstream runs it, unchecked statuses included:
 //!   `HaveTangentGaps` ignores `NormalizedEvaluate`'s and `ClosestPoint`'s statuses (a
-//!   failed evaluation leaves the point at `SmPoint3d`'s `SM_UNDEF_DOUBLE` default, a
-//!   failed closest point counts as `bSuccess == FALSE`), `TrimExtendedEdge` ignores the
+//!   sample whose evaluation fails is skipped, see below; a failed closest point counts
+//!   as `bSuccess == FALSE`), `TrimExtendedEdge` ignores the
 //!   `Evaluate` / `EvaluateNormal` of a solution the same way, and `ExtendTrimEdges` keeps
 //!   `pOtherUVCurve` as the edge use's or radial's own UV trim curve when there is no
 //!   other extended surface (`cpp:1452`, `1458`), passes it to `TrimExtendedEdge` and trims
@@ -160,10 +160,10 @@
 //!   upstream's stay on the surfaces between curve replacements.
 //! - **Recursion.** None.
 //!
-//! With `offset_tangent_gap_statuses` (#483; the fork's behaviour since #2009, fork
-//! 4803d6d), `HaveTangentGaps` skips a sample it cannot evaluate (it measured an unset
-//! point); `ClosestPoint`'s status stays dropped, its success flag decides. A successful
-//! query without a solution retains its existing meaning.
+//! As the fork does (#483; fork 4803d6d, since #2009), `HaveTangentGaps` skips a sample
+//! it cannot evaluate (upstream measured an unset point); `ClosestPoint`'s status stays
+//! dropped, its success flag decides. A successful query without a solution retains its
+//! existing meaning.
 //!
 
 use crate::blend::fillet_standard_solver::p1::CircularCrossSectionFsg;
@@ -366,12 +366,9 @@ fn tangent_gap_samples<B>(
 ) -> Result<bool> {
     for i in 0..=num_samples {
         let param = (i as f64 * 1.0) / (num_samples as f64 * 1.0);
-        let evaluation = ignore_soft(evaluate(k, brep, param))?;
-        let pnt = match evaluation {
-            Some(pnt) => pnt,
-            // fork 4803d6d: a sample that cannot be evaluated shows no gap
-            None if k.fixes.offset_tangent_gap_statuses => continue,
-            None => Vec3::new(UNDEF_DOUBLE, UNDEF_DOUBLE, UNDEF_DOUBLE),
+        // fork 4803d6d: a sample that cannot be evaluated shows no gap
+        let Some(pnt) = ignore_soft(evaluate(k, brep, param))? else {
+            continue;
         };
         // `ClosestPoint`'s status is dropped (the fork keeps it so: its `bSuccess`
         // says whether a closest point was found)
@@ -4184,10 +4181,9 @@ impl OffsetGeometryCreation {
     ///
     /// # Errors
     ///
-    /// Evaluation and closest-point statuses are ignored (`Unported` aside); with
-    /// `offset_tangent_gap_statuses` a sample that cannot be evaluated is skipped
-    /// (fork 4803d6d). A successful closest-point query without a solution does not
-    /// establish a gap.
+    /// Evaluation and closest-point statuses are ignored (`Unported` aside); a sample
+    /// that cannot be evaluated is skipped (fork 4803d6d). A successful closest-point
+    /// query without a solution does not establish a gap.
     /// [`SolidError::InvalidInput`] for an edge use without edge.
     pub fn have_tangent_gaps<O: ClassObject + SolutionObject>(
         &self,
