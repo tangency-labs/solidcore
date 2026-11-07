@@ -152,3 +152,68 @@ projection normal, an early error on a noneligible request, supplied-answer
 provenance, cancellation followed by retry, and explicit branch accumulation.
 The final strict library/tests lint rerun also passes. The affected-unit
 output/refusal audit, final native output artifacts and broad gates remain pending.
+
+
+## Frozen affected-output audit
+
+The before checkpoint is `cf11091a9`, the current pair-query parent with its
+reviewed wrapper/caller corrections and native cone/sphere/half-torus goldens.
+The standalone `affine_face_output_audit_3110.rs` links the checkpoint's existing
+`goldens` library, enumerates the unit's real case list, then replays the frozen
+JSON inputs without applying known-failure exclusions. No Cargo rebuild or golden
+blessing is part of that step. Its baseline contains 2,575 cases: 1,975 fixtures
+and 600 generated vertex-tree controls. Fourteen fixtures exercise the selected
+native affine curve/edge-face Single projected maximum class: four cylinders,
+two cones, four spheres and four tori. The two known-wrong full-torus outputs are
+included rather than excluded from the audit.
+
+The frozen input SHA-256 is
+`eb9347c55dd6d8b1c503f09db342adc0608829057dda36639c3da402bcb29398`;
+the structured before-output SHA-256 is
+`dcc2cd45d4071d9b0fd3efc200717c96c4ecf9cb8cdb96f812865932246a6a42`.
+The after executable must consume those exact inputs. A separate final-generator
+freeze must match them, or fixture/generator changes must be accounted for before
+comparing solver behavior.
+
+For every case, compare success/error/deferred/rejected state and the complete raw
+output, independently of its golden exclusion. List every changed row and every
+new refusal; an unchanged status alone does not validate a changed answer. A new
+refusal requires its concrete cause and scope, never a replacement golden that
+hides it. Successful focal rows must satisfy all of these obligations:
+
+1. Decode the original entry's parameter order and verify the curve/edge parameter
+   against its requested native interval and UV against the actual face domain.
+   The static adapter collapses some object handles to the same display id, so
+   raw display ids alone do not establish ownership; dedicated owner/history
+   regressions check the real handles.
+2. Recreate the exact native constructors used by the adapter and evaluate both
+   returned points. Record reported scalar, native metric, difference and an
+   independently evaluated definition-point enclosure. The reported scalar must
+   lie in that returned pair's own enclosure; caller retention is not an error
+   allowance.
+3. Apply the native homogeneous residual certificate to both defining line
+   endpoints over the complete native face domain, with the returned pair's own
+   upper endpoint as threshold. Convexity then covers the entire affine segment.
+   Record both endpoint proof results and an intentionally too-small threshold
+   control. A closed-form ideal bound is additional geometric evidence, not a
+   substitute for the native defining-net certificate.
+4. Classify a fitted scalar outside the native point enclosure separately from a
+   feasible point that fails the whole-domain bound. Preserve before evidence even
+   when both defects occur in the same full-torus record.
+
+The 600 generated p2 tree cases do not contain native curve/face maxima. The 28
+focused native/domain tests therefore form a separate required history/lifecycle
+cohort: direct/tree parity, vertex/edge/face accumulation, scalar-pruning trap,
+different owners, trims, unknown history refusal, bounded work, external targets,
+raw partial-entry refusal, fresh request reuse and intentional branch accumulation.
+Their pass counts must not be described as before/after golden coverage. Final
+validation also runs the complete affected topology units and generic solver
+checks after the final parent merge; only confirmed repaired records may graduate.
+
+Propagation waits for the final parent gates. Relative to this branch's original
+`5211a7ad2` base, `cf11091a9` overlaps production changes in `curve/curve/p1.rs`:
+retain the parent's exact wrapper and centered affine certificates together with
+this change's endpoint-enclosure API and bounded endpoint reduction. The ledger,
+native face construction and fresh-request hook do not overlap that checkpoint's
+production changes. Merge the final parent stack once, do not rebase, and rerun the
+frozen output comparison and focused lifecycle checks on the merged head.
