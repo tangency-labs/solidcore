@@ -5,6 +5,7 @@
 //! enclosure. Caller tolerance selects retained answers, not solve accuracy.
 //! The mean-value enclosure uses the existing outward-rounded NURBS partials.
 //! Deviations: no recursion; at most 16,384 boxes and 48 bisections along a path.
+//! Native candidate refinement uses at most 48 active-set Newton steps.
 
 use crate::blend::fillet_section::certificate::{knot_cuts, nurbs_partials_over_piece};
 use crate::blend::fillet_section::interval::Ivl;
@@ -58,13 +59,127 @@ pub(super) fn certify_candidate<O: crate::geom::solution_array::SolutionObject>(
     checked_candidate(k, objects, face, point, solver).map(|_| ())
 }
 
-fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
+/// Improve the chosen feasible face point on the native definition. This is
+/// candidate construction only; the whole-domain certificate remains mandatory.
+pub(super) fn refine_candidate<O: crate::geom::solution_array::SolutionObject>(
     k: &Kernel,
     objects: &dyn super::p1::TopologyObjects<O>,
     face: O,
     point: Vec3,
-    solver: &crate::geom::global_solver::GlobalSolver<'_, O>,
-) -> Result<(Nurbs, Extent2d, Vec3, f64)> {
+    solver: &mut crate::geom::global_solver::GlobalSolver<'_, O>,
+) -> Result<()> {
+    let Some(solution) = solver.solutions.get(0) else {
+        return Ok(());
+    };
+    if !solution.objects.contains(&Some(face)) {
+        return Ok(());
+    }
+    let (_, domain, normal, _) = checked_candidate(k, objects, face, point, solver)?;
+    let surface = objects.surface(objects.face_surface(face)?)?;
+    let uv = Vec2::new(solution.start.param(0)?, solution.start.param(1)?);
+    let refined = refine_uv(k, surface, &domain, point, normal, uv)?;
+    let value = normal
+        .cross(surface.evaluate_point(k, refined)? - point)
+        .cross(normal)
+        .length();
+    if value.is_finite() && value >= solution.start.solution_value {
+        if let Some(solution) = solver.solutions.get_mut(0) {
+            *solution.start.param_mut(0)? = refined.x;
+            *solution.start.param_mut(1)? = refined.y;
+            solution.start.solution_value = value;
+        }
+        solver.best_answer_so_far_sq = solver.best_answer_so_far_sq.max(value * value);
+    }
+    Ok(())
+}
+
+/// Bounded active-set Newton refinement of squared projected distance. A fixed
+/// domain side releases only when the gradient points into the domain. No caller
+/// retention tolerance is a convergence condition; non-improving/undefined steps
+/// stop candidate refinement and leave acceptance to the independent certificate.
+fn refine_uv(
+    k: &Kernel,
+    surface: &crate::surface::surface::Surface,
+    domain: &Extent2d,
+    point: Vec3,
+    normal: Vec3,
+    mut uv: Vec2,
+) -> Result<Vec2> {
+    use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
+    let project = |v: Vec3| normal.cross(v).cross(normal);
+    let metric = |uv| -> Result<f64> {
+        Ok(project(surface.evaluate_point(k, uv)? - point).length_squared())
+    };
+    let mut value = metric(uv)?;
+    for _ in 0..48 {
+        k.check_cancelled(OP)?;
+        let d = surface.evaluate(
+            k,
+            uv,
+            2,
+            2,
+            EvaluateFlags {
+                non_zero_tangents: false,
+                ..EvaluateFlags::default()
+            },
+        )?;
+        let at = |u: usize, v: usize| {
+            d.get(u)
+                .and_then(|row| row.get(v))
+                .copied()
+                .ok_or_else(|| refused("missing native surface derivative"))
+        };
+        let q = project(at(0, 0)? - point);
+        let du = project(at(1, 0)?);
+        let dv = project(at(0, 1)?);
+        let gu = q.dot(du);
+        let gv = q.dot(dv);
+        let huu = du.dot(du) + q.dot(project(at(2, 0)?));
+        let huv = du.dot(dv) + q.dot(project(at(1, 1)?));
+        let hvv = dv.dot(dv) + q.dot(project(at(0, 2)?));
+        if ![gu, gv, huu, huv, hvv].iter().all(|x| x.is_finite()) {
+            break;
+        }
+        let hold_u = (uv.x == domain.min.x && gu <= 0.0) || (uv.x == domain.max.x && gu >= 0.0);
+        let hold_v = (uv.y == domain.min.y && gv <= 0.0) || (uv.y == domain.max.y && gv >= 0.0);
+        let delta = match (hold_u, hold_v) {
+            (true, true) => break,
+            (true, false) if hvv < 0.0 => Vec2::new(0.0, -gv / hvv),
+            (false, true) if huu < 0.0 => Vec2::new(-gu / huu, 0.0),
+            (false, false) => {
+                let determinant = huu * hvv - huv * huv;
+                if !(huu < 0.0 && hvv < 0.0 && determinant > 0.0 && determinant.is_finite()) {
+                    break;
+                }
+                Vec2::new(
+                    (huv * gv - hvv * gu) / determinant,
+                    (huv * gu - huu * gv) / determinant,
+                )
+            }
+            _ => break,
+        };
+        let next = Vec2::new(
+            (uv.x + delta.x).max(domain.min.x).min(domain.max.x),
+            (uv.y + delta.y).max(domain.min.y).min(domain.max.y),
+        );
+        if ![next.x, next.y].iter().all(|x| x.is_finite()) || next == uv {
+            break;
+        }
+        let next_value = metric(next)?;
+        if !next_value.is_finite() || next_value < value {
+            break;
+        }
+        uv = next;
+        value = next_value;
+    }
+    Ok(uv)
+}
+
+fn face_net<O: crate::geom::solution_array::SolutionObject>(
+    k: &Kernel,
+    objects: &dyn super::p1::TopologyObjects<O>,
+    face: O,
+) -> Result<Nurbs> {
     use crate::blend::fillet_section::station::as_b_spline;
     use crate::surface::surface::SurfaceKind;
     let surface = objects.surface(objects.face_surface(face)?)?;
@@ -84,7 +199,17 @@ fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
         _ => return Err(refused("projected maximum has no exact surface enclosure")),
     }
     let bs = as_b_spline(k, surface)?.ok_or_else(|| refused("missing surface net"))?;
-    let net = Nurbs::of(&bs)?;
+    Nurbs::of(&bs)
+}
+
+fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
+    k: &Kernel,
+    objects: &dyn super::p1::TopologyObjects<O>,
+    face: O,
+    point: Vec3,
+    solver: &crate::geom::global_solver::GlobalSolver<'_, O>,
+) -> Result<(Nurbs, Extent2d, Vec3, f64)> {
+    let net = face_net(k, objects, face)?;
     let domain = objects.face_uv_domain(face)?;
     let normal = *solver
         .opt_vectors
@@ -105,28 +230,41 @@ fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
     {
         return Err(refused("projected maximum has no finite error budget"));
     }
-    // Other objects supply a previously validated feasible incumbent. Without
-    // this face's point enclosure, grant it no additional arithmetic allowance.
+    // Enclose the actual returned object's point, even while certifying another
+    // face. Never borrow the face under comparison's evaluation uncertainty.
     let mut upper = reported;
-    if solution.objects.contains(&Some(face)) {
+    let candidate_face = solution
+        .objects
+        .iter()
+        .flatten()
+        .copied()
+        .find(|object| object.kind() == crate::geom::solution_array::ObjectKind::Face);
+    if let Some(candidate_face) = candidate_face {
+        let candidate_net;
+        let (own_net, own_domain) = if candidate_face == face {
+            (&net, domain)
+        } else {
+            candidate_net = face_net(k, objects, candidate_face)?;
+            (&candidate_net, objects.face_uv_domain(candidate_face)?)
+        };
         if solution.solution_type != crate::geom::solution_array::SolutionType::SingleValue {
             return Err(refused(
                 "projected maximum requires a single feasible point",
             ));
         }
         let (b, f) = objects
-            .face_entity(face)
+            .face_entity(candidate_face)
             .ok_or_else(|| refused("missing face boundary"))?;
-        if !is_exact_rectangle(k, b, f, &domain)? {
+        if !is_exact_rectangle(k, b, f, &own_domain)? {
             return Err(refused(
                 "candidate feasibility needs an exact rectangular trim boundary",
             ));
         }
         let uv = Vec2::new(solution.start.param(0)?, solution.start.param(1)?);
-        if !uv.x.is_finite() || !uv.y.is_finite() || !domain.contains_point(uv, 0.0) {
+        if !uv.x.is_finite() || !uv.y.is_finite() || !own_domain.contains_point(uv, 0.0) {
             return Err(refused("projected candidate is outside the face domain"));
         }
-        let value = value_at(&net, uv, point, normal)?;
+        let value = value_at(own_net, uv, point, normal)?;
         if !(value.lo.is_finite()
             && value.hi.is_finite()
             && value.lo <= reported
@@ -137,6 +275,35 @@ fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
             ));
         }
         upper = value.hi;
+    } else if solution.num_variables == 0 {
+        // A point/vertex answer has no parameter uncertainty: its stored native
+        // vertex coordinates define the point. A query vertex can also be named;
+        // use only a point whose metric actually encloses the reported scalar.
+        let mut found = false;
+        for object in solution.objects.iter().flatten() {
+            if object.kind() != crate::geom::solution_array::ObjectKind::Vertex {
+                continue;
+            }
+            let value = norm_squared(projected(
+                relative(V3::from_vec3(objects.vertex_point(*object)?), point),
+                V3::from_vec3(normal),
+            ))
+            .sqrt();
+            if value.lo.is_finite()
+                && value.hi.is_finite()
+                && value.lo <= reported
+                && reported <= value.hi
+            {
+                upper = value.hi;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return Err(refused(
+                "returned vertex value is outside its own enclosure",
+            ));
+        }
     }
     Ok((net, domain, normal, upper))
 }
@@ -526,6 +693,51 @@ mod tests {
             v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             pw,
         }
+    }
+
+    #[test]
+    fn projected_native_refinement_removes_small_normal_candidate_deficit() {
+        use crate::surface::sphere::{Sphere, SphereOptions};
+        use crate::surface::surface::Surface;
+        let k = Kernel::default();
+        let mut sphere = Sphere::new(
+            &k,
+            Vec3::new(0.0, 0.0, -1.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Extent2d::from_bounds(0.0, -60.0, 360.0, 60.0),
+            0.5,
+            SphereOptions::default(),
+        )
+        .unwrap();
+        sphere.make_nurb(&k).unwrap();
+        let surface = Surface::from(sphere);
+        let domain = surface.natural_uv_domain_with_nurb(&k).unwrap();
+        let angle = 45.0_f64.to_radians();
+        let normal = Vec3::new(angle.sin(), 0.0, angle.cos()) * 0.001;
+        let point = Vec3::new(0.2, 0.3, 2.0);
+        let expected = 0.5 * normal.length_squared()
+            + normal
+                .cross(point - Vec3::new(0.0, 0.0, -1.0))
+                .cross(normal)
+                .length();
+        let net = Nurbs::of(
+            &crate::blend::fillet_section::station::as_b_spline(&k, &surface)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        // Actual prior PointFace candidate, approximately 110 own-enclosure
+        // widths below the closed-form projected sphere maximum.
+        let before = Vec2::new(0.9641190747292663, 0.13249057300975678);
+        assert!(value_at(&net, before, point, normal).unwrap().hi < expected);
+        let after = refine_uv(&k, &surface, &domain, point, normal, before).unwrap();
+        assert!(domain.contains_point(after, 0.0));
+        let bound = value_at(&net, after, point, normal).unwrap();
+        assert!(
+            bound.lo <= expected && expected <= bound.hi,
+            "refined={after:?}, own={bound:?}, expected={expected:.17e}"
+        );
     }
 
     #[test]
