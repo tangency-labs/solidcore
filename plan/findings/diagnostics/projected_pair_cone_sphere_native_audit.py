@@ -1,4 +1,4 @@
-﻿"""Replay the native cone/sphere certificate without changing a Cargo target.
+"""Replay the native cone/sphere certificate without changing a Cargo target.
 
 Example (from repository root, using the exact already-built kernel):
 python plan/findings/diagnostics/projected_pair_cone_sphere_native_audit.py \
@@ -37,7 +37,7 @@ transformed = text.replace(
 with tempfile.TemporaryDirectory(prefix='native-cone-sphere-proof-') as folder:
     out = Path(folder)
     copied = out / 'projected_residual_audit_copy.rs'
-    copied.write_text(transformed, encoding='utf-8', newline='\n')
+    copied.write_bytes(transformed.encode('utf-8'))
     assert copied.read_text(encoding='utf-8') == transformed
     print('residual_source_sha256=' + hashlib.sha256(source).hexdigest(), flush=True)
     print('residual_import_adapted_sha256=' + hashlib.sha256(copied.read_bytes()).hexdigest(), flush=True)

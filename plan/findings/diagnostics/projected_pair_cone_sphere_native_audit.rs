@@ -41,6 +41,9 @@ fn own_metric(net: &Nurbs, uv: Vec2, q: Vec3) -> solidcore::Result<Ivl> {
     let a = nurbs_partials_over_piece(net, ku, kv, uv.x, uv.x, uv.y, uv.y, 0)?.at(0, 0);
     let x = a.x - Ivl::from(q.x);
     let y = a.y - Ivl::from(q.y);
+    // Ivl::checked rounds both computed square endpoints outward; see
+    // blend/fillet_section/interval.rs:77 (round_down/up at lines 37/44).
+    // Subsequent additions and sqrt also use checked outward endpoints.
     let sq = |z: Ivl| Ivl::checked(z.mig() * z.mig(), z.mag() * z.mag());
     Ok((sq(x) + sq(y) + sq(Ivl::from(0.))).sqrt())
 }
