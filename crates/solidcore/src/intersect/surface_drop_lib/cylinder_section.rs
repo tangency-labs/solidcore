@@ -1045,9 +1045,7 @@ mod tests {
             let interval = Extent1d::from_min_max(0.0, 1.0);
             let out = s.drop_curve_base::<Obj>(&k, &domain, &curve, &interval, 1e-6, false, None);
             assert_eq!(
-                out.as_ref()
-                    .err()
-                    .and_then(crate::error::SolidError::sm_status),
+                out.as_ref().err().and_then(SolidError::sm_status),
                 Some(crate::error::SM_ERR_NULL_POINTER),
                 "exact UV enabled: {enabled}"
             );
