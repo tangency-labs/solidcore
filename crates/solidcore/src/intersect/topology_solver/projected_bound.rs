@@ -6,7 +6,8 @@
 //! The global proof bounds a homogeneous Bernstein residual over every knot patch.
 //! Deviations: no recursion; global certification supports degree at most 8 per
 //! axis, 4,096 cells, and depth 64. Higher degrees explicitly refuse. Native
-//! candidate refinement uses at most 48 active-set Newton steps.
+//! candidate construction uses at most 4096 UV seeds, each refined with at most
+//! 48 active-set Newton steps. Seeds are proposals, never a completeness proof.
 
 use crate::blend::fillet_section::certificate::{knot_cuts, nurbs_partials_over_piece};
 use crate::blend::fillet_section::interval::Ivl;
@@ -56,6 +57,216 @@ pub(super) fn certify_candidate<O: crate::geom::solution_array::SolutionObject>(
     solver: &crate::geom::global_solver::GlobalSolver<'_, O>,
 ) -> Result<()> {
     checked_candidate(k, objects, face, point, solver).map(|_| ())
+}
+
+/// Construct feasible native UV proposals without solving temporary lifted
+/// curves. Knot-cell and silhouette seeds are independently refined before
+/// selection; only the unchanged whole-face certificate proves completeness.
+pub(super) fn native_candidates<O: crate::geom::solution_array::SolutionObject>(
+    k: &Kernel,
+    objects: &dyn super::p1::TopologyObjects<O>,
+    face: O,
+    point: Vec3,
+    vectors: &[Vec3],
+    hints: &[crate::curve::curve::Curve],
+) -> Result<Vec<(Vec2, f64)>> {
+    let net = face_net(k, objects, face)?;
+    let domain = objects.face_uv_domain(face)?;
+    let normal = *vectors
+        .first()
+        .ok_or_else(|| refused("missing projection vector"))?;
+    if ![
+        point.x,
+        point.y,
+        point.z,
+        normal.x,
+        normal.y,
+        normal.z,
+        domain.min.x,
+        domain.min.y,
+        domain.max.x,
+        domain.max.y,
+    ]
+    .iter()
+    .all(|x| x.is_finite())
+        || domain.min.x >= domain.max.x
+        || domain.min.y >= domain.max.y
+    {
+        return Err(refused("native proposal domain or metric is not finite"));
+    }
+    let (brep, entity) = objects
+        .face_entity(face)
+        .ok_or_else(|| refused("missing face boundary"))?;
+    if !is_exact_rectangle(k, brep, entity, &domain)? {
+        return Err(refused(
+            "native proposals require an exact rectangular trim",
+        ));
+    }
+    let surface = objects.surface(objects.face_surface(face)?)?;
+    native_uv_proposals(k, surface, &net, &domain, point, normal, hints)
+}
+
+/// Refine native proposals within a caller-proved rectangular face domain.
+/// Returned values enclose their own native point; no global optimality is
+/// implied until the independent whole-domain certificate succeeds.
+pub(super) fn native_uv_proposals(
+    k: &Kernel,
+    surface: &crate::surface::surface::Surface,
+    net: &Nurbs,
+    domain: &Extent2d,
+    point: Vec3,
+    normal: Vec3,
+    hints: &[crate::curve::curve::Curve],
+) -> Result<Vec<(Vec2, f64)>> {
+    const MAX_SEEDS: usize = 4096;
+    // Count active cells before knot_cuts allocates the cut vectors. This is a
+    // work bound, not an accuracy threshold or a surface-class special case.
+    let active_spans = |knots: &[f64], lo: f64, hi: f64| -> Result<usize> {
+        let mut count = 1_usize;
+        let mut previous = None;
+        for &knot in knots {
+            k.check_cancelled(OP)?;
+            if knot > lo && knot < hi && previous != Some(knot) {
+                count = count
+                    .checked_add(1)
+                    .ok_or_else(|| refused("native UV proposal budget exceeded"))?;
+                if count > MAX_SEEDS {
+                    return Err(refused("native UV proposal budget exceeded"));
+                }
+            }
+            previous = Some(knot);
+        }
+        Ok(count)
+    };
+    let u_count = active_spans(&net.u, domain.min.x, domain.max.x)?;
+    let v_count = active_spans(&net.v, domain.min.y, domain.max.y)?;
+    let cell_count = u_count
+        .checked_mul(v_count)
+        .filter(|&n| n <= MAX_SEEDS)
+        .ok_or_else(|| refused("native UV proposal cell budget exceeded"))?;
+    // The global proof supports 4096 cells. Proposals need not cover each one:
+    // always retain the rectangle corners, then spread the bounded grid budget
+    // across the whole cell list. Reserve half for trace hints when present.
+    let hint_reserve = if hints.is_empty() { 0 } else { MAX_SEEDS / 2 };
+    let selected_cells = cell_count.min((MAX_SEEDS - 4 - hint_reserve) / 9);
+    let grid_count = selected_cells * 9 + 4;
+    let us = knot_cuts(&net.u, net.p, net.nu, domain.min.x, domain.max.x, 0)?;
+    let vs = knot_cuts(&net.v, net.q, net.nv, domain.min.y, domain.max.y, 0)?;
+    let mut seeds = Vec::new();
+    let mut append = |uv: Vec2| -> Result<()> {
+        if !uv.x.is_finite() || !uv.y.is_finite() {
+            return Err(refused("non-finite native UV seed"));
+        }
+        // A trace is only a hint. Projecting it into the already-proved rectangle
+        // produces a feasible parameter, not a statement about the trace's error.
+        let uv = Vec2::new(
+            uv.x.max(domain.min.x).min(domain.max.x),
+            uv.y.max(domain.min.y).min(domain.max.y),
+        );
+        if seeds.len() >= MAX_SEEDS {
+            return Err(refused("native UV proposal budget exceeded"));
+        }
+        seeds.push(uv);
+        Ok(())
+    };
+    for uv in [
+        domain.min,
+        Vec2::new(domain.min.x, domain.max.y),
+        Vec2::new(domain.max.x, domain.min.y),
+        domain.max,
+    ] {
+        append(uv)?;
+    }
+    for index in 0..selected_cells {
+        k.check_cancelled(OP)?;
+        let source = distributed_index(index, selected_cells, cell_count)?;
+        let ui = source
+            .checked_div(vs.len())
+            .ok_or_else(|| refused("missing native v cells"))?;
+        let vi = source
+            .checked_rem(vs.len())
+            .ok_or_else(|| refused("missing native v cells"))?;
+        let &(u0, u1, _) = us.get(ui).ok_or_else(|| refused("missing native u cell"))?;
+        let &(v0, v1, _) = vs.get(vi).ok_or_else(|| refused("missing native v cell"))?;
+        for u in [u0, 0.5 * u0 + 0.5 * u1, u1] {
+            for v in [v0, 0.5 * v0 + 0.5 * v1, v1] {
+                append(Vec2::new(u, v))?;
+            }
+        }
+    }
+    // Trace density is chosen by its construction tolerance, not by this
+    // optimization problem. A bounded set of parameter hints avoids making
+    // dense traces a reason to reject an otherwise certifiable native maximum.
+    // Endpoints and the midpoint are included; this is not a sampling proof.
+    let remaining = MAX_SEEDS - grid_count;
+    let hint_count = hints.len().min(remaining / 3);
+    if hint_count > 0 {
+        let per_hint = remaining
+            .checked_div(hint_count)
+            .ok_or_else(|| refused("native UV proposal budget exceeded"))?
+            .min(17);
+        // An even number of intervals includes both endpoints and the midpoint.
+        let steps = i32::try_from(((per_hint - 1) / 2) * 2)
+            .map_err(|_| refused("native UV proposal budget exceeded"))?;
+        for index in 0..hint_count {
+            k.check_cancelled(OP)?;
+            // Cover the entire hint list even when it exceeds the budget.
+            let source_index = distributed_index(index, hint_count, hints.len())?;
+            let hint = hints
+                .get(source_index)
+                .ok_or_else(|| refused("missing native UV hint"))?;
+            let interval = hint.natural_interval();
+            if !interval.min().is_finite()
+                || !interval.max().is_finite()
+                || interval.min() > interval.max()
+            {
+                return Err(refused("non-finite native UV hint interval"));
+            }
+            for step in 0..=steps {
+                let fraction = f64::from(step) / f64::from(steps);
+                let t = (1.0 - fraction) * interval.min() + fraction * interval.max();
+                let p = hint.evaluate_point(k, t)?;
+                append(Vec2::new(p.x, p.y))?;
+            }
+        }
+    }
+    let mut proposals = Vec::new();
+    for seed in seeds {
+        k.check_cancelled(OP)?;
+        let uv = refine_uv(k, surface, domain, point, normal, seed)?;
+        let value = normal
+            .cross(surface.evaluate_point(k, uv)? - point)
+            .cross(normal)
+            .length();
+        let own = value_at(net, uv, point, normal)?;
+        if !domain.contains_point(uv, 0.0)
+            || !value.is_finite()
+            || !own.lo.is_finite()
+            || !own.hi.is_finite()
+            || !(own.lo <= value && value <= own.hi)
+        {
+            return Err(refused(
+                "native UV proposal does not fit its own point enclosure",
+            ));
+        }
+        proposals.push((uv, value));
+    }
+    Ok(proposals)
+}
+
+/// Spread bounded proposals across a full ordered source list, including its
+/// first and last elements whenever at least two proposals are available.
+fn distributed_index(index: usize, count: usize, length: usize) -> Result<usize> {
+    if count == 0 || count > length || index >= count {
+        return Err(refused("invalid native proposal distribution"));
+    }
+    if count == 1 {
+        return Ok(length / 2);
+    }
+    index
+        .checked_mul(length - 1)
+        .and_then(|n| n.checked_div(count - 1))
+        .ok_or_else(|| refused("native UV proposal distribution overflow"))
 }
 
 /// Improve the chosen feasible face point on the native definition. This is
@@ -621,6 +832,92 @@ pub(super) use super::projected_residual::maximum_is_bounded;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_native_proposals_cannot_certify_a_missed_peak() {
+        use crate::curve::curve::Curve;
+        use crate::nurbs::b_spline_curve::BSplineCurve;
+        use crate::nurbs::b_spline_surface::BSplineSurface;
+        use crate::nurbs::math::CPoint;
+        use crate::nurbs::srf_basic::Surface as NativeSurface;
+        use crate::surface::surface::Surface;
+        let k = Kernel::default();
+        // x(u)=120*u^2*(1-u)^2*(u-.5)^2. Every coarse grid and hint
+        // seed is zero with zero gradient, but x(.25)=135/512 > 0.
+        let rows = [0.0, 0.0, 2.0, -3.0, 2.0, 0.0, 0.0]
+            .into_iter()
+            .map(|x| vec![CPoint::new(x, 0.0, 0.0, 1.0); 2])
+            .collect();
+        let spline = BSplineSurface::from_nurb(
+            NativeSurface::new(
+                rows,
+                6,
+                1,
+                [vec![0.0; 7], vec![1.0; 7]].concat(),
+                vec![0.0, 0.0, 1.0, 1.0],
+            )
+            .unwrap(),
+            false,
+        );
+        let net = Nurbs::of(&spline).unwrap();
+        let surface = Surface::from(spline);
+        let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        let hint = Curve::from(
+            BSplineCurve::create_line_segment(
+                2,
+                Vec3::new(0.5, 0.0, 0.0),
+                Vec3::new(0.5, 1.0, 0.0),
+            )
+            .unwrap(),
+        );
+        let proposals =
+            native_uv_proposals(&k, &surface, &net, &domain, Vec3::ZERO, Vec3::Z, &[hint]).unwrap();
+        assert!(!proposals.is_empty());
+        let witness = surface.evaluate_point(&k, Vec2::new(0.25, 0.5)).unwrap().x;
+        assert_eq!(witness, 135.0 / 512.0);
+        for (uv, _) in proposals {
+            let own = value_at(&net, uv, Vec3::ZERO, Vec3::Z).unwrap();
+            assert!(own.hi < witness);
+            assert!(!maximum_is_bounded(&k, &net, &domain, Vec3::ZERO, Vec3::Z, own.hi).unwrap());
+        }
+    }
+
+    #[test]
+    fn bounded_proposals_preserve_a_512_cell_affine_definition() {
+        use crate::nurbs::b_spline_surface::BSplineSurface;
+        use crate::nurbs::math::CPoint;
+        use crate::nurbs::srf_basic::Surface as NativeSurface;
+        use crate::surface::surface::Surface;
+        let rows = (0..=32)
+            .map(|x| {
+                (0..=16)
+                    .map(|y| CPoint::new(f64::from(x), f64::from(y), 0.0, 1.0))
+                    .collect()
+            })
+            .collect();
+        let knots = |n| {
+            std::iter::once(0.0)
+                .chain((0..=n).map(f64::from))
+                .chain(std::iter::once(f64::from(n)))
+                .collect()
+        };
+        let spline = BSplineSurface::from_nurb(
+            NativeSurface::new(rows, 1, 1, knots(32), knots(16)).unwrap(),
+            false,
+        );
+        let net = Nurbs::of(&spline).unwrap();
+        let surface = Surface::from(spline);
+        let k = Kernel::default();
+        let domain = Extent2d::from_bounds(0.0, 0.0, 32.0, 16.0);
+        let proposals =
+            native_uv_proposals(&k, &surface, &net, &domain, Vec3::ZERO, Vec3::Z, &[]).unwrap();
+        assert!(proposals.len() <= 4096);
+        let &(uv, value) = proposals.iter().max_by(|a, b| a.1.total_cmp(&b.1)).unwrap();
+        assert_eq!(uv, Vec2::new(32.0, 16.0));
+        assert_eq!(value, 1280.0_f64.sqrt());
+        let own = value_at(&net, uv, Vec3::ZERO, Vec3::Z).unwrap();
+        assert!(maximum_is_bounded(&k, &net, &domain, Vec3::ZERO, Vec3::Z, own.hi).unwrap());
+    }
 
     fn hidden_peak() -> Nurbs {
         // S(u,v)=(4u(1-u),4v(1-v),0): all four corners project to

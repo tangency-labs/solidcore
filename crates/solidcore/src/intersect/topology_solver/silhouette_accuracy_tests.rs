@@ -80,18 +80,31 @@ fn cached_silhouette_measurements_use_the_source_surface() {
         .unwrap()
         .unwrap();
     let uv_curves = copies.curves_uv.unwrap();
-    let curves = super::p1::lift_silhouette_measurements(&k, &uv_curves, &surface, domain).unwrap();
-    assert_eq!((curves.len(), uv_curves.len()), (1, 1));
-    let point = curves[0].evaluate_point(&k, 0.5).unwrap();
-    let uv_point = uv_curves[0].evaluate_point(&k, 0.5).unwrap();
-    assert_eq!(uv_point, Vec3::new(0.5, 0.25, 0.0));
-    assert_eq!(
-        point,
-        surface
-            .evaluate_point(&k, Vec2::new(uv_point.x, uv_point.y))
+    let net = crate::blend::fillet_section::station::Nurbs::of(
+        &crate::blend::fillet_section::station::as_b_spline(&k, &surface)
             .unwrap()
-    );
-    assert_eq!(point.z, 0.0);
+            .unwrap(),
+    )
+    .unwrap();
+    let proposals = super::projected_bound::native_uv_proposals(
+        &k,
+        &surface,
+        &net,
+        &domain,
+        Vec3::ZERO,
+        Vec3::X,
+        &uv_curves,
+    )
+    .unwrap();
+    assert!(!proposals.is_empty());
+    for (uv, value) in proposals {
+        let point = surface.evaluate_point(&k, uv).unwrap();
+        assert_eq!(point.z, 0.0);
+        assert_eq!(value, Vec3::X.cross(point).cross(Vec3::X).length());
+        // The cached fit has z=10. Native proposals use z=0 even when that
+        // coordinate contributes to the projection metric.
+        assert!(value <= 1.0);
+    }
     // No matching tolerance is a cache miss, not an empty successful query.
     assert!(cache
         .has_cached_curves(
@@ -332,9 +345,186 @@ fn projected_brep_maximum_is_certified_against_the_final_candidate_in_either_ord
     }
 }
 
-fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expected: f64) {
+#[test]
+fn projected_full_sphere_pole_seeds_remain_only_proposals() {
+    let mut k = Kernel::default();
+    let mut sphere = Sphere::new(
+        &k,
+        Vec3::new(0.0, 0.0, -1.0),
+        Vec3::X,
+        Vec3::Y,
+        Extent2d::from_bounds(0.0, -90.0, 360.0, 90.0),
+        0.5,
+        SphereOptions::default(),
+    )
+    .unwrap();
+    sphere.make_nurb(&k).unwrap();
+    let surface = Surface::from(sphere);
+    let net = crate::blend::fillet_section::station::Nurbs::of(
+        &crate::blend::fillet_section::station::as_b_spline(&k, &surface)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    let domain = surface.natural_uv_domain_with_nurb(&k).unwrap();
+    let query = Vec3::new(0.2, 0.3, 2.0);
+    let proposals = super::projected_bound::native_uv_proposals(
+        &k,
+        &surface,
+        &net,
+        &domain,
+        query,
+        Vec3::Z,
+        &[],
+    )
+    .unwrap();
+    let &(uv, value) = proposals.iter().max_by(|a, b| a.1.total_cmp(&b.1)).unwrap();
+    let own = super::projected_bound::value_at(&net, uv, query, Vec3::Z).unwrap();
+    assert!(own.lo <= value && value <= own.hi);
+    assert!(
+        super::projected_bound::maximum_is_bounded(&k, &net, &domain, query, Vec3::Z, own.hi)
+            .unwrap()
+    );
+    // Native proposals at degenerate poles do not make a collapsed trim an
+    // exact four-edge rectangle. The end-to-end feasibility gate still refuses.
+    let mut b = new_brep(&mut k, USE_DEFAULT, USE_DEFAULT).unwrap();
+    let mut state = ArenaNotifyState::new(&b);
+    let mut env = state.env(None);
+    let mut marks = Marks::default();
+    let keys = |f| arena_identity(CacheObject::Face(f));
+    let mut fenv = FaceBuildEnv {
+        env: &mut env,
+        marks: &mut marks,
+        this_face: &keys,
+    };
+    let face = create_face_from_surface(&mut k, &mut b, Some(surface), &domain, &mut fenv).unwrap();
+    assert!(!super::projected_bound::is_exact_rectangle(&k, &b, face, &domain).unwrap());
+    let objects = BrepObjects {
+        preparation: None,
+        brep: &b,
+        brep_id: BrepId::from_index(0),
+        cache: None,
+        keys: &arena_identity,
+        owner_of: &|_| None,
+    };
+    assert!(super::projected_bound::native_candidates(
+        &k,
+        &objects,
+        CacheObject::Face(face),
+        query,
+        &[Vec3::Z],
+        &[]
+    )
+    .is_err());
+}
+
+/// Exact native constructors and query values of static-analytic-faces.json's
+/// seven entry=5, operation=15 regressions, including the VertexFace dispatch.
+#[test]
+fn native_vertex_face_proposals_cover_the_seven_analytic_fixtures() {
+    use crate::geom::axis2_placement::Axis2Placement;
+    use crate::surface::cone::Cone;
+    for angle in [360.0, 180.0] {
+        let k = Kernel::default();
+        let mut cylinder = Cone::new_cylinder_bounded(
+            Vec3::new(-0.5, 0.0, 0.0),
+            Vec3::Y,
+            Vec3::Z,
+            0.5,
+            0.0,
+            angle,
+            1.0,
+            false,
+            false,
+            false,
+        );
+        cylinder.make_nurb(&k).unwrap();
+        check_face_projection_kind(
+            k,
+            &Surface::from(cylinder),
+            Vec3::Z,
+            (0.7_f64 * 0.7 + 0.8 * 0.8).sqrt(),
+            true,
+        );
+    }
+    let k = Kernel::default();
+    let tangent = (30.0 * std::f64::consts::PI / 180.0).tan();
+    let placement = Axis2Placement::new(Vec3::new(-0.5, 0.0, 0.0), Vec3::Y, Vec3::Z);
+    let cone = Cone::create_canonical(
+        &k,
+        &placement,
+        0.5 * tangent,
+        1.5 * tangent,
+        1.0,
+        false,
+        false,
+    )
+    .unwrap();
+    let y = 1.5 * tangent + 0.3;
+    check_face_projection_kind(
+        k,
+        &Surface::from(cone),
+        Vec3::Z,
+        (0.3_f64 * 0.3 + y * y).sqrt(),
+        true,
+    );
+    for (angle, latitude, expected) in [
+        (360.0, 60.0, 0.5 + (0.2_f64 * 0.2 + 0.3 * 0.3).sqrt()),
+        (180.0, 45.0, (0.7_f64 * 0.7 + 0.3 * 0.3).sqrt()),
+    ] {
+        let k = Kernel::default();
+        let mut sphere = Sphere::new(
+            &k,
+            Vec3::new(0.0, 0.0, -1.0),
+            Vec3::X,
+            Vec3::Y,
+            Extent2d::from_bounds(0.0, -latitude, angle, latitude),
+            0.5,
+            SphereOptions::default(),
+        )
+        .unwrap();
+        sphere.make_nurb(&k).unwrap();
+        check_face_projection_kind(k, &Surface::from(sphere), Vec3::Z, expected, true);
+    }
+    for angle in [360.0, 180.0] {
+        let k = Kernel::default();
+        let mut torus = Torus::new(
+            &k,
+            Vec3::new(0.0, 0.0, -2.0),
+            Vec3::Y,
+            Vec3::Z,
+            Extent2d::from_bounds(0.0, 0.0, angle, 360.0),
+            1.0,
+            0.25,
+            TorusOptions::default(),
+        )
+        .unwrap();
+        torus.make_nurb(&k).unwrap();
+        check_face_projection_kind(
+            k,
+            &Surface::from(torus),
+            Vec3::Z,
+            0.25 + (0.2_f64 * 0.2 + 1.3 * 1.3).sqrt(),
+            true,
+        );
+    }
+}
+
+fn check_face_projection(k: Kernel, surface: &Surface, normal: Vec3, expected: f64) {
+    check_face_projection_kind(k, surface, normal, expected, false);
+}
+
+fn check_face_projection_kind(
+    mut k: Kernel,
+    surface: &Surface,
+    normal: Vec3,
+    expected: f64,
+    vertex_query: bool,
+) {
     let domain = surface.natural_uv_domain_with_nurb(&k).unwrap();
     let mut b = new_brep(&mut k, USE_DEFAULT, USE_DEFAULT).unwrap();
+    let query = Vec3::new(0.2, 0.3, 2.0);
+    let vertex = vertex_query.then(|| b.add_vertex(query).unwrap());
     let mut state = ArenaNotifyState::new(&b);
     let mut env = state.env(None);
     let mut marks = Marks::default();
@@ -377,7 +567,6 @@ fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expecte
         keys: &arena_identity,
         owner_of: &|_| None,
     };
-    let query = Vec3::new(0.2, 0.3, 2.0);
     let tol = 1e-5;
     let mut solver = TopologySolver::new(
         &k,
@@ -388,10 +577,20 @@ fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expecte
         0.0,
         &[normal],
     );
-    let mut local = LocalSolver::new(LocalSolverKind::PointFace, false, None);
+    let kind = if vertex_query {
+        LocalSolverKind::VertexFace
+    } else {
+        LocalSolverKind::PointFace
+    };
+    let mut local = LocalSolver::new(kind, false, None);
     local.set_point(query);
     local
-        .solve_it(&k, &mut solver, None, Some(CacheObject::Surface(face)))
+        .solve_it(
+            &k,
+            &mut solver,
+            vertex.map(CacheObject::Vertex),
+            Some(CacheObject::Surface(face)),
+        )
         .unwrap();
     assert_eq!(solver.base.solutions.len(), 1);
     let solution = &solver.base.solutions.as_slice()[0];
@@ -410,15 +609,8 @@ fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expecte
     let enclosed = super::projected_bound::value_at(&net, uv, query, normal).unwrap();
     assert!(enclosed.lo <= measured && measured <= enclosed.hi);
     assert!(
-        super::projected_bound::maximum_is_bounded(
-            &k,
-            &net,
-            &domain,
-            query,
-            normal,
-            measured + tol * 0.9,
-        )
-        .unwrap(),
+        super::projected_bound::maximum_is_bounded(&k, &net, &domain, query, normal, enclosed.hi,)
+            .unwrap(),
         "whole-domain bound did not close: normal={normal:?}"
     );
     if normal == Vec3::new(0.0, 0.0, 1.0) && expected > 0.86 && expected < 0.87 {
