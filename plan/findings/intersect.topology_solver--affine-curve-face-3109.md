@@ -324,6 +324,8 @@ are independently disproved by the native admissible pair
 `(0.2500000000000002,0,-0.5669872981077808)`, and their distance
 `0.5669872981077808` is below the reported `0.9142135623730951`.
 This ordinary-minimum defect is outside the projected-maximum construction.
+It is tracked separately in [#3119](https://github.com/tangency-labs/solidcore/issues/3119),
+with the independently rerun public reproduction and confirmed native witness.
 A fresh Windows immediate-parent replay is required to determine attribution;
 these outputs have not been blessed. The
 native fourteen-record audit includes both currently excluded full-torus cases,
