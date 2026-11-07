@@ -2047,6 +2047,48 @@ mod tests {
     }
 
     #[test]
+    fn projected_pair_maximum_includes_constrained_corners() {
+        let k = Kernel::default();
+        let a = segment([-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
+        let b = segment([-0.5, 0.5, 0.0], [0.5, 0.5, 0.0]);
+        let normal = [Vec3::new(0.0, 0.0, 1.0)];
+        let opts = CurveSolveOptions {
+            handles: handles(&a, &b),
+            opt_vectors: Some(&normal),
+            ..CurveSolveOptions::default()
+        };
+        let sols = a
+            .global_curve_solve(
+                &k,
+                &a.natural_interval(),
+                &b,
+                &b.natural_interval(),
+                SolverOperation::ProjectedMaximize,
+                1e-8,
+                &opts,
+                SolutionRequested::Single,
+            )
+            .unwrap();
+        assert_eq!(sols.len(), 1);
+        let solution = &sols.as_slice()[0];
+        let expected = 2.5_f64.sqrt();
+        assert!(
+            (solution.start.solution_value - expected).abs() <= 1e-8,
+            "reported={}, expected={expected}",
+            solution.start.solution_value
+        );
+        let ta = solution.start.parameters[0];
+        let tb = solution.start.parameters[1];
+        assert!(a.natural_interval().contains_value(ta, 0.0));
+        assert!(b.natural_interval().contains_value(tb, 0.0));
+        let measured = a
+            .evaluate_point(&k, ta)
+            .unwrap()
+            .distance(b.evaluate_point(&k, tb).unwrap());
+        assert!((solution.start.solution_value - measured).abs() <= 1e-8);
+    }
+
+    #[test]
     fn minimum_between_parallel_segments() {
         let k = Kernel::default();
         let a = segment([0.0, 0.0, 0.0], [4.0, 0.0, 0.0]);
