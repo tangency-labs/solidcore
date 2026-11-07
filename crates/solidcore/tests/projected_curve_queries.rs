@@ -1179,7 +1179,7 @@ mod bounds {
                     numerator[i + j] += projected[i].dot(projected[j]);
                 }
             }
-            // Distance squared is N/WÂ²; its derivative has numerator H=N'W-2NW'.
+            // Distance squared is N/W²; its derivative has numerator H=N'W-2NW'.
             let mut h = [0.0; 6];
             for i in 1..5 {
                 for j in 0..3 {
