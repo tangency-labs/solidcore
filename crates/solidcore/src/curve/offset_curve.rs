@@ -26,6 +26,8 @@
 //! | [`OffsetCurve::is_kind_of`]                  | `IsKindOf`                                       |
 //!
 //! Deviations:
+//! - Reversed defining knots, query intervals and continuity order follow the
+//!   evaluator's mirrored parameter map; non-invertible or unordered knots refuse.
 //! - **Nesting.** `new` returns `InvalidInput` when the base curve would nest
 //!   deeper than [`MAX_GEOMETRY_NESTING`](crate::surface::surface::p2::MAX_GEOMETRY_NESTING)
 //!   (32; upstream fixtures nest at most 3), which bounds the recursive dispatch,
@@ -374,7 +376,7 @@ impl OffsetCurve {
 
     /// The parameter on the base curve (mirrored within the interval when
     /// reversed).
-    fn base_parameter(&self, t: f64) -> f64 {
+    pub(crate) fn base_parameter(&self, t: f64) -> f64 {
         if self.reversed != 0 {
             self.interval.min() + self.interval.max() - t
         } else {
@@ -633,14 +635,55 @@ impl OffsetCurve {
         Ok(pv[0] + bin * self.distance)
     }
 
-    /// The base curve's unique knots and multiplicities, optionally limited to
-    /// `interval` (`GetKnots`).
+    /// The defining knots in this offset's parameterization, optionally limited
+    /// to `interval` (`GetKnots`). Reversal mirrors the query and knot order.
     ///
     /// # Errors
     ///
-    /// Those of the base curve's `GetKnots`.
+    /// Those of the base curve's `GetKnots`, or `InvalidInput` when the mirrored
+    /// knots are nonfinite, unordered or do not map back to the defining knot.
     pub fn knots(&self, k: &Kernel, interval: Option<&Extent1d>) -> Result<(Vec<f64>, Vec<usize>)> {
-        self.base()?.knots(k, interval)
+        if !self.is_reversed() {
+            return self.base()?.knots(k, interval);
+        }
+        let mapped = interval.map(|range| {
+            Extent1d::from_min_max(
+                self.base_parameter(range.max()),
+                self.base_parameter(range.min()),
+            )
+        });
+        if mapped.is_some_and(|range| {
+            !range.min().is_finite() || !range.max().is_finite() || range.min() > range.max()
+        }) {
+            return Err(SolidError::invalid_input(
+                OP_BASE,
+                "invalid reversed knot interval",
+            ));
+        }
+        let (mut knots, mut multiplicities) = self.base()?.knots(k, mapped.as_ref())?;
+        knots.reverse();
+        multiplicities.reverse();
+        for knot in &mut knots {
+            let mirrored = self.base_parameter(*knot);
+            if self.base_parameter(mirrored) != *knot {
+                return Err(SolidError::invalid_input(
+                    OP_BASE,
+                    "reversed defining knot does not roundtrip through the evaluator map",
+                ));
+            }
+            *knot = mirrored;
+        }
+        if knots.iter().any(|t| !t.is_finite())
+            || knots
+                .windows(2)
+                .any(|pair| matches!(pair, [a, b] if a >= b))
+        {
+            return Err(SolidError::invalid_input(
+                OP_BASE,
+                "reversed defining knots are not finite and strictly increasing",
+            ));
+        }
+        Ok((knots, multiplicities))
     }
 
     /// The base curve's natural knot count (`GetNumberNaturalKnots`).
@@ -662,7 +705,11 @@ impl OffsetCurve {
         k: &Kernel,
         angle_tol: f64,
     ) -> Result<(ContinuityType, Vec<ContinuityType>)> {
-        self.base()?.calculate_continuities(k, angle_tol)
+        let (minimum, mut continuities) = self.base()?.calculate_continuities(k, angle_tol)?;
+        if self.is_reversed() {
+            continuities.reverse();
+        }
+        Ok((minimum, continuities))
     }
 
     /// `SetContext`: contexts are not modelled, nothing to do.

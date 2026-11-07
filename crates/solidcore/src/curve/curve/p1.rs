@@ -28,6 +28,8 @@
 //!   propagate solve errors rather than publishing uncertified partial results.
 //!   Native joins are omitted only after defining continuity/collinearity or
 //!   one-sided objective-sign proofs, never from an approximate G1 label alone.
+//! - **Wrapper join proof.** Affine-wrapper recursion follows the owned geometry
+//!   tree with the shared 32-level nesting bound.
 //! - **Projected endpoint extrema.** Eligible finite boundaries are candidates
 //!   independently of the stationary-point search. Finding a stationary
 //!   point does not establish that it beats the interval endpoints.
@@ -1163,16 +1165,37 @@ pub(crate) fn dyadic_four_products_zero(terms: [(f64, f64, bool); 4]) -> bool {
     dyadic_products_zero(&terms)
 }
 
-/// At most eight products need 4199 bits; the same 4224-bit storage suffices.
+/// At most eight two-factor products need 4199 bits; 4224-bit storage suffices.
 fn dyadic_products_zero(terms: &[(f64, f64, bool)]) -> bool {
-    /// Split a finite binary64 value into its sign, integer significand and exponent.
+    if terms.len() > 8 {
+        return false;
+    }
+    let mut products = [([0.0; 2], false); 8];
+    for (slot, &(a, b, negative)) in products.iter_mut().zip(terms) {
+        *slot = ([a, b], negative);
+    }
+    products.get(..terms.len()).is_some_and(|products| {
+        dyadic_product_order::<2, 66>(products) == Some(std::cmp::Ordering::Equal)
+    })
+}
+
+/// Four factors are needed for cross products of rational tangent numerators.
+fn dyadic_four_product_order(terms: &[([f64; 4], bool)]) -> Option<std::cmp::Ordering> {
+    dyadic_product_order::<4, 132>(terms)
+}
+
+/// Exact sign of at most eight products of four finite binary64 values.
+/// Each product needs at most 212 significand bits, with exponent [-4296,3884].
+/// Including the three carry bits for eight terms requires at most 8395 bits;
+/// two fixed 8448-bit accumulators bound storage independently of the inputs.
+fn dyadic_product_order<const FACTORS: usize, const WORDS: usize>(
+    terms: &[([f64; FACTORS], bool)],
+) -> Option<std::cmp::Ordering> {
     fn parts(value: f64) -> Option<(bool, u64, i32)> {
         if !value.is_finite() {
             return None;
         }
         let bits = value.to_bits();
-        // The mask is at most 2047, so this cast is exact. Finite inputs exclude
-        // 2047; the resulting power-of-two exponent is in [-1074, 971].
         let exponent = ((bits >> 52) & 0x7ff) as i32;
         let fraction = bits & ((1_u64 << 52) - 1);
         Some((
@@ -1189,53 +1212,68 @@ fn dyadic_products_zero(terms: &[(f64, f64, bool)]) -> bool {
             },
         ))
     }
-    /// Accumulate one shifted word with checked access to the fixed-capacity sum.
-    fn add_word(words: &mut [u64; 66], word: u64, shift: usize) -> bool {
+    fn add_word(words: &mut [u64], word: u64, shift: usize) -> Option<()> {
         let mut index = shift / 64;
-        // Constant nonzero divisor; remainder is 0..=63, below u128's 128 bits.
         let mut carry = u128::from(word) << (shift % 64);
         while carry != 0 {
-            let Some(slot) = words.get_mut(index) else {
-                return false;
-            };
-            // Two u64 values sum to at most 2^65-2. The cast deliberately keeps
-            // the low word; sum >> 64 carries its single high bit forward.
+            let slot = words.get_mut(index)?;
             let sum = u128::from(*slot) + (carry & u128::from(u64::MAX));
             *slot = sum as u64;
             carry = (carry >> 64) + (sum >> 64);
             index += 1;
         }
-        true
+        Some(())
+    }
+    // Only these audited fixed sizes are supported; neither comes from input.
+    if !((FACTORS == 2 && WORDS == 66) || (FACTORS == 4 && WORDS == 132)) {
+        return None;
     }
     if terms.len() > 8 {
-        return false;
+        return None;
     }
-    let mut positive = [0_u64; 66];
-    let mut negative = [0_u64; 66];
-    for &(a, b, negate) in terms {
-        let Some((sa, ma, ea)) = parts(a) else {
-            return false;
-        };
-        let Some((sb, mb, eb)) = parts(b) else {
-            return false;
-        };
-        // Each significand is below 2^53, so multiplication fits in 106 bits.
-        // ea+eb+2148 is in [0,4090], fitting both i32 and wasm32 usize. The
-        // second word's shift is at most 4154, within the 4224-bit accumulator.
-        let product = u128::from(ma) * u128::from(mb);
-        let shift = (ea + eb + 2148) as usize;
-        let words = if sa ^ sb ^ negate {
-            &mut negative
-        } else {
-            &mut positive
-        };
-        if !add_word(words, product as u64, shift)
-            || !add_word(words, (product >> 64) as u64, shift + 64)
-        {
-            return false;
+    let mut positive = [0_u64; WORDS];
+    let mut negative = [0_u64; WORDS];
+    for (factors, negate) in terms {
+        let mut sign = *negate;
+        let mut exponent = 0;
+        let mut product = [1_u64, 0, 0, 0];
+        for factor in factors {
+            let (negative_factor, mantissa, power) = parts(*factor)?;
+            sign ^= negative_factor;
+            exponent += power;
+            let mut carry = 0_u128;
+            for word in &mut product {
+                // A 64-bit limb times a 53-bit significand plus its carry fits
+                // in 118 bits. Four significands need only 212 of 256 bits.
+                let value = u128::from(*word) * u128::from(mantissa) + carry;
+                *word = value as u64;
+                carry = value >> 64;
+            }
+            if carry != 0 {
+                return None;
+            }
+        }
+        // Two/four finite exponents plus2148/4296 are nonnegative and at most
+        // 4090/8180. The guarded constant conversion fits both i32 and wasm32.
+        let shift = (exponent + 1074 * FACTORS as i32) as usize;
+        let words = if sign { &mut negative } else { &mut positive };
+        for (index, word) in product.into_iter().enumerate() {
+            add_word(words, word, shift + 64 * index)?;
         }
     }
-    positive == negative
+    Some(positive.iter().rev().cmp(negative.iter().rev()))
+}
+
+/// Native spline definitions that are actually evaluated by the kind dispatcher.
+/// Analytic labels do not replace these stored control points during evaluation.
+fn evaluated_native_spline(curve: &Curve) -> Option<&BSplineCurve> {
+    match curve.kind() {
+        CurveKind::BSpline(spline) => Some(spline),
+        CurveKind::Ellipse(ellipse) => Some(ellipse.base()),
+        CurveKind::Hyperbola(hyperbola) => Some(hyperbola.base()),
+        CurveKind::Parabola(parabola) => Some(parabola.base()),
+        _ => None,
+    }
 }
 
 /// Omit an affine boundary only when adjoining definitions are exactly smooth.
@@ -1249,9 +1287,9 @@ fn exact_affine_join(curve: &Curve, t: f64) -> bool {
 
 /// Establish smoothness from native knot multiplicity or exact endpoint chords.
 /// At a C0 Bezier join, tangent directions use the adjacent defining controls;
-/// equal positive local weights cancel without evaluating or rounding endpoints.
+/// positive rational weights use exact homogeneous tangent numerators.
 fn exact_native_spline_join(curve: &Curve, t: f64, require_linear: bool) -> bool {
-    let CurveKind::BSpline(spline) = curve.kind() else {
+    let Some(spline) = evaluated_native_spline(curve) else {
         return false;
     };
     let Some(nurb) = spline.gw_nurb() else {
@@ -1327,15 +1365,13 @@ fn exact_native_spline_join(curve: &Curve, t: f64, require_linear: bool) -> bool
     }
     let controls = |i: usize| {
         let (a, b) = nurb.cpts().get(i - 1).zip(nurb.cpts().get(i))?;
-        let weight = if a.w == crate::nurbs::math::NOW && b.w == a.w {
-            1.0
-        } else if a.w == b.w && a.w > 0.0 && a.w.is_finite() {
-            a.w
-        } else {
-            return None;
-        };
-        let coordinates = |p: &crate::nurbs::math::CPoint| {
-            [
+        let data = |p: &crate::nurbs::math::CPoint| {
+            let weight = if p.w == crate::nurbs::math::NOW {
+                1.0
+            } else {
+                p.w
+            };
+            let xyz = [
                 p.x,
                 p.y,
                 if p.z == crate::nurbs::math::NOZ {
@@ -1343,9 +1379,11 @@ fn exact_native_spline_join(curve: &Curve, t: f64, require_linear: bool) -> bool
                 } else {
                     p.z
                 },
-            ]
+            ];
+            (weight.is_finite() && weight > 0.0 && xyz.iter().all(|v| v.is_finite()))
+                .then_some((xyz, weight))
         };
-        Some((coordinates(a), coordinates(b), weight))
+        data(a).zip(data(b))
     };
     let Some(right_control) = ri
         .checked_sub(degree)
@@ -1353,17 +1391,20 @@ fn exact_native_spline_join(curve: &Curve, t: f64, require_linear: bool) -> bool
     else {
         return false;
     };
-    let Some(((a, b, w), (c, d, v))) = controls(li).zip(controls(right_control)) else {
+    let Some((((a, wa), (b, wb)), ((c, wc), (d, wd)))) = controls(li).zip(controls(right_control))
+    else {
         return false;
     };
-    // Homogeneous positions must agree even at repeated knots or a closed seam.
     if !b
         .into_iter()
         .zip(c)
-        .all(|(b, c)| dyadic_products_zero(&[(b, v, false), (c, w, true)]))
+        .all(|(b, c)| dyadic_products_zero(&[(b, wc, false), (c, wb, true)]))
     {
         return false;
     }
+    // Rational endpoint tangent numerators are L=B*wa-A*wb and R=D*wc-C*wd.
+    // Positive weights and positive knot spans only multiply them by positive
+    // factors. Test L x R exactly, before any division or rounded subtraction.
     let [ax, ay, az] = a;
     let [bx, by, bz] = b;
     let [cx, cy, cz] = c;
@@ -1375,24 +1416,41 @@ fn exact_native_spline_join(curve: &Curve, t: f64, require_linear: bool) -> bool
     ]
     .into_iter()
     .all(|(ai, aj, bi, bj, ci, cj, di, dj)| {
-        dyadic_products_zero(&[
-            (bi, dj, false),
-            (bi, cj, true),
-            (ai, dj, true),
-            (ai, cj, false),
-            (bj, di, true),
-            (bj, ci, false),
-            (aj, di, false),
-            (aj, ci, true),
-        ])
+        dyadic_four_product_order(&[
+            ([bi, wa, dj, wc], false),
+            ([bi, wa, cj, wd], true),
+            ([ai, wb, dj, wc], true),
+            ([ai, wb, cj, wd], false),
+            ([bj, wa, di, wc], true),
+            ([bj, wa, ci, wd], false),
+            ([aj, wb, di, wc], false),
+            ([aj, wb, ci, wd], true),
+        ]) == Some(std::cmp::Ordering::Equal)
     });
-    // Parallel but reversed chords form a cusp, not a smooth join. Comparisons
-    // determine difference signs exactly without subtracting or normalizing.
     parallel
         && a.into_iter()
             .zip(b)
             .zip(c.into_iter().zip(d))
-            .any(|((a, b), (c, d))| (b > a && d > c) || (b < a && d < c))
+            .any(|((a, b), (c, d))| {
+                let left = dyadic_four_product_order(&[
+                    ([b, wa, 1.0, 1.0], false),
+                    ([a, wb, 1.0, 1.0], true),
+                ]);
+                let right = dyadic_four_product_order(&[
+                    ([d, wc, 1.0, 1.0], false),
+                    ([c, wd, 1.0, 1.0], true),
+                ]);
+                matches!(
+                    (left, right),
+                    (
+                        Some(std::cmp::Ordering::Less),
+                        Some(std::cmp::Ordering::Less)
+                    ) | (
+                        Some(std::cmp::Ordering::Greater),
+                        Some(std::cmp::Ordering::Greater)
+                    )
+                )
+            })
 }
 
 /// Require defining smoothness for native spline and plane-UV joins.
@@ -1403,8 +1461,38 @@ fn omit_projected_boundary(curve: &Curve, t: f64, continuity: ContinuityType) ->
     if (continuity as i32) < (ContinuityType::G1 as i32) {
         return false;
     }
+    omit_projected_definition_join(curve, t, 0)
+}
+
+/// Linear wrappers preserve a defining tangent identity. Recursion follows the
+/// geometry ownership tree and is bounded by the shared 32-level nesting limit.
+fn omit_projected_definition_join(curve: &Curve, t: f64, depth: usize) -> bool {
+    if depth > crate::surface::surface::p2::MAX_GEOMETRY_NESTING {
+        return false;
+    }
     match curve.kind() {
-        CurveKind::BSpline(_) => exact_native_spline_join(curve, t, false),
+        CurveKind::BSpline(_)
+        | CurveKind::Ellipse(_)
+        | CurveKind::Hyperbola(_)
+        | CurveKind::Parabola(_) => exact_native_spline_join(curve, t, false),
+        CurveKind::Projected(projected) => {
+            use crate::nurbs::b_spline_curve::ProjectionType;
+            match projected.proj_type() {
+                ProjectionType::Parallel | ProjectionType::Rotation | ProjectionType::Unknown => {
+                    // These point evaluators are fixed affine maps of the same
+                    // native parameter, including Unknown's parallel point map.
+                    omit_projected_definition_join(projected.curve(), t, depth + 1)
+                }
+                // Perspective regularity needs a separate denominator proof;
+                // its preexisting policy is not certified by this linear case.
+                ProjectionType::Perspective => true,
+            }
+        }
+        CurveKind::Offset(offset) if offset.offset_distance() == 0.0 => {
+            offset.base_curve().is_some_and(|base| {
+                omit_projected_definition_join(base, offset.base_parameter(t), depth + 1)
+            })
+        }
         CurveKind::CrvOnSurf(on_surface) => {
             if on_surface.surface().procedural_definition().is_some() {
                 return false;
@@ -1443,9 +1531,18 @@ fn omit_projected_boundary(curve: &Curve, t: f64, continuity: ContinuityType) ->
             });
             inside && exact_native_spline_join(uv, t, false)
         }
-        // Other curve kinds retain their existing boundary policy; this proof
-        // does not establish smoothness of their wrapped definitions.
-        _ => true,
+        // Line/Hermite are single polynomials with no internal joins. The other
+        // explicitly listed evaluator classes retain their preexisting policy
+        // pending their separate defining-regularity audit; no proof for those
+        // classes is claimed by the native spline or affine-wrapper cases.
+        CurveKind::Line(_)
+        | CurveKind::Hermite(_)
+        | CurveKind::Conic(_)
+        | CurveKind::Iso(_)
+        | CurveKind::Offset(_)
+        | CurveKind::CrvInVolume(_)
+        | CurveKind::TangentField(_)
+        | CurveKind::Composite(_) => true,
     }
 }
 
@@ -1458,7 +1555,7 @@ fn native_join_is_not_extremum(
     normal: Vec3,
     maximize: bool,
 ) -> bool {
-    let CurveKind::BSpline(spline) = curve.kind() else {
+    let Some(spline) = evaluated_native_spline(curve) else {
         return false;
     };
     let Some(nurb) = spline.gw_nurb() else {
@@ -1790,6 +1887,57 @@ impl AffineDefinition {
             denominator,
         );
         (bound.lo.is_finite() && bound.hi.is_finite()).then_some(bound)
+    }
+
+    /// Lower-bound the full projected carrier in a frame centered at `t`.
+    /// For X = P(C(t)-Q) and a nonzero projected direction D, completing the
+    /// square gives min_s |X+sD|^2 = |X|^2 - (X.D)^2 / |D|^2. The carrier
+    /// contains the requested span, so this is also its lower bound. Centering
+    /// near the stationary parameter avoids the cancellation in a remote-anchor
+    /// triple product; the candidate's own arithmetic enclosure is unchanged.
+    fn centered_carrier_lower(
+        &self,
+        curve: &Curve,
+        t: f64,
+        point: Vec3,
+        normal: Vec3,
+    ) -> Option<f64> {
+        let direction = match self.direction {
+            AffineDirection::Controls(a, b) => {
+                let [ax, ay, az] = a.map(Ivl::from);
+                let [bx, by, bz] = b.map(Ivl::from);
+                [
+                    carrier_sub(bx, ax),
+                    carrier_sub(by, ay),
+                    carrier_sub(bz, az),
+                ]
+            }
+            AffineDirection::MappedLine { vector, .. } => iv_point(vector),
+        };
+        // Nonzero scalar parameter/weight factors do not change this carrier.
+        // A zero projected direction is handled by the constant construction.
+        let n = iv_point(normal);
+        let d = carrier_cross(carrier_cross(n, direction), n);
+        let denominator = carrier_dot(d, d);
+        if !carrier_finite(denominator) || denominator.lo <= 0.0 {
+            return None;
+        }
+        let [a, b, c] = self.tight_point(curve, t)?;
+        let offset = [
+            carrier_sub(a, Ivl::from(point.x)),
+            carrier_sub(b, Ivl::from(point.y)),
+            carrier_sub(c, Ivl::from(point.z)),
+        ];
+        let x = carrier_cross(carrier_cross(n, offset), n);
+        let residual = carrier_dot(x, d);
+        let correction = carrier_div(carrier_mul(residual, residual), denominator);
+        let squared = carrier_sub(carrier_dot(x, x), correction);
+        if !carrier_finite(squared) {
+            return None;
+        }
+        // The exact squared norm is nonnegative. One outward sqrt step covers
+        // IEEE rounding, including a subnormal result, without a geometric floor.
+        Some(next_parameter_down(squared.lo.max(0.0).sqrt()).max(0.0))
     }
 
     /// Enclose the affine point at the caller's raw parameter.
@@ -2471,6 +2619,14 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         };
         if let Some(carrier) = definition.carrier_minimum(curve, point, normal) {
             optimum.lo = optimum.lo.max(carrier.lo);
+        }
+        if let Some(lower) = definition.centered_carrier_lower(
+            curve,
+            interval.evaluate(fraction.mid()),
+            point,
+            normal,
+        ) {
+            optimum.lo = optimum.lo.max(lower);
         }
         if let Some(position) = definition.isolated_end {
             let isolated = iv_length(projected(position));
@@ -4667,5 +4823,95 @@ mod tests {
             test_span_accuracy(k, &c, 0.0, [a[0], a[1]], 1.0, [b[0], b[1]], 1e-9, true).unwrap();
         assert!(r.passes);
         assert!(r.max_dist < 1e-12);
+    }
+    #[test]
+    fn exact_product_sign_handles_four_factor_extremes() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        let huge = f64::MAX;
+        let tiny = f64::from_bits(1);
+        for factors in [
+            [huge; 4],
+            [tiny; 4],
+            [huge, tiny, huge, tiny],
+            [-huge, tiny, -huge, tiny],
+        ] {
+            assert_eq!(
+                dyadic_four_product_order(&[(factors, false), (factors, true)]),
+                Some(Equal)
+            );
+            assert_eq!(
+                dyadic_four_product_order(&[(factors, false)]),
+                Some(Greater)
+            );
+            assert_eq!(dyadic_four_product_order(&[(factors, true)]), Some(Less));
+        }
+        assert_eq!(
+            dyadic_four_product_order(&[
+                ([1.0; 4], false),
+                ([1.0, 1.0, 1.0, next_parameter_up(1.0)], true)
+            ]),
+            Some(Less)
+        );
+        let factors = [huge, huge, 0.5, 0.25];
+        let permuted = [0.25, huge, 0.5, huge];
+        let mut carry_terms = [(factors, false); 8];
+        assert_eq!(dyadic_four_product_order(&carry_terms), Some(Greater));
+        for term in carry_terms.iter_mut().skip(4) {
+            *term = (permuted, true);
+        }
+        assert_eq!(dyadic_four_product_order(&carry_terms), Some(Equal));
+        // Cancel six overflowing products, leaving two positive subnormal
+        // products. This exercises carries and cancellation over the full span.
+        let mixed = [
+            (factors, false),
+            (permuted, true),
+            (factors, false),
+            ([-huge, huge, 0.5, 0.25], false),
+            (factors, false),
+            (permuted, true),
+            ([tiny; 4], false),
+            ([tiny; 4], false),
+        ];
+        assert_eq!(dyadic_four_product_order(&mixed), Some(Greater));
+        assert_eq!(
+            dyadic_four_product_order(&[([f64::INFINITY; 4], false)]),
+            None
+        );
+        assert_eq!(dyadic_four_product_order(&[([1.0; 4], false); 9]), None);
+    }
+
+    #[test]
+    fn exact_rational_native_join_keeps_weighted_tangent_identity() {
+        use crate::nurbs::{crv_basic::Curve as Net, math::CPoint};
+        for scale in [2.0_f64.powi(-400), 1.0, 2.0_f64.powi(400)] {
+            for (dx, dy, smooth) in [
+                (4.0, 8.0, true),
+                (next_parameter_up(4.0), 8.0, false),
+                (4.0, 0.0, false),
+            ] {
+                let controls = [
+                    (0., 0., 1.),
+                    (2., 0., 2.),
+                    (1., 1., 1.),
+                    (dx, dy, 4.),
+                    (2., 2., 1.),
+                ]
+                .into_iter()
+                .map(|(x, y, w)| CPoint::new(x * scale, y * scale, 0., w * scale))
+                .collect();
+                let curve = Curve::from(BSplineCurve::from_nurb(
+                    Net::new(controls, 2, vec![0., 0., 0., 1., 1., 2., 2., 2.]).unwrap(),
+                    3,
+                    false,
+                ));
+                assert_eq!(
+                    exact_native_spline_join(&curve, 1., false),
+                    smooth,
+                    "scale={scale} dx={dx} dy={dy}"
+                );
+                assert!(exact_native_spline_join(&curve, 0.5, false));
+                assert!(exact_native_spline_join(&curve, 1.5, false));
+            }
+        }
     }
 }
