@@ -124,3 +124,55 @@ The complete original p1 private suite plus new arithmetic controls passes all
 22 tests. Final static/integrated checks remain pending. The nonzero-offset, perspective and
 nonlinear surface/volume composition policies remain separately unresolved;
 this evidence must not be described as closing their regularity contract.
+
+## Reversed offset metadata audit (19 golden differences)
+
+The parent `12dda6862` sweep changed 19 of 3123 `curve.offset_curve` records.
+An independent replay of the actual constructors against the matching optimized
+kernel reproduced all 19. Frozen inputs include each original generator seed;
+the runner's unmodified input types, input contract, generator and PRNG were used
+to recover them. No curve evaluator changed in this correction.
+
+The evaluator uses `base_parameter(t) = (a+b)-t` when reversed. Therefore knot
+locations must be reflected, sorted in reverse source order, and paired with the
+same source multiplicities. A bounded metadata query must select the reflected
+locations in the caller's interval. Continuity labels similarly follow reversed
+indices; their meaning is unchanged by this metadata ordering correction.
+
+| Change | Cases | Independent result |
+|---|---|---|
+| Corrected knot locations/query membership | gen0073, gen0078, gen0441, gen0480, gen0605, gen0680, gen0791, gen0969, gen1274, gen1406, gen1673, gen1742 | All 12 exact output lists match reflected defining knots, including nested offsets, multiplicities and requested intervals. |
+| Reversed continuity index correspondence | gen0082, gen1583, gen1806 | All 3 preserve the prior labels under reversed index order. This does not independently certify inherited absolute nonzero-offset continuity labels. |
+| Overly broad metadata refusal | gen0237, gen0701, gen1381, gen1670 | Prior parent returned 1007 because a reflected float did not map back exactly. This is an API regression, not a golden to bless. Metadata must remain available; numerical certificates check mapping accuracy separately. |
+
+![Reflected knot and query membership](diagnostics/projected_offset_reversal_map.svg)
+
+For each of the four refusals, the exact rational inverse lies between adjacent
+binary64 wrapper parameters whose evaluator images straddle, but skip, the source
+knot. This establishes a numerical certificate boundary, not invalid geometry or
+unusable knot metadata. The metadata correction removes its blanket roundtrip
+guard and returns the rounded reflected locations. The separate projected-query
+preflight must reject an unproved mapped join; simply treating that approximate
+location as an exactly smooth join would be unsafe.
+
+The existing metadata regression now expects `[0, 0.9, 1]` with multiplicities
+`[2, 1, 2]` although `1-(1-0.1) != 0.1`. It fails with the old 1007 guard against
+the parent kernel. Its integrated green and the separate projected-refusal
+regression are pending the coordinated wrapper validation; no golden has been
+changed by this audit.
+
+Reproducible evidence:
+
+- [All defining inputs and seeds](diagnostics/projected_offset_reversal_inputs.jsonl).
+- [Old golden versus prior parent outputs](diagnostics/projected_offset_reversal_before_prior.jsonl).
+- [Native constructor replay](diagnostics/projected_offset_reversal_native_audit.rs), taking the input JSONL path as its sole argument; compile standalone against the exact kernel rlib and matching dependencies, without modifying a Cargo target.
+- [Prior native replay](diagnostics/projected_offset_reversal_native_prior.jsonl).
+- [Independent check](diagnostics/projected_offset_reversal_check.py), deriving reflected metadata from the raw defining knots and exact adjacent-float evidence.
+- [Per-case proof report](diagnostics/projected_offset_reversal_proof_prior.jsonl), preserving **before**, **prior_parent**, **current** and **expected_metadata** separately, including exact lists, domain mappings and index/multiplicity correspondence.
+
+Run `python plan/findings/diagnostics/projected_offset_reversal_check.py` to
+reproduce the prior checkpoint (15 correct changes, four API regressions). After
+native replay against the integrated fix, pass `--native <new-replay.jsonl>
+--require-success` to require all 19 corrected metadata results. No numerical
+tolerance is used in this metadata check; exact binary64 values and rational
+inverse relationships are compared.
