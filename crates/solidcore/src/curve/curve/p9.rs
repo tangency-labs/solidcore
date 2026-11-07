@@ -2613,6 +2613,50 @@ mod tests {
     }
 
     #[test]
+    fn projected_pair_maximum_retention_does_not_relax_interior_peak() {
+        use crate::curve::hermite_curve::HermiteCurve;
+        let k = Kernel::default();
+        let a = segment([-1.0, 0.0, 7.0], [1.0, 0.0, -9.0]);
+        // y(t) = 1 - (t - 0.3)^2 has its strict maximum between the
+        // initial endpoint/midpoint samples. Projection discards varying z.
+        let b = Curve::from(HermiteCurve::new(
+            Vec3::new(0.0, 0.91, 2.0),
+            Vec3::new(0.0, 0.6, 3.0),
+            Vec3::new(0.0, 0.51, 5.0),
+            Vec3::new(0.0, -1.4, 3.0),
+            3,
+        ));
+        let normal = [Vec3::new(0.0, 0.0, 1.0)];
+        let opts = CurveSolveOptions {
+            handles: handles(&a, &b),
+            opt_vectors: Some(&normal),
+            ..CurveSolveOptions::default()
+        };
+        let solve = |tolerance| {
+            a.global_curve_solve(
+                &k,
+                &a.natural_interval(),
+                &b,
+                &b.natural_interval(),
+                SolverOperation::ProjectedMaximize,
+                tolerance,
+                &opts,
+                SolutionRequested::Single,
+            )
+        };
+        let zero = solve(0.0).unwrap();
+        let slack = solve(0.5).unwrap();
+        let exact = 2.0_f64.sqrt();
+        let point = &zero.as_slice()[0].start;
+        assert!((point.solution_value - exact).abs() < 2e-14);
+        assert_eq!(point.parameters, slack.as_slice()[0].start.parameters);
+        assert_eq!(
+            point.solution_value,
+            slack.as_slice()[0].start.solution_value
+        );
+    }
+
+    #[test]
     fn projected_pair_maximum_includes_constrained_corners() {
         let k = Kernel::default();
         let a = segment([-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
