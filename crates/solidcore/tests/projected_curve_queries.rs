@@ -1476,6 +1476,10 @@ mod missed_cutter_keeps_geometry {
                 .into_bytes(),
             );
             if let Some(surface) = &f.surface {
+                assert!(
+                    surface.procedural_definition().is_none(),
+                    "fixture has a retained definition outside this geometry record"
+                );
                 // Ordinary Clone starts fresh NURB/cache slots; evaluation copies
                 // would share them and could prime the operation before it runs.
                 let surface = surface.clone();
