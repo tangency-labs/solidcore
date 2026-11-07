@@ -17,6 +17,7 @@ use solidcore::primitive::api_primitives::create_box;
 use solidcore::query::api_queries::{
     brep_bounding_box, brep_is_manifold_solid, face_bounding_box, surface_closest_point,
 };
+use solidcore::surface::procedural_blend::corner::CornerKind;
 use solidcore::surface::surface::Surface;
 use solidcore::topology::brep::p5::{stitch_and_orient, StitchAndOrientOptions};
 use solidcore::topology::face::p2 as face;
@@ -27,7 +28,11 @@ const CORNER: [f64; 3] = [60.0, 40.0, 20.0];
 
 /// The box with its far corner set back 8, built with the default kernel.
 fn build() -> (Kernel, Brep) {
-    let mut k = Kernel::default();
+    build_with(Kernel::default())
+}
+
+/// The box with its far corner set back 8, built with `k`.
+fn build_with(mut k: Kernel) -> (Kernel, Brep) {
     let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 60.0, 40.0, 20.0).unwrap();
     let corner = Point3::new(CORNER[0], CORNER[1], CORNER[2]);
     let v = b
@@ -174,4 +179,26 @@ fn the_patch_meets_the_rounds_tangentially_within_tolerance() {
         .map(|e| edge::tolerance(&b, e).unwrap())
         .fold(0.0, f64::max);
     assert!(tol <= 4.0e-5 * (1.0 + 1e-9), "edge tolerance {tol}");
+}
+
+/// With the rounds as their definitions (`fillet_round_as_definition`), the six patch faces
+/// are the Setback's fill: each keeps the Setback's definition (`procedural_blend`), which the
+/// N x N patch has not.
+#[test]
+fn with_round_definitions_the_six_patches_are_the_setback_fill() {
+    let mut k = Kernel::default();
+    k.fixes.fillet_round_as_definition = true;
+    let (_, b) = build_with(k);
+    let setback = b
+        .face_list()
+        .iter()
+        .filter(|&&f| {
+            face::surface(&b, f).unwrap().is_some_and(|s| {
+                s.procedural_blend()
+                    .and_then(|d| d.corner())
+                    .is_some_and(|c| c.kind() == CornerKind::Setback)
+            })
+        })
+        .count();
+    assert_eq!(setback, 6);
 }
