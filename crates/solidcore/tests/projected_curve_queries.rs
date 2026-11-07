@@ -2899,3 +2899,116 @@ mod centered_affine_minima {
         );
     }
 }
+
+mod reversed_offset_knot_boundaries {
+    //! Reflected metadata is filtered in caller coordinates without inverse rounding.
+    #![allow(clippy::unwrap_used)]
+    use solidcore::curve::{curve::Curve, hermite_curve::HermiteCurve, offset_curve::OffsetCurve};
+    use solidcore::geom::extent1d::Extent1d;
+    use solidcore::math::Vec3;
+    use solidcore::nurbs::{
+        b_spline_curve::BSplineCurve,
+        crv_basic::Curve as Net,
+        math::{CPoint, NOW},
+    };
+    use solidcore::Kernel;
+    /// Exact interval membership preserves decimal endpoints and excludes outside knots.
+    #[test]
+    fn reflected_knots_obey_requested_coordinates() {
+        let base = Curve::from(BSplineCurve::from_nurb(
+            Net::new(
+                vec![CPoint::new(0., 0., 0., NOW), CPoint::new(1., 0., 0., NOW)],
+                1,
+                vec![0.3, 0.3, 0.7, 0.7],
+            )
+            .unwrap(),
+            3,
+            false,
+        ));
+        let range = Extent1d::from_raw(0.3, 0.7);
+        let mut c = OffsetCurve::new(3, base, range, Vec3::Z, 0., true).unwrap();
+        let _ = c.reverse_parameterization(&range);
+        let low = 1.0 - 0.7;
+        for (a, b, expected) in [
+            (0.3, 0.7, vec![low, 0.7]),
+            (0.7, 0.7, vec![0.7]),
+            (0.3, 0.3, vec![]),
+            (low, low, vec![low]),
+        ] {
+            let (knots, mults) = c
+                .knots(&Kernel::default(), Some(&Extent1d::from_raw(a, b)))
+                .unwrap();
+            assert_eq!(knots, expected, "range [{a},{b}]");
+            assert_eq!(mults, vec![2; knots.len()]);
+        }
+    }
+    /// Reversal must not sort an invalid caller interval into a valid one.
+    #[test]
+    fn reversed_requests_reject_invalid_raw_intervals() {
+        let base = Curve::from(HermiteCurve::new(Vec3::ZERO, Vec3::X, Vec3::X, Vec3::X, 3));
+        let range = Extent1d::from_raw(0., 1.);
+        let mut c = OffsetCurve::new(3, base, range, Vec3::Z, 0., true).unwrap();
+        let _ = c.reverse_parameterization(&range);
+        for (a, b) in [(1., 0.), (f64::NAN, 1.), (0., f64::INFINITY)] {
+            assert!(
+                c.knots(&Kernel::default(), Some(&Extent1d::from_raw(a, b)))
+                    .is_err(),
+                "range [{a},{b}]"
+            );
+        }
+    }
+
+    /// Finite requested endpoints do not imply a finite reflected interval.
+    #[test]
+    fn reversed_requests_reject_mapping_overflow() {
+        let base = Curve::from(HermiteCurve::new(Vec3::ZERO, Vec3::X, Vec3::X, Vec3::X, 3));
+        let range = Extent1d::from_raw(0.0, f64::MAX);
+        let mut c = OffsetCurve::new(3, base, range, Vec3::Z, 0.0, true).unwrap();
+        let _ = c.reverse_parameterization(&range);
+        // Ordered, finite caller bounds can still overflow in the evaluator's map.
+        assert!(c
+            .knots(
+                &Kernel::default(),
+                Some(&Extent1d::from_raw(-f64::MAX, -f64::MAX))
+            )
+            .is_err());
+    }
+    /// Unrelated reflected overflow or collapsed knots cannot invalidate a subquery.
+    #[test]
+    fn reversed_subquery_ignores_outside_mapping_failures() {
+        for (knots, range, query) in [
+            (
+                vec![0.0, 0.0, 1.0, 2.0, 2.0],
+                Extent1d::from_raw(0.0, 1.0e16),
+                Extent1d::from_raw(1.0e16 - 2.0, 1.0e16 - 2.0),
+            ),
+            (
+                vec![-f64::MAX, -f64::MAX, 0.0, f64::MAX, f64::MAX],
+                Extent1d::from_raw(0.0, f64::MAX),
+                Extent1d::from_raw(0.0, 1.0),
+            ),
+        ] {
+            let base = Curve::from(BSplineCurve::from_nurb(
+                Net::new(
+                    vec![
+                        CPoint::new(0.0, 0.0, 0.0, NOW),
+                        CPoint::new(1.0, 0.0, 0.0, NOW),
+                        CPoint::new(2.0, 0.0, 0.0, NOW),
+                    ],
+                    1,
+                    knots,
+                )
+                .unwrap(),
+                3,
+                false,
+            ));
+            let mut c = OffsetCurve::new(3, base, range, Vec3::Z, 0.0, true).unwrap();
+            let _ = c.reverse_parameterization(&range);
+            assert_eq!(
+                c.knots(&Kernel::default(), Some(&query)).unwrap(),
+                (vec![query.min()], vec![2])
+            );
+            assert!(c.knots(&Kernel::default(), None).is_err());
+        }
+    }
+}

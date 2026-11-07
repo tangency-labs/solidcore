@@ -636,37 +636,51 @@ impl OffsetCurve {
     }
 
     /// The defining knots in this offset's parameterization, optionally limited
-    /// to `interval` (`GetKnots`). Reversal mirrors the query and knot order.
+    /// to `interval` (`GetKnots`). Reversal mirrors knots before interval filtering.
     /// Reflected parameters are rounded metadata; they need not map back exactly
     /// through the evaluator. A numerical certificate must check that separately.
     ///
     /// # Errors
     ///
     /// Those of the base curve's `GetKnots`, or `InvalidInput` when the mirrored
-    /// knots are nonfinite or unordered.
+    /// knots are nonfinite or unordered, or the requested interval is invalid.
     pub fn knots(&self, k: &Kernel, interval: Option<&Extent1d>) -> Result<(Vec<f64>, Vec<usize>)> {
         if !self.is_reversed() {
             return self.base()?.knots(k, interval);
         }
-        let mapped = interval.map(|range| {
-            Extent1d::from_min_max(
-                self.base_parameter(range.max()),
-                self.base_parameter(range.min()),
-            )
-        });
-        if mapped.is_some_and(|range| {
-            !range.min().is_finite() || !range.max().is_finite() || range.min() > range.max()
+        if interval.is_some_and(|range| {
+            !range.min().is_finite()
+                || !range.max().is_finite()
+                || range.min() > range.max()
+                || !self.base_parameter(range.min()).is_finite()
+                || !self.base_parameter(range.max()).is_finite()
         }) {
             return Err(SolidError::invalid_input(
                 OP_BASE,
                 "invalid reversed knot interval",
             ));
         }
-        let (mut knots, mut multiplicities) = self.base()?.knots(k, mapped.as_ref())?;
+        // Inverse filtering is not equivalent to filtering reflected metadata:
+        // for [0.3, 0.7], 1 - 0.7 exceeds 0.3, but 1 - 0.3 equals 0.7.
+        // Reflect the defining knots first, then apply the caller's exact bounds.
+        let (mut knots, mut multiplicities) = self.base()?.knots(k, None)?;
+        if knots.len() != multiplicities.len() {
+            return Err(SolidError::invalid_input(
+                OP_BASE,
+                "defining knot and multiplicity counts differ",
+            ));
+        }
         knots.reverse();
         multiplicities.reverse();
         for knot in &mut knots {
             *knot = self.base_parameter(*knot);
+        }
+        if let Some(range) = interval {
+            (knots, multiplicities) = knots
+                .into_iter()
+                .zip(multiplicities)
+                .filter(|(t, _)| *t >= range.min() && *t <= range.max())
+                .unzip();
         }
         if knots.iter().any(|t| !t.is_finite())
             || knots

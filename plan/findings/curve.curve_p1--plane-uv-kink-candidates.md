@@ -255,3 +255,35 @@ record is byte-equivalent as parsed data, and there are no added, removed or
 broken cases. These 19 records are now committed. The four broad 1007 refusals
 are not blessed: the metadata API succeeds with rounded reflected knots. No
 curve evaluator, tolerance or comparison floor changes in this migration.
+
+### Reflected metadata interval boundaries
+
+Filtering the base knots through inverse-rounded query endpoints can lose a
+valid reflected boundary. For reversal about a parameter sum of 1, the base
+knots `[0.3,0.7]` map to `[0.30000000000000004,0.7]` in ascending order.
+The requested interval `[0.3,0.7]` contains both reflected values. Previously,
+the inverse query lower endpoint `1 - 0.7 = 0.30000000000000004` excluded the
+base knot 0.3 before reflection, losing the valid returned knot 0.7.
+
+The correction reflects the complete native knot/multiplicity pairs, then
+filters them by exact comparisons in the caller's requested coordinates. It
+adds no epsilon, snaps no endpoint and does not assert inverse round-trip
+identity. Singleton requests distinguish the cases: `[0.7,0.7]` retains 0.7,
+`[0.3,0.3]` is empty, and `[0.30000000000000004,0.30000000000000004]` retains that
+rounded lower knot. The projected certificate's separate round-trip refusal
+remains unchanged.
+
+Validate the original requested endpoints as finite and ordered before any
+mapping; constructing a sorted interval must not repair an inverted request.
+Also require finite mapped endpoints, because finite input can overflow in the
+reflection. After reflection and caller filtering, validate the selected knots
+as finite and strictly increasing. Unrelated out-of-query overflow or collapsed
+knots must not reject a valid subquery; requesting the complete metadata still
+validates and rejects those invalid full lists. Knot and multiplicity counts
+remain paired and are checked before filtering.
+
+The public regressions reproduce both original defects and preserve those
+query-scoped controls. The full projected-query integration run passes 50 tests
+at isolated repair `3972b516e`. All six private offset tests, strict library/tests
+Clippy, formatting and diff checks also pass. Integrated golden and full hosted
+CI gates remain separate checks on the final merged tree.
