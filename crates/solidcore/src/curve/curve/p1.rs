@@ -1467,8 +1467,8 @@ fn retain_defining_boundary(k: &Kernel, curve: &Curve, t: f64) -> Result<bool> {
 }
 
 /// Enclose the raw native point and first derivative without rebuilding controls
-/// through control_polygon's divide/remultiply conversion. Net validation bounds
-/// degree by MAX_DEGREE (17); derivative order is the fixed value one.
+/// through `control_polygon`'s divide/remultiply conversion. Net validation bounds
+/// degree by `MAX_DEGREE` (17); derivative order is the fixed value one.
 fn native_point_jet(curve: &Curve, t: f64, piece: Option<usize>) -> Option<[[Ivl; 3]; 2]> {
     use crate::blend::fillet_section::certificate::{curve_derivs_over, NurbsCurve};
     if !t.is_finite() {
@@ -1878,7 +1878,7 @@ fn offset_definition_range(
     Ok(mapped)
 }
 
-/// TangentField inherits UV knots but changes definition in endpoint strips and
+/// `TangentField` inherits UV knots but changes definition in endpoint strips and
 /// supplies only first finite-difference derivatives. The current candidate
 /// machinery does not cover that definition; a cache with no artificial split
 /// must not turn it into a successful empty answer. Follow directly evaluated
