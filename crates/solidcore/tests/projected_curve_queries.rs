@@ -2539,6 +2539,7 @@ mod stored_spline_labels {
 
 mod centered_affine_minima {
     //! Ordinary oblique line projections have attainable minima despite carrier-bound dependency.
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use solidcore::{
         curve::curve::{p1::GlobalPointSolveOptions, Curve},
         geom::{

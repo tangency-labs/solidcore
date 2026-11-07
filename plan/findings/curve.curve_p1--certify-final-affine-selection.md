@@ -104,5 +104,6 @@ queries, for Single/All and zero/positive retention. All four fail with 1021 aga
 the preserved parent before this correction. The corrected construction passes all
 36 public projected-query tests, the side-classification matrix (12 combinations),
 and all eight caller-keyed operation tests. The exact Fraction checker passes all
-12 candidate checks. Private p1 tests, strict Clippy and scoped golden validation
-remain pending at this checkpoint; no golden output is changed.
+12 candidate checks, and all 20 private p1 tests pass. Strict library/tests Clippy
+and workspace formatting also pass. Scoped golden validation remains pending at
+this checkpoint; no golden output is changed.
