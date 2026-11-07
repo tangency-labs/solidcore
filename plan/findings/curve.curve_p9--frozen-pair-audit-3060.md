@@ -238,3 +238,38 @@ nets; it is not a replacement production API. Actual outputs are recorded in
 record is generated or edited by this evidence.
 
 ![Native projected cone and sphere domains](diagnostics/projected_pair_cone_sphere_projection.svg)
+
+### Half-torus curve/edge additions
+
+The same pinned native proof now covers `analytic_face_torus_half_x_6_15` and
+`analytic_face_torus_half_x_7_15`. Their exact returned native parameters are
+`(t,u,v)=(0,0,0.12499999813735485)`, all inside [0,1]. Native evaluation gives
+`1.66421356237309492`; its own enclosure is
+`[1.66421356237307383,1.66421356237311580]`. Both endpoint/full-face Bernstein
+certificates pass at that own upper; one binary64 predecessor below the native
+witness value is rejected. The source/copy residual hashes remain unchanged.
+
+For the ideal torus axis X, major radius 1 and minor radius 1/4, the projection
+satisfies `x=(1/4)sin(v)` and `|y| <= 1+(1/4)cos(v)`. Maximizing against either
+X-line endpoint yields squared distance at most
+`2+1/16+(1/2)(|sin(v)|+cos(v)) <= 2+1/16+sqrt(2)/2`, hence maximum
+`sqrt(2)+1/4`. Azimuth zero and minor angle 45 degrees attain it within the half
+major-angle domain. Native rounded control coefficients and the reported
+parameter do not require exact agreement with that ideal number: the independent
+own-enclosure residual proof above certifies the actual native geometry.
+
+### Eight additional native records
+
+The actual c7 optimized runner changes cone X entries 6/7 from empty output to
+sqrt(3), changes sphere band and quarter entries 6/7 to the certified native
+representatives recorded above (reported distance 1.5), and graduates half-torus
+entries 6/7 from their excluded 1.25 result to 1.664213562373095. Exact old/new
+serialized golden values are preserved in
+`diagnostics/projected_pair_native_golden_changes.json`; these are runner output,
+not manually calculated replacement records. No other expected row changes.
+
+The two full-torus entries remain excluded: their reported 1.6642154866673036
+exceeds the native distance 1.6642135459403802 at the returned parameters. Their
+native-attainment repair is separate. No tolerance or floor changes accompany
+these eight records. The c7 whole-unit run had six changed records and zero
+broken cases; the refreshed whole-unit gate remains required after this migration.
