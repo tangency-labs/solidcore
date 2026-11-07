@@ -504,8 +504,8 @@ fn lerp(a: [f64; 4], b: [f64; 4], s: f64) -> [f64; 4] {
 /// The de Casteljau split of Bézier coefficients at `s`.
 fn split_at(c: &[[f64; 4]], s: f64) -> (Vec<[f64; 4]>, Vec<[f64; 4]>) {
     let mut work = c.to_vec();
-    let mut left = Vec::with_capacity(c.len());
-    let mut right = Vec::with_capacity(c.len());
+    let mut left = Vec::new();
+    let mut right = Vec::new();
     while let (Some(&first), Some(&last)) = (work.first(), work.last()) {
         left.push(first);
         right.push(last);
@@ -1769,7 +1769,7 @@ fn corner(
     }
     let p = crate::topology::vertex::point(b, at.vertex)?;
     let a = class_of(b, at.own)?;
-    let mut others = Vec::with_capacity(around.len());
+    let mut others = Vec::new();
     for &f in &around {
         let c = class_of(b, Some(f))?;
         if is_moved(Some(f)) {
