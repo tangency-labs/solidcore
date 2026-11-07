@@ -6,9 +6,14 @@ This record audits the scoped Single and finite affine All construction. It does
 
 All 31 generated Single projected maximum requests among the 3,000 seeds, plus four cylinder fixtures, were replayed. There are 31 changed outputs, no new refusals and no decode errors. The three empty natural-domain intersections (gen2506, gen2915, gen2993) and the incumbent-filtered gen0717 remain unchanged. The OOB-enabled gen2915 result preserves existing cache-domain clipping; it does not certify extrapolation outside the natural interval.
 
-Every returned pair is admissible, and independent native line/Hermite/homogeneous-rational evaluation agrees with the reported scalar within 7.11e-15. Independent grid/optimization search found no larger witness beyond caller slack; that search is a diagnostic, **not a completeness proof**. The production whole-domain interval invariant supplies the certificate. Four cylinder maxima equal sqrt(2.5) and their returned parameters independently attain it.
+**Historical checkpoint, superseded for Single accuracy by 5c66fb436.** The tables
+and figures below preserve the ab5107/8948 audit for traceability; these Single
+outputs are not approved golden updates. A fresh strict-construction replay is
+pending. The independent All corner/monotonicity proofs are separate.
 
-Some new Single candidates are slightly lower than an older candidate while still certified within unchanged retention slack. Fourteen rows have independently found improvements inside that slack; this is not represented as exact optimization. The largest found gap is approximately 0.001340204 in gen1658, whose slack is 0.5.
+Every returned pair in this historical checkpoint is admissible, and independent native line/Hermite/homogeneous-rational evaluation agrees with the reported scalar within 7.11e-15. Independent grid/optimization search found no larger witness beyond caller slack; that search is a diagnostic, **not a completeness proof**. The old production invariant bounded the remaining geometric gap by retention slack; that does not meet the maintainer's solve-accuracy contract. Four cylinder maxima equal sqrt(2.5) and their returned parameters independently attain it.
+
+Fourteen historical Single rows have independently found improvements inside caller slack. Those coarse candidates must not be blessed: retention slack does not authorize optimization error. The largest found gap is approximately 0.001340204 in gen1658, whose slack is 0.5. The strict correction removes slack from construction and requires the global bound to fit the returned point's own arithmetic enclosure, following the [maintainer contract](https://github.com/tangency-labs/solidcore/pull/2840#discussion_r4496188362).
 
 | Case | Before values (status) | After values | Slack | Largest independently found improvement |
 |---|---|---|---|---|
@@ -70,7 +75,7 @@ The final 75-row replay at `8948e0bc2` has eight changes and no new refusals or
 decode errors. The sole additional change is original All `gen1839`:
 three old values at or below 4.243690092983992e-12 become one value
 4.408015599603469 at native parameters
-(0.43561427937496744, 0.034742159860404488).
+(0.43561427937496744, 0.03474215986040488).
 [Exact frozen input/output](diagnostics/projected_pair_monotone_all_after_3060.jsonl).
 The existing exact-rational derivative-numerator check proves the native
 coordinates monotone on the complete union span; increasing ordered parameter
