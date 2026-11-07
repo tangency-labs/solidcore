@@ -1132,11 +1132,21 @@ fn exact_parallel_difference(a: [f64; 3], b: [f64; 3], normal: Vec3) -> bool {
     })
 }
 
+/// Exact factors of an affine direction, before endpoint evaluation rounds them.
+enum AffineDirection {
+    Controls([f64; 3], [f64; 3]),
+    MappedLine {
+        vector: Vec3,
+        scale: f64,
+        parameter_ends: (f64, f64),
+    },
+}
+
 struct AffineDefinition {
     start: [Ivl; 3],
     end: [Ivl; 3],
     interval: Extent1d,
-    direction_points: ([f64; 3], [f64; 3]),
+    direction: AffineDirection,
     isolated_end: Option<[Ivl; 3]>,
 }
 impl AffineDefinition {
@@ -1148,7 +1158,23 @@ impl AffineDefinition {
     }
     /// Recognize an exactly constant projected objective without a tolerance test.
     fn constant_projection(&self, normal: Vec3) -> bool {
-        exact_parallel_difference(self.direction_points.0, self.direction_points.1, normal)
+        match self.direction {
+            AffineDirection::Controls(a, b) => exact_parallel_difference(a, b, normal),
+            AffineDirection::MappedLine {
+                vector,
+                scale,
+                parameter_ends: (a, b),
+            } => {
+                // The mapped endpoint difference factors as scale * (b-a) * V,
+                // times a nonzero query/natural-span ratio for bounded maps.
+                // Test its exact zero factors before multiplying or rounding
+                // endpoint positions: neither underflow nor lost low bits may
+                // turn a transverse direction into a constant projection.
+                scale == 0.0
+                    || a == b
+                    || exact_parallel_difference([0.0; 3], [vector.x, vector.y, vector.z], normal)
+            }
+        }
     }
 }
 
@@ -1159,9 +1185,10 @@ fn affine_definition(curve: &Curve, interval: Extent1d) -> Option<AffineDefiniti
         let vector = iv_point(line.line_vector());
         let natural = line.natural_interval();
         let analytic = line.step_interval();
+        let bounded_map = line.is_bounded() && !is_zero(natural.length());
         let endpoint = |t: f64| {
             let mut step = Ivl::from(t);
-            if line.is_bounded() && !is_zero(natural.length()) {
+            if bounded_map {
                 let fraction = if line.inside_out() {
                     (step - Ivl::from(natural.max()))
                         / (Ivl::from(natural.min()) - Ivl::from(natural.max()))
@@ -1179,14 +1206,17 @@ fn affine_definition(curve: &Curve, interval: Extent1d) -> Option<AffineDefiniti
             let scale = step * Ivl::from(line.line_scale());
             [x + scale * dx, y + scale * dy, z + scale * dz]
         };
-        let a = line.evaluate_point(interval.min());
-        let b = line.evaluate_point(interval.max());
+        let mapped_domain = if bounded_map { analytic } else { interval };
         return Some(AffineDefinition {
             start: endpoint(interval.min()),
             end: endpoint(interval.max()),
             interval,
             isolated_end: None,
-            direction_points: ([a.x, a.y, a.z], [b.x, b.y, b.z]),
+            direction: AffineDirection::MappedLine {
+                vector: line.line_vector(),
+                scale: line.line_scale(),
+                parameter_ends: (mapped_domain.min(), mapped_domain.max()),
+            },
         });
     }
     let CurveKind::BSpline(spline) = curve.kind() else {
@@ -1245,7 +1275,7 @@ fn affine_definition(curve: &Curve, interval: Extent1d) -> Option<AffineDefiniti
         start: ac.map(|x| Ivl::from(x) / w),
         end: bc.map(|x| Ivl::from(x) / w),
         interval: Extent1d::from_min_max(lo, hi),
-        direction_points: (ac, bc),
+        direction: AffineDirection::Controls(ac, bc),
         isolated_end,
     })
 }

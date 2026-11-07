@@ -138,6 +138,78 @@ mod affine_spans {
     }
 
     #[test]
+    fn mapped_line_parallelism_survives_endpoint_rounding() {
+        use solidcore::curve::line::Line;
+        let line =
+            Line::create_line_segment(3, Vec3::new(0.1, 0.2, 0.3), Vec3::new(1.7, 2.9, 4.2), None)
+                .unwrap();
+        let normal = line.line_vector();
+        let curve = Curve::from(line);
+        for op in [
+            SolverOperation::ProjectedMinimize,
+            SolverOperation::ProjectedMaximize,
+        ] {
+            let answers = curve
+                .global_point_solve::<Object>(
+                    &Kernel::default(),
+                    &curve.natural_interval(),
+                    op,
+                    Vec3::ZERO,
+                    0.0,
+                    SolutionRequested::All,
+                    &GlobalPointSolveOptions {
+                        opt_vectors: Some(&[normal]),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(answers.len(), 1);
+            assert_eq!(
+                answers.as_slice()[0].solution_type,
+                SolutionType::RangeOfValues
+            );
+        }
+    }
+
+    #[test]
+    fn mapped_line_does_not_erase_a_small_transverse_direction() {
+        use solidcore::curve::line::Line;
+        let line = Line::from_parts(
+            BSplineCurve::create_line_segment(3, Vec3::X, Vec3::new(1.0, 0.0, 1.0)).unwrap(),
+            Vec3::X,
+            Vec3::new(1e-16, 0.0, 1.0),
+            Extent1d::from_min_max(0.0, 1.0),
+            1.0,
+            false,
+        );
+        let curve = Curve::from(line);
+        for op in [
+            SolverOperation::ProjectedMinimize,
+            SolverOperation::ProjectedMaximize,
+        ] {
+            let answers = curve
+                .global_point_solve::<Object>(
+                    &Kernel::default(),
+                    &curve.natural_interval(),
+                    op,
+                    Vec3::ZERO,
+                    0.0,
+                    SolutionRequested::All,
+                    &GlobalPointSolveOptions {
+                        opt_vectors: Some(&[Vec3::Z]),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert!(!answers.is_empty());
+            assert!(answers
+                .as_slice()
+                .iter()
+                .all(|s| s.solution_type == SolutionType::SingleValue));
+        }
+    }
+
+    #[test]
     fn zero_retention_slack_accepts_affine_minimum_to_rounding() {
         let points = [
             (0.1569346301508998, -0.5329538213524829, -0.8439542626476992),
