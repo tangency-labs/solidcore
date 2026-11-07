@@ -48,3 +48,61 @@ or tolerances. The independent exact-rational diagnostic also passes. Strict
 Clippy for the library and public regression target passes. Private tests,
 affected golden replays and integrated gates remain to be
 recorded before this revision is review-ready. No golden output is changed here.
+
+
+## Ordinary oblique trim queries: centered carrier proof
+
+The parent hosted sweep exposed three `primitive.api_trim_ops` refusals:
+`gen0017`, `gen0021`, and `gen0137`. Each uses an ordinary analytic line cutter.
+The first two APIs normalize their direction; `trim_project_parallel` in the third
+preserves its supplied nonunit direction. All reference queries succeed, but an
+original box vertex or surface corner fails the minimum certificate. The required
+caller-status propagation exposes this error rather than silently classifying a
+face using an uncertified projection.
+
+The actual analytic Line's stored anchor, direction, scale and STEP/natural map
+were dumped, not reconstructed from evaluated endpoints. Exact Fraction arithmetic
+proves the minimum and each candidate lie inside the candidate's existing own
+point enclosure. The old carrier expression's lower endpoint missed that own lower
+endpoint by one or two floating-point spacings: these are avoidable refusals, unlike
+the narrow-knot unrepresentability controls.
+
+| Query | Old carrier lower | Unchanged candidate own lower | Centered carrier lower |
+|---|---:|---:|---:|
+| gen0017 original origin vertex | 4.717646518721153 | 4.717646518721154 | 4.717646518721160 |
+| gen0021 original origin vertex | 5.359602813902480 | 5.359602813902481 | 5.359602813902484 |
+| gen0137 upper-left corner | 86.59806893767195 | 86.59806893767198 | 86.59806893767202 |
+| gen0137 upper-right corner | 85.56319489742386 | 85.56319489742388 | 85.56319489742390 |
+
+For the double-cross projection P, set X=P(C(t)-Q) at the existing stationary
+fraction estimate and let D be any nonzero projected defining direction. Completing
+the square gives the full infinite-carrier minimum squared:
+
+`min_s |X+sD|^2 = |X|^2 - (X.D)^2 / |D|^2`.
+
+This is the one-variable least-squares normal-equation identity (Boyd and
+Vandenberghe, [Convex Optimization, section 1.2.1](https://web.stanford.edu/~boyd/cvxbook/bv_cvxbook.pdf)).
+Directed arithmetic encloses all defining operations; a positive denominator is
+required. The infinite carrier contains the entire requested continuous span, so
+its minimum is a valid lower bound even when the stationary point is outside the
+requested interval. At an isolated upper knot, the existing separate point bound
+is still combined by minimum. This new independent lower bound is combined with
+the existing carrier and hull bounds. No unsuccessful construction selects a
+fallback, no candidate enclosure is widened, and retention slack is not used as
+solve accuracy.
+
+The [independent Fraction checker](diagnostics/projected_trim_affine_certificate.py)
+uses [actual defining coefficient data](diagnostics/projected_trim_affine_coefficients.jsonl).
+Its acceptance checks use exact squared rational inequalities; decimal square roots
+are display only. It verifies that the centered lower bound is below the exact
+minimum, that the unchanged own enclosure contains the exact minimum and candidate,
+and that all candidate parameters are admissible. The measured candidate excess
+ranges from approximately 2e-36 to 5e-29.
+
+Four public regressions cover both normalized directions and both nonunit corner
+queries, for Single/All and zero/positive retention. All four fail with 1021 against
+the preserved parent before this correction. The corrected construction passes all
+36 public projected-query tests, the side-classification matrix (12 combinations),
+and all eight caller-keyed operation tests. The exact Fraction checker passes all
+12 candidate checks. Private p1 tests, strict Clippy and scoped golden validation
+remain pending at this checkpoint; no golden output is changed.
