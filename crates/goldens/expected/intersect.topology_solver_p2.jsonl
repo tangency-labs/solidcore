@@ -28,11 +28,11 @@
 {"case":"analytic_face_cyl_x_5_8_rayfire","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":[0.00001,0.00001,0.00001,0.00001,0.00001,0.0],"status":[0.0]}}
 {"case":"analytic_face_cyl_x_6_11","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":[0.00001,0.00001,0.00001,0.00001,0.00001,0.0],"status":[0.0]}}
 {"case":"analytic_face_cyl_x_6_14","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[1006.75005,1010.75005,10065.25015]],"n":20},"status":[0.0]}}
-{"case":"analytic_face_cyl_x_6_15","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[1006.75005,1010.75005,10065.25015]],"n":20},"status":[0.0]}}
+{"case":"analytic_face_cyl_x_6_15","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[1006.5811888300842,1010.5811888300842,10056.97381596101]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_cyl_x_6_3","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[1007.5982247704246,1011.5982247704246,10077.374596785945]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_cyl_x_7_11","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":[0.00001,0.00001,0.00001,0.00001,0.00001,0.0],"status":[0.0]}}
 {"case":"analytic_face_cyl_x_7_14","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[5.75005,13.75005,55.25015]],"n":20},"status":[0.0]}}
-{"case":"analytic_face_cyl_x_7_15","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[5.75005,13.75005,55.25015]],"n":20},"status":[0.0]}}
+{"case":"analytic_face_cyl_x_7_15","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[5.58118883008419,13.581188830084189,46.973815961010274]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_cyl_x_7_3","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[6.598224770424681,14.59822477042468,67.37459678594553]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_cyl_x_8_11","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":[0.00001,0.00001,0.00001,0.00001,0.00001,0.0],"status":[0.0]}}
 {"case":"analytic_face_cyl_x_8_14","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":[0.00001,0.00001,0.00001,0.00001,0.00001,0.0],"status":[0.0]}}
@@ -48,11 +48,11 @@
 {"case":"analytic_face_halfcyl_x_5_8_rayfire","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":[0.00001,0.00001,0.00001,0.00001,0.00001,0.0],"status":[0.0]}}
 {"case":"analytic_face_halfcyl_x_6_11","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":[0.00001,0.00001,0.00001,0.00001,0.00001,0.0],"status":[0.0]}}
 {"case":"analytic_face_halfcyl_x_6_14","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[1006.75005,1010.75005,10065.25015]],"n":20},"status":[0.0]}}
-{"case":"analytic_face_halfcyl_x_6_15","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[1006.75005,1010.75005,10065.25015]],"n":20},"status":[0.0]}}
+{"case":"analytic_face_halfcyl_x_6_15","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[1006.5811888300842,1010.5811888300842,10056.97381596101]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_halfcyl_x_6_3","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[1007.5982247704246,1011.5982247704246,10077.374596785945]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_halfcyl_x_7_11","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":[0.00001,0.00001,0.00001,0.00001,0.00001,0.0],"status":[0.0]}}
 {"case":"analytic_face_halfcyl_x_7_14","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[5.75005,13.75005,55.25015]],"n":20},"status":[0.0]}}
-{"case":"analytic_face_halfcyl_x_7_15","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[5.75005,13.75005,55.25015]],"n":20},"status":[0.0]}}
+{"case":"analytic_face_halfcyl_x_7_15","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[5.58118883008419,13.581188830084189,46.973815961010274]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_halfcyl_x_7_3","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":{"blocks":[[6.598224770424681,14.59822477042468,67.37459678594553]],"n":20},"status":[0.0]}}
 {"case":"analytic_face_halfcyl_x_8_11","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":[0.00001,0.00001,0.00001,0.00001,0.00001,0.0],"status":[0.0]}}
 {"case":"analytic_face_halfcyl_x_8_14","deferred":null,"error":null,"ints":{},"topology":null,"values":{"static":[0.00001,0.00001,0.00001,0.00001,0.00001,0.0],"status":[0.0]}}

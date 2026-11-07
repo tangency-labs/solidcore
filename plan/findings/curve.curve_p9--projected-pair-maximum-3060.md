@@ -55,7 +55,7 @@ is separate; this work does not change it. The branch includes #2968 and #2840
 so their existing fixes and enclosures are reused rather than duplicated.
 
 
-## Implemented Single path (work in progress)
+## Initial Single construction and subsequent strict certificate
 
 The Single solver now constructs feasible parameter pairs and encloses every
 parameter rectangle with interval value and mean-value derivative bounds. Only a
@@ -75,11 +75,10 @@ An analytic label alone is not accepted: a changed radius with a stale net is
 refused. The new helper reuses that existing policy rather than a sampled
 recognizer. Other definition kinds are still unsupported.
 
-Six targeted tests pass locally: constrained corners; trimmed projection at
+At the initial implementation checkpoint, six targeted tests passed: constrained corners; trimmed projection at
 normal scales 0, 0.001, 1, and 1000 with nonzero Z; same-object disjoint intervals
 and incumbent cutoffs; cancellation under both legacy flags; the rational gen1839 **Single variant**; and a valid ellipse versus a stale
-analytic net. The original gen1839 All row remains a separate obligation. Full
-case and downstream audits remain pending.
+analytic net. The original gen1839 All row was still a separate obligation at that checkpoint. It is now repaired by the finite monotone constructor, as recorded in the frozen audit.
 
 
 The numerical contract follows the [maintainer's explicit review on #2840](https://github.com/tangency-labs/solidcore/pull/2840#discussion_r4496188362):
