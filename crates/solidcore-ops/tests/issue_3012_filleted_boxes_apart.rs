@@ -13,7 +13,9 @@
 
 mod common;
 
-use common::{edge_at, volume};
+use common::{edge_at, kernel_copy, volume};
+use solidcore::surface::surface::SurfaceKind;
+use solidcore::topology::face::p2 as face;
 use solidcore_ops::boolean::boolean;
 use solidcore_ops::sweep::{extrude, Curve, DraftCorner};
 use solidcore_ops::{blend, make_box, session, Blend, Body, BooleanOp, CheckLevel, Corners};
@@ -67,7 +69,8 @@ fn extruded(dx: f64) -> Body {
 
 #[test]
 fn issue_3012_cut_of_filleted_boxes_a_sliver_apart() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    // the fillets of both bodies are cones, not surfaces of extrusion
+    session::set_fixes(["linear_sweep_arc_is_cylinder", "classify_edge_interval"]).unwrap();
     for dx in [1e-4, 1e-3] {
         for reversed in [false, true] {
             let (a, b) = (rounded_box(), extruded(dx));
@@ -76,6 +79,16 @@ fn issue_3012_cut_of_filleted_boxes_a_sliver_apart() {
                 .unwrap_or_else(|e| panic!("dx {dx} reversed {reversed}: {e}"))
                 .unwrap();
             assert!(r.check(CheckLevel::All).unwrap().is_valid(), "dx {dx}");
+            assert_eq!(r.solid_count().unwrap(), 1, "dx {dx} reversed {reversed}");
+            // Every face of the sliver: the two flat sides (26 x 10 each) and the four fillets
+            // (a quarter turn of R2 by 10 each), plus the thin ends. A fillet face the sector
+            // skipped and a neighbouring edge put in the wrong region would add or drop 31.4.
+            let faces = 2.0 * 26.0 * 10.0 + 4.0 * FRAC_PI_2 * 2.0 * 10.0;
+            let area = r.area(1e-8).unwrap();
+            assert!(
+                (area - faces).abs() < 100.0 * dx,
+                "dx {dx} reversed {reversed}: area {area} vs {faces}"
+            );
             // the sliver's volume dx * 300, less the taper at its ends: 1e-3 of it at most
             let expected = dx * 300.0;
             let v = volume(&r);
@@ -84,5 +97,27 @@ fn issue_3012_cut_of_filleted_boxes_a_sliver_apart() {
                 "dx {dx} reversed {reversed}: {v} vs {expected}"
             );
         }
+    }
+}
+
+/// The straight-edge fillets of both operands are cones of semi-angle 0 (`SurfaceKind::Cone`,
+/// `is_cylinder`), the kind `faces_coincide` gates: a cylinder has no kind of its own.
+#[test]
+fn issue_3012_the_fillets_are_cylinders_of_the_cone_kind() {
+    session::set_fixes(["linear_sweep_arc_is_cylinder", "classify_edge_interval"]).unwrap();
+    for body in [rounded_box(), extruded(1e-4)] {
+        let (_, brep) = kernel_copy(&body);
+        let round: Vec<_> = brep
+            .face_list()
+            .iter()
+            .filter_map(
+                |&f| match face::surface(&brep, f).unwrap().unwrap().kind() {
+                    SurfaceKind::Plane(_) => None,
+                    SurfaceKind::Cone(c) => Some(c.is_cylinder()),
+                    other => panic!("a fillet face of kind {other:?}"),
+                },
+            )
+            .collect();
+        assert_eq!(round, [true; 4]);
     }
 }
