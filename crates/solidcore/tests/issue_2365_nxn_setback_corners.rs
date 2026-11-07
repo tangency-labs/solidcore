@@ -7,25 +7,24 @@
 //!
 //! Since solidcore#2933 such a corner between planes is the blend corner's Setback
 //! ([`FilletCornerType::NByTwo`]), the setback set on it read as the fill asked: its patch
-//! meets the rounds tangentially (the N x N patch was up to 4.35 degrees off). Its six fill
+//! meets the rounds tangentially (the N x N patch was up to 4.71 degrees off). Its six fill
 //! patches are marked as the N x N patch's six were. The G2 cases' volumes come within
 //! 0.007 % of the rig's (SolidCraft's G2 patch), where the N x N patch was up to 0.08 % off.
 //! A setback too short for the fill to stay convex is refused with the one that builds
 //! (`NoRoom`, 3.5 on r3 rounds: 3.5595), where the N x N corner built a patch.
 //!
 //! The seven cases are SolidCraft's kernel-rig cases that built before the port (their
-//! entries are in `tests/kernel_cases/`), driven as SolidCraft's `round_edges` drives the
+//! entries are in `tests/kernel_cases/`; six build here, the r3 one is refused), driven as SolidCraft's `round_edges` drives the
 //! session: circular rounds per edge, each set-back vertex marked (`add_set_back_vertex`)
 //! before the corners are made, then `set_corner_setback` on the vertex's corner, and with
 //! a G2 corner the corner's patch marked (`set_mark_corner_patches`) for SolidCraft to
 //! replace; then `StitchAndOrient`. The fixes are the corpus's `fixes.json`. The values are
 //! those the same calls give on the Setback (solidcore#2933), every one: counts, the
-//! patch's faces and the volume to 1e-9. Where the
-//! case's rig value is the kernel's own (013's filled corner, and the cut that takes the
-//! whole patch away in `...-outside-setback`) it is the rig's measured value too; the G2
-//! cases' rig volumes are SolidCraft's patch's, so here the corner's own N x N patch is
+//! patch's faces and the volume to 1e-9. The rig's values are the N x N corner's (013's
+//! filled corner) or SolidCraft's G2 patch's, so here the corner's own Setback fill is
 //! checked: its six faces marked, and the body's faces the rig's less SolidCraft's one G2
-//! patch plus these six.
+//! patch plus these six. Where the cut takes the whole patch away (`...-outside-setback`)
+//! the volume is the rig's measured value.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

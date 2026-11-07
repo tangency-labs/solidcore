@@ -160,7 +160,7 @@ pub struct SetbackClass {
 }
 
 /// The blend corner's Setback of fill order `order` at `corner`'s vertex, on its edge uses
-/// (`SmFilletCorner::Create`'s NxN case taking the Setback, smlib#104 61547af), its setback
+/// (`SmFilletCorner::Create`'s N x N case taking the Setback, smlib#104 61547af), its setback
 /// and ease the ones set on `corner`.
 #[must_use]
 pub fn setback_corner_of(corner: &FilletCorner, order: usize) -> FilletCorner {
@@ -223,10 +223,12 @@ pub struct SetBackFill {
 /// that no blend corner took (`SmFilletConvexNxNCorner`'s setback corner, to which
 /// `SmFilletConcaveNxNCorner` hands its own). The fork's dc757a6 deletes the N x N setback
 /// paths; solidcore keeps them (WR-697 addendum `setback-asked-not-built-refused`), as the
-/// Setback does not build every corner they do (a corner beside a curved face; a concave
-/// notch). Three equal rounds at a box corner, which a set-back vertex keeps from the Ball,
-/// are the Setback once a setback is set on their corner (solidcore#2933, classified when the
-/// corners are filleted: [`classify_setback`]'s `marked`).
+/// Setback does not build every corner they do: a marked corner beside a curved face, and
+/// one [`classify_setback`] does not take (variable rounds, mixed convexity, edges tangent at
+/// the vertex). Three equal rounds of one convexity between planes, convex or concave, which
+/// a set-back vertex keeps from the Ball, are the Setback once a setback is set on their
+/// corner (solidcore#2933, classified when the corners are filleted: [`classify_setback`]'s
+/// `marked`).
 #[must_use]
 pub fn builds_setback(corner: &FilletCorner) -> bool {
     match corner.blend {
