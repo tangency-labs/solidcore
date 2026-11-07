@@ -1,11 +1,11 @@
-//! Native-parameter edge certificates for finite ellipse-pair enumeration.
+//! Complete finite maxima for identical native noncircular open ellipse arcs.
 //!
 //! Not upstream. A strict edge maximum has a zero first derivative and negative
 //! second derivative. Interval exclusion covers the entire edge; strict endpoint
 //! signs and a negative derivative enclose exactly one stationary maximum.
-//! Deviations: experimental, test-only construction; at most 4096 cells, depth
-//! 48 and 64 interval-Newton contractions. Endpoint/multiple-root ambiguity
-//! refuses. No production dispatch or All completeness claim yet.
+//! Deviations: a selected structural class replaces the incomplete search; at most
+//! 4096 cells, depth 48 and 64 interval-Newton contractions. Endpoint/multiple-root ambiguity
+//! refuses. Closed seams and distinct ellipse pairs remain outside this class.
 
 use super::projected_pair::{
     bounded_domain, dot, norm_squared, project, square, sub, Candidate, Cell, Definition, Piece,
@@ -148,6 +148,7 @@ fn projected_frame(curve: &Curve, definition: &Definition<'_>, normal: Vec3) -> 
 #[derive(Clone, Copy, Debug)]
 struct EdgeMaximum {
     parameter: Ivl,
+    #[cfg(test)]
     original_bracket: Ivl,
 }
 
@@ -255,6 +256,7 @@ fn contract(mut range: Ivl, evaluate: &impl Fn(Ivl) -> Result<(Ivl, Ivl)>) -> Re
 /// Isolate every strict interior edge maximum, or refuse an unresolved region.
 /// Endpoint roots belong to the corner construction but are not silently dropped:
 /// until an exact endpoint identity can be proved they cause explicit refusal.
+#[cfg(test)]
 fn isolate(
     kernel: &Kernel,
     initial: Ivl,
@@ -303,6 +305,7 @@ fn isolate_with_budget(
             if left.lo > 0.0 && right.hi < 0.0 {
                 maxima.push(EdgeMaximum {
                     parameter: contract(range, &evaluate)?,
+                    #[cfg(test)]
                     original_bracket: range,
                 });
                 continue;
@@ -759,12 +762,10 @@ mod tests {
         assert!(finite_candidates(&query, [closed.natural_interval(); 2]).is_err());
     }
 
-    #[test]
-    fn original_ellipse_edge_encloses_the_stronger_native_parameter_witness() {
-        let kernel = Kernel::default();
-        let curve = Curve::from(
+    fn original_ellipse(kernel: &Kernel) -> Curve {
+        Curve::from(
             Ellipse::new(
-                &kernel,
+                kernel,
                 Vec3::new(1.9892188469923955, -3.246996295465655, -3.4858186076942532),
                 Vec3::X,
                 Vec3::Y,
@@ -774,7 +775,102 @@ mod tests {
                 &EllipseOptions::default(),
             )
             .unwrap(),
-        );
+        )
+    }
+
+    #[test]
+    fn public_original_ellipse_all_constructs_complete_pairs_and_propagates_refusal() {
+        use crate::curve::curve::p9::CurveSolveOptions;
+        use crate::geom::global_solver::{SolutionRequested, SolverOperation};
+        use crate::geom::solution_array::OperandObject;
+        let requested = Extent1d::from_min_max(-12.067776972579878, 65.71806952381752);
+        for pass_on in [false, true] {
+            let mut kernel = Kernel::default();
+            kernel.fixes.query_statuses_pass_on = pass_on;
+            let curve = original_ellipse(&kernel);
+            let handle = OperandObject::Curve(0, curve.natural_interval());
+            for scale in [1.0, 2.0] {
+                let normal = [Vec3::Z * scale];
+                let tolerance = 1e-5 * scale * scale;
+                let expected = 6.327472493603755 * scale * scale;
+                let options = CurveSolveOptions {
+                    handles: [Some(handle); 2],
+                    opt_vectors: Some(&normal),
+                    target_distance: None,
+                };
+                let answers = curve
+                    .global_curve_solve(
+                        &kernel,
+                        &requested,
+                        &curve,
+                        &requested,
+                        SolverOperation::ProjectedMaximize,
+                        tolerance,
+                        &options,
+                        SolutionRequested::All,
+                    )
+                    .unwrap();
+                assert_eq!(answers.len(), 2);
+                for answer in answers.as_slice() {
+                    let s = answer.start.parameters[0];
+                    let t = answer.start.parameters[1];
+                    assert!(curve.natural_interval().contains_value(s, 0.0));
+                    assert!(curve.natural_interval().contains_value(t, 0.0));
+                    assert!((answer.start.solution_value - expected).abs() < 1e-12 * scale * scale);
+                    let delta = curve.evaluate_point(&kernel, s).unwrap()
+                        - curve.evaluate_point(&kernel, t).unwrap();
+                    assert_eq!(
+                        answer.start.solution_value,
+                        normal[0].cross(delta).cross(normal[0]).length()
+                    );
+                }
+                let options = CurveSolveOptions {
+                    target_distance: Some(expected + 1.0),
+                    ..options
+                };
+                assert!(curve
+                    .global_curve_solve(
+                        &kernel,
+                        &requested,
+                        &curve,
+                        &requested,
+                        SolverOperation::ProjectedMaximize,
+                        tolerance,
+                        &options,
+                        SolutionRequested::All,
+                    )
+                    .unwrap()
+                    .is_empty());
+            }
+            let normal = [Vec3::X];
+            let result = curve.global_curve_solve(
+                &kernel,
+                &requested,
+                &curve,
+                &requested,
+                SolverOperation::ProjectedMaximize,
+                1e-5,
+                &CurveSolveOptions {
+                    handles: [Some(handle); 2],
+                    opt_vectors: Some(&normal),
+                    target_distance: None,
+                },
+                SolutionRequested::All,
+            );
+            assert!(matches!(
+                result,
+                Err(SolidError::Unsupported {
+                    operation: "curve::curve::projected_pair_ellipse",
+                    ..
+                })
+            ));
+        }
+    }
+
+    #[test]
+    fn original_ellipse_edge_encloses_the_stronger_native_parameter_witness() {
+        let kernel = Kernel::default();
+        let curve = original_ellipse(&kernel);
         assert!(supports([&curve, &curve], [curve.natural_interval(); 2]));
         let definition = Definition::of(&curve, curve.natural_interval()).unwrap();
         projected_frame(&curve, &definition, Vec3::Z).unwrap();

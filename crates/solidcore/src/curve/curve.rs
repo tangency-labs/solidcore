@@ -18,7 +18,6 @@ pub mod p8;
 pub mod p9;
 mod projected_pair;
 mod projected_pair_all;
-#[cfg(test)]
 mod projected_pair_ellipse;
 mod projected_pair_monotone;
 
