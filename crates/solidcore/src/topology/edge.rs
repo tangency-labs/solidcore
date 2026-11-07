@@ -729,6 +729,9 @@ pub struct RadialSector {
     pub radial_edgeuse: Option<EdgeuseId>,
     /// `rpCoincidentFaceuse`: the coincident face use, `None` without coincidence.
     pub coincident_faceuse: Option<FaceuseId>,
+    /// The sector is of zero angle: the coincident face use is the sector's own, not a face
+    /// found to coincide with the classified one.
+    pub zero_sector: bool,
 }
 
 /// An error a caller treats as a failed status: unported dependencies and
@@ -889,6 +892,7 @@ pub fn find_radial_sector_between(
                         eu1::radial(b, eu)?
                     };
                     out.coincident_faceuse = faceuse_of(b, out.radial_edgeuse)?;
+                    out.zero_sector = true;
                     return Ok(out);
                 }
             }

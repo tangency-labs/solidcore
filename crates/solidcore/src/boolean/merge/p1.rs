@@ -72,6 +72,7 @@ use crate::kernel::Kernel;
 use crate::math::{Point3, Vec3};
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::query::brep::{self as qbrep, BoundingBoxOptions, BrepQuery};
+use crate::surface::surface::p2::{Surface, SurfaceKind};
 use crate::topology::brep::p4;
 use crate::topology::edgeuse::p1 as eu;
 use crate::topology::shell;
@@ -251,6 +252,46 @@ pub fn finish_face_coincidence(
     Ok(brep_edges(brep)?.len() != edge_counts.0 || brep_edges(other)?.len() != edge_counts.1)
 }
 
+/// Whether the surfaces of two faces coincide within their tolerances. A radial sector
+/// only compares the faces at a mated edge, where tangent surfaces that part further
+/// along (a fillet against a fillet 1e-4 off) read as coincident; faces are coincident
+/// only when their surfaces are.
+///
+/// # Errors
+///
+/// Those of the face tolerances and of the surface coincidence check.
+pub fn faces_coincide(
+    k: &Kernel,
+    brep: &Brep,
+    face: FaceId,
+    other: &Brep,
+    other_face: FaceId,
+) -> Result<bool> {
+    fn surface(b: &Brep, f: FaceId) -> Option<&Surface> {
+        b.face(f).ok().and_then(|f| f.surface.as_ref())
+    }
+    let (Some(a), Some(b)) = (surface(brep, face), surface(other, other_face)) else {
+        return Ok(true);
+    };
+    // Only analytic pairs part where the sector cannot see (two planes keep their gap, which
+    // its step-off measures); the coincidence check of other kinds (offset, B-spline) is not
+    // exact enough to overrule the sector.
+    let plane = |s: &Surface| matches!(s.kind(), SurfaceKind::Plane(_));
+    let analytic = |s: &Surface| {
+        plane(s)
+            || matches!(
+                s.kind(),
+                SurfaceKind::Cone(_) | SurfaceKind::Sphere(_) | SurfaceKind::Torus(_)
+            )
+    };
+    if !(analytic(a) && analytic(b)) || (plane(a) && plane(b)) {
+        return Ok(true);
+    }
+    let tol = crate::topology::face::p2::tolerance(brep, face)?
+        .max(crate::topology::face::p2::tolerance(other, other_face)?);
+    Ok(a.coincidence_check(k, b, tol, false)?.are_coincident)
+}
+
 /// Classify an other-operand face use into a primary region. A single primary
 /// region wins immediately. Otherwise try mated-edge radial sectors, then sample
 /// unmated edges at 0.456789 of their interval and classify each point.
@@ -288,6 +329,15 @@ pub fn find_brep_region_of_other_face(
         else {
             continue;
         };
+        // a face found coincident here is coincident only when its surface is (WR-754)
+        if let (Some(fu), false) = (sector.coincident_faceuse, sector.zero_sector) {
+            let face = eu::faceuse_face(brep, fu)?.ok_or_else(|| SolidError::null_pointer(OP))?;
+            let other_face =
+                eu::face(other, other_eu)?.ok_or_else(|| SolidError::null_pointer(OP))?;
+            if !faces_coincide(k, brep, face, other, other_face)? {
+                continue;
+            }
+        }
         let region = if let Some(eu_id) = sector.radial_edgeuse {
             let shell = eu::shell(brep, eu_id)?.ok_or_else(|| SolidError::null_pointer(OP))?;
             eu::shell_region(brep, shell)?
