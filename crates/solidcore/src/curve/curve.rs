@@ -17,6 +17,8 @@ pub mod p7;
 pub mod p8;
 pub mod p9;
 mod projected_pair;
+#[cfg(test)]
+mod projected_pair_all;
 
 pub use p2::{
     knots_ignoring_status, Curve, CurveEvaluate, CurveKind, CurvePropertyType, KnotsWithStatus,
