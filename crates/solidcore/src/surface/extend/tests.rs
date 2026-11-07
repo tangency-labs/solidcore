@@ -2517,7 +2517,6 @@ fn a_pyramid_side_extends_by_its_tolerance_past_its_base_after_its_ends() {
 /// and 5e-12); at 1e5 the closed form's rounding is sized on the part's position
 /// (`gamma(64) (length + size)`, 2.8e-10) and 1e-5 and 1e-4 are refused `NotExact`.
 #[test]
-#[ignore = "second review finding 8: the analytic closed forms' rounding is position-sized"]
 fn a_far_cone_extends_round_its_axis_by_a_tolerance_as_at_the_origin() {
     let kk = k();
     for o in [0.0, 1e3, 1e5] {
@@ -2701,5 +2700,57 @@ fn a_huge_bilinear_sheet_extends_as_its_closed_form() {
     ];
     for l in across {
         assert!((l - d).abs() <= 1e-9 * d, "across {l} vs {d}");
+    }
+}
+
+/// A straight analytic iso has a distance-sized rounding budget, even when the
+/// requested widening is much shorter than the cylinder's radius (#2980).
+#[test]
+fn a_cylinder_widens_by_small_distances_along_its_axis() {
+    let kk = k();
+    let s = unit_cylinder(&kk);
+    for d in [5e-9, 1e-8, 1e-7, 1e-6, 5e-6] {
+        let e = s
+            .extended_by_distance(&kk, &dom(&s), BoxSide::VMax, Continuity::Natural, d)
+            .unwrap_or_else(|err| panic!("by {d:e}: {err:?}"));
+        // These two asks are below this four-unit cylinder's least knot step;
+        // preserve the existing, proved `Unchanged` outcome rather than widening
+        // it by a distance it never asked for.
+        if d <= 1e-8 {
+            assert!(e.is_none(), "by {d:e}: expected below-resolution result");
+            continue;
+        }
+        let e = e.unwrap_or_else(|| panic!("by {d:e}: not extended"));
+        meets(&e, d);
+        assert!(e.across.rounding <= 1e-6 * d, "{:?}", e.across);
+    }
+}
+
+/// Diagnostic matrix for #2980; retained to reproduce the before/after evidence.
+#[test]
+fn difference_form_certificate_table() {
+    let kk = k();
+    for o in [0.0, 1e3, 1e5] {
+        let pl = Axis2Placement::new(Vec3::new(o, o, 0.0), Vec3::Z, Vec3::X);
+        let mut cone = Cone::create_canonical(&kk, &pl, 2.0, 1.0, 1.0, false, false).unwrap();
+        cone.adjust_step_uv_domain(&kk, &Extent2d::from_bounds(0.0, 0.0, 90.0, 1.0))
+            .unwrap();
+        let cone = Surface::from(cone);
+        let c = Vec3::new(o, o, 0.0);
+        let (net, _, _) = crate::blend::blend_corner::ball::ball_triangle_patch(
+            c, 2.0, &[Vec3::X, Vec3::Y, Vec3::Z], 0, false,
+        ).unwrap();
+        let ball = Surface::from(crate::surface::ball_patch::BallPatch::create(&net, c, 2.0).unwrap());
+        for d in [1e-5, 1e-4, 1e-3] {
+            let e = cone.extended_by_distance(&kk, &dom(&cone), BoxSide::UMin, Continuity::Natural, d);
+            println!("TABLE cone o={o:e} d={d:e} {:?}", e.as_ref().map(|e| e.as_ref().map(|e| e.across.rounding)));
+            let e = ball.extended_sides(&kk, &[BoxSide::UMin], Continuity::Natural, d);
+            println!("TABLE ball o={o:e} d={d:e} {:?}", e.as_ref().map(|e| (e.sides, e.extension)));
+        }
+    }
+    let s = unit_cylinder(&kk);
+    for d in [5e-9, 1e-8, 1e-7, 1e-6, 5e-6] {
+        let e = s.extended_by_distance(&kk, &dom(&s), BoxSide::VMax, Continuity::Natural, d);
+        println!("TABLE cylinder d={d:e} {:?}", e.as_ref().map(|e| e.as_ref().map(|e| e.across.rounding)));
     }
 }
