@@ -1,7 +1,7 @@
 //! Projected curve queries: endpoints, affine parameter maps, and objective bounds.
 
 mod affine_spans {
-    //! Projected extrema of affine spans must not depend on their knot widths (#2840).
+    //! Projected extrema of affine spans must not depend on their knot widths.
     //!
     //! The middle segment runs from (-1, 0) to (1, 1). Its supporting line is
     //! x - 2y + 1 = 0, so (0, y) has distance |1 - 2y| / sqrt(5).
@@ -302,20 +302,20 @@ mod affine_spans {
         let normal = Vec3::Z * normal_scale;
         // The API's double-cross metric scales by |normal| squared.
         let expected = geometric_distance * normal_scale * normal_scale;
-        let solutions = curve
-            .global_point_solve::<Object>(
-                &kernel,
-                &interval,
-                operation,
-                point,
-                EFF_ZERO_SQRT,
-                SolutionRequested::Single,
-                &GlobalPointSolveOptions {
-                    opt_vectors: Some(&[normal]),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
+        let solutions = curve.global_point_solve::<Object>(
+            &kernel,
+            &interval,
+            operation,
+            point,
+            EFF_ZERO_SQRT,
+            SolutionRequested::Single,
+            &GlobalPointSolveOptions {
+                opt_vectors: Some(&[normal]),
+                ..Default::default()
+            },
+        );
+        assert!(solutions.is_ok(), "gap={gap}, parameter_scale={parameter_scale}, point={point:?}, normal_scale={normal_scale}: {:?}", solutions.as_ref().err());
+        let solutions = solutions.unwrap();
         assert_eq!(solutions.len(), 1);
         let answer = &solutions.as_slice()[0];
         assert_eq!(answer.solution_type, SolutionType::SingleValue);
@@ -376,17 +376,68 @@ mod affine_spans {
 
     #[test]
     fn narrow_raw_spans_retain_interior_projected_minima() {
-        for gap in [1.5e-12, 1.9e-12, 1e-8] {
-            for y in [0.3, 0.2] {
-                check(
-                    gap,
-                    1.0,
-                    Vec3::new(0.0, y, 0.0),
-                    1.0,
-                    SolverOperation::ProjectedMinimize,
-                    (1.0 - 2.0 * y) / 5.0_f64.sqrt(),
-                );
+        for y in [0.3, 0.2] {
+            check(
+                1e-8,
+                1.0,
+                Vec3::new(0.0, y, 0.0),
+                1.0,
+                SolverOperation::ProjectedMinimize,
+                (1.0 - 2.0 * y) / 5.0_f64.sqrt(),
+            );
+        }
+    }
+
+    #[test]
+    fn narrower_raw_spans_refuse_unrepresentable_minima_even_with_retention_slack() {
+        // Exact rational parameter arithmetic gives nearest-point objective
+        // excesses from 8.14e-10 to 2.76e-8 (scale1), and 8.98e-11 to1.09e-8
+        // (scale1e6). These are geometric errors, not arithmetic enclosure widths.
+        for (gap, scale) in [(1.5e-12, 1.0), (1.9e-12, 1.0), (1.5e-12, 1e6)] {
+            let (curve, knots) = raw_polyline(gap, scale);
+            for y in [0.2, 0.3] {
+                for normal_scale in [1.0, 0.5, -2.0] {
+                    let result = curve.global_point_solve::<Object>(
+                        &Kernel::default(),
+                        &Extent1d::from_min_max(knots[0], knots[5]),
+                        SolverOperation::ProjectedMinimize,
+                        Vec3::new(0.0, y, 0.0),
+                        EFF_ZERO_SQRT,
+                        SolutionRequested::Single,
+                        &GlobalPointSolveOptions {
+                            opt_vectors: Some(&[Vec3::Z * normal_scale]),
+                            ..Default::default()
+                        },
+                    );
+                    assert!(
+                        matches!(result,Err(error)if error.kind()==solidcore::error::ErrorKind::NotWithinTolerance),
+                        "gap={gap},scale={scale},y={y},normal={normal_scale} must refuse the geometric gap"
+                    );
+                }
             }
+        }
+    }
+
+    #[test]
+    fn retention_slack_cannot_make_an_unrepresentable_minimum_accurate() {
+        let (curve, knots) = raw_polyline(1.5e-12, 1.0);
+        for slack in [1e-12, 1e-4, 1.0] {
+            let result = curve.global_point_solve::<Object>(
+                &Kernel::default(),
+                &Extent1d::from_min_max(knots[0], knots[5]),
+                SolverOperation::ProjectedMinimize,
+                Vec3::new(0.0, 0.3, 0.0),
+                slack,
+                SolutionRequested::Single,
+                &GlobalPointSolveOptions {
+                    opt_vectors: Some(&[Vec3::Z]),
+                    ..Default::default()
+                },
+            );
+            assert!(
+                matches!(result, Err(error) if error.kind() == solidcore::error::ErrorKind::NotWithinTolerance),
+                "retention slack {slack} must not loosen the solve certificate"
+            );
         }
     }
 
@@ -394,7 +445,7 @@ mod affine_spans {
     fn affine_minimum_obeys_nonunit_projection_metric() {
         for normal_scale in [0.5, -2.0] {
             check(
-                1.9e-12,
+                1e-8,
                 1.0,
                 Vec3::new(0.0, 0.3, 9.0),
                 normal_scale,
@@ -406,7 +457,7 @@ mod affine_spans {
 
     #[test]
     fn affine_minimum_is_invariant_under_parameter_scaling() {
-        for (gap, scale) in [(1e-8, 1e-3), (1.5e-12, 1e6)] {
+        for (gap, scale) in [(1e-8, 1e-3), (1e-8, 1e6)] {
             check(
                 gap,
                 scale,
@@ -534,7 +585,7 @@ mod affine_spans {
                                 ..Default::default()
                             },
                         )
-                        .unwrap();
+                        .unwrap_or_else(|error| panic!("right_weight={right_weight},upper={upper},operation={operation:?}: {error}"));
                     assert_eq!(answers.len(), 1);
                     let answer = &answers.as_slice()[0];
                     let t = answer.start.parameters[0];
@@ -691,7 +742,7 @@ mod affine_spans {
                                 ..Default::default()
                             },
                         )
-                        .unwrap();
+                        .unwrap_or_else(|error| panic!("bounded={bounded},inside_out={inside_out},operation={operation:?}: {error}"));
                     assert_eq!(answers.len(), 1);
                     let answer = &answers.as_slice()[0];
                     let t = answer.start.parameters[0];
@@ -710,7 +761,7 @@ mod affine_spans {
 }
 
 mod endpoint_extrema {
-    //! Constrained projected extrema include finite curve endpoints (#2840).
+    //! Constrained projected extrema include finite curve endpoints.
     //!
     //! Oracle: the squared projected distance to our line is
     //! `scale^2 * ((t - foot)^2 + transverse^2)`. Thus the minimum is
@@ -787,21 +838,23 @@ mod endpoint_extrema {
         };
         let expected_distance = scale * ((expected_parameters[0] - foot).powi(2) + 0.16).sqrt();
         let vectors = [normal];
-        let answers = curve
-            .global_point_solve::<Object>(
-                &k,
-                &interval,
-                op,
-                point,
-                1e-10 * scale,
-                request,
-                &GlobalPointSolveOptions {
-                    opt_vectors: Some(&vectors),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        let context = format!("scale={scale}, rotated={rotated}, reversed={reversed}, spline={spline}, bounds={bounds:?}, foot={foot}, op={op:?}, request={request:?}");
+        let context = format!(
+            "scale={scale}, rotated={rotated}, reversed={reversed}, spline={spline}, bounds={bounds:?}, foot={foot}, op={op:?}, request={request:?}"
+        );
+        let answers = curve.global_point_solve::<Object>(
+            &k,
+            &interval,
+            op,
+            point,
+            1e-10 * scale,
+            request,
+            &GlobalPointSolveOptions {
+                opt_vectors: Some(&vectors),
+                ..Default::default()
+            },
+        );
+        assert!(answers.is_ok(), "{context}: {:?}", answers.as_ref().err());
+        let answers = answers.unwrap();
         assert!(
             !answers.is_empty(),
             "missing constrained extremum: {context}"
@@ -1022,7 +1075,7 @@ mod endpoint_extrema {
 }
 
 mod bounds {
-    //! Endpoint candidates must not hide better interior projected extrema (#2840).
+    //! Endpoint candidates must not hide better interior projected extrema.
     //!
     //! Independent oracle for these rational quadratic fixtures: construct homogeneous
     //! Bernstein polynomials directly, then certify the stationary polynomial's sign
@@ -1269,8 +1322,10 @@ mod bounds {
                     "reported metric disagrees with rational polynomial"
                 );
                 // Preserve the caller's original tolerance for global optimality.
-                assert!((actual-expected.1).abs()<=tolerance,
-                    "endpoint displaced interior optimum: t={t}, distance={actual}, oracle={expected:?}, tol={tolerance}");
+                assert!(
+                    (actual - expected.1).abs() <= tolerance,
+                    "endpoint displaced interior optimum: t={t}, distance={actual}, oracle={expected:?}, tol={tolerance}"
+                );
             }
         }
     }
@@ -1713,6 +1768,106 @@ mod g1_joins {
             Vec3::new(0.0, 1024.0, 0.0),
             1024.0,
         );
+    }
+
+    #[test]
+    fn cubic_near_collinear_join_retains_projected_extrema() {
+        let e = 1.0 / 1024.0;
+        let points = (-3_i32..=3)
+            .map(|x| CPoint::new(f64::from(x), f64::from(x.abs()) * e, 0.0, NOW))
+            .collect();
+        let curve = Curve::from(BSplineCurve::from_nurb(
+            NurbCurve::new(
+                points,
+                3,
+                vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0],
+            )
+            .unwrap(),
+            3,
+            false,
+        ));
+        let (_, continuity) = curve
+            .calculate_continuities(&Kernel::default(), 0.5)
+            .unwrap();
+        assert!((continuity[1] as i32) >= (ContinuityType::G1 as i32));
+        for (op, point, expected) in [
+            (
+                SolverOperation::ProjectedMinimize,
+                Vec3::new(0.0, -1.0, 0.0),
+                1.0,
+            ),
+            (
+                SolverOperation::ProjectedMaximize,
+                Vec3::new(0.0, 4096.0, 0.0),
+                4096.0,
+            ),
+        ] {
+            for requested in [SolutionRequested::Single, SolutionRequested::All] {
+                let answers = curve
+                    .global_point_solve::<Handle>(
+                        &Kernel::default(),
+                        &curve.natural_interval(),
+                        op,
+                        point,
+                        1e-8,
+                        requested,
+                        &GlobalPointSolveOptions {
+                            opt_vectors: Some(&[Vec3::Z]),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                assert!(
+                    !answers.is_empty(),
+                    "cubic {op:?} {requested:?} lost the kink"
+                );
+                assert!(
+                    answers
+                        .as_slice()
+                        .iter()
+                        .all(|answer| (answer.start.solution_value - expected).abs() <= 1e-8),
+                    "cubic {op:?} {requested:?} lost the true value {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn gen1172_monotone_kink_is_not_an_extra_retained_minimum() {
+        let points = [
+            [0.07940467954627639, 3.432185442926146, -1.7857031322721397],
+            [1.07064237589226, 3.2501505967236453, -1.3565118660393338],
+            [2.061980072238244, 3.0681157505211445, -0.9273205998065279],
+            [3.0531177685842277, 2.8860809043186437, -0.498129333573722],
+        ]
+        .into_iter()
+        .map(|[x, y, z]| CPoint::new(x, y, z, NOW))
+        .collect();
+        let curve = Curve::from(BSplineCurve::from_nurb(
+            NurbCurve::new(points, 1, vec![0.0, 0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0, 1.0]).unwrap(),
+            3,
+            false,
+        ));
+        let answers = curve
+            .global_point_solve::<Handle>(
+                &Kernel::default(),
+                &curve.natural_interval(),
+                SolverOperation::ProjectedMinimize,
+                Vec3::new(0.9299482248193833, 3.275988232082504, -1.4174303531722534),
+                0.05,
+                SolutionRequested::All,
+                &GlobalPointSolveOptions {
+                    opt_vectors: Some(&[Vec3::new(
+                        0.2768740720669518,
+                        0.09239858445816851,
+                        0.5062961704696287,
+                    )]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(answers.len(), 1);
+        assert!(answers.as_slice()[0].start.solution_value < 1e-14);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Projected endpoint extrema and small-profile mitres
 
-Related: #2840; the available geometry follow-up in #2811, under #2794.
+Related: #2840 fixes #3087, the small-profile geometry defect recorded in #2811 under #2794.
 Units: `curve.curve_p1`, `curve.curve_p4`, `geom.global_solver`;
 caller `primitive.primitive_creation_p2`.
 
@@ -658,7 +658,12 @@ and does not establish regression attribution. The captured union-case replay
 passes. No deadline, tolerance, fixture or classification was changed to hide
 the timeout. Hosted CI separately requires repository-admin workflow approval.
 
-## Projected face review follow-up: retention slack and early exits
+## Historical projected-face checkpoint (superseded by strict review work)
+
+The following records the earlier `711b12437` checkpoint. Its combined caller/
+comparison-point allowance was subsequently rejected in review and is not the
+current certificate contract. The strict own-enclosure work is still under
+validation; the earlier 33-test result below does not validate it.
 
 The face certificate now distinguishes retention slack from arithmetic rounding.
 For a face-owned incumbent it uses the lower endpoint of its singleton metric
@@ -690,3 +695,43 @@ kernel accuracy issue. Both analytic expectations remain unchanged.
 All 33 focused topology-solver tests pass for this review change. Full validation
 of the final parent/main merges remains a separate gate; earlier full-suite
 results above are not attributed to these later changes.
+## Original seeded elbow cases
+
+The direct replay in `diagnostics/check_small_elbow_cases.rs` obtains `gen0092`
+and `gen0189` from the actual seeded runner, rebuilds their curves and flags,
+and checks the returned bodies independently of the runner's success flag.
+At checkpoint `ed6119602` both inputs are identical and both pass Level2 validity
+with no failed checks. Their measured volume is `6.283172176379765e-8`, versus
+`pi * 0.001^2 * 0.02 = 6.283185307179586e-8`: relative error
+`2.089831698288911e-6`, within the existing `1e-4` volume assertion.
+The exact inputs, values and generated golden records are retained in
+`diagnostics/small_elbow_seeded_cases.json`.
+
+Both formerly excluded records now have actual runner-generated goldens:
+`record = [0,0,0,0,0,0,0,0,0,0,1]`. The success status alone would not establish
+the fix: the validity and volume checks above distinguish the corrected body
+from the old successful-but-invalid body. The old vertices were
+`0.00182842712474619` off their incident faces.
+
+The cases are generated golden inputs, not entries in `tests/kernel_cases`;
+there is no existing gallery entry or `gallery_note` to change. The ignored
+file-writing exporter has been removed from the ordinary regression test file;
+the explicit diagnostic helper replaces it. The fixture filenames now describe
+the behavior, while their stable case identifiers preserve audit correspondence.
+
+The shaded after image is rendered by `solidcore-diag` at azimuth -55 degrees,
+elevation 22 degrees, size 1200 by 900, using the binary SMB emitted by the helper:
+
+![Corrected small elbow, diagnostic shaded rendering](figures/small-elbow-diag-after.png)
+
+The shaded path refuses to convert the old invalid body to a mesh
+("a sheet touching itself along an edge"). The explicit `--wireframe` mode in
+#3089 (diagnostics commit `f62bab308`) renders both bodies' native edges without
+attempting that conversion. Both images below use the same azimuth, elevation,
+image size and `--edges-above 0.00002` setting. The reports explicitly identify
+wireframe mode and `mesh.attempted: false`; no repaired or substituted body is
+used as the before image.
+
+| Before: invalid small elbow | After: valid small elbow |
+|---|---|
+| ![Original native edges](figures/small-elbow-diag-wire-before.png) | ![Corrected native edges](figures/small-elbow-diag-wire-after.png) |
