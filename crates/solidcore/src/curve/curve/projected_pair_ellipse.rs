@@ -8,7 +8,8 @@
 //! refuses. No production dispatch or All completeness claim yet.
 
 use super::projected_pair::{
-    bounded_domain, dot, norm_squared, project, sub, Candidate, Cell, Definition, Piece, Query,
+    bounded_domain, dot, norm_squared, project, square, sub, Candidate, Cell, Definition, Piece,
+    Query,
 };
 use super::{Curve, CurveKind};
 use crate::blend::fillet_section::certificate::curve_derivs_over;
@@ -191,12 +192,28 @@ fn edge_value_over(
 ) -> Result<Ivl> {
     let midpoint = range.mid();
     let (point, _) = definition.jet(Ivl::from(midpoint), piece.knot)?;
-    let at_midpoint = norm_squared(project(sub(point, fixed), V3::from_vec3(normal)));
+    let projected_delta = project(sub(point, fixed), V3::from_vec3(normal));
+    let at_midpoint = norm_squared(projected_delta);
     let (first, _) = edge_jet(definition, piece, fixed, normal, Ivl::from(midpoint))?;
     let (_, second) = edge_jet(definition, piece, fixed, normal, range)?;
     let delta = range - Ivl::from(midpoint);
     let squared_delta = Ivl::checked(delta.mig() * delta.mig(), delta.mag() * delta.mag());
-    let squared = at_midpoint + Ivl::from(2.0) * first * delta + second * squared_delta;
+    let linear = Ivl::from(2.0) * first * delta;
+    let quadratic = second * squared_delta;
+    let original = at_midpoint + linear + quadratic;
+    // The same exact Taylor terms, still outward rounded, can be grouped
+    // before the final large sum. This avoids rounding the full metric again
+    // merely to add a tiny geometric remainder; no remainder is discarded and
+    // the feasible point's independently computed interval is never enlarged.
+    let mut components = [
+        square(projected_delta.x),
+        square(projected_delta.y),
+        square(projected_delta.z),
+    ];
+    components.sort_by(|a, b| a.mag().total_cmp(&b.mag()));
+    let [small, middle, large] = components;
+    let grouped = (((small + linear) + quadratic) + middle) + large;
+    let squared = Ivl::new(original.lo.max(grouped.lo), original.hi.min(grouped.hi));
     let value = squared.sqrt();
     if !finite(value) {
         return Err(refused("root objective has no finite Taylor enclosure"));
