@@ -119,3 +119,24 @@ The first three focused prototype tests pass, including the original native edge
 root and Taylor objective enclosure. Strict library/tests Clippy and changed-file
 formatting pass. Independent read-only review found the current edge proof sound;
 multiple-root subdivision coverage is the next regression before production.
+
+## Finite-candidate prototype checkpoint
+
+The test-only prototype now enumerates strict constrained corners, all certified
+edge maxima whose fixed-side inward derivative is negative, and opposite roots
+of squared projected distance to the center. It requires identical native
+quadratic definitions, continuous internal knots, the existing nonreversing
+single-turn conic certificate, and strictly positive projected Gram determinant
+and eigenvalue discriminant. Circular, rank-lost or uncertain projections refuse.
+A shared finite visit budget covers every edge/center root solve and root-pair
+comparison. Closed-seam/endpoint identities still refuse rather than silently
+collapsing repeated parameter aliases.
+
+Five focused tests and strict library/tests Clippy pass. The original gen0472
+candidate construction contains both ordered pairs near the stronger witness;
+its full objective bounds remain separate from feasible point rounding.
+Additional tests cover two isolated maxima with an intermediate minimum,
+repeated-root refusal, reversed traversal, non-unit projection, circular/rank-loss
+refusal and unresolved closed seams. Shared All retention/ordered deduplication,
+public dispatch, broad affected-case audit and full independent review remain
+pending; this checkpoint does not claim a production fix.

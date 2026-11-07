@@ -7,11 +7,15 @@
 //! 48 and 64 interval-Newton contractions. Endpoint/multiple-root ambiguity
 //! refuses. No production dispatch or All completeness claim yet.
 
-use super::projected_pair::{dot, norm_squared, project, sub, Definition, Piece};
+use super::projected_pair::{
+    dot, norm_squared, project, sub, Candidate, Cell, Definition, Piece, Query,
+};
+use super::{Curve, CurveKind};
 use crate::blend::fillet_section::certificate::curve_derivs_over;
 use crate::blend::fillet_section::interval::Ivl;
 use crate::blend::fillet_section::series::V3;
 use crate::error::{Result, SolidError};
+use crate::geom::extent1d::Extent1d;
 use crate::kernel::Kernel;
 use crate::math::Vec3;
 
@@ -29,6 +33,80 @@ fn refused(reason: &'static str) -> SolidError {
 
 fn finite(x: Ivl) -> bool {
     x.lo.is_finite() && x.hi.is_finite() && x.lo <= x.hi
+}
+
+/// Establish the regular noncircular projected conic needed by the finite
+/// interior-candidate theorem. `definition` must come from `Definition::of`
+/// for this same immutable curve, which already proves its analytic exact class.
+fn projected_frame(curve: &Curve, definition: &Definition<'_>, normal: Vec3) -> Result<V3<Ivl>> {
+    let (CurveKind::Ellipse(ellipse), Definition::Nurbs(net)) = (curve.kind(), definition) else {
+        return Err(refused(
+            "finite ellipse enumeration requires a native ellipse",
+        ));
+    };
+    if net.p != 2 || net.n > MAX_CELLS {
+        return Err(refused(
+            "finite ellipse enumeration requires bounded quadratic native pieces",
+        ));
+    }
+    let domain = curve.natural_interval();
+    // A conic identity on separate pieces does not prove they meet. For
+    // quadratic positive-weight NURBS, internal multiplicity <=2 guarantees
+    // C0 continuity; a full-multiplicity internal break must refuse.
+    if net.u.windows(3).any(|run| match run {
+        [a, _, c] => a == c && domain.min() < *a && *a < domain.max(),
+        _ => false,
+    }) {
+        return Err(refused("ellipse form has a discontinuous internal knot"));
+    }
+    let center = ellipse.position().origin();
+    let x = ellipse.position().x_axis();
+    let y = if ellipse.inside_out() {
+        -ellipse.position().y_axis()
+    } else {
+        ellipse.position().y_axis()
+    };
+    let sweep = crate::surface::implicit::conic_turn(
+        ellipse.base(),
+        center,
+        x,
+        y,
+        ellipse.x_radius(),
+        ellipse.y_radius(),
+    )?
+    .ok_or_else(|| refused("ellipse form has no regular nonreversing traversal certificate"))?;
+    if !(sweep > 0.0 && sweep <= 360.0) {
+        return Err(refused(
+            "ellipse form has no finite single-turn coverage certificate",
+        ));
+    }
+    let scaled = |axis: Vec3, radius: f64| {
+        let r = Ivl::from(radius);
+        V3 {
+            x: Ivl::from(axis.x) * r,
+            y: Ivl::from(axis.y) * r,
+            z: Ivl::from(axis.z) * r,
+        }
+    };
+    let n = V3::from_vec3(normal);
+    let a = project(scaled(x, ellipse.x_radius()), n);
+    let b = project(scaled(y, ellipse.y_radius()), n);
+    let aa = dot(a, a);
+    let ab = dot(a, b);
+    let bb = dot(b, b);
+    let determinant = aa * bb - ab * ab;
+    let difference = aa - bb;
+    let discriminant = difference * difference + Ivl::from(4.0) * ab * ab;
+    if !(finite(determinant)
+        && finite(discriminant)
+        && determinant.lo > 0.0
+        && discriminant.lo > 0.0)
+    {
+        return Err(refused(
+            "projected ellipse is degenerate, circular or unresolved",
+        ));
+    }
+    Ok(V3::from_vec3(center))
 }
 
 /// One unique strict stationary maximum, in the original parameter coordinates.
@@ -127,6 +205,15 @@ fn isolate(
     initial: Ivl,
     evaluate: impl Fn(Ivl) -> Result<(Ivl, Ivl)>,
 ) -> Result<Vec<EdgeMaximum>> {
+    isolate_with_budget(kernel, initial, evaluate, &mut 0)
+}
+
+fn isolate_with_budget(
+    kernel: &Kernel,
+    initial: Ivl,
+    evaluate: impl Fn(Ivl) -> Result<(Ivl, Ivl)>,
+    visited: &mut usize,
+) -> Result<Vec<EdgeMaximum>> {
     if !(finite(initial) && initial.lo < initial.hi) {
         return Err(refused(
             "edge parameter domain is not finite and increasing",
@@ -134,11 +221,10 @@ fn isolate(
     }
     let mut todo = vec![(initial, 0_usize)];
     let mut maxima = Vec::new();
-    let mut visited = 0_usize;
     while let Some((range, depth)) = todo.pop() {
         kernel.check_cancelled(OP)?;
-        visited += 1;
-        if visited > MAX_CELLS {
+        *visited += 1;
+        if *visited > MAX_CELLS {
             return Err(refused("edge stationary-root cell budget exhausted"));
         }
         let (value, derivative) = evaluate(range)?;
@@ -179,12 +265,225 @@ fn isolate(
     Ok(maxima)
 }
 
+/// A feasible representative and the separate enclosure of the actual maximum.
+struct MaximumCandidate {
+    point: Candidate,
+    objective: Ivl,
+}
+
+#[derive(Clone, Copy)]
+struct RootPiece {
+    piece: Piece,
+    root: EdgeMaximum,
+}
+
+fn roots_over(
+    query: &Query<'_>,
+    definition: &Definition<'_>,
+    domain: Extent1d,
+    fixed: V3<Ivl>,
+    visited: &mut usize,
+) -> Result<Vec<RootPiece>> {
+    let mut roots = Vec::new();
+    for piece in definition.pieces(domain)? {
+        if piece.range.lo == piece.range.hi {
+            continue;
+        }
+        for root in isolate_with_budget(
+            query.kernel,
+            piece.range,
+            |t| edge_jet(definition, piece, fixed, query.normal, t),
+            visited,
+        )? {
+            roots.push(RootPiece { piece, root });
+        }
+    }
+    Ok(roots)
+}
+
+fn candidate_over(query: &Query<'_>, a: Piece, b: Piece) -> Result<MaximumCandidate> {
+    let point = query.candidate(a.range.mid(), b.range.mid())?;
+    let objective = query.bound(Cell { a, b, depth: 0 })?.sqrt();
+    if !finite(objective) {
+        return Err(refused("finite maximum has no objective enclosure"));
+    }
+    Ok(MaximumCandidate { point, objective })
+}
+
+fn inward_derivative(
+    query: &Query<'_>,
+    a: Piece,
+    b: Piece,
+    first: bool,
+    lower: bool,
+) -> Result<Ivl> {
+    let [da, db] = &query.definitions;
+    let (pa, va) = da.jet(a.range, a.knot)?;
+    let (pb, vb) = db.jet(b.range, b.knot)?;
+    let n = V3::from_vec3(query.normal);
+    let delta = project(sub(pa, pb), n);
+    let direction = if first {
+        project(va, n)
+    } else {
+        project(vb, n)
+    };
+    let sign = if first == lower { 1.0 } else { -1.0 };
+    Ok(dot(delta, direction) * Ivl::from(sign))
+}
+
+fn strict_inward(value: Ivl) -> Result<bool> {
+    if finite(value) && value.hi < 0.0 {
+        return Ok(true);
+    }
+    if finite(value) && value.lo > 0.0 {
+        return Ok(false);
+    }
+    Err(refused(
+        "inward derivative does not isolate a constrained maximum",
+    ))
+}
+
+/// Complete finite local maxima for identical, regular noncircular projected
+/// ellipses: strict corners, strict edge roots and opposite major-axis points.
+/// Every unknown classification refuses; retention is a separate construction.
+fn finite_candidates(query: &Query<'_>, domains: [Extent1d; 2]) -> Result<Vec<MaximumCandidate>> {
+    let [ca, cb] = query.curves;
+    let (CurveKind::Ellipse(ea), CurveKind::Ellipse(eb)) = (ca.kind(), cb.kind()) else {
+        return Err(refused(
+            "finite ellipse construction needs two native ellipses",
+        ));
+    };
+    let [da, db] = &query.definitions;
+    let (Definition::Nurbs(na), Definition::Nurbs(nb)) = (da, db) else {
+        return Err(refused(
+            "finite ellipse construction needs certified native forms",
+        ));
+    };
+    if na.p != nb.p
+        || na.n != nb.n
+        || na.u != nb.u
+        || na.pw != nb.pw
+        || ea.position().origin() != eb.position().origin()
+        || ea.position().x_axis() != eb.position().x_axis()
+        || ea.position().y_axis() != eb.position().y_axis()
+        || ea.x_radius() != eb.x_radius()
+        || ea.y_radius() != eb.y_radius()
+        || ea.inside_out() != eb.inside_out()
+    {
+        return Err(refused(
+            "finite ellipse construction requires identical definitions",
+        ));
+    }
+    let center = projected_frame(ca, da, query.normal)?;
+    let [ia, ib] = domains;
+    if !(ia.min() < ia.max() && ib.min() < ib.max()) {
+        return Err(refused(
+            "finite ellipse construction needs positive-length domains",
+        ));
+    }
+    let fixed_piece = |t| Piece {
+        range: Ivl::from(t),
+        knot: None,
+    };
+    let mut maxima = Vec::new();
+    // Equal native parameters on identical curves have zero separation and
+    // cannot maximize a nondegenerate pair of positive-length intervals.
+    for (s, lower_a) in [(ia.min(), true), (ia.max(), false)] {
+        for (t, lower_b) in [(ib.min(), true), (ib.max(), false)] {
+            if s == t {
+                continue;
+            }
+            let a = fixed_piece(s);
+            let b = fixed_piece(t);
+            let ga = inward_derivative(query, a, b, true, lower_a)?;
+            let gb = inward_derivative(query, a, b, false, lower_b)?;
+            if ga.lo > 0.0 || gb.lo > 0.0 {
+                continue;
+            }
+            if strict_inward(ga)? && strict_inward(gb)? {
+                maxima.push(candidate_over(query, a, b)?);
+            }
+        }
+    }
+    let mut visited = 0;
+    for (first, fixed_t, lower) in [
+        (true, ia.min(), true),
+        (true, ia.max(), false),
+        (false, ib.min(), true),
+        (false, ib.max(), false),
+    ] {
+        let (fixed_definition, moving_definition, moving_domain) =
+            if first { (da, db, ib) } else { (db, da, ia) };
+        let (fixed, _) = fixed_definition.jet(Ivl::from(fixed_t), None)?;
+        for root in roots_over(query, moving_definition, moving_domain, fixed, &mut visited)? {
+            let moving = Piece {
+                range: root.root.parameter,
+                knot: root.piece.knot,
+            };
+            let fixed = fixed_piece(fixed_t);
+            let (a, b) = if first {
+                (fixed, moving)
+            } else {
+                (moving, fixed)
+            };
+            if strict_inward(inward_derivative(query, a, b, first, lower)?)? {
+                maxima.push(candidate_over(query, a, b)?);
+            }
+        }
+    }
+    // For an ellipse with distinct Gram eigenvalues, center-distance maxima
+    // are its two major-axis points. Distinct opposite ones are precisely the
+    // interior pair maxima; minor-axis antipodes are pair-objective saddles.
+    let a_roots = roots_over(query, da, ia, center, &mut visited)?;
+    let b_roots = roots_over(query, db, ib, center, &mut visited)?;
+    let normal = V3::from_vec3(query.normal);
+    for a in a_roots {
+        for b in &b_roots {
+            query.kernel.check_cancelled(OP)?;
+            visited += 1;
+            if visited > MAX_CELLS {
+                return Err(refused("finite ellipse root-pair budget exhausted"));
+            }
+            let pa = Piece {
+                range: a.root.parameter,
+                knot: a.piece.knot,
+            };
+            let pb = Piece {
+                range: b.root.parameter,
+                knot: b.piece.knot,
+            };
+            let (va, _) = da.jet(pa.range, pa.knot)?;
+            let (vb, _) = db.jet(pb.range, pb.knot)?;
+            let alignment = dot(
+                project(sub(va, center), normal),
+                project(sub(vb, center), normal),
+            );
+            if finite(alignment) && alignment.lo > 0.0 {
+                continue;
+            }
+            if !(finite(alignment) && alignment.hi < 0.0) {
+                return Err(refused(
+                    "major-axis roots have unresolved opposite correspondence",
+                ));
+            }
+            maxima.push(candidate_over(query, pa, pb)?);
+            if maxima.len() > MAX_CELLS {
+                return Err(refused("finite ellipse candidate budget exhausted"));
+            }
+        }
+    }
+    if maxima.is_empty() {
+        return Err(refused(
+            "nonempty ellipse domain has no certified finite maximum",
+        ));
+    }
+    Ok(maxima)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::curve::curve::Curve;
     use crate::curve::ellipse::{Ellipse, EllipseOptions};
-    use crate::geom::extent1d::Extent1d;
 
     #[test]
     fn edge_isolation_proves_unique_maximum_and_excludes_minimum() {
@@ -216,6 +515,70 @@ mod tests {
     }
 
     #[test]
+    fn edge_subdivision_covers_two_maxima_and_refuses_a_multiple_root() {
+        // g=x-x^3 is the derivative of x^2/2-x^4/4: strict maxima
+        // at -1 and +1, and a minimum at zero. Asymmetric limits keep
+        // those roots off artificial bisection boundaries.
+        let roots = isolate(&Kernel::default(), Ivl::new(-1.8, 1.9), |x| {
+            Ok((x - x * x * x, Ivl::from(1.0) - Ivl::from(3.0) * x * x))
+        })
+        .unwrap();
+        assert_eq!(roots.len(), 2);
+        for (root, expected) in roots.iter().zip([-1.0, 1.0]) {
+            assert!(root.parameter.lo <= expected && expected <= root.parameter.hi);
+            assert!(root.parameter.hi - root.parameter.lo < 1e-12);
+        }
+        // The quartic's flat maximum has a repeated stationary root. A
+        // sign-changing g alone cannot replace the required uniqueness proof.
+        assert!(isolate(&Kernel::default(), Ivl::new(-0.7, 1.1), |x| {
+            Ok((Ivl::from(0.0) - x * x * x, Ivl::from(-3.0) * x * x))
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn projected_conic_frame_and_closed_seam_boundaries_are_explicit() {
+        let kernel = Kernel::default();
+        let make = |rx, ry, end, inside_out| {
+            Curve::from(
+                Ellipse::new(
+                    &kernel,
+                    Vec3::ZERO,
+                    Vec3::X,
+                    Vec3::Y,
+                    Extent1d::from_min_max(-90.0, end),
+                    rx,
+                    ry,
+                    &EllipseOptions {
+                        inside_out,
+                        ..EllipseOptions::default()
+                    },
+                )
+                .unwrap(),
+            )
+        };
+        let circle = make(2.0, 2.0, 100.0, false);
+        let circle_definition = Definition::of(&circle, circle.natural_interval()).unwrap();
+        assert!(projected_frame(&circle, &circle_definition, Vec3::Z).is_err());
+        let reversed = make(4.0, 2.0, 100.0, true);
+        let reversed_definition = Definition::of(&reversed, reversed.natural_interval()).unwrap();
+        projected_frame(&reversed, &reversed_definition, Vec3::new(0.0, 0.0, 2.0)).unwrap();
+        let closed = make(4.0, 2.0, 270.0, false);
+        let query = Query {
+            kernel: &kernel,
+            curves: [&closed, &closed],
+            definitions: [
+                Definition::of(&closed, closed.natural_interval()).unwrap(),
+                Definition::of(&closed, closed.natural_interval()).unwrap(),
+            ],
+            normal: Vec3::Z,
+        };
+        // Closed seam aliases require an endpoint construction; the current
+        // finite strict-classifier must refuse instead of inventing an All set.
+        assert!(finite_candidates(&query, [closed.natural_interval(); 2]).is_err());
+    }
+
+    #[test]
     fn original_ellipse_edge_encloses_the_stronger_native_parameter_witness() {
         let kernel = Kernel::default();
         let curve = Curve::from(
@@ -232,6 +595,9 @@ mod tests {
             .unwrap(),
         );
         let definition = Definition::of(&curve, curve.natural_interval()).unwrap();
+        projected_frame(&curve, &definition, Vec3::Z).unwrap();
+        assert!(projected_frame(&curve, &definition, Vec3::ZERO).is_err());
+        assert!(projected_frame(&curve, &definition, Vec3::X).is_err());
         let (fixed, _) = definition.jet(Ivl::from(1.0), None).unwrap();
         let mut roots = Vec::new();
         for piece in definition.pieces(curve.natural_interval()).unwrap() {
@@ -259,5 +625,28 @@ mod tests {
         let objective = edge_value_over(&definition, piece, fixed, Vec3::Z, root).unwrap();
         assert!(objective.lo <= 6.327472493603755 && objective.hi >= 6.327472493603755);
         assert!(objective.hi - objective.lo < 2e-11);
+        let query = Query {
+            kernel: &kernel,
+            curves: [&curve, &curve],
+            definitions: [
+                Definition::of(&curve, curve.natural_interval()).unwrap(),
+                Definition::of(&curve, curve.natural_interval()).unwrap(),
+            ],
+            normal: Vec3::Z,
+        };
+        let maxima = finite_candidates(&query, [curve.natural_interval(); 2]).unwrap();
+        let global_upper = maxima
+            .iter()
+            .map(|m| m.objective.hi)
+            .fold(0.0_f64, f64::max);
+        let retained: Vec<_> = maxima
+            .iter()
+            .filter(|m| m.point.reported >= global_upper - 1e-5)
+            .collect();
+        assert_eq!(retained.len(), 2);
+        for maximum in retained {
+            assert!((maximum.point.reported - 6.327472493603755).abs() < 1e-12);
+            assert!(maximum.point.parameters.contains(&1.0));
+        }
     }
 }
