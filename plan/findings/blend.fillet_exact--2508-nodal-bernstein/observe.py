@@ -26,6 +26,11 @@ dependencies = root / "bin/goldens/deps"
 
 
 def compile_source(source, executable, libraries, test=False):
+    """Link a temporary observer or renderer to this checkout's already-built rlibs.
+
+    With ``test=True``, rustc builds the test harness used to export the fixture.
+    Otherwise it builds the copied diagnostic renderer with its explicit camera.
+    """
     args = ["nice", "-n", "10", "rustc", "--edition=2021", str(source), "-O",
             "-L", "dependency=" + str(dependencies), "-o", str(executable)]
     if test:

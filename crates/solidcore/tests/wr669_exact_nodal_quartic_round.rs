@@ -359,6 +359,7 @@ fn body_bits(k: &Kernel, b: &Brep) -> Vec<Vec<[u64; 3]>> {
         .collect()
 }
 
+/// The nodal definition survives record and parameter edits, while altered geometry refuses.
 #[test]
 fn the_nodal_quartic_round_keeps_its_exact_definition() {
     // Both the offset identities and the canal-surface identity must certify at 0,

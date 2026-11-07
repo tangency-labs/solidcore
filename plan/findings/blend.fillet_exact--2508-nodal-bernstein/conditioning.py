@@ -15,12 +15,19 @@ OUT = Path(__file__).resolve().parent
 OUT.mkdir(exist_ok=True)
 
 def coefficients(number, sqrt):
+    """Form the old quartic's homogeneous power coefficients in the given arithmetic.
+
+    The endpoints are shared double inputs; using Decimal isolates coefficient
+    formation error from the later evaluation of those rounded coefficients.
+    """
     def dot(a, b):
+        """Dot product in the selected arithmetic, preserving the original sum order."""
         s = number(0)
         for x, y in zip(a, b):
             s += x * y
         return s
     def bil(a, u, v):
+        """Evaluate uᵀAv in the original row order without a basis conversion."""
         s = number(0)
         for x, row in zip(u, a):
             for m, y in zip(row, v):
@@ -39,6 +46,7 @@ def coefficients(number, sqrt):
     length = sqrt(dot(v0, v0))
     v0 = [v / length for v in v0]
     def on(phi):
+        """The positive-x lobe on both offset cylinders at the given angle."""
         y = 2.0 + 1.5 * math.cos(phi)
         return [math.sqrt(3.5 * 3.5 - y * y), y, 1.5 * math.sin(phi)]
     f = [n(x) - qi for x, qi in zip(on(0.3), q)]
@@ -63,6 +71,7 @@ def coefficients(number, sqrt):
     return x, w
 
 def horner(p, t):
+    """Evaluate an ascending power-coefficient sequence by Horner's rule."""
     s = p[0] * 0
     for c in reversed(p):
         s = s * t + c

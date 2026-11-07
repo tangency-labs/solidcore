@@ -164,3 +164,46 @@ goldens: 3 unit(s), 3 passed, 0 failed
 
 The three existing known failures remain visible: the two teardrop cases and
 the high-corner setback-eight case. This change neither removes nor blesses them.
+
+## Review follow-up: sphere and cone supports (2026-11-07)
+
+CodeRabbit and the maintainer requested coverage of the other quadric kinds the
+nodal classifier accepts. The follow-up is based on main
+`99ed57c4d4f4cd77d942ac6cd2e4d09f612acb20` and changes tests and documentation;
+the numerical construction is unchanged.
+
+Four fixtures have independently derived intersection points:
+
+| Offsets | Equations / placement | Node |
+| --- | --- | --- |
+| Sphere/cylinder | `(x+2)^2+y^2+z^2=16`, `x^2+y^2=4` | `(2,0,0)` |
+| Sphere/cone | `(x+2)^2+y^2+(z-6)^2=32`, `x^2+y^2=z^2` | `(2,0,2)` |
+| Cylinder/cone | `(x-1)^2+(z-3)^2=2`, `x^2+y^2=z^2` | `(2,0,2)` |
+| Cone/cone | The same z cone and a 45-degree cone with apex `(2,-4,2)` and axis `(-1/2,1/sqrt(2),1/2)` | `(2,0,2)` |
+
+The cone axes in the last row are skew, so this exercises the singular quartic,
+rather than the two-conic class. Each test explicitly checks `NodalQuartic`.
+The endpoint formulas follow the equations above, independently of the polar
+construction; the last uses `l=z+x`, `h=z-x`, so `lh=y^2` and
+`l(l-4)^2=2 sqrt(2) y^2(y+4)`, with parameter `t=(l-4)/y`.
+
+The new identity test verifies **512 additional segments**: four pairs, both
+support orders, both branch charts, both parameter directions and 16 segments.
+The round test builds the production contact rows into a patch, classifies actual
+analytic support surfaces and exercises `keep_round_if_proved`, the zero-bound
+certificate and JSON rebuild. It verifies **64 retained definitions**: four
+pairs, both support orders, four normal-sign pairs and two common contact
+directions. With `side_i` the normal sign and `d=+1` or `-1`, the feasible contacts
+are `contact_i=d*side_i`, and the signed support offsets are `-r*contact_i`;
+`r=1/8`. Independent samples check the ball radius and both rails on their faces.
+This also reaches the contact-row branch for two cones. The existing full-body
+pipe regression continues to cover the complete fillet operation.
+
+Both new tests pass, as do fmt and strict workspace clippy. The optimized kernel
+suite, existing exact-round regressions, wasm and affected goldens are checked
+for the updated head and reported in the PR description.
+
+The missing test/helper docstrings are added as requested by CodeRabbit. In the
+two Python evidence scripts, removing docstrings from their syntax trees gives
+the same executable trees as revision `9e47df04a`. Their execution behavior is
+unchanged; the maintainer's separate security review remains for its follow-up.

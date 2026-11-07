@@ -2489,7 +2489,7 @@ fn keep_definition(
 /// was. The class is read within `tol`, the body's tolerance, and the certificate to rounding.
 /// Supports only that close to the class (a cylinder's axis 1e-13 off square to a plane, as
 /// read from a record) make a net that is the round but not provably on the class's surface:
-/// no bound of 0, so it keeps no definition, as a nodal quartic does. A net further off the
+/// no bound of 0, so it keeps no definition. A net further off the
 /// class than `tol` ([`ExactRound::miss`]) is built wrongly, and stays an error.
 ///
 /// # Errors

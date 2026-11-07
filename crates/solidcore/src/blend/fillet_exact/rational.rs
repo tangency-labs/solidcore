@@ -1281,7 +1281,14 @@ pub fn calc_rational_spine_fillet_geom(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blend::fillet_exact::{classify_supports, keep_round_if_proved, ClassInputs};
+    use crate::geom::axis2_placement::Axis2Placement;
+    use crate::surface::cone::Cone;
+    use crate::surface::procedural_blend::convert::{exact_rebuild, exact_to_record};
+    use crate::surface::procedural_blend::exact::{ExactClass, ExactRound};
+    use crate::surface::sphere::Sphere;
 
+    /// A homogeneous quartic segment as the canonical curve the identity checker reads.
     fn segment_curve(segment: &Segment) -> BSplineCurve {
         let [mx, my, mz] = &segment.m.a;
         let points: Vec<_> = segment
@@ -1349,6 +1356,7 @@ mod tests {
         }
     }
 
+    /// The original nodal pair satisfies both offset equations, including its last end.
     #[test]
     fn two_touching_cylinders_meet_in_a_nodal_quartic_its_segments_on_both() {
         // r3.5 about z and r1.5 about x through (0, 2, 0): touching at (0, 3.5, 0)
@@ -1403,6 +1411,7 @@ mod tests {
         }
     }
 
+    /// The identities survive changes of scale, frame, ordering and projective chart.
     #[test]
     fn nodal_quartic_identities_hold_at_other_scales_frames_and_directions() {
         for size in [1e-3, 1.0, 1e3] {
@@ -1461,6 +1470,363 @@ mod tests {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Non-cylinder pairs with independent closed-form intersection points.
+    ///
+    /// The cylinder/sphere has x²+y²=4 and z²=8-4x. For the cone/sphere,
+    /// x²+y²=z² and x=-z²/2+3z-2. The cylinder/cone uses the circle
+    /// (x-1)²+(z-3)²=2 and y²=z²-x². For the two cones, l=z+x, h=z-x
+    /// give lh=y² and l(l-4)²=2√2 y²(y+4); t=(l-4)/y parametrizes them.
+    /// Their normals agree at the stated nodes; the two cone axes are skew.
+    fn other_nodal_pairs() -> [([BlendQuadric; 2], Point3, [Point3; 2]); 4] {
+        let cylinder = |point, dir, radius| BlendQuadric {
+            kind: QuadricKind::Cylinder,
+            point,
+            dir,
+            radius,
+            ..BlendQuadric::default()
+        };
+        let sphere = |point, radius| BlendQuadric {
+            kind: QuadricKind::Sphere,
+            point,
+            radius,
+            ..BlendQuadric::default()
+        };
+        let cone = BlendQuadric {
+            kind: QuadricKind::Cone,
+            dir: Vec3::new(0.0, 0.0, 1.0),
+            angle: PI / 4.0,
+            ..BlendQuadric::default()
+        };
+        let cylinder_sphere = |phi: f64| {
+            let x = 2.0 * phi.cos();
+            Point3::new(x, 2.0 * phi.sin(), (8.0 - 4.0 * x).sqrt())
+        };
+        let cone_sphere = |z: f64| {
+            let x = -0.5 * z * z + 3.0 * z - 2.0;
+            Point3::new(x, (z * z - x * x).sqrt(), z)
+        };
+        let cylinder_cone = |phi: f64| {
+            let x = 1.0 + 2.0_f64.sqrt() * phi.cos();
+            let z = 3.0 + 2.0_f64.sqrt() * phi.sin();
+            Point3::new(x, (z * z - x * x).sqrt(), z)
+        };
+        let cone_cone = |t: f64| {
+            let c = 2.0 * 2.0_f64.sqrt();
+            let y = 4.0 * (c - t * t) / (t * t * t - c);
+            let l = 4.0 + t * y;
+            let h = y * y / l;
+            Point3::new(0.5 * (l - h), y, 0.5 * (l + h))
+        };
+        [
+            (
+                [
+                    sphere(Point3::new(-2.0, 0.0, 0.0), 4.0),
+                    cylinder(Point3::ZERO, Vec3::new(0.0, 0.0, 1.0), 2.0),
+                ],
+                Point3::new(2.0, 0.0, 0.0),
+                [cylinder_sphere(0.4), cylinder_sphere(1.2)],
+            ),
+            (
+                [sphere(Point3::new(-2.0, 0.0, 6.0), 32.0_f64.sqrt()), cone],
+                Point3::new(2.0, 0.0, 2.0),
+                [cone_sphere(2.6), cone_sphere(3.4)],
+            ),
+            (
+                [
+                    cylinder(
+                        Point3::new(1.0, 0.0, 3.0),
+                        Vec3::new(0.0, 1.0, 0.0),
+                        2.0_f64.sqrt(),
+                    ),
+                    cone,
+                ],
+                Point3::new(2.0, 0.0, 2.0),
+                [
+                    cylinder_cone(-PI / 4.0 + 0.3),
+                    cylinder_cone(-PI / 4.0 + 0.9),
+                ],
+            ),
+            (
+                [
+                    cone,
+                    BlendQuadric {
+                        point: Point3::new(2.0, -4.0, 2.0),
+                        dir: Vec3::new(-0.5, std::f64::consts::FRAC_1_SQRT_2, 0.5),
+                        ..cone
+                    },
+                ],
+                Point3::new(2.0, 0.0, 2.0),
+                [cone_cone(1.6), cone_cone(1.64)],
+            ),
+        ]
+    }
+
+    /// Each accepted mixed pair's quartic is identically on both quadrics in either chart.
+    #[test]
+    fn nodal_sphere_and_cone_pairs_satisfy_both_offset_identities() {
+        for (offsets, node, ends) in other_nodal_pairs() {
+            for q in offsets {
+                assert!(q.distance(node) < 1e-14);
+                for end in ends {
+                    assert!(q.distance(end) < 1e-14);
+                }
+            }
+            for reversed in [false, true] {
+                let [a, b] = if reversed {
+                    [offsets[1], offsets[0]]
+                } else {
+                    offsets
+                };
+                let mut blend = ExactBlend {
+                    offsets: [a, b],
+                    radius: 0.125,
+                    ..ExactBlend::default()
+                };
+                super::super::classify_blend_spine(ends[0], 1e-7, &mut blend);
+                assert_eq!(blend.spine, BlendSpine::NodalQuartic, "{a:?}, {b:?}");
+                assert!(blend.point.distance(node) < 1e-14);
+                for base in 0..2 {
+                    for [from, to] in [ends, [ends[1], ends[0]]] {
+                        let arc =
+                            nodal_quartic(&a, &b, node, from - node, to - node, base).unwrap();
+                        for i in 0..16 {
+                            let curve = segment_curve(
+                                &arc.segment(f64::from(i) / 16.0, f64::from(i + 1) / 16.0),
+                            );
+                            assert!(
+                                crate::surface::implicit::curve_on_quadrics(
+                                    &curve,
+                                    &[a.implicit(), b.implicit()]
+                                )
+                                .unwrap(),
+                                "{a:?}, {b:?}, base {base}, segment {i}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The same Bernstein contact rows as the builder, as one tensor-product patch.
+    fn round_patch(
+        offsets: [BlendQuadric; 2],
+        contact: [f64; 2],
+        segment: &Segment,
+        radius: f64,
+    ) -> Surface {
+        let a = contact_of(&offsets[0], contact[0], segment);
+        let b = contact_of(&offsets[1], contact[1], segment);
+        let (mut rows, mut weights) = if !a.bw && b.bw {
+            let (mut rows, mut weights) = round_rows(&b, &a, segment, [radius; 2], true);
+            rows.reverse();
+            weights.reverse();
+            (rows, weights)
+        } else {
+            round_rows(&a, &b, segment, [radius; 2], true)
+        };
+        let degree = rows
+            .iter()
+            .flat_map(|row| &row.a)
+            .chain(&weights)
+            .map(|p| degree(p))
+            .max()
+            .unwrap();
+        for row in &mut rows {
+            for coordinate in &mut row.a {
+                *coordinate = elevate(coordinate, degree);
+            }
+        }
+        for row in &mut weights {
+            *row = elevate(row, degree);
+        }
+        let mut points = Vec::new();
+        let mut w = Vec::new();
+        for i in 0..=degree {
+            for (row, weights) in rows.iter().zip(&weights) {
+                let weight = weights[i];
+                assert!(weight > 0.0, "positive round weights: {weight:e}");
+                points.push(Point3::new(row.a[0][i], row.a[1][i], row.a[2][i]) / weight);
+                w.push(weight);
+            }
+        }
+        let maximum = w.iter().copied().fold(0.0_f64, f64::max);
+        for weight in &mut w {
+            *weight /= maximum;
+        }
+        Surface::from(
+            BSplineSurface::create_canonical(&CanonicalSurfaceData {
+                u_degree: degree,
+                v_degree: 2,
+                control_points: &points,
+                form: BSplineSurfaceForm::Unspecified,
+                u_multiplicities: &[degree + 1, degree + 1],
+                v_multiplicities: &[3, 3],
+                u_knots: &[0.0, 1.0],
+                v_knots: &[0.0, 1.0],
+                knot_type: KnotType::PiecewiseBezierKnots,
+                weights: Some(&w),
+                uv_domain: None,
+            })
+            .unwrap(),
+        )
+    }
+
+    /// The analytic support with the quadric's normal, plus a regular UV for classification.
+    fn quadric_support(k: &Kernel, q: BlendQuadric) -> (Surface, Point2) {
+        let axis = if q.kind == QuadricKind::Sphere {
+            Vec3::new(0.0, 0.0, 1.0)
+        } else {
+            q.dir
+        };
+        let x = if axis.x.abs() < 0.9 {
+            Vec3::new(1.0, 0.0, 0.0)
+        } else {
+            Vec3::new(0.0, 1.0, 0.0)
+        };
+        let x = (x - axis * x.dot(axis)).unitize().unwrap();
+        let origin = if q.kind == QuadricKind::Cone {
+            q.point + axis
+        } else {
+            q.point
+        };
+        let frame = Axis2Placement::new(origin, x, axis.cross(x));
+        let mut surface = match q.kind {
+            QuadricKind::Sphere => {
+                Surface::from(Sphere::create_canonical(k, &frame, q.radius).unwrap())
+            }
+            QuadricKind::Cylinder => {
+                Surface::from(Cone::create_canonical_cylinder(k, &frame, q.radius).unwrap())
+            }
+            QuadricKind::Cone => Surface::from(
+                Cone::create_canonical_with_semi_angle(
+                    k,
+                    &frame,
+                    q.angle.tan(),
+                    q.angle * 180.0 / PI,
+                    Some(6.0),
+                    false,
+                    false,
+                )
+                .unwrap(),
+            ),
+            _ => panic!("a mixed nodal support is a sphere, cylinder or cone"),
+        };
+        if q.side < 0.0 {
+            surface.reverse(k, SurfParamType::U).unwrap();
+        }
+        let uv = surface.natural_uv_domain_with_nurb(k).unwrap().mid();
+        let read = BlendQuadric::from_surface(k, &surface, uv, 1e-7).unwrap();
+        assert_eq!(read.kind, q.kind);
+        assert_eq!(read.side, q.side);
+        (surface, uv)
+    }
+
+    /// Mixed pairs retain certified definitions for both contact directions and all normal signs.
+    #[test]
+    fn nodal_sphere_and_cone_rounds_keep_zero_bound_definitions() {
+        let k = Kernel::default();
+        let radius = 0.125;
+        for (offsets, node, [from, to]) in other_nodal_pairs() {
+            for swapped in [false, true] {
+                let offsets = if swapped {
+                    [offsets[1], offsets[0]]
+                } else {
+                    offsets
+                };
+                for sides in [[1.0, 1.0], [1.0, -1.0], [-1.0, 1.0], [-1.0, -1.0]] {
+                    for toward in [1.0, -1.0] {
+                        let offsets = [
+                            BlendQuadric {
+                                side: sides[0],
+                                ..offsets[0]
+                            },
+                            BlendQuadric {
+                                side: sides[1],
+                                ..offsets[1]
+                            },
+                        ];
+                        let contact = sides.map(|side| toward * side);
+                        let signed = contact.map(|sign| -radius * sign);
+                        let faces = [
+                            offsets[0].offset(-signed[0], 1e-7),
+                            offsets[1].offset(-signed[1], 1e-7),
+                        ];
+                        let [(a, uv_a), (b, uv_b)] = faces.map(|face| quadric_support(&k, face));
+                        let arc = nodal_quartic(
+                            &offsets[0],
+                            &offsets[1],
+                            node,
+                            from - node,
+                            to - node,
+                            0,
+                        )
+                        .unwrap();
+                        let segment = arc.segment(0.25, 0.3125);
+                        let leader = segment_curve(&segment);
+                        let inputs = ClassInputs {
+                            uv: [uv_a, uv_b],
+                            offsets: signed,
+                            centre: leader.evaluate_point(0.5).unwrap(),
+                            tol: 1e-7,
+                            ball_on_collapsed: false,
+                            radii_can_change: false,
+                        };
+                        let blend = classify_supports(&k, [&a, &b], &inputs).unwrap();
+                        assert_eq!(
+                            blend.spine,
+                            BlendSpine::NodalQuartic,
+                            "{offsets:?}, {contact:?}"
+                        );
+                        let mut net = round_patch(offsets, contact, &segment, radius);
+                        let round = ExactRound::create(
+                            &k,
+                            ExactClass::NodalQuartic,
+                            [&a, &b],
+                            radius,
+                            Some(&leader),
+                            inputs,
+                        )
+                        .unwrap();
+                        assert!(
+                            keep_round_if_proved(&k, &mut net, round, inputs.tol).unwrap(),
+                            "{offsets:?}, {contact:?}"
+                        );
+                        assert_eq!(
+                            net.procedural_blend().unwrap().exact().unwrap().bound(),
+                            0.0
+                        );
+                        assert_eq!(net.procedural_blend().unwrap().recertify(&k).unwrap(), 0.0);
+                        for i in 0..=4 {
+                            let u = f64::from(i) / 4.0;
+                            let centre = leader.evaluate_point(u).unwrap();
+                            for j in 0..=4 {
+                                let p = net
+                                    .evaluate_point(&k, Point2::new(u, f64::from(j) / 4.0))
+                                    .unwrap();
+                                assert!((p.distance(centre) - radius).abs() < 1e-13);
+                                if j == 0 {
+                                    assert!(faces[0].distance(p) < 1e-13);
+                                }
+                                if j == 4 {
+                                    assert!(faces[1].distance(p) < 1e-13);
+                                }
+                            }
+                        }
+                        let record = exact_to_record(&k, &net).unwrap();
+                        let bytes = serde_json::to_vec(&record).unwrap();
+                        let record = serde_json::from_slice(&bytes).unwrap();
+                        let rebuilt = exact_rebuild(&k, &record).unwrap();
+                        assert_eq!(
+                            rebuilt.procedural_blend().unwrap().recertify(&k).unwrap(),
+                            0.0
+                        );
                     }
                 }
             }
