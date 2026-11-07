@@ -2831,6 +2831,34 @@ fn a_cylinder_widens_by_small_distances_along_its_axis() {
 
 /// Diagnostic matrix for #2980; retained to reproduce the before/after evidence.
 #[test]
+fn a_far_ball_patch_extends_by_the_same_small_distance_as_at_the_origin() {
+    use crate::surface::implicit::{lies_on, Implicit};
+    let kk = k();
+    for o in [0.0, 1e3, 1e5] {
+        let c = Vec3::new(o, o, 0.0);
+        let r = 2.0;
+        let (net, _, _) = crate::blend::blend_corner::ball::ball_triangle_patch(
+            c, r, &[Vec3::X, Vec3::Y, Vec3::Z], 0, false,
+        ).unwrap();
+        let s = Surface::from(crate::surface::ball_patch::BallPatch::create(&net, c, r).unwrap());
+        let d = 1e-3;
+        let e = s.extended_sides(&kk, &[BoxSide::UMin], Continuity::Natural, d)
+            .unwrap_or_else(|err| panic!("at {o:e} by {d:e}: {err:?}"));
+        let SideExtension::Extended(a) = e.sides[0] else {
+            panic!("at {o:e}: {:?}", e.sides);
+        };
+        assert!(super::exact(&a, e.extension, d), "at {o:e}: {a:?}");
+        assert!((a.enclosure.mid() - d).abs() <= 1e-12 * d, "at {o:e}: {a:?}");
+        let SurfaceKind::BallPatch(out) = e.surface.kind() else { panic!("not a ball patch"); };
+        assert!(lies_on(out.net(), &Implicit::Sphere { centre: c, radius: r }).unwrap());
+        let old = net.gw_nurb().unwrap();
+        let new = out.net().gw_nurb().unwrap();
+        assert!(old.cpts().iter().flatten().all(|p| new.cpts().iter().flatten()
+            .any(|q| p.x == q.x && p.y == q.y && p.z == q.z && p.w == q.w)));
+    }
+}
+
+#[test]
 fn difference_form_certificate_table() {
     let kk = k();
     for o in [0.0, 1e3, 1e5] {
