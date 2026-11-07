@@ -13,4 +13,6 @@ mod projected_bound;
 pub(super) mod projected_residual;
 
 #[cfg(test)]
+mod affine_face_maxima_tests;
+#[cfg(test)]
 mod silhouette_accuracy_tests;

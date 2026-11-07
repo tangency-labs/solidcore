@@ -1,0 +1,522 @@
+{
+  "query_checkpoint": "69d8abd33",
+  "native_evaluator_rlib_sha256": "B9697942D8F25FC6E4CF1D6F0B4D7203B9B926266573D6290CDB3AE859502AB9",
+  "cases": [
+    {
+      "case": "analytic_face_torus_x_6_15",
+      "input": {
+        "entry": 6,
+        "faces": [
+          {
+            "center": [
+              0.0,
+              0.0,
+              -2.0
+            ],
+            "kind": "torus",
+            "major": [
+              0.0,
+              360.0
+            ],
+            "major_radius": 1.0,
+            "minor": [
+              0.0,
+              360.0
+            ],
+            "minor_radius": 0.25,
+            "x": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            999.0,
+            -2.0,
+            1.6642154866673036,
+            0.0,
+            0.5,
+            0.12494065250506982,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            999.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.5,
+            0.12494065250506982
+          ],
+          "type": 1.0,
+          "value": 1.6642154866673036
+        }
+      ],
+      "unit": "intersect.topology_solver_p2"
+    },
+    {
+      "case": "analytic_face_torus_x_7_15",
+      "input": {
+        "entry": 7,
+        "faces": [
+          {
+            "center": [
+              0.0,
+              0.0,
+              -2.0
+            ],
+            "kind": "torus",
+            "major": [
+              0.0,
+              360.0
+            ],
+            "major_radius": 1.0,
+            "minor": [
+              0.0,
+              360.0
+            ],
+            "minor_radius": 0.25,
+            "x": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            -2.0,
+            -2.0,
+            1.6642154866673036,
+            0.0,
+            0.5,
+            0.12494065250506982,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            -2.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.5,
+            0.12494065250506982
+          ],
+          "type": 1.0,
+          "value": 1.6642154866673036
+        }
+      ],
+      "unit": "intersect.topology_solver_p2"
+    },
+    {
+      "case": "analytic_face_torus_half_x_6_15",
+      "input": {
+        "entry": 6,
+        "faces": [
+          {
+            "center": [
+              0.0,
+              0.0,
+              -2.0
+            ],
+            "kind": "torus",
+            "major": [
+              0.0,
+              180.0
+            ],
+            "major_radius": 1.0,
+            "minor": [
+              0.0,
+              360.0
+            ],
+            "minor_radius": 0.25,
+            "x": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            999.0,
+            -2.0,
+            1.664213562373095,
+            0.0,
+            0.0,
+            0.12499999813735485,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            999.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            0.12499999813735485
+          ],
+          "type": 1.0,
+          "value": 1.664213562373095
+        }
+      ],
+      "unit": "intersect.topology_solver_p2"
+    },
+    {
+      "case": "analytic_face_torus_half_x_7_15",
+      "input": {
+        "entry": 7,
+        "faces": [
+          {
+            "center": [
+              0.0,
+              0.0,
+              -2.0
+            ],
+            "kind": "torus",
+            "major": [
+              0.0,
+              180.0
+            ],
+            "major_radius": 1.0,
+            "minor": [
+              0.0,
+              360.0
+            ],
+            "minor_radius": 0.25,
+            "x": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            -2.0,
+            -2.0,
+            1.664213562373095,
+            0.0,
+            0.0,
+            0.12499999813735485,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            -2.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            0.12499999813735485
+          ],
+          "type": 1.0,
+          "value": 1.664213562373095
+        }
+      ],
+      "unit": "intersect.topology_solver_p2"
+    }
+  ],
+  "full_torus_native_point": [
+    0.1767071517102781,
+    -1.176846211535449,
+    -1.9999999999999996
+  ],
+  "full_torus_native_distance": 1.6642135459403802,
+  "half_torus_native_distance": 1.664213562373095,
+  "global_bound": 1.6642135623730951
+}
