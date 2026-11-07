@@ -1035,8 +1035,8 @@ crates/solidcore/src/topology/brep/validation/spatial.rs	SpatialIndex::new	int-r
 crates/solidcore/src/topology/brep/vertex_fans.rs	remove_vertexuse	Vec::remove	1	proven	remove(index)	index is position() in the same Vec, with no intervening mutation
 crates/solidcore/src/topology/brep_data_write.rs	BrepData::from_brep	Vec::insert	1	proven	insert(0, r)	index 0 is never past the end
 crates/solidcore/src/topology/brep_data_write.rs	BrepData::from_brep	Vec::remove	1	proven	remove(i + 1)	i is position() after skip(1) in the same regions Vec, so i + 1 < len()
-crates/solidcore/src/topology/database_io.rs	DatabaseReader::read_raw_items	chunks	1	proven	chunks_exact(N)	private helper called only by read_longs/read_doubles/read_booleans/read_characters with N = 8/8/4/1
-crates/solidcore/src/topology/database_io.rs	DatabaseReader::read_raw_items	copy_from_slice	1	proven	copy_from_slice(c)	chunks_exact(N) yields slices of length N, matching [0u8; N]
+crates/solidcore/src/topology/database_io.rs	DatabaseReader::read_raw_items	chunks	1	open	chunks_exact(N)	
+crates/solidcore/src/topology/database_io.rs	DatabaseReader::read_raw_items	copy_from_slice	1	open	copy_from_slice(c)	
 crates/solidcore/src/topology/database_io.rs	InputStream::scan_int	int-div	1	proven	max / 10	constant non-zero divisor
 crates/solidcore/src/topology/edge.rs	insert_after	Vec::insert	1	proven	insert(pos + 1, obj)	pos is position() in the same edgeuses Vec, so pos + 1 <= len()
 crates/solidcore/src/topology/edge.rs	is_seam_of_surface	step_by	1	proven	step_by(2)	constant non-zero step
