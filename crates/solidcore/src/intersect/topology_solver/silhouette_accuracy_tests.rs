@@ -534,6 +534,10 @@ fn check_maximum_after_near_seam_vertex(operation: SolverOperation) {
         b.vertex(vertices[0]).unwrap().point,
         Vec3::new(1.25, 0.0, 0.0)
     );
+    // Face construction records notification identities for its seam edges;
+    // arena-only keys would silently omit them from the cache tree.
+    let proven = crate::query::brep::BrepIdentity::of_brep_with_id(BrepId::from_index(0), &b);
+    let identity = proven.identity();
     let mut preparation = crate::query::brep::RayPreparation::default();
     {
         let objects = BrepObjects {
@@ -541,8 +545,8 @@ fn check_maximum_after_near_seam_vertex(operation: SolverOperation) {
             brep: &b,
             brep_id: BrepId::from_index(0),
             cache: None,
-            keys: &arena_identity,
-            owner_of: &|_| None,
+            keys: identity.keys,
+            owner_of: identity.owner_of,
         };
         let mut context = objects.surface_solve_context().unwrap();
         assert!(matches!(
@@ -563,16 +567,17 @@ fn check_maximum_after_near_seam_vertex(operation: SolverOperation) {
             &k,
             crate::topology::brep_cache::CacheSource::Brep(&b),
             |o| o,
-            &arena_identity,
+            identity.keys,
         )
         .unwrap();
+    assert_eq!(cache.curve_tree().unwrap().object_list().unwrap().len(), 2);
     let objects = BrepObjects {
         preparation: Some(&preparation),
         brep: &b,
         brep_id: BrepId::from_index(0),
         cache: Some(&cache),
-        keys: &arena_identity,
-        owner_of: &|_| None,
+        keys: identity.keys,
+        owner_of: identity.owner_of,
     };
     let tolerance = 1e-6;
     let offset = if operation == SolverOperation::DirectedMaximize {
