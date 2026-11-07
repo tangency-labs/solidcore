@@ -11,6 +11,11 @@
 //!   degree 3 that vanishes where `g''''` changes sign; they are now accepted on the
 //!   larger of it and the fifth divided difference (`OdeOptions::quadrature`, as the
 //!   precise-property integrals).
+//! - each step's error was held to the accuracy relative to the length so far, so the
+//!   steps' errors could add up past the accuracy asked for the whole curve. Each step
+//!   is now held to half the accuracy relative to its share of the curve (its parameter
+//!   step times the estimated length per unit of parameter) plus its own increment
+//!   (`OdeOptions::rate`), shares that add up to at most twice the length.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 use solidcore::curve::curve::Curve;
 use solidcore::geom::extent1d::Extent1d;
