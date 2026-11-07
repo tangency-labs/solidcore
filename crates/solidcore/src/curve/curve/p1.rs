@@ -112,7 +112,8 @@ use crate::geom::extent1d::Extent1d;
 use crate::geom::geom_utility::p1::segment_point_angle_deg_to_perp;
 use crate::geom::geom_utility::p2::ContinuityType;
 use crate::geom::global_solver::{
-    Branch, GlobalSolve, ObjectZoneTol, SolutionRequested, SolveRequest, SolverOperation,
+    Branch, GlobalSolve, ObjectZoneTol, SolutionPairType, SolutionRequested, SolveRequest,
+    SolverOperation,
 };
 use crate::geom::solution_array::{
     OperandObject, Solution, SolutionArray, SolutionObject, SolutionType, SortKey,
@@ -1044,7 +1045,7 @@ fn iv_lerp(a: [Ivl; 3], b: [Ivl; 3], t: Ivl) -> [Ivl; 3] {
     [ax + (bx - ax) * t, ay + (by - ay) * t, az + (bz - az) * t]
 }
 
-/// Tight directed bounds for the affine carrier proof only. Each IEEE binary64
+/// Tight directed bounds for affine definition proofs. Each IEEE binary64
 /// basic operation is rounded once, then stepped one representable value outward;
 /// signed zero and subnormal results are covered without a fixed absolute floor.
 fn carrier_outward(lo: f64, hi: f64) -> Ivl {
@@ -1394,12 +1395,58 @@ fn exact_native_spline_join(curve: &Curve, t: f64, require_linear: bool) -> bool
             .any(|((a, b), (c, d))| (b > a && d > c) || (b < a && d < c))
 }
 
-/// Keep native spline knots unless their defining data proves smoothness.
-/// Other geometry kinds retain their existing endpoint policy.
+/// Require defining smoothness for native spline and plane-UV joins.
+/// A plane is an affine map of UV: it preserves an exact UV tangent identity.
+/// In particular, native UV non-knots remain artificial subdivisions rather
+/// than becoming extrema merely because the curve is wrapped by a surface.
 fn omit_projected_boundary(curve: &Curve, t: f64, continuity: ContinuityType) -> bool {
-    (continuity as i32) >= (ContinuityType::G1 as i32)
-        && (!matches!(curve.kind(), CurveKind::BSpline(_))
-            || exact_native_spline_join(curve, t, false))
+    if (continuity as i32) < (ContinuityType::G1 as i32) {
+        return false;
+    }
+    match curve.kind() {
+        CurveKind::BSpline(_) => exact_native_spline_join(curve, t, false),
+        CurveKind::CrvOnSurf(on_surface) => {
+            if on_surface.surface().procedural_definition().is_some() {
+                return false;
+            }
+            let crate::surface::surface::p2::SurfaceKind::Plane(plane) =
+                on_surface.surface().kind()
+            else {
+                return false;
+            };
+            let uv = on_surface.uv_curve();
+            let CurveKind::BSpline(spline) = uv.kind() else {
+                return false;
+            };
+            let Some(net) = spline.gw_nurb() else {
+                return false;
+            };
+            // Plane evaluation clamps outside its analytic domain. Prove the
+            // defining positive-weight UV hull stays strictly inside, so that
+            // clamping cannot introduce another, hidden nonsmooth join.
+            let domain = plane.step_uv_domain();
+            let inside = net.cpts().iter().all(|control| {
+                let weight = if control.w == crate::nurbs::math::NOW {
+                    1.0
+                } else {
+                    control.w
+                };
+                if !weight.is_finite() || weight <= 0.0 {
+                    return false;
+                }
+                let x = Ivl::from(control.x) / Ivl::from(weight);
+                let y = Ivl::from(control.y) / Ivl::from(weight);
+                x.lo > domain.min().x
+                    && x.hi < domain.max().x
+                    && y.lo > domain.min().y
+                    && y.hi < domain.max().y
+            });
+            inside && exact_native_spline_join(uv, t, false)
+        }
+        // Other curve kinds retain their existing boundary policy; this proof
+        // does not establish smoothness of their wrapped definitions.
+        _ => true,
+    }
 }
 
 /// Exclude a continuous native C0 knot when a one-sided derivative proves that
@@ -1549,6 +1596,90 @@ impl AffineDefinition {
         let fraction = (t - Ivl::from(self.interval.min())) / span;
         let derivative = iv_sub(self.end, self.start).map(|x| x / span);
         (iv_lerp(self.start, self.end, fraction), derivative)
+    }
+
+    /// A directed enclosure from defining factors, independent of the wider
+    /// arithmetic enclosure used to validate a reported native evaluation.
+    /// At a discontinuity this evaluates this span's left limit.
+    fn tight_point(&self, curve: &Curve, t: f64) -> Option<[Ivl; 3]> {
+        match self.direction {
+            AffineDirection::Controls(a, b) => {
+                let CurveKind::BSpline(spline) = curve.kind() else {
+                    return None;
+                };
+                let net = spline.gw_nurb()?;
+                let index = net
+                    .knots()
+                    .partition_point(|knot| *knot <= self.interval.min())
+                    .checked_sub(1)?;
+                let weight = net.cpts().get(index)?.w;
+                let weight = Ivl::from(if weight == crate::nurbs::math::NOW {
+                    1.0
+                } else {
+                    weight
+                });
+                let fraction = carrier_div(
+                    carrier_sub(Ivl::from(t), Ivl::from(self.interval.min())),
+                    carrier_sub(
+                        Ivl::from(self.interval.max()),
+                        Ivl::from(self.interval.min()),
+                    ),
+                );
+                let coordinate = |a, b| {
+                    // Endpoints are defining controls, with no interpolation error.
+                    let value = if t == self.interval.min() {
+                        Ivl::from(a)
+                    } else if t == self.interval.max() {
+                        Ivl::from(b)
+                    } else {
+                        carrier_add(
+                            Ivl::from(a),
+                            carrier_mul(carrier_sub(Ivl::from(b), Ivl::from(a)), fraction),
+                        )
+                    };
+                    carrier_div(value, weight)
+                };
+                let [ax, ay, az] = a;
+                let [bx, by, bz] = b;
+                Some([coordinate(ax, bx), coordinate(ay, by), coordinate(az, bz)])
+            }
+            AffineDirection::MappedLine { .. } => {
+                let CurveKind::Line(line) = curve.kind() else {
+                    return None;
+                };
+                let natural = line.natural_interval();
+                let analytic = line.step_interval();
+                let mut step = Ivl::from(t);
+                if line.is_bounded() && !is_zero(natural.length()) {
+                    let (a, b) = if line.inside_out() {
+                        (natural.max(), natural.min())
+                    } else {
+                        (natural.min(), natural.max())
+                    };
+                    let fraction = carrier_div(
+                        carrier_sub(step, Ivl::from(a)),
+                        carrier_sub(Ivl::from(b), Ivl::from(a)),
+                    );
+                    step = carrier_add(
+                        Ivl::from(analytic.min()),
+                        carrier_mul(
+                            fraction,
+                            carrier_sub(Ivl::from(analytic.max()), Ivl::from(analytic.min())),
+                        ),
+                    );
+                } else if !line.is_bounded() && line.inside_out() {
+                    step = carrier_sub(Ivl::from(0.0), step);
+                }
+                let scale = carrier_mul(step, Ivl::from(line.line_scale()));
+                let p = line.line_point();
+                let v = line.line_vector();
+                Some([
+                    carrier_add(Ivl::from(p.x), carrier_mul(scale, Ivl::from(v.x))),
+                    carrier_add(Ivl::from(p.y), carrier_mul(scale, Ivl::from(v.y))),
+                    carrier_add(Ivl::from(p.z), carrier_mul(scale, Ivl::from(v.z))),
+                ])
+            }
+        }
     }
 
     /// Enclose the mathematical endpoint difference from defining factors before
@@ -1861,7 +1992,256 @@ pub(crate) fn affine_projected_point_enclosure(
     (bound.lo.is_finite() && bound.hi.is_finite()).then_some(bound)
 }
 
+/// Certificates belong to the actual leaf candidates, not their scalar ordering.
+/// The selected structural cohort traverses every defining knot span; omitted
+/// smooth boundaries have their extrema owned by adjoining leaves. A proved
+/// nonretained minimum leaf lies above a feasible incumbent's upper enclosure,
+/// so cannot lower the global optimum below the recorded minimum bound.
+#[derive(Debug, Clone)]
+pub(super) struct ProjectedAffineSelection<O> {
+    candidates: Vec<(Solution<O>, Ivl)>,
+    maximum_upper: f64,
+    minimum_lower: f64,
+    span_lower: f64,
+    pub(super) pending_spans: Option<Vec<Extent1d>>,
+}
+
+/// Select before solving: every active native piece must have the existing
+/// exact affine definition. Mixed rational/non-affine definitions retain their
+/// established construction; they are never omitted from a selected proof.
+fn complete_affine_definition(curve: &Curve, interval: Extent1d) -> Option<Vec<Extent1d>> {
+    if !interval.min().is_finite()
+        || !interval.max().is_finite()
+        || interval.min() >= interval.max()
+    {
+        return None;
+    }
+    let mut spans = Vec::new();
+    match curve.kind() {
+        CurveKind::Line(_) => {
+            affine_definition(curve, interval)?;
+            spans.push(interval);
+        }
+        CurveKind::BSpline(spline) => {
+            let net = spline.gw_nurb()?;
+            if net.degree() != 1 {
+                return None;
+            }
+            for pair in net.knots().windows(2) {
+                let &[a, b] = pair else {
+                    return None;
+                };
+                let a = a.max(interval.min());
+                let b = b.min(interval.max());
+                if a < b {
+                    let span = Extent1d::from_min_max(a, b);
+                    affine_definition(curve, span)?;
+                    spans.push(span);
+                }
+            }
+        }
+        _ => return None,
+    }
+    (spans.first()?.min() == interval.min() && spans.last()?.max() == interval.max())
+        .then_some(spans)
+}
+
+impl<O: SolutionObject> ProjectedAffineSelection<O> {
+    fn finish(
+        &self,
+        curve: &Curve,
+        point: Vec3,
+        normal: Vec3,
+        maximize: bool,
+        requested: SolutionRequested,
+        target: Option<f64>,
+        retention: f64,
+        solutions: &mut SolutionArray<O>,
+        mut identical: impl FnMut(&Solution<O>, &Solution<O>) -> Result<bool>,
+    ) -> Result<()> {
+        if self.pending_spans.is_some() {
+            // An empty cache traversal is not a proof about the definition.
+            return Err(affine_refusal());
+        }
+        let limit = if maximize {
+            self.maximum_upper
+        } else {
+            self.minimum_lower
+        };
+        if !limit.is_finite() {
+            return Err(affine_refusal());
+        }
+        let cutoff = target.map(|target| {
+            if maximize {
+                carrier_sub(Ivl::from(target.abs()), Ivl::from(retention))
+            } else {
+                carrier_add(Ivl::from(target), Ivl::from(retention))
+            }
+        });
+        let Some(current) = solutions.as_slice().first() else {
+            // Scalar filtering can discard every rounded report even though
+            // the actual optimum qualifies. Empty success requires a proof of
+            // exclusion; overlap with the external band explicitly refuses.
+            return if cutoff.is_some_and(|cutoff| {
+                carrier_finite(cutoff)
+                    && if maximize {
+                        limit < cutoff.lo
+                    } else {
+                        limit > cutoff.hi
+                    }
+            }) {
+                Ok(())
+            } else {
+                Err(affine_refusal())
+            };
+        };
+        let certifies = |solution: &Solution<O>| {
+            let value = solution.start.solution_value;
+            let certifies_bound = |own: Ivl| {
+                value >= own.lo
+                    && value <= own.hi
+                    && if maximize {
+                        own.hi >= limit
+                    } else {
+                        own.lo <= limit
+                    }
+            };
+            // Reuse only this exact returned native point's original proof.
+            // A different algebraic evaluation can be tighter without making
+            // the original own-point enclosure invalid. Never borrow another
+            // parameter's width, a left limit, or a whole-range hull.
+            if self.candidates.iter().any(|(candidate, own)| {
+                candidate.start.parameters[0] == solution.start.parameters[0]
+                    && candidate.start.solution_value == value
+                    && certifies_bound(*own)
+            }) {
+                return true;
+            }
+            let Some(own) = affine_projected_point_enclosure(
+                curve,
+                solution.start.parameters[0],
+                point,
+                normal,
+            ) else {
+                return false;
+            };
+            certifies_bound(own)
+        };
+        if certifies(current) {
+            if requested == SolutionRequested::All {
+                let feasible = self
+                    .candidates
+                    .iter()
+                    .map(|(_, bound)| if maximize { bound.lo } else { bound.hi })
+                    .fold(
+                        if maximize {
+                            f64::NEG_INFINITY
+                        } else {
+                            f64::INFINITY
+                        },
+                        |a, b| if maximize { a.max(b) } else { a.min(b) },
+                    );
+                let band = if maximize {
+                    carrier_sub(Ivl::from(feasible), Ivl::from(retention))
+                } else {
+                    carrier_add(Ivl::from(feasible), Ivl::from(retention))
+                };
+                if !carrier_finite(band) {
+                    return Err(affine_refusal());
+                }
+                for (candidate, bound) in &self.candidates {
+                    let outside = |cutoff: Ivl| {
+                        carrier_finite(cutoff)
+                            && if maximize {
+                                bound.hi < cutoff.lo
+                            } else {
+                                bound.lo > cutoff.hi
+                            }
+                    };
+                    if outside(band) || cutoff.is_some_and(outside) {
+                        continue;
+                    }
+                    let mut represented = false;
+                    for retained in solutions.as_slice() {
+                        if identical(candidate, retained)?
+                            || affine_range_represents(retained, candidate)
+                        {
+                            represented = true;
+                            break;
+                        }
+                    }
+                    if !represented {
+                        return Err(affine_refusal());
+                    }
+                }
+            }
+            return Ok(());
+        }
+        // All's existing canonical retention and range merging is preserved.
+        // An ambiguous reported ordering cannot silently become a certified set.
+        if requested != SolutionRequested::Single {
+            return Err(affine_refusal());
+        }
+        let Some((replacement, _)) = self
+            .candidates
+            .iter()
+            .find(|(solution, _)| certifies(solution))
+        else {
+            return Err(affine_refusal());
+        };
+        if let Some(cutoff) = cutoff {
+            // Replacing a rounded winner must not resurrect a report excluded
+            // by the caller's external incumbent. Overlapping cutoff arithmetic
+            // refuses instead of silently changing retention semantics.
+            let value = replacement.start.solution_value;
+            if !carrier_finite(cutoff)
+                || if maximize {
+                    value < cutoff.hi
+                } else {
+                    value > cutoff.lo
+                }
+            {
+                return Err(affine_refusal());
+            }
+        }
+        *solutions = SolutionArray::default();
+        solutions.add(replacement);
+        Ok(())
+    }
+}
+
+/// The canonical accumulator absorbs points and subranges into constant ranges.
+/// This exact containment check introduces no new geometric dedup tolerance.
+fn affine_range_represents<O: SolutionObject>(
+    range: &Solution<O>,
+    candidate: &Solution<O>,
+) -> bool {
+    if range.solution_type != SolutionType::RangeOfValues
+        || range.num_variables != 1
+        || candidate.num_variables != 1
+        || range.num_objects != candidate.num_objects
+        || range.objects != candidate.objects
+    {
+        return false;
+    }
+    let a = range.start.parameters[0].min(range.end.parameters[0]);
+    let b = range.start.parameters[0].max(range.end.parameters[0]);
+    let t = candidate.start.parameters[0];
+    a <= t
+        && t <= b
+        && (candidate.solution_type != SolutionType::RangeOfValues
+            || (a <= candidate.end.parameters[0] && candidate.end.parameters[0] <= b))
+}
+
 impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
+    fn record_affine_candidate(&mut self, solution: &Solution<O>, bound: Ivl) {
+        if let Some(selection) = &mut self.projected_affine_selection {
+            selection.candidates.push((*solution, bound));
+            selection.minimum_lower = selection
+                .minimum_lower
+                .min(bound.lo.max(selection.span_lower));
+        }
+    }
     /// `AddSortedSolution` by value (with parameter) or by first parameter.
     fn add_solution(&mut self, solution: &Solution<O>, by_value: bool) -> Result<()> {
         let key = if by_value {
@@ -1884,9 +2264,93 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         owner: Option<O>,
     ) -> Result<bool> {
         let Some(definition) = affine_definition(curve, interval) else {
+            if self.projected_affine_selection.is_some() {
+                return Err(affine_refusal());
+            }
             return Ok(false);
         };
         let normal = self.opt(0)?;
+        let constant = definition.constant_projection(normal);
+        if let Some(selection) = &mut self.projected_affine_selection {
+            // A norm of an affine vector is convex: both defining endpoints
+            // bound the whole span, even when an endpoint is not retained.
+            // An isolated right-valued knot is an additional native point.
+            let project = |position: [Ivl; 3]| {
+                let [x, y, z] = position;
+                let offset = [
+                    carrier_sub(x, Ivl::from(point.x)),
+                    carrier_sub(y, Ivl::from(point.y)),
+                    carrier_sub(z, Ivl::from(point.z)),
+                ];
+                carrier_cross(carrier_cross(iv_point(normal), offset), iv_point(normal))
+            };
+            let mut hull: Option<[Ivl; 3]> = None;
+            let mut include = |position| -> Result<()> {
+                let projected = project(position);
+                let bound = carrier_length(projected);
+                if !carrier_finite(bound) {
+                    return Err(affine_refusal());
+                }
+                selection.maximum_upper = selection.maximum_upper.max(bound.hi);
+                hull = Some(match hull {
+                    None => projected,
+                    Some(previous) => {
+                        let union = |a: Ivl, b: Ivl| Ivl::new(a.lo.min(b.lo), a.hi.max(b.hi));
+                        let [ax, ay, az] = previous;
+                        let [bx, by, bz] = projected;
+                        [union(ax, bx), union(ay, by), union(az, bz)]
+                    }
+                });
+                Ok(())
+            };
+            // Exact parallelism proves that the projected vector is constant.
+            // Re-evaluating a remote endpoint would lose that shared-factor
+            // identity to interval dependency without adding any coverage.
+            let upper = if constant {
+                interval.min()
+            } else {
+                interval.max()
+            };
+            for t in [interval.min(), upper] {
+                include(
+                    definition
+                        .tight_point(curve, t)
+                        .ok_or_else(affine_refusal)?,
+                )?;
+            }
+            if definition.isolated_end.is_some() {
+                let t = interval.max();
+                // Only the right knot point belongs to this query; the next
+                // span need not itself have equal weights or be affine.
+                let CurveKind::BSpline(spline) = curve.kind() else {
+                    return Err(affine_refusal());
+                };
+                let net = spline.gw_nurb().ok_or_else(affine_refusal)?;
+                let index = net
+                    .knots()
+                    .partition_point(|knot| *knot <= t)
+                    .checked_sub(2)
+                    .ok_or_else(affine_refusal)?;
+                let control = net.cpts().get(index).ok_or_else(affine_refusal)?;
+                let weight = Ivl::from(if control.w == crate::nurbs::math::NOW {
+                    1.0
+                } else {
+                    control.w
+                });
+                let z = if control.z == crate::nurbs::math::NOZ {
+                    0.0
+                } else {
+                    control.z
+                };
+                include(
+                    [control.x, control.y, z].map(|value| carrier_div(Ivl::from(value), weight)),
+                )?;
+            }
+            // The affine vector lies inside its endpoint hull. Its norm's
+            // lower bound can tighten the local stationary-point proof,
+            // particularly when the objective is almost constant.
+            selection.span_lower = carrier_length(hull.ok_or_else(affine_refusal)?).lo;
+        }
         let projected = |p| {
             iv_cross(
                 iv_cross(iv_point(normal), iv_sub(p, iv_point(point))),
@@ -1899,7 +2363,6 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             return Err(affine_refusal());
         };
         let delta = iv_cross(iv_cross(iv_point(normal), difference), iv_point(normal));
-        let constant = definition.constant_projection(normal);
         let left_end = if definition.isolated_end.is_some() {
             next_parameter_down(interval.max())
         } else {
@@ -1948,11 +2411,13 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         if constant {
             // The exact parallel identity proves zero optimization error for
             // every parameter, including a zero requested distance tolerance.
-            let (a, _) = metric(interval.min())?;
+            let (a, a_bound) = metric(interval.min())?;
             let (b, _) = metric(left_end)?;
             if definition.isolated_end.is_some() {
-                let (value, _) = metric(interval.max())?;
-                self.add_solution(&make_solution(interval.max(), value), true)?;
+                let (value, bound) = metric(interval.max())?;
+                let isolated = make_solution(interval.max(), value);
+                self.record_affine_candidate(&isolated, bound);
+                self.add_solution(&isolated, true)?;
             }
             let mut solution = make_solution(interval.min(), a);
             if interval.min() < left_end {
@@ -1961,6 +2426,7 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             solution.end = solution.start;
             solution.end.parameters[0] = left_end;
             solution.end.solution_value = b;
+            self.record_affine_candidate(&solution, a_bound);
             self.add_solution(&solution, true)?;
             return Ok(true);
         }
@@ -2010,6 +2476,9 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             let isolated = iv_length(projected(position));
             optimum.lo = optimum.lo.min(isolated.lo);
             optimum.hi = optimum.hi.min(isolated.hi);
+        }
+        if let Some(selection) = &self.projected_affine_selection {
+            optimum.lo = optimum.lo.max(selection.span_lower);
         }
         if !maximize {
             // A proved nonretained leaf needs no representable local minimizer.
@@ -2100,15 +2569,19 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
                 return Err(affine_refusal());
             }
         }
-        self.add_solution(&make_solution(best_t, best_value), true)?;
+        let best = make_solution(best_t, best_value);
+        self.record_affine_candidate(&best, best_bound);
+        self.add_solution(&best, true)?;
         if self.base.solution_requested == SolutionRequested::Single {
             return Ok(true);
         }
         // Preserve eligible endpoint candidates for All mode, but do not emit
         // adjacent floating-point representatives as distinct stationary roots.
-        for (t, value, _) in candidates.into_iter().skip(1) {
+        for (t, value, bound) in candidates.into_iter().skip(1) {
             if t == interval.min() || t == interval.max() || t == left_end {
-                self.add_solution(&make_solution(t, value), true)?;
+                let candidate = make_solution(t, value);
+                self.record_affine_candidate(&candidate, bound);
+                self.add_solution(&candidate, true)?;
             }
         }
         Ok(true)
@@ -2140,6 +2613,38 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
     /// branch node, curve or option vector or a node that is not a curve leaf; those
     /// of `Unitize`, the signed angle, `AddSortedSolution` and `LocalPropertyAnalysis`.
     pub fn local_solve_branch(&mut self, k: &Kernel, branch: &Branch) -> Result<bool> {
+        // The affine construction follows defining knot pieces directly. A cache
+        // may omit geometrically degenerate pieces, whose projected distance can
+        // nevertheless be the global extremum. Cache topology is not coverage.
+        if let Some(spans) = self
+            .projected_affine_selection
+            .as_mut()
+            .and_then(|selection| selection.pending_spans.take())
+        {
+            let curve = self.curve.ok_or_else(affine_refusal)?;
+            let point = self.base.branch_node(branch, 0)?.bbox.min();
+            let tree = self.base.tree(1)?;
+            let owner = tree.owner_object()?;
+            let mut definition_branch = *branch;
+            definition_branch[1] = tree.top_node();
+            for span in spans {
+                k.check_cancelled(OP_GLOBAL)?;
+                let conts = [
+                    if span.min() == self.interval.min() {
+                        ContinuityType::Discontinuous
+                    } else {
+                        ContinuityType::G1
+                    },
+                    if span.max() == self.interval.max() {
+                        ContinuityType::Discontinuous
+                    } else {
+                        ContinuityType::G1
+                    },
+                ];
+                self.projected_affine(k, curve, span, conts, point, &definition_branch, owner)?;
+            }
+            return Ok(false);
+        }
         // init outputs
         let needs_more_subdivision = false;
         // the fork passes on the statuses below (tangency-labs/smlib 8311f8e)
@@ -3049,6 +3554,23 @@ impl Curve {
 
         // Construct and init global solver
         let mut gs = CpGlobalSolver::new(k, &point_tree, curve_tree, *interval).with_curve(self);
+        if matches!(
+            op,
+            SolverOperation::ProjectedMinimize | SolverOperation::ProjectedMaximize
+        ) && matches!(
+            requested,
+            SolutionRequested::Single | SolutionRequested::All
+        ) {
+            if let Some(spans) = complete_affine_definition(self, *interval) {
+                gs.projected_affine_selection = Some(ProjectedAffineSelection {
+                    candidates: Vec::new(),
+                    maximum_upper: f64::NEG_INFINITY,
+                    minimum_lower: f64::INFINITY,
+                    span_lower: 0.0,
+                    pending_spans: Some(spans),
+                });
+            }
+        }
         gs.base.fixes = k.fixes;
         gs.zone_tol_3d = opts.zone_tol_3d;
 
@@ -3101,6 +3623,20 @@ impl Curve {
             solved?;
         } else {
             ignore_or_pass_on(solved, k.fixes.query_statuses_pass_on)?;
+        }
+
+        if let Some(selection) = &gs.projected_affine_selection {
+            selection.finish(
+                self,
+                test_point,
+                gs.opt(0)?,
+                op == SolverOperation::ProjectedMaximize,
+                requested,
+                target,
+                dist_tol,
+                &mut solutions,
+                |a, b| Ok(gs.identical_solutions(a, b)?.0 == SolutionPairType::Identical),
+            )?;
         }
 
         Ok(solutions)
@@ -3451,6 +3987,91 @@ impl Curve {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn complete_affine_selection_excludes_mixed_weight_spans() {
+        use crate::nurbs::math::CPoint;
+        for (last_weight, supported) in [(1.0, true), (2.0, false)] {
+            let net = crate::nurbs::crv_basic::Curve::new(
+                vec![
+                    CPoint::new(0.0, 0.0, 0.0, 1.0),
+                    CPoint::new(1.0, 0.0, 0.0, 1.0),
+                    CPoint::new(2.0, 1.0, 0.0, last_weight),
+                ],
+                1,
+                vec![0.0, 0.0, 1.0, 2.0, 2.0],
+            )
+            .unwrap();
+            let curve = Curve::from(BSplineCurve::from_nurb(net, 3, true));
+            assert_eq!(
+                complete_affine_definition(&curve, Extent1d::from_min_max(0.0, 2.0)).is_some(),
+                supported
+            );
+            for outside in [
+                Extent1d::from_min_max(-1.0, 2.0),
+                Extent1d::from_min_max(0.0, 3.0),
+            ] {
+                assert!(complete_affine_definition(&curve, outside).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn projected_plane_uv_boundary_uses_defining_join_not_cache_angle() {
+        use crate::curve::crv_on_surf::CrvOnSurf;
+        use crate::geom::extent2d::Extent2d;
+        use crate::math::Vec2;
+        use crate::nurbs::math::{CPoint, NOW};
+        use crate::surface::{plane::Plane, surface::p2::Surface};
+        let k = Kernel::default();
+        for (height, domain_y, kept_definition, smooth) in [
+            (0.999999, 2.0, false, false),
+            (1.0, 2.0, false, true),
+            (1.0, 1.0, false, false),
+            (1.0, 2.0, true, false),
+        ] {
+            let uv = Curve::from(BSplineCurve::from_nurb(
+                crate::nurbs::crv_basic::Curve::new(
+                    vec![
+                        CPoint::new(-0.001, height, 0.0, NOW),
+                        CPoint::new(0.0, 1.0, 0.0, NOW),
+                        CPoint::new(0.001, height, 0.0, NOW),
+                    ],
+                    1,
+                    vec![0.0, 0.0, 1.0, 2.0, 2.0],
+                )
+                .unwrap(),
+                2,
+                false,
+            ));
+            let domain = Extent2d::from_points(Vec2::new(-2.0, -2.0), Vec2::new(2.0, domain_y));
+            let mut surface = Surface::from(Plane::new(
+                Vec3::ZERO,
+                Vec3::X,
+                Vec3::Y,
+                Vec2::new(1.0, 1.0),
+                &domain,
+            ));
+            if kept_definition {
+                use crate::surface::procedural_blend::corner::{CornerDefinition, EndDefinition};
+                surface.set_corner_definition(CornerDefinition::End(EndDefinition {
+                    support: Box::new(surface.clone()),
+                    boundary: Vec::new(),
+                }));
+            }
+            let curve = Curve::from(CrvOnSurf::new(&k, uv, surface, None, 2).unwrap());
+            assert_eq!(
+                omit_projected_boundary(&curve, 1.0, ContinuityType::G1),
+                smooth
+            );
+            if domain_y == 2.0 && !kept_definition {
+                // The same underlying affine span on either side of an
+                // artificial subdivision remains exactly smooth.
+                assert!(omit_projected_boundary(&curve, 0.5, ContinuityType::G1));
+                assert!(omit_projected_boundary(&curve, 1.5, ContinuityType::G1));
+            }
+        }
+    }
+
     #[test]
     fn affine_point_enclosure_uses_actual_right_value_at_a_jump() {
         use crate::nurbs::math::CPoint;

@@ -401,10 +401,6 @@ fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expecte
     );
     let point = surface.evaluate_point(&k, uv).unwrap();
     let measured = normal.cross(point - query).cross(normal).length();
-    eprintln!(
-        "certified projected maximum: normal={normal:?}, reported={:.17e}, exact={expected:.17e}",
-        solution.start.solution_value,
-    );
     let net = crate::blend::fillet_section::station::Nurbs::of(
         &crate::blend::fillet_section::station::as_b_spline(&k, surface)
             .unwrap()
@@ -612,7 +608,6 @@ fn check_maximum_after_near_seam_vertex(operation: SolverOperation) {
     .unwrap();
     assert_eq!(answer.len(), 1);
     let actual = answer.as_slice()[0].start.solution_value;
-    println!("{operation:?}: actual={actual:.17e}, expected={expected:.17e}");
     assert!(
         (actual - expected).abs() <= tolerance,
         "{operation:?}: actual={actual}, expected={expected}"
@@ -712,10 +707,6 @@ fn check_zero_slack_plane_candidate(normal: Vec3) {
     );
     let point = surface.evaluate_point(&k, uv).unwrap();
     let measured = normal.cross(point - query).cross(normal).length();
-    eprintln!(
-        "certified projected maximum: normal={normal:?}, reported={:.17e}, exact={expected:.17e}",
-        solution.start.solution_value,
-    );
     // Closed form: the farthest projected corners are (0.5,+/-0.5,0).
     // Candidate construction includes the exact trim endpoints. The explicit
     // caller slack is zero; all remaining room comes from arithmetic bounds.
@@ -745,7 +736,72 @@ fn check_zero_slack_plane_candidate(normal: Vec3) {
             &incorrect,
         )
         .is_err());
+        incorrect.tolerance_3d = 10.0 * expected;
+        assert!(super::projected_bound::certify_candidate(
+            &k,
+            &objects,
+            CacheObject::Face(face),
+            query,
+            &incorrect,
+        )
+        .is_err());
     }
+    // An edge incumbent must supply its own verified point metric. Merely
+    // trusting its reported value could "certify" this face against an invented
+    // larger answer on another object.
+    let edge = crate::topology::brep::p1::edges(&b, None).unwrap()[0];
+    let edge_object = CacheObject::Edge(edge);
+    let curve = objects
+        .curve(objects.edge_curve(edge_object).unwrap().unwrap())
+        .unwrap();
+    let t = objects.edge_interval(edge_object).unwrap().min();
+    let edge_point = curve.evaluate_point(&k, t).unwrap();
+    let mut incumbent = solver.base.clone();
+    let mut edge_answer = *solution;
+    edge_answer.objects.fill(None);
+    edge_answer.objects[0] = Some(edge_object);
+    edge_answer.num_objects = 1;
+    edge_answer.num_variables = 1;
+    edge_answer.start.parameters[0] = t;
+    edge_answer.start.solution_value = normal.cross(edge_point - query).cross(normal).length();
+    incumbent.solutions.set_at(0, &edge_answer).unwrap();
+    super::projected_bound::certify_candidate(
+        &k,
+        &objects,
+        CacheObject::Face(face),
+        query,
+        &incumbent,
+    )
+    .unwrap();
+    edge_answer.start.solution_value = 10.0 * expected;
+    incumbent.tolerance_3d = 100.0 * expected;
+    incumbent.solutions.set_at(0, &edge_answer).unwrap();
+    assert!(super::projected_bound::certify(
+        &k,
+        &objects,
+        CacheObject::Face(face),
+        query,
+        &incumbent,
+    )
+    .is_err());
+
+    // Retention slack must not make a feasible but suboptimal point a maximum.
+    // The center has projected distance |normal|^2, below sqrt(2.5)|normal|^2.
+    let mut suboptimal = solver.base.clone();
+    suboptimal.tolerance_3d = 10.0 * expected;
+    let mut changed = *solution;
+    changed.start.parameters[0] = 0.0;
+    changed.start.parameters[1] = 0.0;
+    changed.start.solution_value = normal.length_squared();
+    suboptimal.solutions.set_at(0, &changed).unwrap();
+    assert!(super::projected_bound::certify(
+        &k,
+        &objects,
+        CacheObject::Face(face),
+        query,
+        &suboptimal,
+    )
+    .is_err());
 }
 
 #[test]

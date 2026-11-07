@@ -460,14 +460,21 @@ The sampled curves illustrate the analytic checks; they do not certify maxima.
 
 ### Analytic face and subdivided callers
 
+The four cylinder curve/face rows below are known failures, not valid maximum
+baselines. In projected coordinates their line spans `[-1, 1]` and the face spans
+`[-0.5, 0.5]^2`: every pair has `|dx| <= 1.5`, `|dy| <= 0.5`, and an opposite
+endpoint/corner pair attains both bounds. Thus the exact maximum is `sqrt(2.5)`.
+Their incorrect `0.5` golden rows are removed and excluded under #3060 until the
+pair construction in #3077 graduates the actual corrected outputs.
+
 | Case | Native distance; parameters | Rust distance; parameters | Independent classification |
 |---|---|---|---|
 | `analytic_face_cyl_x_5_15` | 0.80000000000000004; (1.5707963267948966, 0.69999999999999996) | 1.063014581273465; (1.5707963267948966, 0) | Matches exact point-face maximum; native value is suboptimal even along the silhouette. |
-| `analytic_face_cyl_x_6_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | Both distances remain 0.5 at valid pairs; changed representatives. Below unrestricted face maximum 1.5811388300841898; no new scalar regression and no C++ defect established. |
-| `analytic_face_cyl_x_7_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | Both distances remain 0.5 at valid pairs; changed representatives. Below unrestricted face maximum 1.5811388300841898; no new scalar regression and no C++ defect established. |
+| `analytic_face_cyl_x_6_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | KNOWN WRONG: 0.5 is suboptimal. The admissible opposite-endpoint pair attains the exact maximum sqrt(2.5)=1.5811388300841898. Excluded under #3060; the pair construction is repaired in #3077, not this parent. |
+| `analytic_face_cyl_x_7_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | KNOWN WRONG: 0.5 is suboptimal. The admissible opposite-endpoint pair attains the exact maximum sqrt(2.5)=1.5811388300841898. Excluded under #3060; the pair construction is repaired in #3077, not this parent. |
 | `analytic_face_halfcyl_x_5_15` | 0.80000000000000004; (1.5707963267948966, 0.69999999999999996) | 1.063014581273465; (1.5707963267948966, 0) | Matches exact point-face maximum; native value is suboptimal even along the silhouette. |
-| `analytic_face_halfcyl_x_6_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | Both distances remain 0.5 at valid pairs; changed representatives. Below unrestricted face maximum 1.5811388300841898; no new scalar regression and no C++ defect established. |
-| `analytic_face_halfcyl_x_7_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | Both distances remain 0.5 at valid pairs; changed representatives. Below unrestricted face maximum 1.5811388300841898; no new scalar regression and no C++ defect established. |
+| `analytic_face_halfcyl_x_6_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | KNOWN WRONG: 0.5 is suboptimal. The admissible opposite-endpoint pair attains the exact maximum sqrt(2.5)=1.5811388300841898. Excluded under #3060; the pair construction is repaired in #3077, not this parent. |
+| `analytic_face_halfcyl_x_7_15` | 0.5; (0.5, 0, 0.5) | 0.5; (0.25, 0, 0) | KNOWN WRONG: 0.5 is suboptimal. The admissible opposite-endpoint pair attains the exact maximum sqrt(2.5)=1.5811388300841898. Excluded under #3060; the pair construction is repaired in #3077, not this parent. |
 | `analytic_face_cone_x_5_15` | 0.85980762113533138; (0.49999999999999989, 0.27009618943233427) | 1.2039996853283075; (0.5, 1) | Matches exact point-face maximum; native value is suboptimal. |
 | `analytic_face_sphere_band_5_15` | empty | 0.86054198087056166; (0.65499056183776805, 0.50000000000000011) | Reported-distance gap 1.314667583729e-5 exceeds query tolerance; approximate-silhouette output, not a strict corrected-result claim. |
 | `analytic_face_sphere_quarter_5_15` | empty | 0.76157731058639078; (1, 0.50000000000000011) | Matches exact point-face maximum; native empty. |
@@ -658,7 +665,12 @@ and does not establish regression attribution. The captured union-case replay
 passes. No deadline, tolerance, fixture or classification was changed to hide
 the timeout. Hosted CI separately requires repository-admin workflow approval.
 
-## Projected face review follow-up: retention slack and early exits
+## Historical projected-face checkpoint (superseded by strict review work)
+
+The following records the earlier `711b12437` checkpoint. Its combined caller/
+comparison-point allowance was subsequently rejected in review and is not the
+current certificate contract. The strict own-enclosure revision and its separate validation are recorded
+below; the earlier 33-test result does not validate that revision.
 
 The face certificate now distinguishes retention slack from arithmetic rounding.
 For a face-owned incumbent it uses the lower endpoint of its singleton metric
@@ -730,6 +742,51 @@ used as the before image.
 | Before: invalid small elbow | After: valid small elbow |
 |---|---|
 | ![Original native edges](figures/small-elbow-diag-wire-before.png) | ![Corrected native edges](figures/small-elbow-diag-wire-after.png) |
+
+
+## Strict projected-face certificate revision
+
+The current construction uses only the returned point's own definition-based
+metric enclosure. Caller distance tolerance selects retained answers; it never
+increases the construction cutoff. A face, edge, or vertex incumbent is enclosed
+from its actual geometry and native parameter side, and its reported scalar must
+lie inside that enclosure. Unsupported incumbent definitions explicitly refuse
+certification instead of trusting an unchecked reported distance.
+
+Native UV refinement uses at most 48 active-set Newton steps to improve the
+candidate on its exact rectangular trim. This is candidate generation, not a
+maximality proof. The independent whole-face check uses homogeneous Bernstein
+coefficients of `U^2 W^2 - |N x (H-QW) x N|^2`, where `U` is that same candidate's
+own upper metric enclosure. Positive native weights and nonnegative residual
+coefficient lower bounds prove the bound over every requested knot patch.
+Neither another point's arithmetic width nor geometric parameter uncertainty
+is added to `U`.
+
+This bounded proof supports degree at most 8 in each surface parameter, visits
+at most 4096 subdivision cells, and uses depth at most 64. Higher degrees,
+exhausted budgets, unresolved coefficient signs, and uncovered discontinuous
+upper boundaries explicitly refuse certification. Degree-8 success and
+otherwise equivalent degree-9 refusal are tested separately. These bounds are
+implementation limits, not evidence that the unsupported geometric query has
+no answer; affected golden cases must be audited before updating expectations.
+
+A zero projection normal has identically zero projected numerator. It therefore
+certifies at upper bound zero without an arithmetic floor. Negative or nonfinite
+upper bounds and invalid inputs remain refusals. Native discontinuous knots
+use the actual evaluator's default side for the candidate; the other side is
+never treated as point rounding. An isolated native-right value at a requested
+upper boundary remains a refusal until it is included in the global proof.
+
+Validation of this integrated revision: all 44 topology-solver unit tests pass,
+including all eight cases that the strict mean-value bound previously refused.
+The original plane, sphere, trimmed/banded sphere, tilted projection, torus and
+traversal-order expectations are unchanged. The seven residual-specific tests
+include independent polynomial, rational-weight, knot-extraction and degree-limit
+controls. Strict library/tests Clippy and formatting pass. The panic-site
+inventory reports no unlisted sites; its Windows base-revision lookup uses a
+backslash path, so the authoritative base-list ratchet remains a Linux gate.
+Broad golden validation remains separate; earlier full-suite totals above
+belong to their identified historical checkpoints.
 
 ## Exact joins and strict affine construction
 
