@@ -403,7 +403,7 @@ pub fn net_miss(k: &Kernel, net: &Surface, surface: &ClassSurface) -> Result<f64
                 } => {
                     let w = if map.along_v { uv.y } else { uv.x };
                     let ivl = spine.natural_interval();
-                    let s = (map.a + map.b * w).clamp(ivl.min(), ivl.max());
+                    let s = (map.a + map.b * w).max(ivl.min()).min(ivl.max());
                     ((x - spine.evaluate_point(s)?).length() - *radius).abs()
                 }
             };
