@@ -620,6 +620,8 @@ pub trait OffsetBrep<O>: ProtoGeometry<O> {
     fn edge_create_trimmed_nurbs_curve(&mut self, k: &Kernel, edge: O) -> Result<Option<O>>;
     /// `SmVertex::GetPoint` (`topology::vertex::point`).
     fn vertex_point(&self, vertex: O) -> Result<Point3>;
+    /// `SmVertex::GetTolerance` (`topology::vertex::tolerance`).
+    fn vertex_tolerance(&self, vertex: O) -> Result<f64>;
     /// `SmVertex::SetPoint` (`topology::vertex::set_point`).
     fn set_vertex_point(&mut self, k: &Kernel, vertex: O, point: Point3) -> Result<()>;
     /// `SmVertex::IsLaminaVertex` (`topology::vertex::is_lamina_vertex`).
@@ -4544,7 +4546,6 @@ impl OffsetGeometryCreation {
                 rail2 = b_spline_of(brep, h)?;
             }
         }
-
         if (contains(&shell_faces, &orig_face) ^ contains(&shell_faces, &other_orig_face))
             && shell_tangent_gap
         {
@@ -4569,26 +4570,41 @@ impl OffsetGeometryCreation {
 
                 if let (Some(p1), Some(p2), Some(p1_o), Some(p2_o)) = (p1, p2, p1_other, p2_other) {
                     if (p1 - p2).length() > 1e-6 && (p1_o - p2_o).length() > 1e-6 {
-                        // Check if the edge curve already spans between its respective vertices.
+                        // Check if the edge curve already spans between its respective vertices within certified tolerances.
                         let tol = brep.edge_tolerance(off_e)?;
                         let tol2 = brep.edge_tolerance(other_off_e)?;
-                        let check_ends = |e: O, q1: Point3, q2: Point3| -> Result<bool> {
+                        let check_ends = |e: O,
+                                          opt_v1: Option<O>,
+                                          opt_v2: Option<O>,
+                                          q1: Point3,
+                                          q2: Point3|
+                         -> Result<bool> {
                             if let Some(ch) = brep.edge_curve(e)? {
                                 let cv = curve_of(brep, ch)?;
                                 let ivl = brep.edge_interval(e)?;
                                 let e0 = cv.evaluate_point(k, ivl.min())?;
                                 let e1 = cv.evaluate_point(k, ivl.max())?;
                                 let t = brep.edge_tolerance(e)?;
-                                let tol_margin = 10.0 * t.max(1e-5);
-                                Ok(((q1 - e0).length() <= tol_margin
-                                    || (q1 - e1).length() <= tol_margin)
-                                    && ((q2 - e0).length() <= tol_margin
-                                        || (q2 - e1).length() <= tol_margin))
+                                let t1 = opt_v1
+                                    .and_then(|v| brep.vertex_tolerance(v).ok())
+                                    .unwrap_or(0.0)
+                                    .max(t);
+                                let t2 = opt_v2
+                                    .and_then(|v| brep.vertex_tolerance(v).ok())
+                                    .unwrap_or(0.0)
+                                    .max(t);
+                                let (d_start, d_end) = if (q1 - e0).length() <= (q1 - e1).length() {
+                                    ((q1 - e0).length(), (q2 - e1).length())
+                                } else {
+                                    ((q1 - e1).length(), (q2 - e0).length())
+                                };
+                                let tol_margin = t + 3.0_f64.sqrt() * t1.max(t2);
+                                Ok(d_start <= tol_margin && d_end <= tol_margin)
                             } else {
                                 Ok(false)
                             }
                         };
-                        let off_matched = check_ends(off_e, p1, p2)?;
+                        let off_matched = check_ends(off_e, v1, v2, p1, p2)?;
                         if !off_matched {
                             let d_same = (p1 - p1_o).length();
                             let d_cross = (p1 - p2_o).length();
@@ -4606,8 +4622,8 @@ impl OffsetGeometryCreation {
                             let off_face = brep.edgeuse_face(off)?.ok_or(dangling("face"))?;
                             let surf1 = brep.face_surface(off_face)?.ok_or(dangling("surf"))?;
                             let s1 = surface_of(brep, surf1)?;
-                            let (uv1, _) = s1.step_inversion_unbounded(k, p1, 10.0 * tol)?;
-                            let (uv2, _) = s1.step_inversion_unbounded(k, p2, 10.0 * tol)?;
+                            let (uv1, _) = s1.step_inversion_unbounded(k, p1, tol)?;
+                            let (uv2, _) = s1.step_inversion_unbounded(k, p2, tol)?;
                             let uv_curve1 = BSplineCurve::create_line_segment(
                                 2,
                                 Point3::new(uv1.x, uv1.y, 0.0),
@@ -4630,8 +4646,8 @@ impl OffsetGeometryCreation {
                             let surf2 =
                                 brep.face_surface(other_off_face)?.ok_or(dangling("surf"))?;
                             let s2 = surface_of(brep, surf2)?;
-                            let (uv1_o, _) = s2.step_inversion_unbounded(k, p1_o, 10.0 * tol2)?;
-                            let (uv2_o, _) = s2.step_inversion_unbounded(k, p2_o, 10.0 * tol2)?;
+                            let (uv1_o, _) = s2.step_inversion_unbounded(k, p1_o, tol2)?;
+                            let (uv2_o, _) = s2.step_inversion_unbounded(k, p2_o, tol2)?;
                             let uv_curve2 = BSplineCurve::create_line_segment(
                                 2,
                                 Point3::new(uv1_o.x, uv1_o.y, 0.0),
