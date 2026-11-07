@@ -172,8 +172,18 @@ pub(super) fn is_exact_rectangle(
     f: crate::topology::FaceId,
     domain: &Extent2d,
 ) -> Result<bool> {
+    Ok(exact_rectangle_boundary(k, b, f, domain)?.is_some())
+}
+
+/// Return the exact stored boundary curves only after proving the rectangle.
+pub(super) fn exact_rectangle_boundary(
+    k: &Kernel,
+    b: &crate::topology::Brep,
+    f: crate::topology::FaceId,
+    domain: &Extent2d,
+) -> Result<Option<Vec<crate::curve::curve::Curve>>> {
     if !crate::topology::trimming_tools::face_uv_curves_present(b, f)? {
-        return Ok(false);
+        return Ok(None);
     }
     let boundary = crate::topology::face::p1::create_oriented_trim_boundary(
         k,
@@ -184,7 +194,7 @@ pub(super) fn is_exact_rectangle(
         None,
         &|entity| b.owner_identity(entity),
     )?;
-    Ok(boundary_is_rectangle(&boundary, domain))
+    Ok(boundary_is_rectangle(&boundary, domain).then_some(boundary.curves))
 }
 
 fn boundary_is_rectangle(

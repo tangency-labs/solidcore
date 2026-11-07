@@ -2146,9 +2146,18 @@ fn projected_face_candidates<O: SolutionObject>(
             "projection tracing tolerance is not representable",
         ));
     }
-    let (_, uv) = face_silhouettes_at_tolerance(k, objects, face, opt_vectors, approx_tol)?;
+    let (_, mut uv) = face_silhouettes_at_tolerance(k, objects, face, opt_vectors, approx_tol)?;
     let surface = objects.surface(objects.face_surface(face)?)?;
-    let curves = lift_silhouette_measurements(k, &uv, surface, objects.face_uv_domain(face)?)?;
+    let domain = objects.face_uv_domain(face)?;
+    // A constrained maximum can lie on a trim even when no silhouette reaches
+    // it. Include the exact boundary independently of tree traversal order.
+    if let Some((b, f)) = objects.face_entity(face) {
+        if let Some(boundary) = super::projected_bound::exact_rectangle_boundary(k, b, f, &domain)?
+        {
+            uv.extend(boundary);
+        }
+    }
+    let curves = lift_silhouette_measurements(k, &uv, surface, domain)?;
     Ok((curves, uv))
 }
 

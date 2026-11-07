@@ -188,6 +188,48 @@ fn projected_torus_maximum_matches_the_capsule_projection() {
     check_face_projection(k, &Surface::from(torus), Vec3::new(0.0, 0.0, 1.0), expected);
 }
 
+#[test]
+fn projected_plane_maximum_uses_its_boundary_without_a_silhouette() {
+    let k = Kernel::default();
+    let domain = Extent2d::from_bounds(-0.5, -0.5, 0.5, 0.5);
+    let surface = Surface::from(crate::surface::plane::Plane::new(
+        Vec3::ZERO,
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        Vec2::new(1.0, 1.0),
+        &domain,
+    ));
+    check_face_projection(
+        k,
+        &surface,
+        Vec3::new(0.0, 0.0, 1.0),
+        (0.7_f64 * 0.7 + 0.8 * 0.8).sqrt(),
+    );
+}
+
+#[test]
+fn projected_sphere_band_maximum_uses_a_trim_away_from_the_silhouette() {
+    let k = Kernel::default();
+    let mut sphere = Sphere::new(
+        &k,
+        Vec3::new(0.0, 0.0, -1.0),
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        Extent2d::from_bounds(0.0, 15.0, 360.0, 60.0),
+        0.5,
+        SphereOptions::default(),
+    )
+    .unwrap();
+    sphere.make_nurb(&k).unwrap();
+    let expected = 0.5 * 15.0_f64.to_radians().cos() + (0.2_f64 * 0.2 + 0.3 * 0.3).sqrt();
+    check_face_projection(
+        k,
+        &Surface::from(sphere),
+        Vec3::new(0.0, 0.0, 1.0),
+        expected,
+    );
+}
+
 fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expected: f64) {
     let domain = surface.natural_uv_domain_with_nurb(&k).unwrap();
     let mut b = new_brep(&mut k, USE_DEFAULT, USE_DEFAULT).unwrap();
@@ -262,7 +304,9 @@ fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expecte
         solution.start.solution_value,
     );
     let net = crate::blend::fillet_section::station::Nurbs::of(
-        surface.analytic_base_with_nurb(&k).unwrap(),
+        &crate::blend::fillet_section::station::as_b_spline(&k, surface)
+            .unwrap()
+            .unwrap(),
     )
     .unwrap();
     let enclosed = super::projected_bound::value_at(&net, uv, query, normal).unwrap();

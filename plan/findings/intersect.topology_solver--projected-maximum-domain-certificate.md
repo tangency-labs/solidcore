@@ -3,6 +3,9 @@
 The reported operation is a single projected point/face maximum. Its candidate
 curves now evaluate `S(uv(t))`; an independent fitted spatial curve is not measured.
 This removes the original extra fit error but is not, by itself, a certificate.
+The verified rectangular boundary curves are also candidate curves, so a
+boundary maximum does not depend on a silhouette reaching it or on the global
+tree visiting edges first.
 
 ## Construction
 
