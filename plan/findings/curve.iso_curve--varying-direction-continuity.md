@@ -80,3 +80,40 @@ The final three public regressions also pass as a standalone test binary linked 
 the freshly rebuilt corrected kernel. The native plot exporter is compiled against
 each kernel and the plot script checks that the native points are identical before
 labeling the second panel as After. Private tests and lint checks are still queued.
+
+
+## Independent continuity-cohort audit
+
+The current runner has 120 continuity queries: 88 generated and 32 fixture inputs.
+A standalone public-API replay against the corrected native kernel finds 99
+corrected records (77 generated, 22 fixture) and 21 unchanged controls, with no
+new refusal. Every old record matches the fixed coordinate's knot metadata;
+every corrected record matches the varying coordinate.
+
+For each clamped tensor, an interior knot of multiplicity `m` in degree `p`
+guarantees `C^(p-m)` continuity in that coordinate. The independent checker uses
+only the defining degrees and knot multiplicities, without calling a solver.
+All observed interior labels equal those guaranteed orders, capped at the API's
+third-derivative category; the two endpoint entries are discontinuous, and no
+interior knot gives the API's `CInfinity` minimum. This verifies dispatch metadata,
+not whether a specialized geometric slice can be smoother than the guarantee.
+The U-versus-other enum convention is preserved exactly as used by evaluation.
+
+[Frozen native inputs and before/after records](diagnostics/iso_continuity_native_records.jsonl),
+[public-API replay](diagnostics/iso_continuity_native_audit.rs), and
+[independent checker](diagnostics/iso_continuity_check.py) reproduce the audit.
+The generated inputs use the runner's unchanged per-case RNG seeds; fixture SMS
+files are expanded to their native tensor definitions. The public replay prints
+one record per input and the checker can compare a fresh capture using `--native`.
+
+```
+python plan/findings/diagnostics/iso_continuity_check.py
+# Compile iso_continuity_native_audit.rs with rustc --edition=2021, linking the
+# corrected solidcore rlib and its serde/serde_json dependency rlibs.
+# Run that executable with iso_continuity_native_records.jsonl as its argument.
+python plan/findings/diagnostics/iso_continuity_check.py --native native-replay.jsonl
+```
+
+Both checks report `120 continuity records verified; 99 corrected, 21 unchanged`.
+This is an independent expected-delta audit, not a replacement for the full 2,874
+case golden runner. No expected golden record has been edited at this checkpoint.
