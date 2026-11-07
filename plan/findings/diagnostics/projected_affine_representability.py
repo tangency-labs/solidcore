@@ -33,3 +33,19 @@ for gap, scale in [(1.5e-12, 1.0), (1.9e-12, 1.0), (1.5e-12, 1e6),
             excess = decimal(best).sqrt()-decimal(exact_minimum_squared).sqrt()
         print(json.dumps({"gap": gap, "parameter_scale": scale, "query_y": y,
                           "best_representable_excess": str(excess)}))
+
+# Cross-leaf maximum: the defining binary64 normal is not the real number 1/10.
+# Its large-coordinate product rounds away in the old reported scalar, although
+# its exact projected distance is larger than the small, stably evaluated leaf.
+normal = F(0.1)
+large_cross = F(1e8)*normal-F(1e7)
+large_squared = (1+normal*normal)*large_cross*large_cross
+small_squared = (1+normal*normal)*F(1e-10)*F(1e-10)
+assert large_cross == F(1e8)/(5*2**55)
+assert large_squared > small_squared > 0
+with localcontext() as context:
+    context.prec = 80
+    large = (Decimal(large_squared.numerator)/Decimal(large_squared.denominator)).sqrt()
+    small = (Decimal(small_squared.numerator)/Decimal(small_squared.denominator)).sqrt()
+print(json.dumps({"case": "cross_leaf_maximum", "true_first_value": str(large),
+                  "true_second_value": str(small)}))
