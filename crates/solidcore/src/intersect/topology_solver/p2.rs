@@ -801,7 +801,8 @@ fn early_point_answer<O: SolutionObject>(
     ts: &TopologySolver<'_, '_, O>,
     options: TopologySolveOptions<'_>,
 ) -> bool {
-    options.requested == SolutionRequested::Single
+    options.operation != SolverOperation::ProjectedMaximize
+        && options.requested == SolutionRequested::Single
         && ts
             .base
             .solutions
@@ -831,6 +832,29 @@ fn rewrite_endpoint_solutions<O: SolutionObject>(
 }
 
 impl<'t, O: SolutionObject + 't> TopologySolver<'t, '_, O> {
+    fn defer_projected_point_bounds(&mut self) {
+        if self.base.operation == SolverOperation::ProjectedMaximize
+            && self.base.solution_requested == SolutionRequested::Single
+        {
+            self.deferred_projected_faces = Some(Vec::new());
+        }
+    }
+
+    fn certify_projected_point_bounds(&self, point: Point3) -> Result<()> {
+        if let Some(faces) = &self.deferred_projected_faces {
+            for &face in faces {
+                super::projected_bound::certify(
+                    self.kernel,
+                    self.objects,
+                    face,
+                    point,
+                    &self.base,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     /// Solves a query point against a B-rep's vertex, edge and face trees
     /// (`BrepPointSolve`), retaining upstream's early single-answer exits.
     ///
@@ -849,6 +873,7 @@ impl<'t, O: SolutionObject + 't> TopologySolver<'t, '_, O> {
         }
         let brep = brep.ok_or(SolidError::null_pointer(OP))?;
         let mut ts = new_topology_solver(kernel, objects, options);
+        ts.defer_projected_point_bounds();
         let trees = objects.brep_trees(brep)?;
         let query = point_tree(point);
         if options.operation != SolverOperation::Normalize {
@@ -868,6 +893,7 @@ impl<'t, O: SolutionObject + 't> TopologySolver<'t, '_, O> {
         let mut faces = LocalSolver::new(LocalSolverKind::PointFace, false, None);
         faces.set_point(point);
         ts.solve_trees(&query, trees.surfaces, &mut faces)?;
+        ts.certify_projected_point_bounds(point)?;
         Ok(ts.base.solutions)
     }
 
@@ -887,6 +913,7 @@ impl<'t, O: SolutionObject + 't> TopologySolver<'t, '_, O> {
             return Err(SolidError::invalid_input(OP, "unsupported operation"));
         }
         let mut ts = new_topology_solver(kernel, objects, options);
+        ts.defer_projected_point_bounds();
         let mapped = ShapeTreeViews::new(objects, shape)?;
         let trees = mapped.views();
         let query = point_tree(point);
@@ -901,6 +928,7 @@ impl<'t, O: SolutionObject + 't> TopologySolver<'t, '_, O> {
         let mut faces = LocalSolver::new(LocalSolverKind::PointFace, false, Some(shape));
         faces.set_point(point);
         ts.solve_trees(&query, trees.surfaces, &mut faces)?;
+        ts.certify_projected_point_bounds(point)?;
         Ok(ts.base.solutions)
     }
 
@@ -951,6 +979,7 @@ impl<'t, O: SolutionObject + 't> TopologySolver<'t, '_, O> {
                     kernel,
                     objects,
                     local_solver: None,
+                    deferred_projected_faces: None,
                 };
                 let result = scoped.solve_trees(&query, trees.surfaces, &mut faces);
                 ts.restore_base(scoped.base, trees.surfaces);
@@ -1003,6 +1032,7 @@ impl<'t, O: SolutionObject + 't> TopologySolver<'t, '_, O> {
                 kernel,
                 objects,
                 local_solver: None,
+                deferred_projected_faces: None,
             };
             let result = scoped.solve_trees(&query, trees.surfaces, &mut faces);
             ts.restore_base(scoped.base, trees.surfaces);

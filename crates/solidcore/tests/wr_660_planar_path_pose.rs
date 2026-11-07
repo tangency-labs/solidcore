@@ -293,7 +293,6 @@ fn default_two_piece_paths_keep_upstream_pose_dependence() {
 
 mod small_profile_mitres {
     //! Small circular profiles must produce valid mitred elbows at every tested scale.
-    #![allow(clippy::unwrap_used)]
 
     use solidcore::curve::curve::Curve;
     use solidcore::geom::attribute::{AttributeStore, ObjectKey};

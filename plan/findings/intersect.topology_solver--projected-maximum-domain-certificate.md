@@ -50,9 +50,24 @@ A previous answer on another object is retained as the caller's already
 established feasible bound; this local certificate proves that this face cannot
 improve it by more than the tolerance.
 
-Failure restores the solver state from before candidate generation and returns
+Global B-rep/shape point queries check each newly selected face candidate before
+it can affect subsequent tree pruning, then defer whole-face upper bounds until
+the final feasible candidate is available. Local point/face calls retain their
+immediate whole-face check. A zero vertex distance does not finish a projected
+maximum query.
+
+The two-face regression uses sphere bands of radii 0.5 and 0.6, centered at
+(0,0,-1) and (0.1,0,-1), with longitude [0,360], latitude [-60,60], Z projection
+and query (0.000001,0,2). The exact maximum is 0.699999. Before this review fix,
+one face insertion order succeeds and the reverse returns an unproved-bound
+refusal at the first face. Both orders now return the maximum within 1e-8.
+A companion single-band query at (0.25,0,2) has coincident projected seam vertices
+but maximum 0.75, ensuring the vertex shortcut cannot skip the face.
+
+Candidate-check failure restores the solver state from before candidate generation and returns
 `Unsupported`, rather than publishing an unproved candidate. The certificate
-uses no enlarged tolerance or sampled accuracy floor.
+uses no enlarged tolerance or sampled accuracy floor. A final global bound failure
+also returns `Unsupported`; it never publishes a partially certified answer.
 
 ## Scope
 

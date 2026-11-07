@@ -187,6 +187,7 @@ counts, temporary replay programs, and redundant validation snapshots are omitte
 | gen2335 | not found | (0.2057706791318854, 1.526401246903282) | New stationary minimum. |
 | gen2938 | (-1.416959240152698, 842.2781967874612) | (-1.635855706635469, 223.8362336456594) | Both valid roots; native maximum, Rust minimum. Changed basin, not a false native result. |
 | gen2940 | (0.08124076285751645, 38.51742584776892) | not found | Native valid maximum; Rust misses it from this guess. Lost local convergence. |
+
 | p4 case | Native derivative | Rust derivative | Qualification |
 |---|---:|---:|---|
 | circle_property_21 | 0.64309503671411716 | -0.64309503671411716 | Matches independent smooth derivative |
@@ -271,6 +272,7 @@ counts, temporary replay programs, and redundant validation snapshots are omitte
 | `analytic_face_torus_half_x_5_15` | empty | 1.5652946437965907; (1, 0.97379278043265505) | Matches exact point-face maximum; native empty. |
 | `analytic_face_torus_half_x_6_15` | 1.25; (0.50000000000000011, 0, 4.1645158291059437e-15) | 1.25; (0.5, 0, 0) | Both distances remain 1.25 at valid pairs; only rounding-sized parameter movement. Below unrestricted face maximum 1.6642135623730951; no new scalar regression and no C++ defect established. |
 | `analytic_face_torus_half_x_7_15` | 1.25; (0.50000000000000011, 0, 4.1645158291059437e-15) | 1.25; (0.5, 0, 0) | Both distances remain 1.25 at valid pairs; only rounding-sized parameter movement. Below unrestricted face maximum 1.6642135623730951; no new scalar regression and no C++ defect established. |
+
 | Case | Native count | Rust count | Native best | Rust / oracle best | Added only endpoints |
 |---|---:|---:|---:|---:|---|
 | `static_operation_matrix_1_15_0_0` | 1 | 1 | 0.10000000000000001 | 1.7 | yes |
@@ -301,6 +303,16 @@ counts, temporary replay programs, and redundant validation snapshots are omitte
 | `subdivided_1_14_1e+06_40_30_2_3` | 4 | 12 | 500000 | 500000 | yes |
 | `subdivided_1_14_1e+06_40_30_50_1` | 4 | 12 | 500000 | 500000 | yes |
 | `subdivided_1_14_1e+06_40_30_50_3` | 4 | 12 | 500000 | 500000 | yes |
+
+The audit script now checks maximality explicitly for the four cylinder
+curve/edge projected maxima (`analytic_face_{cyl_x,halfcyl_x}_{6,7}_15`).
+Each cylinder projects onto the rectangle [-0.5,0.5] x [-0.5,0.5], while
+the query segment projects onto [-1,1] x {0}. Convexity of squared distance
+in each coordinate places the maximum at opposite x endpoints with |y|=0.5:
+`sqrt(1.5^2 + 0.5^2) = 1.5811388300841898`. The reported 0.5 fails this
+check before and after the parameter changes. The new CSV column says `false`,
+not a successful maximum certificate. These are additional concrete pair-query
+reproductions for #3060; #2968 only certifies point/face maxima.
 
 ### Trimming callers: unresolved outputs are not blessed
 
@@ -349,7 +361,12 @@ checks the actual elbow's Level2 validity and analytic volume.
 - The repository's `docs/definitions-and-certificates.md`, section 4.2: rounded
   interval enclosures include arithmetic error and are not sample estimates.
 
-## Goldens migration after numerical review
+## Historical parent goldens migration after numerical review
+
+This section records the #2840 migration, before the #2968 accuracy fix. The
+sphere exclusion and counts below are historical. For the restored sphere record,
+updated torus maximum and current traversal counts, see the
+[current projected-maximum audit](intersect.topology_solver--projected-maximum-domain-certificate.md#golden-audit).
 
 The reviewed run updates or adds 201 records (190 existing, 11 new fixtures).
 The exact old/new serialized values are in the corresponding golden-file diff;
@@ -368,7 +385,7 @@ accuracy failure under #2967. The existing #2794 records owned by #2811 are kept
 | curve.curve_p9 | 1 | circle_projected_max keeps distance 4.5 = center separation 3 + radii 1 + 0.5; seam parameters become exact endpoints. All six suboptimal pair cases are excluded under #3060. |
 | geom.global_solver | 2 | New scaled-normal fixtures verify disk radii and center distances use the same double-cross metric as the incumbent. |
 | intersect.topology_solver_p1 | 42 | Valid endpoint additions/rounding are retained; incomplete domains return 1021. gen1646 now completes all three calls with reported distance 0 and t=0.6406108473689741, within its arithmetic enclosure of the near-zero true distance. Reported 0 is not an assertion of exact incidence. |
-| intersect.topology_solver_p2 | 40 | Closed-form cylinder/cone/sphere/torus audits and unchanged-best subdivision endpoint additions above. The torus point-face maximum differs from the exact oracle by 1.949364369036e-6, within its 1e-5 request. The sphere-band case is excluded. |
+| intersect.topology_solver_p2 | 40 | Closed-form cylinder/cone/sphere/torus audits and unchanged-best subdivision endpoint additions above. The torus point-face maximum differs from the exact oracle by 1.949364369036e-6, within its 1e-5 request. The sphere-band case was excluded in this parent migration; #2968 restores it, as detailed in the current audit linked above. |
 | primitive.api_trim_ops | 2 | pat_misses and pat_plain_misses retain the complete box, proved by the finite-cutter side inequality below. Four unverified finite-cutter outputs are excluded under #3061. |
 | topology.brep_p1 | 1 | find_side_6 changes 1001/UNSURE to success/left, by the endpoint tangent cross product above. |
 | topology.brep_p10 | 4 | The raw-knot lens is entirely reference-side: KeepPoint retains one face and DeletePoint retains none, for both narrow knot widths. |

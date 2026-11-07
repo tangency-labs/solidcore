@@ -36,6 +36,35 @@ pub(super) fn certify<O: crate::geom::solution_array::SolutionObject>(
     point: Vec3,
     solver: &crate::geom::global_solver::GlobalSolver<'_, O>,
 ) -> Result<()> {
+    let (net, domain, normal, reported) = checked_candidate(k, objects, face, point, solver)?;
+    let upper = (Ivl::from(reported) + Ivl::from(solver.tolerance_3d)).lo;
+    if !maximum_is_bounded(k, &net, &domain, point, normal, upper)? {
+        return Err(refused(
+            "whole-face projected maximum could not be certified within tolerance",
+        ));
+    }
+    Ok(())
+}
+
+/// Check a candidate before it can supply a feasible bound for tree pruning.
+/// The whole-face upper bound may be checked against a later, better candidate.
+pub(super) fn certify_candidate<O: crate::geom::solution_array::SolutionObject>(
+    k: &Kernel,
+    objects: &dyn super::p1::TopologyObjects<O>,
+    face: O,
+    point: Vec3,
+    solver: &crate::geom::global_solver::GlobalSolver<'_, O>,
+) -> Result<()> {
+    checked_candidate(k, objects, face, point, solver).map(|_| ())
+}
+
+fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
+    k: &Kernel,
+    objects: &dyn super::p1::TopologyObjects<O>,
+    face: O,
+    point: Vec3,
+    solver: &crate::geom::global_solver::GlobalSolver<'_, O>,
+) -> Result<(Nurbs, Extent2d, Vec3, f64)> {
     use crate::blend::fillet_section::station::as_b_spline;
     use crate::surface::surface::SurfaceKind;
     let surface = objects.surface(objects.face_surface(face)?)?;
@@ -103,13 +132,7 @@ pub(super) fn certify<O: crate::geom::solution_array::SolutionObject>(
             ));
         }
     }
-    let upper = (Ivl::from(reported) + Ivl::from(solver.tolerance_3d)).lo;
-    if !maximum_is_bounded(k, &net, &domain, point, normal, upper)? {
-        return Err(refused(
-            "whole-face projected maximum could not be certified within tolerance",
-        ));
-    }
-    Ok(())
+    Ok((net, domain, normal, reported))
 }
 
 #[derive(Clone, Copy)]

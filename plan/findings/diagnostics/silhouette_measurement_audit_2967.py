@@ -5,12 +5,13 @@ emitted Rust against solidcore. CSV columns are case, before/after, scalar error
 UVs in natural rectangular domains, line parameter in [0,1], and the directed
 query's transverse residual (zero for nondirected queries). Domain checks
 use zero padding. They do not certify arbitrary trim loops, completeness,
-stationarity, or global optimality.
+stationarity, or global optimality, except for the explicitly checked cylinder
+curve/edge maxima. The final column reports that closed-form check or 'not_checked'.
 """
 
+import argparse
 import json
 import re
-import sys
 from pathlib import Path
 
 
@@ -63,7 +64,11 @@ def records(path):
     return dict(line.split("\t", 1) for line in Path(path).read_text().splitlines())
 
 
-before, after = map(records, sys.argv[1:3])
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("before", help="digest-debug file before the change")
+parser.add_argument("after", help="digest-debug file after the change")
+args = parser.parse_args()
+before, after = records(args.before), records(args.after)
 fixtures = {}
 for path in Path("fixtures/intersect.topology_solver_p2").glob("*.json"):
     for case in json.loads(path.read_text()).get("cases", []):
@@ -82,7 +87,10 @@ let k = Kernel::default();
 for name in sorted(before.keys() & after.keys()):
     if before[name] == after[name]:
         continue
-    case = fixtures[name]
+    case = fixtures.get(name)
+    if (case is None or not name.startswith("analytic_face_")
+            or case.get("entry") not in (5, 6, 7, 8) or not case.get("faces")):
+        continue
     for label, record in [("before", before[name]), ("after", after[name])]:
         match = re.search(r'"static": (\[[^]]*\])', record)
         values = json.loads(match.group(1))
@@ -112,5 +120,20 @@ for name in sorted(before.keys() & after.keys()):
         # directed candidates must have equal projected y coordinates.
         directed = case["operation"] in (11, 12, 13)
         print("let transverse = " + ("(a.y-b.y).abs()" if directed else "0.0_f64") + ";")
-        print(f'println!("{name},{label},{{error:.17e}},{{uv_inside}},{{line_inside}},{{transverse:.17e}}"); }}')
+        maximality = '"not_checked"'
+        if name in {
+            "analytic_face_cyl_x_6_15", "analytic_face_cyl_x_7_15",
+            "analytic_face_halfcyl_x_6_15", "analytic_face_halfcyl_x_7_15",
+        }:
+            # These fixtures project to [-.5,.5]^2 against [-1,1] x {0}.
+            # Squared distance is convex in each coordinate: its maximum is
+            # attained at opposite x endpoints and y=+/-.5, hence sqrt(2.5).
+            spec = case["faces"][0]
+            assert spec["kind"] == "cylinder" and spec["radius"] == 0.5
+            assert spec["origin"] == [-0.5, 0, 0] and spec["height"] == [0, 1]
+            assert spec["x"] == [0, 1, 0] and spec["y"] == [0, 0, 1]
+            assert spec["angle"] in ([0, 180], [0, 360])
+            print(f"let is_maximum = uv_inside && line_inside && error <= {number(case['tolerance'])} && (measured - 2.5_f64.sqrt()).abs() <= {number(case['tolerance'])};")
+            maximality = 'if is_maximum { "true" } else { "false" }'
+        print(f'println!("{name},{label},{{error:.17e}},{{uv_inside}},{{line_inside}},{{transverse:.17e}},{{}}", {maximality}); }}')
 print("Ok(()) }")
