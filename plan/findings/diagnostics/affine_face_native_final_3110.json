@@ -1,0 +1,2223 @@
+{
+  "audit": {
+    "kernel_head": "c341e5309ab39973277f13ed30fc6a4e4c6a04f2",
+    "platform": "Windows",
+    "kernel_rlib_sha256": "2f600bf05200db5743ad00f2497918208ef4cdc49733f38529a4e43edef2eaaa",
+    "full_input_cases": 2575,
+    "full_input_sha256": "eb9347c55dd6d8b1c503f09db342adc0608829057dda36639c3da402bcb29398",
+    "native_cases": 14,
+    "native_failed": 0,
+    "historical_output_comparison_performed": false,
+    "actual_full_golden_gate": {
+      "changed": 4,
+      "broken": 0,
+      "added": 0,
+      "removed": 0,
+      "known_failing": 2,
+      "changed_cases": [
+        "analytic_face_sphere_band_6_14",
+        "analytic_face_sphere_band_6_3",
+        "analytic_face_sphere_band_7_14",
+        "analytic_face_sphere_band_7_3"
+      ]
+    },
+    "proof_source_commit": "b69187f1d",
+    "proof_source_sha256": "7bdb97a39e507620e738659bc8fee9a2b0067420193658c9e73f9a29f5cbd1f7"
+  },
+  "records": [
+    {
+      "case": "analytic_face_cyl_x_6_15",
+      "input": {
+        "entry": 6,
+        "faces": [
+          {
+            "angle": [
+              0.0,
+              360.0
+            ],
+            "height": [
+              0.0,
+              1.0
+            ],
+            "kind": "cylinder",
+            "origin": [
+              -0.5,
+              0.0,
+              0.0
+            ],
+            "radius": 0.5,
+            "x": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            999.0,
+            -2.0,
+            1.5811388300841898,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            999.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "type": 1.0,
+          "value": 1.5811388300841898
+        }
+      ],
+      "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.5811388300841898,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.5811388300841769,
+          1.5811388300842026
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "reduced_threshold": 1.5811388300841767,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.5811388300841898,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          0.5,
+          0.0
+        ]
+      }
+    },
+    {
+      "case": "analytic_face_cyl_x_7_15",
+      "input": {
+        "entry": 7,
+        "faces": [
+          {
+            "angle": [
+              0.0,
+              360.0
+            ],
+            "height": [
+              0.0,
+              1.0
+            ],
+            "kind": "cylinder",
+            "origin": [
+              -0.5,
+              0.0,
+              0.0
+            ],
+            "radius": 0.5,
+            "x": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            -2.0,
+            -2.0,
+            1.5811388300841898,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            -2.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "type": 1.0,
+          "value": 1.5811388300841898
+        }
+      ],
+      "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.5811388300841898,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.5811388300841769,
+          1.5811388300842026
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "reduced_threshold": 1.5811388300841767,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.5811388300841898,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          0.5,
+          0.0
+        ]
+      }
+    },
+    {
+      "case": "analytic_face_halfcyl_x_6_15",
+      "input": {
+        "entry": 6,
+        "faces": [
+          {
+            "angle": [
+              0.0,
+              180.0
+            ],
+            "height": [
+              0.0,
+              1.0
+            ],
+            "kind": "cylinder",
+            "origin": [
+              -0.5,
+              0.0,
+              0.0
+            ],
+            "radius": 0.5,
+            "x": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            999.0,
+            -2.0,
+            1.5811388300841898,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            999.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "type": 1.0,
+          "value": 1.5811388300841898
+        }
+      ],
+      "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.5811388300841898,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.5811388300841769,
+          1.5811388300842026
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "reduced_threshold": 1.5811388300841767,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.5811388300841898,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          0.5,
+          0.0
+        ]
+      }
+    },
+    {
+      "case": "analytic_face_halfcyl_x_7_15",
+      "input": {
+        "entry": 7,
+        "faces": [
+          {
+            "angle": [
+              0.0,
+              180.0
+            ],
+            "height": [
+              0.0,
+              1.0
+            ],
+            "kind": "cylinder",
+            "origin": [
+              -0.5,
+              0.0,
+              0.0
+            ],
+            "radius": 0.5,
+            "x": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            -2.0,
+            -2.0,
+            1.5811388300841898,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            -2.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "type": 1.0,
+          "value": 1.5811388300841898
+        }
+      ],
+      "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.5811388300841898,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.5811388300841769,
+          1.5811388300842026
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "reduced_threshold": 1.5811388300841767,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.5811388300841898,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          0.5,
+          0.0
+        ]
+      }
+    },
+    {
+      "case": "analytic_face_cone_x_6_15",
+      "input": {
+        "entry": 6,
+        "faces": [
+          {
+            "apex": [
+              -1.0,
+              0.0,
+              0.0
+            ],
+            "half_angle_deg": 30.0,
+            "height": [
+              0.5,
+              1.5
+            ],
+            "kind": "cone",
+            "x": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            999.0,
+            -2.0,
+            1.7320508075688772,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            999.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "type": 1.0,
+          "value": 1.7320508075688772
+        }
+      ],
+      "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.7320508075688772,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.7320508075688605,
+          1.7320508075688943
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "reduced_threshold": 1.7320508075688603,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.7320508075688772,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          0.8660254037844386,
+          0.0
+        ]
+      }
+    },
+    {
+      "case": "analytic_face_cone_x_7_15",
+      "input": {
+        "entry": 7,
+        "faces": [
+          {
+            "apex": [
+              -1.0,
+              0.0,
+              0.0
+            ],
+            "half_angle_deg": 30.0,
+            "height": [
+              0.5,
+              1.5
+            ],
+            "kind": "cone",
+            "x": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            -2.0,
+            -2.0,
+            1.7320508075688772,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            -2.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "type": 1.0,
+          "value": 1.7320508075688772
+        }
+      ],
+      "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.7320508075688772,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.7320508075688605,
+          1.7320508075688943
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "reduced_threshold": 1.7320508075688603,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.7320508075688772,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          0.8660254037844386,
+          0.0
+        ]
+      }
+    },
+    {
+      "case": "analytic_face_sphere_band_6_15",
+      "input": {
+        "entry": 6,
+        "faces": [
+          {
+            "center": [
+              0.0,
+              0.0,
+              -1.0
+            ],
+            "kind": "sphere",
+            "lat": [
+              -60.0,
+              60.0
+            ],
+            "lon": [
+              0.0,
+              360.0
+            ],
+            "radius": 0.5,
+            "x": [
+              1.0,
+              0.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              1.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            999.0,
+            -2.0,
+            1.5,
+            0.0,
+            0.0,
+            0.5000000000000002,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            999.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            0.5000000000000002
+          ],
+          "type": 1.0,
+          "value": 1.5
+        }
+      ],
+      "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.5,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.499999999999986,
+          1.500000000000014
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          0.5000000000000002
+        ],
+        "reduced_threshold": 1.4999999999999858,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.5,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          0.0,
+          -1.0
+        ]
+      }
+    },
+    {
+      "case": "analytic_face_sphere_band_7_15",
+      "input": {
+        "entry": 7,
+        "faces": [
+          {
+            "center": [
+              0.0,
+              0.0,
+              -1.0
+            ],
+            "kind": "sphere",
+            "lat": [
+              -60.0,
+              60.0
+            ],
+            "lon": [
+              0.0,
+              360.0
+            ],
+            "radius": 0.5,
+            "x": [
+              1.0,
+              0.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              1.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            -2.0,
+            -2.0,
+            1.5,
+            0.0,
+            0.0,
+            0.5000000000000002,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            -2.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            0.5000000000000002
+          ],
+          "type": 1.0,
+          "value": 1.5
+        }
+      ],
+      "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.5,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.499999999999986,
+          1.500000000000014
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          0.5000000000000002
+        ],
+        "reduced_threshold": 1.4999999999999858,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.5,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          0.0,
+          -1.0
+        ]
+      }
+    },
+    {
+      "case": "analytic_face_sphere_quarter_6_15",
+      "input": {
+        "entry": 6,
+        "faces": [
+          {
+            "center": [
+              0.0,
+              0.0,
+              -1.0
+            ],
+            "kind": "sphere",
+            "lat": [
+              -45.0,
+              45.0
+            ],
+            "lon": [
+              0.0,
+              180.0
+            ],
+            "radius": 0.5,
+            "x": [
+              1.0,
+              0.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              1.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            999.0,
+            -2.0,
+            1.5,
+            0.0,
+            0.0,
+            0.5000000000000001,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            999.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            0.5000000000000001
+          ],
+          "type": 1.0,
+          "value": 1.5
+        }
+      ],
+      "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.5,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.4999999999999858,
+          1.5000000000000142
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          0.5000000000000001
+        ],
+        "reduced_threshold": 1.4999999999999856,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.5,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.49999999999999994,
+          0.0,
+          -0.9999999999999999
+        ]
+      }
+    },
+    {
+      "case": "analytic_face_sphere_quarter_7_15",
+      "input": {
+        "entry": 7,
+        "faces": [
+          {
+            "center": [
+              0.0,
+              0.0,
+              -1.0
+            ],
+            "kind": "sphere",
+            "lat": [
+              -45.0,
+              45.0
+            ],
+            "lon": [
+              0.0,
+              180.0
+            ],
+            "radius": 0.5,
+            "x": [
+              1.0,
+              0.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              1.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            -2.0,
+            -2.0,
+            1.5,
+            0.0,
+            0.0,
+            0.5000000000000001,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            -2.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            0.5000000000000001
+          ],
+          "type": 1.0,
+          "value": 1.5
+        }
+      ],
+      "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.5,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.4999999999999858,
+          1.5000000000000142
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          0.5000000000000001
+        ],
+        "reduced_threshold": 1.4999999999999856,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.5,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.49999999999999994,
+          0.0,
+          -0.9999999999999999
+        ]
+      }
+    },
+    {
+      "case": "analytic_face_torus_x_6_15",
+      "input": {
+        "entry": 6,
+        "faces": [
+          {
+            "center": [
+              0.0,
+              0.0,
+              -2.0
+            ],
+            "kind": "torus",
+            "major": [
+              0.0,
+              360.0
+            ],
+            "major_radius": 1.0,
+            "minor": [
+              0.0,
+              360.0
+            ],
+            "minor_radius": 0.25,
+            "x": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            999.0,
+            -2.0,
+            1.6642135623730954,
+            0.0,
+            2.1982488732768807e-17,
+            0.125,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            999.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            2.1982488732768807e-17,
+            0.125
+          ],
+          "type": 1.0,
+          "value": 1.6642135623730954
+        }
+      ],
+      "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.6642135623730954,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.6642135623730725,
+          1.6642135623731176
+        ],
+        "parameters": [
+          0.0,
+          2.1982488732768807e-17,
+          0.125
+        ],
+        "reduced_threshold": 1.6642135623730723,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.6642135623730954,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.17677669529663692,
+          1.1767766952966372,
+          -1.9999999999999998
+        ]
+      }
+    },
+    {
+      "case": "analytic_face_torus_x_7_15",
+      "input": {
+        "entry": 7,
+        "faces": [
+          {
+            "center": [
+              0.0,
+              0.0,
+              -2.0
+            ],
+            "kind": "torus",
+            "major": [
+              0.0,
+              360.0
+            ],
+            "major_radius": 1.0,
+            "minor": [
+              0.0,
+              360.0
+            ],
+            "minor_radius": 0.25,
+            "x": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            -2.0,
+            -2.0,
+            1.6642135623730954,
+            0.0,
+            2.1982488732768807e-17,
+            0.125,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            -2.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            2.1982488732768807e-17,
+            0.125
+          ],
+          "type": 1.0,
+          "value": 1.6642135623730954
+        }
+      ],
+      "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.6642135623730954,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.6642135623730725,
+          1.6642135623731176
+        ],
+        "parameters": [
+          0.0,
+          2.1982488732768807e-17,
+          0.125
+        ],
+        "reduced_threshold": 1.6642135623730723,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.6642135623730954,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.17677669529663692,
+          1.1767766952966372,
+          -1.9999999999999998
+        ]
+      }
+    },
+    {
+      "case": "analytic_face_torus_half_x_6_15",
+      "input": {
+        "entry": 6,
+        "faces": [
+          {
+            "center": [
+              0.0,
+              0.0,
+              -2.0
+            ],
+            "kind": "torus",
+            "major": [
+              0.0,
+              180.0
+            ],
+            "major_radius": 1.0,
+            "minor": [
+              0.0,
+              360.0
+            ],
+            "minor_radius": 0.25,
+            "x": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            999.0,
+            -2.0,
+            1.6642135623730954,
+            0.0,
+            4.3964977465537614e-17,
+            0.125,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            999.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            4.3964977465537614e-17,
+            0.125
+          ],
+          "type": 1.0,
+          "value": 1.6642135623730954
+        }
+      ],
+      "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.6642135623730954,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.6642135623730725,
+          1.6642135623731176
+        ],
+        "parameters": [
+          0.0,
+          4.3964977465537614e-17,
+          0.125
+        ],
+        "reduced_threshold": 1.6642135623730723,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.6642135623730954,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.17677669529663692,
+          1.1767766952966372,
+          -1.9999999999999998
+        ]
+      }
+    },
+    {
+      "case": "analytic_face_torus_half_x_7_15",
+      "input": {
+        "entry": 7,
+        "faces": [
+          {
+            "center": [
+              0.0,
+              0.0,
+              -2.0
+            ],
+            "kind": "torus",
+            "major": [
+              0.0,
+              180.0
+            ],
+            "major_radius": 1.0,
+            "minor": [
+              0.0,
+              360.0
+            ],
+            "minor_radius": 0.25,
+            "x": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "y": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "kind": "plane"
+          }
+        ],
+        "first": [
+          [
+            0.2,
+            0.3,
+            2.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "included": true,
+        "op": "static",
+        "operation": 15,
+        "point": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "request": 0,
+        "second": [
+          [
+            0.0,
+            0.0,
+            3.0
+          ]
+        ],
+        "swap": false,
+        "tolerance": 1e-05
+      },
+      "output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            -2.0,
+            -2.0,
+            1.6642135623730954,
+            0.0,
+            4.3964977465537614e-17,
+            0.125,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            -2.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            4.3964977465537614e-17,
+            0.125
+          ],
+          "type": 1.0,
+          "value": 1.6642135623730954
+        }
+      ],
+      "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.6642135623730954,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.6642135623730725,
+          1.6642135623731176
+        ],
+        "parameters": [
+          0.0,
+          4.3964977465537614e-17,
+          0.125
+        ],
+        "reduced_threshold": 1.6642135623730723,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.6642135623730954,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.17677669529663692,
+          1.1767766952966372,
+          -1.9999999999999998
+        ]
+      }
+    }
+  ]
+}

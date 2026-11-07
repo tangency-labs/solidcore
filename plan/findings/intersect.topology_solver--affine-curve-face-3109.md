@@ -280,8 +280,9 @@ source/library hashes before applying its final gates. `--expect-certified`
 requires all fourteen native rows to satisfy every obligation and no new refusal
 against either historical or immediate-parent output. Failure requires
 investigation, not tolerance changes, golden replacement or new exclusions.
-The prepared native helper and orchestration still require their first executable
-replay; syntax/format checks alone are not native proof evidence.
+The Linux historical/immediate-parent/final replay remains pending. The independent
+Windows final replay below has executed the native helper; its evidence does not
+substitute for the pending historical output comparison.
 
 
 The merged production checkpoint `17353d3ac` passed all 28 native/history tests,
@@ -290,3 +291,39 @@ reviewed parent native-proposal repair was integrated. These are kernel test
 results, not a claim that the prepared standalone native audit has run. The
 immediate-parent evidence/golden-only follow-up does not change kernel sources;
 its source identity is checked separately when propagated.
+
+### Final native construction audit (Windows, `c341e5309`)
+
+The fresh host build's Cargo artifact record identifies the rebuilt kernel rlib
+with SHA256 `2f600bf05200db5743ad00f2497918208ef4cdc49733f38529a4e43edef2eaaa`.
+The actual public runner froze all 2,575 inputs; their byte hash equals the pinned
+historical input hash above. All fourteen native curve/edge-face maximum records
+then passed independent checks of requested/native domain membership, reported
+scalar inclusion in the returned point's own enclosure, native scalar identity,
+and both affine endpoint residual certificates over the complete face. The
+one-representable-value-below-witness-lower-bound controls all refused. No caller
+retention slack enters these construction checks.
+
+Exact inputs, output arrays, native points and individual proof results are in
+[`affine_face_native_final_3110.json`](diagnostics/affine_face_native_final_3110.json).
+The final full- and half-torus outputs report `1.6642135623730954`, exactly equal
+to their evaluated native metric. Their rigorous native point enclosures, rather
+than an unpadded ideal-geometry scalar, supply the full-domain proof threshold.
+
+![Actual historical and repaired torus endpoints in the same projected view](figures/affine-face-native-final-3110.png)
+
+The full Windows golden comparison is **not green**: 2,575 cases, four changed,
+zero added/removed/broken, and the two existing full-torus exclusions. The four
+changes are `analytic_face_sphere_band_{6,7}_{14,3}`, outside the new projected
+maximum operation 15. Operation 14 retains scalar zero but chooses the other
+periodic seam parameter; operation 3 chooses the symmetric opposite minimum,
+with a one-ULP scalar difference. A fresh Windows immediate-parent replay is
+required to determine attribution; these outputs have not been blessed. The
+native fourteen-record audit includes both currently excluded full-torus cases,
+so their proof coverage does not depend on the golden exclusions.
+
+The historical raw-output comparison and final Linux native replay remain
+pending; matching input bytes alone is not a before/after output comparison.
+The separate 28 native/history and 15 generic solver tests passed at the
+production-identical `17353d3ac` checkpoint. The later parent provenance merge
+changes documentation only.
