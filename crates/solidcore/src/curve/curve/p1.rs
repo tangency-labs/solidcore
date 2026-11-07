@@ -2932,7 +2932,10 @@ mod tests {
             vec![lo, lo, hi, hi],
         )
         .unwrap();
-        let curve = Curve::from(BSplineCurve::from_nurb(spline, 3, false));
+        // Preserve the raw adjacent knots: an owned NURB normalizes them.
+        let spline = BSplineCurve::from_nurb(spline, 3, true);
+        assert_eq!(spline.gw_nurb().unwrap().knots(), &[lo, lo, hi, hi]);
+        let curve = Curve::from(spline);
         let point_tree = Tree::<ObjectHandle>::new(None);
         let curve_tree = Tree::<ObjectHandle>::new(None);
         let interval = Extent1d::from_min_max(lo, hi);
