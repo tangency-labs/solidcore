@@ -732,7 +732,7 @@ pub struct RadialSector {
     /// The sector is of zero angle: the faces of its edge use and of that edge use's radial
     /// partner are parallel at the edge, and the coincident face use is one of the sector's own
     /// faces, not a face found to coincide with the classified face. The surface gate
-    /// `faces_coincide` (WR-754) does not apply to it.
+    /// `faces_coincide` (WR-755) does not apply to it.
     pub zero_sector: bool,
 }
 
