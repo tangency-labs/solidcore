@@ -4556,14 +4556,15 @@ impl OffsetGeometryCreation {
                     .ok_or(dangling("other off edge"))?;
                 let v1 = brep.edgeuse_vertex(off)?;
                 let mate = brep.edgeuse_mate(off)?;
-                let v2 = mate.and_then(|m| brep.edgeuse_vertex(m).ok()).flatten();
+                let v2 = mate.map(|m| brep.edgeuse_vertex(m)).transpose()?.flatten();
                 let p1 = v1.map(|v| brep.vertex_point(v)).transpose()?;
                 let p2 = v2.map(|v| brep.vertex_point(v)).transpose()?;
 
                 let v1_other = brep.edgeuse_vertex(other_off)?;
                 let mate_other = brep.edgeuse_mate(other_off)?;
                 let v2_other = mate_other
-                    .and_then(|m| brep.edgeuse_vertex(m).ok())
+                    .map(|m| brep.edgeuse_vertex(m))
+                    .transpose()?
                     .flatten();
                 let p1_other = v1_other.map(|v| brep.vertex_point(v)).transpose()?;
                 let p2_other = v2_other.map(|v| brep.vertex_point(v)).transpose()?;
@@ -4578,7 +4579,7 @@ impl OffsetGeometryCreation {
                                           opt_v2: Option<O>,
                                           q1: Point3,
                                           q2: Point3|
-                         -> Result<bool> {
+                         -> Result<(bool, f64)> {
                             if let Some(ch) = brep.edge_curve(e)? {
                                 let cv = curve_of(brep, ch)?;
                                 let ivl = brep.edge_interval(e)?;
@@ -4586,11 +4587,13 @@ impl OffsetGeometryCreation {
                                 let e1 = cv.evaluate_point(k, ivl.max())?;
                                 let t = brep.edge_tolerance(e)?;
                                 let t1 = opt_v1
-                                    .and_then(|v| brep.vertex_tolerance(v).ok())
+                                    .map(|v| brep.vertex_tolerance(v))
+                                    .transpose()?
                                     .unwrap_or(0.0)
                                     .max(t);
                                 let t2 = opt_v2
-                                    .and_then(|v| brep.vertex_tolerance(v).ok())
+                                    .map(|v| brep.vertex_tolerance(v))
+                                    .transpose()?
                                     .unwrap_or(0.0)
                                     .max(t);
                                 let (d_start, d_end) = if (q1 - e0).length() <= (q1 - e1).length() {
@@ -4599,38 +4602,195 @@ impl OffsetGeometryCreation {
                                     ((q1 - e1).length(), (q2 - e0).length())
                                 };
                                 let tol_margin = t + 3.0_f64.sqrt() * t1.max(t2);
-                                Ok(d_start <= tol_margin && d_end <= tol_margin)
+                                Ok((d_start <= tol_margin && d_end <= tol_margin, tol_margin))
                             } else {
-                                Ok(false)
+                                Ok((false, 0.0))
                             }
                         };
-                        let off_matched = check_ends(off_e, v1, v2, p1, p2)?;
-                        if !off_matched {
-                            let d_same = (p1 - p1_o).length();
-                            let d_cross = (p1 - p2_o).length();
-                            let (r2_start, r2_end) = if d_same <= d_cross {
-                                (p1_o, p2_o)
-                            } else {
-                                (p2_o, p1_o)
-                            };
-                            let r1 = BSplineCurve::create_line_segment(3, p1, p2)?;
-                            let r2 = BSplineCurve::create_line_segment(3, r2_start, r2_end)?;
-                            rail1 = Some(r1.clone());
-                            rail2 = Some(r2);
+                        let (off_matched, tol_margin) = check_ends(off_e, v1, v2, p1, p2)?;
+                        let (other_off_matched, other_tol_margin) =
+                            check_ends(other_off_e, v1_other, v2_other, p1_o, p2_o)?;
 
-                            // Update off edge curve to span p1..p2
-                            let off_face = brep.edgeuse_face(off)?.ok_or(dangling("face"))?;
-                            let surf1 = brep.face_surface(off_face)?.ok_or(dangling("surf"))?;
-                            let s1 = surface_of(brep, surf1)?;
-                            let (uv1, _) = s1.step_inversion_unbounded(k, p1, tol)?;
-                            let (uv2, _) = s1.step_inversion_unbounded(k, p2, tol)?;
-                            let uv_curve1 = BSplineCurve::create_line_segment(
+                        let adjust_periodic_uv =
+                            |s: &Surface, uv_start: Point2, mut uv_end: Point2| -> Result<Point2> {
+                                let dom = s.natural_uv_domain_if_built();
+                                if s.is_periodic(k, &dom, SurfParamType::U)? {
+                                    let period_u = dom.max().x - dom.min().x;
+                                    if period_u > 0.0 {
+                                        let delta = uv_end.x - uv_start.x;
+                                        if delta.abs() > period_u * 0.5 {
+                                            uv_end.x -= delta.signum() * period_u;
+                                        }
+                                    }
+                                }
+                                if s.is_periodic(k, &dom, SurfParamType::V)? {
+                                    let period_v = dom.max().y - dom.min().y;
+                                    if period_v > 0.0 {
+                                        let delta = uv_end.y - uv_start.y;
+                                        if delta.abs() > period_v * 0.5 {
+                                            uv_end.y -= delta.signum() * period_v;
+                                        }
+                                    }
+                                }
+                                Ok(uv_end)
+                            };
+
+                        let derive_curve_and_rail =
+                            |e: O,
+                             q1: Point3,
+                             q2: Point3,
+                             margin: f64|
+                             -> Result<(Curve, BSplineCurve)> {
+                                if let Some(ch) = brep.edge_curve(e)? {
+                                    let cv = curve_of(brep, ch)?;
+                                    let is_linear = match cv.kind() {
+                                        CurveKind::Line(l) => Some(l.is_line()),
+                                        _ => cv.is_line(k, 10, margin)?,
+                                    };
+                                    if let Some((pt, dir)) = is_linear {
+                                        let dir_u = dir.unitize_or_z();
+                                        let d1 =
+                                            ((q1 - pt) - (q1 - pt).dot(dir_u) * dir_u).length();
+                                        let d2 =
+                                            ((q2 - pt) - (q2 - pt).dot(dir_u) * dir_u).length();
+                                        if d1 > margin || d2 > margin {
+                                            return Err(sm_err(OP_EDGEUSE));
+                                        }
+                                        let line = BSplineCurve::create_line_segment(3, q1, q2)?;
+                                        let mut r = line.clone();
+                                        r.edit_parameterization(&Extent1d::from_min_max(0.0, 1.0))?;
+                                        Ok((Curve::from(line), r))
+                                    } else {
+                                        let dp1 = cv.drop_point(
+                                            k,
+                                            &cv.natural_interval(),
+                                            q1,
+                                            None,
+                                            margin,
+                                            None,
+                                            SolverOperation::Minimize,
+                                        )?;
+                                        let dp2 = cv.drop_point(
+                                            k,
+                                            &cv.natural_interval(),
+                                            q2,
+                                            None,
+                                            margin,
+                                            None,
+                                            SolverOperation::Minimize,
+                                        )?;
+                                        if dp1.distance > margin || dp2.distance > margin {
+                                            return Err(sm_err(OP_EDGEUSE));
+                                        }
+                                        let t1 = dp1.parameter;
+                                        let t2 = dp2.parameter;
+                                        let mut trimmed_cv = cv.copy(k)?;
+                                        let mut ivl =
+                                            Extent1d::from_min_max(t1.min(t2), t1.max(t2));
+                                        trimmed_cv.trim(k, &mut ivl, TrimMode::Notify)?;
+                                        if t1 > t2 {
+                                            trimmed_cv.reverse_parameterization(k, &ivl)?;
+                                        }
+                                        let mut b_spline = b_spline_part(&trimmed_cv)?
+                                            .ok_or_else(|| sm_err(OP_EDGEUSE))?;
+                                        b_spline.edit_parameterization(&Extent1d::from_min_max(
+                                            0.0, 1.0,
+                                        ))?;
+                                        let rail_dev = trimmed_cv
+                                            .curve_max_distance_between(
+                                                k,
+                                                &trimmed_cv.natural_interval(),
+                                                &Curve::from(b_spline.clone()),
+                                                0.0,
+                                                1.0,
+                                                30,
+                                                None,
+                                            )?
+                                            .distance;
+                                        if rail_dev > margin {
+                                            return Err(sm_err(OP_EDGEUSE));
+                                        }
+                                        Ok((trimmed_cv, b_spline))
+                                    }
+                                } else {
+                                    let line = BSplineCurve::create_line_segment(3, q1, q2)?;
+                                    let mut r = line.clone();
+                                    r.edit_parameterization(&Extent1d::from_min_max(0.0, 1.0))?;
+                                    Ok((Curve::from(line), r))
+                                }
+                            };
+
+                        let build_uv_trim = |s: &Surface,
+                                             c3: &Curve,
+                                             p1: Point3,
+                                             p2: Point3,
+                                             tol: f64|
+                         -> Result<Curve> {
+                            let (uv1, _) = s.step_inversion_unbounded(k, p1, 10.0 * tol)?;
+                            let (uv2, _) = s.step_inversion_unbounded(k, p2, 10.0 * tol)?;
+                            let uv2 = adjust_periodic_uv(s, uv1, uv2)?;
+
+                            if matches!(s.kind(), SurfaceKind::Plane(_)) {
+                                let uv_curve = BSplineCurve::create_line_segment(
+                                    2,
+                                    Point3::new(uv1.x, uv1.y, 0.0),
+                                    Point3::new(uv2.x, uv2.y, 0.0),
+                                )?;
+                                return Ok(Curve::from(uv_curve));
+                            }
+
+                            let dom = s.natural_uv_domain_if_built();
+                            if let Ok(mut dropped) = s.drop_curve::<NoObject>(
+                                k,
+                                &dom,
+                                c3,
+                                &c3.natural_interval(),
+                                10.0 * tol,
+                                false,
+                                None,
+                                true,
+                            ) {
+                                if dropped.uv_curves.len() == 1 {
+                                    return Ok(dropped.uv_curves.remove(0));
+                                }
+                            }
+
+                            let uv_curve = BSplineCurve::create_line_segment(
                                 2,
                                 Point3::new(uv1.x, uv1.y, 0.0),
                                 Point3::new(uv2.x, uv2.y, 0.0),
                             )?;
-                            let h_c1 = store_curve(brep, Curve::from(r1))?;
-                            let h_uv1 = store_curve(brep, Curve::from(uv_curve1))?;
+                            Ok(Curve::from(uv_curve))
+                        };
+
+                        let off_work = if off_matched {
+                            None
+                        } else {
+                            let (c1, r1) = derive_curve_and_rail(off_e, p1, p2, tol_margin)?;
+                            let off_face = brep.edgeuse_face(off)?.ok_or(dangling("face"))?;
+                            let surf1 = brep.face_surface(off_face)?.ok_or(dangling("surf"))?;
+                            let s1 = surface_of(brep, surf1)?;
+                            let uv1 = build_uv_trim(s1, &c1, p1, p2, tol)?;
+                            Some((c1, uv1, r1))
+                        };
+
+                        let other_off_work = if other_off_matched {
+                            None
+                        } else {
+                            let (c2, r2) =
+                                derive_curve_and_rail(other_off_e, p1_o, p2_o, other_tol_margin)?;
+                            let other_off_face =
+                                brep.edgeuse_face(other_off)?.ok_or(dangling("face"))?;
+                            let surf2 =
+                                brep.face_surface(other_off_face)?.ok_or(dangling("surf"))?;
+                            let s2 = surface_of(brep, surf2)?;
+                            let uv2 = build_uv_trim(s2, &c2, p1_o, p2_o, tol2)?;
+                            Some((c2, uv2, r2))
+                        };
+
+                        if let Some((c1, uv1, r1)) = off_work {
+                            let h_c1 = store_curve(brep, c1)?;
+                            let h_uv1 = store_curve(brep, uv1)?;
                             self.replace_edge_curves(
                                 k,
                                 brep,
@@ -4639,23 +4799,12 @@ impl OffsetGeometryCreation {
                                 Some(h_uv1),
                                 Some(original_edgeuse),
                             )?;
+                            rail1 = Some(r1);
+                        }
 
-                            // Update other_off edge curve to span p1_o..p2_o
-                            let other_off_face =
-                                brep.edgeuse_face(other_off)?.ok_or(dangling("face"))?;
-                            let surf2 =
-                                brep.face_surface(other_off_face)?.ok_or(dangling("surf"))?;
-                            let s2 = surface_of(brep, surf2)?;
-                            let (uv1_o, _) = s2.step_inversion_unbounded(k, p1_o, tol2)?;
-                            let (uv2_o, _) = s2.step_inversion_unbounded(k, p2_o, tol2)?;
-                            let uv_curve2 = BSplineCurve::create_line_segment(
-                                2,
-                                Point3::new(uv1_o.x, uv1_o.y, 0.0),
-                                Point3::new(uv2_o.x, uv2_o.y, 0.0),
-                            )?;
-                            let c2 = BSplineCurve::create_line_segment(3, p1_o, p2_o)?;
-                            let h_c2 = store_curve(brep, Curve::from(c2))?;
-                            let h_uv2 = store_curve(brep, Curve::from(uv_curve2))?;
+                        if let Some((c2, uv2, r2)) = other_off_work {
+                            let h_c2 = store_curve(brep, c2)?;
+                            let h_uv2 = store_curve(brep, uv2)?;
                             self.replace_edge_curves(
                                 k,
                                 brep,
@@ -4664,6 +4813,20 @@ impl OffsetGeometryCreation {
                                 Some(h_uv2),
                                 Some(other_original_edgeuse),
                             )?;
+                            rail2 = Some(r2);
+                        }
+
+                        if let (Some(r1), Some(r2)) = (rail1.as_mut(), rail2.as_mut()) {
+                            r1.edit_parameterization(&Extent1d::from_min_max(0.0, 1.0))?;
+                            r2.edit_parameterization(&Extent1d::from_min_max(0.0, 1.0))?;
+                            let p1_start = r1.evaluate_point(0.0)?;
+                            let p2_start = r2.evaluate_point(0.0)?;
+                            let p2_end = r2.evaluate_point(1.0)?;
+                            if (p1_start - p2_start).length() > (p1_start - p2_end).length() {
+                                let nat = r2.natural_interval();
+                                r2.reverse_parameterization(&nat)?;
+                                r2.edit_parameterization(&Extent1d::from_min_max(0.0, 1.0))?;
+                            }
                         }
                     }
                 }
