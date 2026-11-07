@@ -178,8 +178,7 @@ pub(super) fn retained_bound<O: SolutionObject>(
                     return Err(refused("retained edge point is outside its domain"));
                 }
             }
-            crate::curve::curve::p1::affine_point_definition_enclosure(curve, t)
-                .ok_or_else(|| refused("retained pair curve lacks an exact point enclosure"))?
+            crate::curve::curve::p9::projected_definition_point(curve, t)?
         } else if handle.kind() == ObjectKind::Face {
             let uv = Vec2::new(
                 solution.start.param(parameter)?,
@@ -223,97 +222,4 @@ pub(super) fn retained_bound<O: SolutionObject>(
         ));
     }
     Ok(bound)
-}
-
-/// Independently recover prior-domain coverage; attainment of an earlier fitted
-/// answer is not a certificate of the domain it came from.
-pub(super) fn certify_previous_domain<O: SolutionObject>(
-    k: &Kernel,
-    objects: &dyn TopologyObjects<O>,
-    solution: &crate::geom::solution_array::Solution<O>,
-    query_owner: O,
-    query_curve: &Curve,
-    normal: Vec3,
-    upper: f64,
-) -> Result<()> {
-    use crate::geom::solution_array::ObjectKind;
-    enum Domain {
-        Points(Vec<[Ivl; 3]>),
-        Face(Nurbs, Extent2d),
-    }
-    let mut domains = Vec::new();
-    for handle in solution.objects.iter().take(2) {
-        let handle = handle.ok_or_else(|| refused("previous domain has an unnamed owner"))?;
-        let domain = if handle == query_owner
-            || matches!(handle.kind(), ObjectKind::Curve | ObjectKind::Edge)
-        {
-            let curve = if handle == query_owner {
-                query_curve
-            } else if handle.kind() == ObjectKind::Edge {
-                objects.curve(
-                    objects
-                        .edge_curve(handle)?
-                        .ok_or_else(|| refused("previous edge has no curve"))?,
-                )?
-            } else {
-                objects.curve(handle)?
-            };
-            let interval = if handle.kind() == ObjectKind::Edge {
-                objects.edge_interval(handle)?
-            } else {
-                curve.natural_interval()
-            };
-            let endpoints = crate::curve::curve::p1::affine_curve_endpoints(curve, interval)?
-                .ok_or_else(|| refused("previous curve domain lacks affine coverage provenance"))?;
-            Domain::Points(endpoints.into_iter().map(|(_, point)| point).collect())
-        } else if handle.kind() == ObjectKind::Vertex {
-            let point = objects.vertex_point(handle)?;
-            Domain::Points(vec![[point.x, point.y, point.z].map(Ivl::from)])
-        } else if handle.kind() == ObjectKind::Face {
-            // Bounding the native UV rectangle is conservative even if the old
-            // face has additional trims; its returned point was checked separately.
-            Domain::Face(
-                projected_bound::face_net(k, objects, handle)?,
-                objects.face_uv_domain(handle)?,
-            )
-        } else {
-            return Err(refused(
-                "previous operand has no domain coverage certificate",
-            ));
-        };
-        domains.push(domain);
-    }
-    match domains.as_slice() {
-        [Domain::Points(a), Domain::Points(b)] => {
-            for a in a {
-                for b in b {
-                    k.check_cancelled(OP)?;
-                    let bound = projected_bound::pair_metric(*a, *b, normal);
-                    if !(bound.hi.is_finite() && bound.hi <= upper) {
-                        return Err(refused(
-                            "previous affine domain exceeds final retained enclosure",
-                        ));
-                    }
-                }
-            }
-        }
-        [Domain::Points(points), Domain::Face(net, domain)]
-        | [Domain::Face(net, domain), Domain::Points(points)] => {
-            for point in points {
-                if !projected_residual::maximum_is_bounded_from_definition(
-                    k, net, domain, *point, normal, upper,
-                )? {
-                    return Err(refused(
-                        "previous native face domain exceeds final retained enclosure",
-                    ));
-                }
-            }
-        }
-        _ => {
-            return Err(refused(
-                "previous pair has no supported whole-domain certificate",
-            ))
-        }
-    }
-    Ok(())
 }

@@ -1994,6 +1994,67 @@ pub fn is_on_plane_base(
     Ok(OnPlane { on_plane, max_dist })
 }
 
+/// Enclose one actual defining curve point for topology's retained-pair check.
+pub(crate) fn projected_definition_point(
+    curve: &Curve,
+    parameter: f64,
+) -> Result<[crate::blend::fillet_section::interval::Ivl; 3]> {
+    use super::projected_pair::Definition;
+    use crate::blend::fillet_section::interval::Ivl;
+    let natural = curve.natural_interval();
+    if !parameter.is_finite() || parameter < natural.min() || parameter > natural.max() {
+        return Err(SolidError::invalid_input(
+            "curve::curve::projected_definition_point",
+            "point outside native curve domain",
+        ));
+    }
+    if let Some(point) = super::p1::affine_point_definition_enclosure(curve, parameter) {
+        return Ok(point);
+    }
+    let definition = Definition::of(curve, natural)?;
+    let (point, _) = definition.jet(Ivl::from(parameter), None)?;
+    Ok([point.x, point.y, point.z])
+}
+
+/// Reuse the complete native Single construction for a topology domain ledger.
+/// The upper endpoint belongs to the returned feasible point, never caller slack.
+pub(crate) fn projected_pair_domain_upper(
+    k: &Kernel,
+    curves: [&Curve; 2],
+    intervals: [Extent1d; 2],
+    normal: Vec3,
+) -> Result<Option<f64>> {
+    use super::projected_pair::{self, Definition, Query};
+    let answers = projected_pair::solve::<crate::geom::solution_array::OperandObject>(
+        k,
+        curves,
+        intervals,
+        normal,
+        0.0,
+        [None, None],
+        None,
+    )?;
+    let Some(answer) = answers.get(0) else {
+        return Ok(None);
+    };
+    let [a, b] = curves;
+    let [ia, ib] = intervals;
+    let query = Query {
+        kernel: k,
+        curves,
+        definitions: [
+            Definition::of(a, projected_pair::bounded_domain(a, ia)?)?,
+            Definition::of(b, projected_pair::bounded_domain(b, ib)?)?,
+        ],
+        normal,
+    };
+    Ok(Some(
+        query
+            .candidate(answer.start.param(0)?, answer.start.param(1)?)?
+            .upper,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -75,7 +75,26 @@ impl<'t, O: SolutionObject + 't> TopologySolver<'t, '_, O> {
     ///
     /// # Errors
     /// Invalid branches or object lists, missing local solver, and local-solve errors.
+    /// A native affine pair certificate belongs to the complete tree/trait solve;
+    /// an untracked partial call refuses rather than implying complete coverage.
     pub fn local_solve_branch(&mut self, k: &Kernel, branch: &Branch) -> Result<bool> {
+        if super::projected_pair_domains::Ledger::eligible(&self.base)
+            && self.base.num_trees == 2
+            && !self.projected_pair_domains.in_tree
+        {
+            if let Some(local) = self.local_solver.as_ref() {
+                self.projected_pair_domains.record_trees(
+                    &self.base,
+                    self.objects,
+                    local,
+                    self.base.tree(0)?,
+                    self.base.tree(1)?,
+                )?;
+            }
+            if self.projected_pair_domains.active {
+                return Err(super::projected_affine_face::refused("partial branch entry cannot finalize a native pair domain ledger; use the tracked tree or trait entry"));
+            }
+        }
         let tree1 = self.base.tree(0)?;
         let tree2 = self.base.tree(1)?;
         let node1 = self.base.branch_node(branch, 0)?;
@@ -416,36 +435,14 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
                 crate::curve::curve::p1::affine_curve_endpoints(curve.curve, self.interval)?
             {
                 use super::projected_affine_face as native;
-                use crate::blend::fillet_section::interval::Ivl;
                 let normal = *ts
                     .base
                     .opt_vectors
                     .first()
                     .ok_or_else(|| native::refused("missing projection normal"))?;
-                let query_owner =
-                    owner.ok_or_else(|| native::refused("missing affine curve owner"))?;
-                let target = if ts.base.solutions.is_empty() {
-                    best_answer_so_far(&ts.base)
-                } else {
-                    None
-                };
                 let (candidate, net, domain) =
                     native::construct(k, ts.objects, face, curve.curve, &endpoints, normal)?;
                 native::certify(k, &net, &domain, &endpoints, normal, candidate.enclosure.hi)?;
-                if !ts.base.tolerance_3d.is_finite() || ts.base.tolerance_3d < 0.0 {
-                    return Err(native::refused("invalid retention slack"));
-                }
-                if let Some(target) = target {
-                    let cutoff = Ivl::from(target.abs()) - Ivl::from(ts.base.tolerance_3d);
-                    if candidate.enclosure.hi < cutoff.lo {
-                        return Ok(());
-                    }
-                    if candidate.enclosure.lo < cutoff.hi {
-                        return Err(native::refused(
-                            "native pair enclosure straddles external incumbent cutoff",
-                        ));
-                    }
-                }
                 let mut solution = Solution::new();
                 solution.solution_type = SolutionType::SingleValue;
                 solution.num_variables = 3;
@@ -457,76 +454,9 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
                 if self.swap_order {
                     swap_curve_surface_parameters(&mut solution)?;
                 }
-                let previous = ts.base.solutions.get(0).copied();
-                let previous_bound = previous
-                    .as_ref()
-                    .map(|previous| {
-                        native::retained_bound(
-                            k,
-                            ts.objects,
-                            previous,
-                            query_owner,
-                            curve.curve,
-                            normal,
-                        )
-                    })
-                    .transpose()?;
-                let required_upper = previous_bound.map_or(candidate.enclosure.hi, |bound| {
-                    bound.hi.max(candidate.enclosure.hi)
-                });
+                ts.projected_pair_domains
+                    .consider(&solution, candidate.enclosure);
                 ts.add_sorted_solution(&solution, SortKey::BySolutionValue, true)?;
-                let retained =
-                    ts.base.solutions.get(0).ok_or_else(|| {
-                        native::refused("certified pair was lost during retention")
-                    })?;
-                let retained_bound = native::retained_bound(
-                    k,
-                    ts.objects,
-                    retained,
-                    query_owner,
-                    curve.curve,
-                    normal,
-                )?;
-                if retained_bound.hi < required_upper {
-                    // Preserve a certified alternative when scalar ordering drops
-                    // the only own enclosure covering every previously solved domain.
-                    let replacement = if candidate.enclosure.hi >= required_upper {
-                        &solution
-                    } else {
-                        previous.as_ref().ok_or_else(|| {
-                            native::refused("missing certified incumbent alternative")
-                        })?
-                    };
-                    ts.base.solutions.set_size(0);
-                    ts.base.solutions.add(replacement);
-                }
-                let retained = ts
-                    .base
-                    .solutions
-                    .get(0)
-                    .ok_or_else(|| native::refused("missing final native pair"))?;
-                let bound = native::retained_bound(
-                    k,
-                    ts.objects,
-                    retained,
-                    query_owner,
-                    curve.curve,
-                    normal,
-                )?;
-                native::certify(k, &net, &domain, &endpoints, normal, bound.hi)?;
-                if let Some(previous) = previous.as_ref() {
-                    native::certify_previous_domain(
-                        k,
-                        ts.objects,
-                        previous,
-                        query_owner,
-                        curve.curve,
-                        normal,
-                        bound.hi,
-                    )?;
-                }
-                ts.base.best_answer_so_far_sq =
-                    retained.start.solution_value * retained.start.solution_value;
                 return Ok(());
             }
         }
@@ -1108,6 +1038,7 @@ impl<'t, O: SolutionObject + 't> TopologySolver<'t, '_, O> {
                     objects,
                     local_solver: None,
                     deferred_projected_faces: None,
+                    projected_pair_domains: super::projected_pair_domains::Ledger::default(),
                 };
                 let result = scoped.solve_trees(&query, trees.surfaces, &mut faces);
                 ts.restore_base(scoped.base, trees.surfaces);
@@ -1161,6 +1092,7 @@ impl<'t, O: SolutionObject + 't> TopologySolver<'t, '_, O> {
                 objects,
                 local_solver: None,
                 deferred_projected_faces: None,
+                projected_pair_domains: super::projected_pair_domains::Ledger::default(),
             };
             let result = scoped.solve_trees(&query, trees.surfaces, &mut faces);
             ts.restore_base(scoped.base, trees.surfaces);

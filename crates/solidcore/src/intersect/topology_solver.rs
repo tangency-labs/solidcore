@@ -11,6 +11,7 @@ pub mod p2;
 
 mod projected_affine_face;
 mod projected_bound;
+mod projected_pair_domains;
 pub(super) mod projected_residual;
 
 #[cfg(test)]

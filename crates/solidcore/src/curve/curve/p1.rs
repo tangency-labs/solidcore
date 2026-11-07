@@ -2002,20 +2002,21 @@ pub(crate) fn affine_point_definition_enclosure(curve: &Curve, t: f64) -> Option
         .then_some(position)
 }
 
+/// A native parameter and its outward definition-point enclosure.
+pub(crate) type AffineEndpoint = (f64, [Ivl; 3]);
+
 /// Endpoint reduction for continuous native affine definitions. Other structural
 /// classes return None before solving. At most 128 defining spans are processed.
 pub(crate) fn affine_curve_endpoints(
     curve: &Curve,
     requested: Extent1d,
-) -> Result<Option<Vec<(f64, [Ivl; 3])>>> {
+) -> Result<Option<Vec<AffineEndpoint>>> {
     let natural = curve.natural_interval();
     let interval = Extent1d::from_min_max(
         requested.min().max(natural.min()),
         requested.max().min(natural.max()),
     );
-    if !interval.min().is_finite()
-        || !interval.max().is_finite()
-        || interval.min() >= interval.max()
+    if !interval.min().is_finite() || !interval.max().is_finite() || interval.min() > interval.max()
     {
         return Ok(None);
     }
@@ -2030,8 +2031,29 @@ pub(crate) fn affine_curve_endpoints(
                 || net.knots().windows(2).any(|pair| matches!(pair, [a,b] if a == b && *a > natural.min() && *a < natural.max())) {
                 return Ok(None);
             }
+            // Count before collecting the proof spans, so a large stored net
+            // cannot allocate an unbounded endpoint list before the budget check.
+            let active = net
+                .knots()
+                .windows(2)
+                .filter(|pair| match *pair {
+                    [a, b] => a < b && a.max(interval.min()) < b.min(interval.max()),
+                    _ => false,
+                })
+                .take(129)
+                .count();
+            if active > 128 {
+                return Err(SolidError::Unsupported {
+                    operation: "curve::curve::affine_curve_endpoints",
+                    reason: "affine endpoint reduction exceeds 128 defining spans",
+                });
+            }
         }
         _ => return Ok(None),
+    }
+    if interval.min() == interval.max() {
+        return Ok(affine_point_definition_enclosure(curve, interval.min())
+            .map(|point| vec![(interval.min(), point)]));
     }
     let Some(spans) = complete_affine_definition(curve, interval) else {
         return Ok(None);

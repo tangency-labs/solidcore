@@ -477,6 +477,8 @@ pub struct TopologySolver<'t, 'a, O> {
     /// Faces whose upper bounds must be checked against a global point query's
     /// final feasible candidate. `None` keeps direct local solves self-contained.
     pub(super) deferred_projected_faces: Option<Vec<O>>,
+    /// Complete original pair domains, recorded before tree pruning.
+    pub(super) projected_pair_domains: super::projected_pair_domains::Ledger<'a, O>,
 }
 
 impl<'t, 'a, O: SolutionObject + 't> TopologySolver<'t, 'a, O> {
@@ -537,6 +539,7 @@ impl<'t, 'a, O: SolutionObject + 't> TopologySolver<'t, 'a, O> {
             objects,
             local_solver: None,
             deferred_projected_faces: None,
+            projected_pair_domains: super::projected_pair_domains::Ledger::default(),
         }
     }
 
@@ -555,6 +558,11 @@ impl<'t, 'a, O: SolutionObject + 't> TopologySolver<'t, 'a, O> {
     /// [`SolverOperation::Rayfire`] a ray vector shorter than `SM_EFF_ZERO` or an
     /// undefined second box (upstream then reads uninitialised values).
     pub fn may_contain_answer(&self, box1: &Extent3d, box2: &Extent3d) -> Result<bool> {
+        if self.projected_pair_domains.active {
+            // Legacy scalar pruning cannot discard an original domain before its
+            // native pair certificate has been checked at final selection.
+            return Ok(true);
+        }
         let s = &self.base;
         let tol = s.tolerance_3d;
         match s.operation {
@@ -760,12 +768,19 @@ impl<'t, 'a, O: SolutionObject + 't> TopologySolver<'t, 'a, O> {
         tree2: &'t Tree<O>,
         local: &mut LocalSolver<'a, O>,
     ) -> Result<()> {
+        self.projected_pair_domains
+            .record_trees(&self.base, self.objects, local, tree1, tree2)?;
+        let was_in_tree = self.projected_pair_domains.in_tree;
+        self.projected_pair_domains.in_tree = true;
         self.local_solver = Some(core::mem::take(local));
         let result = self.solve_trees_inner(tree1, tree2);
+        self.projected_pair_domains.in_tree = was_in_tree;
         if let Some(back) = self.local_solver.take() {
             *local = back;
         }
-        result
+        result?;
+        self.projected_pair_domains
+            .finish(self.kernel, self.objects, &mut self.base)
     }
 
     /// The body of [`TopologySolver::solve_trees`] once the local solver is in
@@ -844,9 +859,11 @@ impl<'t, 'a, O: SolutionObject + 't> TopologySolver<'t, 'a, O> {
                 objects: self.objects,
                 local_solver: None,
                 deferred_projected_faces: self.deferred_projected_faces.take(),
+                projected_pair_domains: core::mem::take(&mut self.projected_pair_domains),
             };
             let result = scoped.solve_trees(&object_tree, tree2, local);
             self.deferred_projected_faces = scoped.deferred_projected_faces;
+            self.projected_pair_domains = scoped.projected_pair_domains;
             self.restore_base(scoped.base, tree2);
             result?;
         }
@@ -914,6 +931,64 @@ impl<'t, O: SolutionObject + 't> GlobalSolve<'t, O> for TopologySolver<'t, '_, O
 
     fn solver_mut(&mut self) -> &mut GlobalSolver<'t, O> {
         &mut self.base
+    }
+
+    fn solve_branch(&mut self, branch: &Branch) -> Result<()> {
+        let managed = super::projected_pair_domains::Ledger::eligible(&self.base)
+            && self.base.num_trees == 2
+            && !self.projected_pair_domains.in_tree;
+        if managed {
+            let local = self.local_solver.as_ref().ok_or_else(|| {
+                null_deref(
+                    OP_TWO_TREES,
+                    "missing local solver for tracked branch entry",
+                )
+            })?;
+            self.projected_pair_domains.record_trees(
+                &self.base,
+                self.objects,
+                local,
+                self.base.tree(0)?,
+                self.base.tree(1)?,
+            )?;
+            self.projected_pair_domains.in_tree = true;
+        }
+        let result = crate::geom::global_solver::solve_branch(self, branch);
+        if managed {
+            self.projected_pair_domains.in_tree = false;
+            result?;
+            self.projected_pair_domains
+                .finish(self.kernel, self.objects, &mut self.base)
+        } else {
+            result
+        }
+    }
+
+    fn branch_may_contain_answers(&mut self, branch: &Branch) -> Result<bool> {
+        if super::projected_pair_domains::Ledger::eligible(&self.base)
+            && self.base.num_trees == 2
+            && !self.projected_pair_domains.in_tree
+        {
+            if let Some(local) = self.local_solver.as_ref() {
+                self.projected_pair_domains.record_trees(
+                    &self.base,
+                    self.objects,
+                    local,
+                    self.base.tree(0)?,
+                    self.base.tree(1)?,
+                )?;
+            }
+            if self.projected_pair_domains.active {
+                return Err(super::projected_affine_face::refused(
+                    "raw free-function traversal lacks the native pair ledger completion hook",
+                ));
+            }
+        }
+        if self.projected_pair_domains.active {
+            Ok(true)
+        } else {
+            self.base.branch_may_contain_answers(branch)
+        }
     }
 
     fn object_zone_tol_3d(&self, object: O) -> Result<f64> {
@@ -1060,7 +1135,9 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
         object1: Option<O>,
         object2: Option<O>,
     ) -> Result<()> {
-        match self.kind {
+        ts.projected_pair_domains
+            .record_local(&ts.base, ts.objects, self, object1, object2)?;
+        let result = match self.kind {
             LocalSolverKind::Base | LocalSolverKind::Point | LocalSolverKind::Curve => {
                 Err(SolidError::sm_err(OP_BASE))
             }
@@ -1079,7 +1156,13 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
             LocalSolverKind::CurveFace => self.solve_curve_face(k, ts, object1, object2),
             LocalSolverKind::EdgeFace => self.solve_edge_face(k, ts, object1, object2),
             LocalSolverKind::FaceFace => self.solve_face_face(k, ts, object1, object2),
+        };
+        result?;
+        if !ts.projected_pair_domains.in_tree {
+            ts.projected_pair_domains
+                .finish(k, ts.objects, &mut ts.base)?;
         }
+        Ok(())
     }
 
     /// Whether `object` (an edge or face, `None` for a null pointer) is to be

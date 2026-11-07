@@ -87,3 +87,52 @@ does not prove coverage of that history. The next checkpoint records original
 domain groups before pruning and independently certifies them against the final
 retained pair. Unknown mixed domains must refuse. This draft is not ready until
 that traversal proof, cross-owner tests and the affected-case audit are complete.
+
+
+## Traversal-domain ledger (implementation review)
+
+The local construction alone is insufficient: an earlier fitted scalar can prune a
+winning native face, and a retained point only proves attainment, not coverage of
+previously discarded domains. The ledger records original operand groups before
+pruning and checks their full Cartesian product at completion.
+
+- **Capture:** `Ledger::record_trees` reads complete original tree object lists,
+  native edge intervals, face domains and supplied curve intervals before either
+  global branch or topology object pruning. Direct `LocalSolver::solve_it` records
+  its complete local pair. References retain the original definitions; no fitted
+  silhouette enters the ledger. Scoped tree solvers move the same ledger back.
+- **Membership:** a retained solution must belong to one recorded original pair,
+  with both owners matching and every curve parameter in its requested and natural
+  domains. Native face-point feasibility also requires the exact rectangle proof.
+  A valid native scalar at an out-of-trim point is not an admissible candidate.
+- **Coverage:** affine curve/face groups use endpoint convexity and the shared
+  homogeneous face residual. Curve/edge groups reuse the complete curve-pair
+  construction, reconstructing its returned point enclosure with the identical
+  bounded requested intervals. Point pairs use direct enclosures. Unsupported
+  mixed domains refuse; no unvisited domain is inferred from an earlier answer.
+- **Selection:** a feasible alternative is retained when scalar ordering discards
+  the candidate whose own enclosure covers the domains. The certificate always
+  belongs to the returned pair. The external incumbent cutoff is outward rounded
+  and is checked separately after coverage; caller slack never stops the solve.
+- **Work:** at most 4,096 recorded operands and 16,384 domain-pair checks. Original
+  groups avoid Cartesian allocation; empty groups are discarded. The existing
+  curve and surface proof budgets and cancellation remain in force.
+- **Entry ownership:** `solve_trees`, `solve_two_trees`, the shape/B-rep wrappers,
+  and the `GlobalSolve::solve_branch` trait entry own full capture/finalization.
+  A raw generic free-function traversal or untracked `local_solve_branch` partial
+  call cannot enforce finalization and explicitly refuses an activated native
+  pair query. A partial branch return is never presented as a global certificate.
+
+The first ledger cycle passed 15 focused native tests, all 60 topology-solver
+unit tests and 33 projected-pair tests. These include direct/tree parity,
+vertex/edge/face history, an unattained legacy scalar that would prune the winning
+face, different face owners, an out-of-trim retained native point, empty groups,
+cone sqrt(3), and both sphere controls at 1.5. The subsequent focused cycle
+passed all 23 tests, adding trait/raw/partial entry guards, external-incumbent
+empty/accepted/ambiguous controls, cancellation, the 128/129-span budget boundary,
+and unchanged single-tree/cull behavior for an unrelated minimum query. The
+strict library/tests lint check also passes. Fresh `GlobalSolve::solve_it` reuse
+needs a separate lifecycle reset before this checkpoint is complete: branch
+accumulation must preserve history, while a new request must not inherit old
+domains or an active certificate. Dedicated reuse controls are pending.
+Affected-unit output/refusal accounting and final broad gates remain pending.
