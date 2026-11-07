@@ -96,7 +96,7 @@ use crate::nurbs::srf_basic::{Direction, Surface as Net};
 use crate::nurbs::srf_tool::p1::extract_iso_crv;
 use crate::surface::implicit::{lies_on, AnalyticSupport, Implicit};
 use crate::surface::offset_surface::{OffsetSurface, SS_UNKNOWN};
-use crate::surface::side::{Across, BoxSide, Bracket};
+use crate::surface::side::{Across, BoxSide};
 use crate::surface::surface::{Surface, SurfaceKind};
 use std::f64::consts::PI;
 
@@ -377,26 +377,107 @@ fn circle(f: &Frame, iso: Iso, x0: Vec3) -> Result<Option<(Vec3, Vec3, f64)>> {
     })
 }
 
-/// The length along the iso from `x0` to `x1`, in closed form, the way round that continues
-/// the source's iso outward: from its far end `x_far` through its halfway point `x_half` to
-/// `x0` (`ball::source_iso`; the extension's own points are too close at the least step to
-/// say the sense).
-fn length(f: &Frame, iso: Iso, (x_far, x_half): (Vec3, Vec3), x0: Vec3, x1: Vec3) -> Result<f64> {
-    let Some((centre, n, radius)) = circle(f, iso, x0)? else {
-        return Ok((x1 - x0).length());
+/// The stored iso's chord, measured about its own side point, then its circle's arc.
+/// The construction contribution is added by the caller, separately from evaluation.
+fn measured(
+    s: &BSplineSurface,
+    (a, b): (Point2, Point2),
+    f: &Frame,
+    iso: Iso,
+    (far, half): (Vec3, Vec3),
+    start: Option<(&BSplineSurface, Point2)>,
+) -> Result<(f64, f64)> {
+    let (source, from) = start.unwrap_or((s, a));
+    let chord = if start.is_some() && !matches!(iso, Iso::Ruling) {
+        super::measure::chord_between(source, from, s, b)?
+    } else {
+        super::measure::chord(s, a, b)?
     };
-    // the swept angle, the way round the source's iso turns
-    let n = if (x_half - x_far).cross(x0 - x_half).dot(n) < 0.0 {
+    if matches!(iso, Iso::Ruling) {
+        return Ok(chord);
+    }
+    let (x0, err) = super::measure::point(source, from, f.origin)?;
+    let (x1, _) = super::measure::point(s, b, f.origin)?;
+    let local = Frame {
+        origin: Vec3::ZERO,
+        ..*f
+    };
+    let Some((centre, n, radius)) = circle(&local, iso, x0)? else {
+        return Err(SolidError::sm_err(OP));
+    };
+    let n = if (half - far).cross(source.evaluate_point(from)? - half).dot(n) < 0.0 {
         n * -1.0
     } else {
         n
     };
-    let (u0, u1) = (x0 - centre, x1 - centre);
-    let mut phi = u0.cross(u1).dot(n).atan2(u0.dot(u1));
-    if phi < 0.0 {
-        phi += TURN;
-    }
-    Ok(radius * phi)
+    let long = (x0 - centre).cross(x1 - centre).dot(n) < 0.0;
+    let radius_err = if matches!(iso, Iso::Parallel) {
+        // gamma_16: axis dot (3 products, 2 sums), projection (3 products,
+        // 3 differences), norm (3 squares, 2 sums, sqrt), and bound arithmetic.
+        // Projection's norm is at most 2 for a stored unit axis; Higham §§3.1–3.4.
+        (2.0 * err + gamma(16) * (x0.length() + radius)) * (1.0 + gamma(4))
+    } else {
+        0.0 // the sphere/tube radius is definition data, not computed from endpoints
+    };
+    super::measure::arc(chord, (radius, radius_err), long)
+}
+
+/// The widened analytic path uses the same local chord and arc as `extend_side`.
+pub(super) fn widened_across(
+    k: &Kernel,
+    (source, source_dom, source_side): (&Surface, &crate::geom::extent2d::Extent2d, BoxSide),
+    (s, dom, side): (&Surface, &crate::geom::extent2d::Extent2d, BoxSide),
+) -> Result<Across> {
+    let support = AnalyticSupport::check(k, s)?;
+    let (origin, axis, along) = match support.implicit() {
+        Implicit::Plane { origin, normal } => (origin, normal, Iso::Ruling),
+        Implicit::Cone { origin, axis, .. } => (origin, axis, Iso::Ruling),
+        Implicit::Sphere { centre, radius } => {
+            let AnalyticSupport::Sphere { placement, .. } = support else {
+                return Err(SolidError::sm_err(OP));
+            };
+            (
+                centre,
+                placement.x_axis().cross(placement.y_axis()),
+                Iso::Meridian { radius },
+            )
+        }
+        Implicit::Torus {
+            centre,
+            axis,
+            major,
+            minor,
+        } => (centre, axis, Iso::Tube { major, minor }),
+    };
+    let f = Frame {
+        origin,
+        axis,
+        apex: None,
+        size: 0.0,
+        quarter: 0.0,
+        tube_left: 0.0,
+    };
+    let iso = if round_the_axis(s, side) == Some(true) {
+        Iso::Parallel
+    } else {
+        along
+    };
+    let form = crate::blend::fillet_section::station::as_b_spline(k, s)?
+        .ok_or_else(|| SolidError::sm_err(OP))?;
+    let middle = side.point(dom, 0.5);
+    let end = side.at(&knot_box(&form)?);
+    let to = if side.is_u() {
+        Point2::new(end, middle.y)
+    } else {
+        Point2::new(middle.x, end)
+    };
+    let source_form = crate::blend::fillet_section::station::as_b_spline(k, source)?
+        .ok_or_else(|| SolidError::sm_err(OP))?;
+    let from = source_side.point(source_dom, 0.5);
+    let sense = source_iso(&source_form, source_dom, source_side, from)?;
+    Ok(super::measure::across(measured(
+        &form, (middle, to), &f, iso, sense, Some((&source_form, from)),
+    )?))
 }
 
 /// `cur` continued Natural past `side` by `distance` across it, capped (module docs): the
@@ -458,29 +539,16 @@ fn extend_side(
         }
     };
     let sense = source_iso(cur, &dom, side, middle)?;
-    let measure = |s: &BSplineSurface| -> Result<f64> {
-        let x0 = s.evaluate_point(at(s, 0.0))?;
-        let x1 = s.evaluate_point(at(s, 1.0))?;
-        length(f, iso, sense, x0, x1)
+    let measure = |s: &BSplineSurface| -> Result<(f64, f64)> {
+        measured(s, (at(s, 0.0), at(s, 1.0)), f, iso, sense, None)
     };
-    let value = |e: f64| -> Result<Option<f64>> { made(e)?.map(|(s, _)| measure(&s)).transpose() };
-    // the length across an extension whose construction bound is `bound`, with the closed
-    // form's rounding (the evaluations at the points' size, the products, the atan2) and the
-    // points' construction bound through the angle
+    let value = |e: f64| -> Result<Option<f64>> {
+        made(e)?.map(|(s, _)| measure(&s).map(|m| m.0)).transpose()
+    };
     let across_of = |s: &BSplineSurface, bound: f64| -> Result<Across> {
-        let length = measure(s)?;
-        let rounding = gamma(64) * (length + f.size) + 4.0 * bound;
-        Ok(Across {
-            enclosure: Bracket {
-                lower: (length - rounding).max(0.0),
-                upper: length + rounding,
-            },
-            truncation: 0.0,
-            rounding,
-            converged: true,
-            // a closed form at the points' size: its rounding part is sized on the part
-            resolution: 0.0,
-        })
+        let (length, rounding) = measure(s)?;
+        // The construction contribution is retained, not relabelled as resolution.
+        Ok(super::measure::across((length, rounding + 4.0 * bound)))
     };
     // the cap, from the side's middle point and the iso's other end inside the source
     let x_side = cur.evaluate_point(middle)?;
