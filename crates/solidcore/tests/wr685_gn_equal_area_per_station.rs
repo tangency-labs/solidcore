@@ -81,6 +81,8 @@ struct Net {
     sum: [f64; 4],
     abs: f64,
     cp12: [f64; 4],
+    /// The x coordinates of the first and of the last row of control points in u.
+    x_ends: [Vec<f64>; 2],
 }
 
 /// The blend faces (B-spline surfaces of degree `vdeg` in v), in face order.
@@ -103,6 +105,7 @@ fn blend_nets(b: &Brep, vdeg: usize) -> Vec<Net> {
             sum: [0.0; 4],
             abs: 0.0,
             cp12: [0.0; 4],
+            x_ends: [Vec::new(), Vec::new()],
         };
         for iu in 0..nu {
             for iv in 0..nv {
@@ -117,6 +120,12 @@ fn blend_nets(b: &Brep, vdeg: usize) -> Vec<Net> {
                 if iu == 1 && iv == 2 {
                     net.cp12 = [p.x, p.y, p.z, w];
                 }
+                if iu == 0 {
+                    net.x_ends[0].push(p.x);
+                }
+                if iu + 1 == nu {
+                    net.x_ends[1].push(p.x);
+                }
             }
         }
         out.push(net);
@@ -125,10 +134,18 @@ fn blend_nets(b: &Brep, vdeg: usize) -> Vec<Net> {
 }
 
 /// Every net is one cubic span along the edge from x = 0 to `length` (WR-702: no sliver
-/// span past its end), its rows' x summing to `nv` times 0 + L/3 + 2L/3 + L.
+/// span past its end): its first row of control points at x = 0, its last at x = `length`,
+/// and its rows' x summing to `nv` times 0 + L/3 + 2L/3 + L.
 fn one_span_along(what: &str, nets: &[Net], length: f64) {
     for n in nets {
         assert_eq!(n.nu, 4, "{what}: one span along the edge: {n:?}");
+        for (row, at) in n.x_ends.iter().zip([0.0, length]) {
+            assert_eq!(row.len(), n.nv, "{what}: an end row of the net");
+            assert!(
+                row.iter().all(|&x| close(x, at)),
+                "{what}: end row x {row:?} want {at}"
+            );
+        }
         let want = n.nv as f64 * 2.0 * length;
         assert!(
             close(n.sum[0], want),
