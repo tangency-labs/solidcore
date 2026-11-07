@@ -165,18 +165,20 @@ fn round_set_back(
     if s.create_corners(k, None).is_err() {
         return Err(refused(&s));
     }
-    let mut kind = None;
+    let mut found = None;
     for (i, c) in s.fillet_corners().unwrap().into_iter().enumerate() {
         if s.corner(c).unwrap().vertex == Some(v) {
-            kind = Some((i, s.corner(c).unwrap().corner_type()));
+            found = Some((i, c));
             s.set_corner_setback(c, setback).unwrap();
         }
     }
-    let (index, kind) = kind.expect("the set-back vertex's corner");
+    let (index, id) = found.expect("the set-back vertex's corner");
     s.set_mark_corner_patches(mark);
     if s.do_filleting(k, None).is_err() {
         return Err(refused(&s));
     }
+    // the corner filleted (the Setback is decided where its setback is read, in do_filleting)
+    let kind = s.corner(id).unwrap().corner_type();
     let patch = s
         .corner_patch_faces()
         .unwrap()
