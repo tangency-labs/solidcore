@@ -990,6 +990,11 @@ impl OffsetBrep<Handle> for EdgeBrep<'_> {
         vertex::point(self.brep(arena), v)
     }
 
+    fn vertex_tolerance(&self, v: Handle) -> Result<f64> {
+        let (arena, v) = v.vertex()?;
+        vertex::tolerance(self.brep(arena), v)
+    }
+
     fn set_vertex_point(&mut self, _k: &Kernel, v: Handle, point: Point3) -> Result<()> {
         let (arena, v) = v.vertex()?;
         self.with_env(arena, |b, env| {
