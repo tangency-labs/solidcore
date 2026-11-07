@@ -83,13 +83,14 @@ pub(super) fn blend_extended(
     k: &Kernel,
     pb: &ProceduralBlend,
     dom: &Extent2d,
+    at: &Extent2d,
     side: BoxSide,
     distance: f64,
 ) -> Result<Option<Extended>> {
     let (a, b, swapped) = pb.definition_map();
     // the definition's s is the net's u, its t the net's v (the other way round swapped)
     if side.is_u() != swapped {
-        return along(k, pb, dom, side, distance);
+        return along(k, pb, dom, at, side, distance);
     }
     let order = pb.order();
     let n = order as usize;
@@ -301,6 +302,7 @@ fn along(
     k: &Kernel,
     pb: &ProceduralBlend,
     dom: &Extent2d,
+    at: &Extent2d,
     side: BoxSide,
     distance: f64,
 ) -> Result<Option<Extended>> {
@@ -420,7 +422,7 @@ fn along(
         )))
     };
     let across =
-        |m: &Option<Surface>| match m.as_ref().map(|s| s.length_across_side(k, dom, side, REL)) {
+        |m: &Option<Surface>| match m.as_ref().map(|s| s.length_across_side(k, at, side, REL)) {
             None | Some(Err(SolidError::NotConverged { .. })) => Ok(None),
             Some(Ok(a)) => Ok(Some(a)),
             Some(Err(e)) => Err(e),

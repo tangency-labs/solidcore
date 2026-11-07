@@ -2772,3 +2772,37 @@ fn a_round_side_just_before_a_station_is_not_joined_on_a_sliver() {
         other => panic!("{other:?}"),
     }
 }
+
+/// Sides extended in turn each meet the distance at the face, not where the sides before
+/// them grew the surface. The triangle `(x, y) -> (x, y + x v)`, its corner at u = 0, widens
+/// along u, so after `UMax` is extended its v sides are wider at the grown box's middle than at
+/// the face's. Its v isos are straight, so each v side's reach at the face's middle (u = 0.5)
+/// is a plain distance: the 0.5 asked.
+#[test]
+fn sides_extended_in_turn_each_meet_the_distance_at_the_face() {
+    let kk = k();
+    let row = |x: f64, y: f64| vec![[x, y, 0.0, 1.0], [x, y + x, 0.0, 1.0]];
+    let t = spline(
+        &[row(0.0, 0.0), row(1.0, 0.0), row(2.0, 0.0)],
+        2,
+        1,
+        &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        &[0.0, 0.0, 1.0, 1.0],
+        false,
+    );
+    let d = 0.5;
+    let e = t
+        .extended_sides(&kk, &BoxSide::ALL, Continuity::Natural, d)
+        .unwrap();
+    assert!(
+        matches!(e.sides[1], SideExtension::Extended(_)),
+        "{:?}",
+        e.sides
+    );
+    let nd = dom(&e.surface);
+    let at = |u: f64, v: f64| e.surface.evaluate_point(&kk, Vec2::new(u, v)).unwrap();
+    for (v_face, v_end) in [(0.0, nd.min().y), (1.0, nd.max().y)] {
+        let reach = at(0.5, v_end).distance(at(0.5, v_face));
+        assert!((reach - d).abs() <= 1e-9 * d, "{v_face}: {reach}");
+    }
+}
