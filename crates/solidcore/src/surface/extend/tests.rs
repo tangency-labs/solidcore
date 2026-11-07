@@ -2824,8 +2824,8 @@ fn difference_form_certificate_table() {
         for d in [1e-5, 1e-4, 1e-3] {
             let e = cone.extended_by_distance(&kk, &dom(&cone), BoxSide::UMin, Continuity::Natural, d);
             println!("TABLE cone o={o:e} d={d:e} {:?}", e.as_ref().map(|e| e.as_ref().map(|e| e.across.rounding)));
-            let e = ball.extended_sides(&kk, &[BoxSide::VMin], Continuity::Natural, d);
-            println!("TABLE ball o={o:e} d={d:e} {:?}", e.as_ref().map(|e| e.sides));
+            let e = ball.extended_sides(&kk, &[BoxSide::UMin], Continuity::Natural, d);
+            println!("TABLE ball o={o:e} d={d:e} {:?}", e.as_ref().map(|e| (e.sides, e.extension)));
         }
     }
     let s = unit_cylinder(&kk);
