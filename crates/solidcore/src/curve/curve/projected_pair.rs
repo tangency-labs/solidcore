@@ -2,7 +2,8 @@
 //!
 //! Not upstream. The branch-and-bound invariant follows Neumaier (2004),
 //! sections 11 and 12: only a feasible point supplies a lower bound, and every
-//! parameter rectangle must have an upper bound within the requested tolerance.
+//! parameter rectangle must have an upper bound within caller slack plus the
+//! explicitly enclosed rounding at feasible points (as in projected_affine).
 //! Deviations: iterative subdivision; at most 32,768 boxes, depth 48 and degree
 //! 18. Unsupported definitions and unresolved bounds return a typed refusal.
 
@@ -90,6 +91,14 @@ impl<'a> Definition<'a> {
         {
             return Err(refused("curve definition exceeds the enclosure contract"));
         }
+        // The public natural domain is [U0, Um], while the NURBS enclosure
+        // covers [Up, U(n+1)]. They coincide only for clamped ends. Do not
+        // silently omit the remaining domain of a nonclamped definition.
+        if raw.knots().first() != raw.knots().get(p) || raw.knots().last() != raw.knots().get(n) {
+            return Err(refused(
+                "projected pair enclosure requires clamped knot ends",
+            ));
+        }
         // These controls are already homogeneous. Do not divide by w
         // and multiply back: that would certify a different rounded net.
         let mut pw = Vec::new();
@@ -140,51 +149,12 @@ impl<'a> Definition<'a> {
         if pieces.is_empty() {
             return Err(refused("curve interval has no knot piece"));
         }
-        // The public B-spline evaluator returns first/last controls at natural
-        // endpoints, including nonclamped nets. Enclose these isolated values
-        // separately from the one-sided polynomial pieces.
-        for (endpoint, knots) in [
-            (net.u.get(net.p), net.u.get(..=net.p)),
-            (net.u.get(net.n), net.u.get(net.n..)),
-        ] {
-            if let (Some(&endpoint), Some(knots)) = (endpoint, knots) {
-                if range.lo <= endpoint
-                    && endpoint <= range.hi
-                    && !knots.iter().all(|&knot| knot == endpoint)
-                {
-                    pieces.push(Piece {
-                        range: Ivl::from(endpoint),
-                        knot: None,
-                    });
-                }
-            }
-        }
         Ok(pieces)
     }
 
     pub(super) fn jet(&self, range: Ivl, knot: Option<usize>) -> Result<(V3<Ivl>, V3<Ivl>)> {
         match self {
             Self::Nurbs(net) => {
-                if range.lo == range.hi && knot.is_none() {
-                    let control = if net.u.get(net.p) == Some(&range.lo) {
-                        net.pw.get(..4)
-                    } else if net.u.get(net.n) == Some(&range.lo) {
-                        net.pw.get(net.pw.len().saturating_sub(4)..)
-                    } else {
-                        None
-                    };
-                    if let Some([x, y, z, w]) = control {
-                        let weight = Ivl::from(*w);
-                        return Ok((
-                            V3 {
-                                x: Ivl::from(*x) / weight,
-                                y: Ivl::from(*y) / weight,
-                                z: Ivl::from(*z) / weight,
-                            },
-                            V3::from_vec3(Vec3::new(0.0, 0.0, 0.0)),
-                        ));
-                    }
-                }
                 let jet = curve_derivs_over(net, range, 1, knot)?;
                 Ok((
                     *jet.first()
@@ -281,7 +251,6 @@ pub(super) struct Query<'a> {
     pub(super) curves: [&'a Curve; 2],
     pub(super) definitions: [Definition<'a>; 2],
     pub(super) normal: Vec3,
-    pub(super) tolerance: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -303,13 +272,9 @@ impl Query<'_> {
         let [ca, cb] = self.curves;
         let delta = ca.evaluate_point(self.kernel, s)? - cb.evaluate_point(self.kernel, t)?;
         let reported = self.normal.cross(delta).cross(self.normal).length();
-        if !(reported.is_finite()
-            && value.lo.is_finite()
-            && value.hi.is_finite()
-            && (value - Ivl::from(reported)).mag() <= self.tolerance)
-        {
+        if !(reported.is_finite() && value.lo.is_finite() && value.hi.is_finite()) {
             return Err(refused(
-                "candidate value cannot be enclosed within the requested tolerance",
+                "candidate value has no finite definition enclosure",
             ));
         }
         Ok(Candidate {
@@ -390,7 +355,6 @@ pub(super) fn solve<O: SolutionObject>(
         curves,
         definitions: [a, b],
         normal,
-        tolerance,
     };
     let mut best = query.candidate(da.min(), db.min())?;
     let mut visited = 0;
@@ -404,16 +368,28 @@ pub(super) fn solve<O: SolutionObject>(
                 if visited > MAX_BOXES {
                     return Err(refused("projected maximum exhausted its enclosure budget"));
                 }
+                let mut point_rounding = 0.0_f64;
                 for s in [cell.a.range.lo, cell.a.range.mid(), cell.a.range.hi] {
                     for t in [cell.b.range.lo, cell.b.range.mid(), cell.b.range.hi] {
                         let candidate = query.candidate(s, t)?;
+                        point_rounding = point_rounding
+                            .max((Ivl::from(candidate.upper) - Ivl::from(candidate.lower)).hi);
                         if candidate.lower > best.lower {
                             best = candidate;
                         }
                     }
                 }
                 let bound = query.bound(cell)?;
-                let threshold = (Ivl::from(best.lower) + Ivl::from(tolerance)).lo;
+                // Mirror projected_affine: subtract only arithmetic uncertainty
+                // enclosed at feasible points, never geometric box width. Any
+                // remaining optimization gap must fit the caller's retention slack.
+                let rounding =
+                    (Ivl::from(best.upper) - Ivl::from(best.lower)) + Ivl::from(point_rounding);
+                if !rounding.hi.is_finite() {
+                    return Err(refused("maximum has no finite arithmetic enclosure"));
+                }
+                let threshold =
+                    (Ivl::from(best.lower) + Ivl::from(tolerance) + Ivl::from(rounding.hi)).lo;
                 if bound.lo <= bound.hi && bound.sqrt().hi <= threshold {
                     global_upper = global_upper.max(bound.sqrt().hi);
                     continue;

@@ -2143,7 +2143,7 @@ mod tests {
     }
 
     #[test]
-    fn projected_pair_maximum_cancellation_and_precision_refusal_propagate() {
+    fn projected_pair_maximum_zero_retention_and_cancellation_propagate() {
         let a = segment([-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
         let normal = [Vec3::new(0.0, 0.0, 1.0)];
         for pass_on in [false, true] {
@@ -2166,10 +2166,9 @@ mod tests {
                     SolutionRequested::Single,
                 )
             };
-            assert!(matches!(
-                solve(&k, 0.0),
-                Err(SolidError::Unsupported { .. })
-            ));
+            let zero = solve(&k, 0.0).unwrap();
+            assert_eq!(zero.len(), 1);
+            assert!((zero.as_slice()[0].start.solution_value - 2.0).abs() <= f64::EPSILON);
             let token = crate::kernel::CancelToken::new();
             token.cancel();
             k.set_cancel_token(token);
@@ -2468,7 +2467,7 @@ mod tests {
     }
 
     #[test]
-    fn projected_pair_maximum_covers_nonclamped_natural_endpoint_values() {
+    fn projected_pair_maximum_refuses_nonclamped_definition_domain() {
         use crate::nurbs::math::{CPoint, NOW};
         let k = Kernel::default();
         let a = Curve::from(
@@ -2488,27 +2487,27 @@ mod tests {
         );
         let b = segment([0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
         let normal = [Vec3::new(0.0, 0.0, 1.0)];
-        let sols = a
-            .global_curve_solve(
-                &k,
-                &a.natural_interval(),
-                &b,
-                &b.natural_interval(),
-                SolverOperation::ProjectedMaximize,
-                1e-8,
-                &CurveSolveOptions {
-                    handles: handles(&a, &b),
-                    opt_vectors: Some(&normal),
-                    ..CurveSolveOptions::default()
-                },
-                SolutionRequested::Single,
-            )
-            .unwrap();
-        assert_eq!(
-            sols.as_slice()[0].start.parameters[0],
-            a.natural_interval().min()
+        let result = a.global_curve_solve(
+            &k,
+            &a.natural_interval(),
+            &b,
+            &b.natural_interval(),
+            SolverOperation::ProjectedMaximize,
+            1e-8,
+            &CurveSolveOptions {
+                handles: handles(&a, &b),
+                opt_vectors: Some(&normal),
+                ..CurveSolveOptions::default()
+            },
+            SolutionRequested::Single,
         );
-        assert!((sols.as_slice()[0].start.solution_value - 10.0).abs() <= 1e-8);
+        assert!(matches!(
+            result,
+            Err(SolidError::Unsupported {
+                reason: "projected pair enclosure requires clamped knot ends",
+                ..
+            })
+        ));
     }
 
     #[test]

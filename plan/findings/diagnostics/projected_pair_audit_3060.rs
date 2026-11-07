@@ -1,13 +1,14 @@
 //! Reproducible #3060 case audit using only the public goldens API.
 //! Link with the goldens and serde_json rlibs of the build being audited.
 //! Usage: audit ROOT [--inputs-only] or audit ROOT --replay INPUTS.jsonl.
+//! --all-inputs-only freezes all generated and fixture All projected cases.
 //! Outputs one JSON record per case; never applies known-failure exclusions.
 use goldens::{Case, CaseContext, CaseSource, Output, Rng, UnitDiff};
 use serde_json::{json, Value};
 use std::io::{self, Write};
 use std::path::Path;
 
-fn selected(root: &Path) -> Result<Vec<Case>, Box<dyn std::error::Error>> {
+fn selected(root: &Path, all: bool) -> Result<Vec<Case>, Box<dyn std::error::Error>> {
     let runner = goldens::units::curve_curve_p9::Runner;
     let mut cases = Vec::new();
     for i in 0..3000 {
@@ -17,7 +18,7 @@ fn selected(root: &Path) -> Result<Vec<Case>, Box<dyn std::error::Error>> {
             .ok_or("generator ended early")?;
         if input.get("op").and_then(Value::as_str) == Some("gcs")
             && input.get("sop").and_then(Value::as_u64) == Some(15)
-            && input.get("requested").and_then(Value::as_u64) == Some(0)
+            && input.get("requested").and_then(Value::as_u64) == Some(u64::from(all))
         {
             cases.push(Case {
                 unit: runner.id().into(),
@@ -27,8 +28,20 @@ fn selected(root: &Path) -> Result<Vec<Case>, Box<dyn std::error::Error>> {
             });
         }
     }
-    if cases.len() != 31 {
+    if !all && cases.len() != 31 {
         return Err(format!("expected 31 Single cases, got {}", cases.len()).into());
+    }
+    if all {
+        for case in goldens::fixtures::load_fixture_dir(root, runner.id())? {
+            let input = &case.inputs;
+            if input.get("op").and_then(Value::as_str) == Some("gcs")
+                && input.get("sop").and_then(Value::as_u64) == Some(15)
+                && input.get("requested").and_then(Value::as_u64) == Some(1)
+            {
+                cases.push(case);
+            }
+        }
+        return Ok(cases);
     }
     let names = [
         "analytic_face_cyl_x_6_15",
@@ -110,7 +123,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.get(1)
             .ok_or("usage: audit ROOT [--inputs-only|--replay FILE]")?,
     );
-    let inputs_only = args.get(2).map(String::as_str) == Some("--inputs-only");
+    let all = args.get(2).map(String::as_str) == Some("--all-inputs-only");
+    let inputs_only = all || args.get(2).map(String::as_str) == Some("--inputs-only");
     let cases = if args.get(2).map(String::as_str) == Some("--replay") {
         let text = std::fs::read_to_string(args.get(3).ok_or("missing replay file")?)?;
         text.lines()
@@ -126,7 +140,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?
     } else {
-        selected(root)?
+        selected(root, all)?
     };
     let mut stdout = io::BufWriter::new(io::stdout().lock());
     for case in cases {

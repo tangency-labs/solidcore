@@ -14,8 +14,9 @@ x endpoints with |y|=0.5 attain the exact maximum sqrt(2.5).
 ## Contract and scope
 
 The returned maximum must have admissible parameters on both definitions and
-satisfy `max |N cross (A(s)-B(t)) cross N| <= reported + tolerance`, without
-changing the tolerance. Its scalar must also agree with the returned pair.
+satisfy `max |N cross (A(s)-B(t)) cross N| <= reported + tolerance + rounding`,
+where rounding is only the explicit width of feasible-point arithmetic enclosures,
+never a floor or the geometric width of a parameter box. Its scalar must also agree with the returned pair.
 The double-cross map preserves the caller's non-unit normal scaling.
 
 `SolutionRequested::Single` asks for the best solution; `All` asks for every
@@ -58,13 +59,14 @@ so their existing fixes and enclosures are reused rather than duplicated.
 
 The Single solver now constructs feasible parameter pairs and encloses every
 parameter rectangle with interval value and mean-value derivative bounds. Only a
-proved upper bound within the original distance tolerance may prune a rectangle.
+proved upper bound within caller slack plus explicitly enclosed point rounding may
+prune a rectangle, matching the accepted `projected_affine` construction.
 The operation keeps the kernel double-cross metric, including non-unit normals.
 Incumbent filtering returns no answer only when the entire certified maximum is
 below the cutoff; an ambiguous cutoff refuses. Cancellation and proof failures
 propagate independently of the legacy error-passing flag.
 
-Definition enclosures cover native positive-weight B-splines (degree at most 18,
+Definition enclosures cover native clamped positive-weight B-splines (degree at most 18,
 so the Taylor helper's factorials remain exact integers), Hermite power
 coefficients, analytic lines, and ellipses whose native rational form passes the
 existing `curve_on_quadrics` exact-class certificate used by record construction.
@@ -74,7 +76,26 @@ recognizer. Other definition kinds are still unsupported.
 
 Six targeted tests pass locally: constrained corners; trimmed projection at
 normal scales 0, 0.001, 1, and 1000 with nonzero Z; same-object disjoint intervals
-and incumbent cutoffs; cancellation and precision refusal under both legacy
-flags; the rational gen1839 **Single variant**; and a valid ellipse versus a stale
+and incumbent cutoffs; cancellation under both legacy flags; the rational gen1839 **Single variant**; and a valid ellipse versus a stale
 analytic net. The original gen1839 All row remains a separate obligation. Full
 case and downstream audits remain pending.
+
+
+The retained numerical contract follows the [accepted zero-slack review on #2840](https://github.com/tangency-labs/solidcore/pull/2840#discussion_r4496188362):
+`dist_tol` is retention slack, not a demand for an exact irrational floating-point
+objective. A candidate needs a finite definition enclosure; its width does not
+have to fit `dist_tol`. A box may be pruned only when its upper bound is within
+`dist_tol + width(I_best) + max(width(I_point))` of the best feasible lower bound,
+with outward-rounded interval arithmetic. `I_point` are actual point evaluations
+in that box, not the box enclosure. This permits zero slack to certify simple
+maxima to their own rounding without inventing an absolute tolerance floor.
+
+
+Nonclamped knot ends are explicitly unsupported: the native B-spline API calls
+`[U0, Um]` its natural interval, while the polynomial enclosure covers the active
+`[Up, U(n+1)]` spans. Its endpoint shortcuts and out-of-active-span evaluation do
+not supply an enclosure for that entire native interval. The solver refuses
+instead of certifying only the middle and silently dropping part of the query.
+Internal repeated knots remain supported and have an isolated-upper-value test.
+Stored homogeneous Z coordinates are preserved regardless of dimension metadata;
+only the native NOZ marker is mapped to zero, as in native evaluation.
