@@ -300,7 +300,8 @@ impl Query<'_> {
         // A fixed derivative sign proves the maximum occurs on that endpoint
         // face. This is geometric contraction, not an arithmetic allowance.
         let ds = dot(d, project(da, n));
-        let dt = -dot(d, project(db, n));
+        let reverse_dt = dot(d, project(db, n));
+        let dt = Ivl::new(-reverse_dt.hi, -reverse_dt.lo);
         let endpoint = |range: Ivl, derivative: Ivl| {
             if derivative.lo >= 0.0 {
                 Ivl::from(range.hi)
