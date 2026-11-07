@@ -1191,10 +1191,6 @@ fn dyadic_four_product_order(terms: &[([f64; 4], bool)]) -> Option<std::cmp::Ord
 fn dyadic_product_order<const FACTORS: usize, const WORDS: usize>(
     terms: &[([f64; FACTORS], bool)],
 ) -> Option<std::cmp::Ordering> {
-    // Only these audited fixed sizes are supported; neither comes from input.
-    if !((FACTORS == 2 && WORDS == 66) || (FACTORS == 4 && WORDS == 132)) {
-        return None;
-    }
     fn parts(value: f64) -> Option<(bool, u64, i32)> {
         if !value.is_finite() {
             return None;
@@ -1227,6 +1223,10 @@ fn dyadic_product_order<const FACTORS: usize, const WORDS: usize>(
             index += 1;
         }
         Some(())
+    }
+    // Only these audited fixed sizes are supported; neither comes from input.
+    if !((FACTORS == 2 && WORDS == 66) || (FACTORS == 4 && WORDS == 132)) {
+        return None;
     }
     if terms.len() > 8 {
         return None;
@@ -1531,12 +1531,13 @@ fn omit_projected_definition_join(curve: &Curve, t: f64, depth: usize) -> bool {
             });
             inside && exact_native_spline_join(uv, t, false)
         }
-        // A line and a single Hermite polynomial have no internal joins.
-        CurveKind::Line(_) | CurveKind::Hermite(_) => true,
-        // These remaining evaluator classes retain their preexisting policy
-        // pending their separate defining-regularity audit. In particular, an
-        // analytic label alone does not prove its stored spline joins smooth.
-        CurveKind::Conic(_)
+        // Line/Hermite are single polynomials with no internal joins. The other
+        // explicitly listed evaluator classes retain their preexisting policy
+        // pending their separate defining-regularity audit; no proof for those
+        // classes is claimed by the native spline or affine-wrapper cases.
+        CurveKind::Line(_)
+        | CurveKind::Hermite(_)
+        | CurveKind::Conic(_)
         | CurveKind::Iso(_)
         | CurveKind::Offset(_)
         | CurveKind::CrvInVolume(_)
