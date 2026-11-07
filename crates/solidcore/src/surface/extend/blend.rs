@@ -344,6 +344,8 @@ fn along(
     }
     let target = pb.bound();
     let rate = b[0].abs();
+    // the shortest span the net's knot fixup keeps where two pieces join, as at the side
+    let least = source.least_step()?;
     // the definition and its spans from the side to s_new for the ask e (in the net's
     // parameter), outward, each with its part `[x, y]` in s
     let pieces_of = |e: f64| -> Result<Option<(ProceduralBlend, Vec<Piece>)>> {
@@ -373,10 +375,17 @@ fn along(
                 }
                 Err(e) => return Err(e),
             };
+            let length = (y - x) / rate;
+            // a piece clipped shorter than a span the knot fixup keeps (the side just before a
+            // station, or the ask just past one) would join on a knot it merges or spreads
+            // (the source's net not kept): an ask that does not work, as a weight not positive
+            if length < least {
+                return Ok(None);
+            }
             pieces.push(Piece {
                 span,
                 part: [(x - sa) / (sb - sa), (y - sa) / (sb - sa)],
-                length: (y - x) / rate,
+                length,
             });
         }
         if !up {

@@ -2703,3 +2703,20 @@ fn a_huge_bilinear_sheet_extends_as_its_closed_form() {
         assert!((l - d).abs() <= 1e-9 * d, "across {l} vs {d}");
     }
 }
+
+/// A round's face box ending 1e-11 short of its definition's end station, extended along
+/// the spine: the first piece of spine is far shorter than a span the net's knot fixup keeps,
+/// so no ask joins on it. The extension is refused with a typed reason, never built on a
+/// sliver span merged or spread away.
+#[test]
+fn a_round_side_just_before_a_station_is_not_joined_on_a_sliver() {
+    let (kk, pb) = round_blend(1, true);
+    let s = Surface::from(pb);
+    let d0 = s.natural_uv_domain_with_nurb(&kk).unwrap();
+    let short = Extent2d::from_bounds(d0.min().x, d0.min().y, d0.max().x - 1e-11, d0.max().y);
+    let r = s.extended_by_distance(&kk, &short, BoxSide::UMax, Continuity::Tangent, 3.0);
+    match r {
+        Err(SolidError::ExtendRefused { .. }) => {}
+        other => panic!("{other:?}"),
+    }
+}
