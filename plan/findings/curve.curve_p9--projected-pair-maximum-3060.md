@@ -14,8 +14,8 @@ x endpoints with |y|=0.5 attain the exact maximum sqrt(2.5).
 ## Contract and scope
 
 The returned maximum must have admissible parameters on both definitions and
-satisfy `max |N cross (A(s)-B(t)) cross N| <= reported + tolerance + rounding`,
-where rounding is only the explicit width of feasible-point arithmetic enclosures,
+satisfy `max |N cross (A(s)-B(t)) cross N| <= I_answer.hi`,
+where `I_answer` is the returned point's own definition arithmetic enclosure,
 never a floor or the geometric width of a parameter box. Its scalar must also agree with the returned pair.
 The double-cross map preserves the caller's non-unit normal scaling.
 
@@ -59,8 +59,9 @@ so their existing fixes and enclosures are reused rather than duplicated.
 
 The Single solver now constructs feasible parameter pairs and encloses every
 parameter rectangle with interval value and mean-value derivative bounds. Only a
-proved upper bound within caller slack plus explicitly enclosed point rounding may
-prune a rectangle, matching the accepted `projected_affine` construction.
+proved upper bound inside the returned point's own arithmetic enclosure may
+prune a rectangle. A derivative sign proved over the whole rectangle contracts
+the maximum to the corresponding endpoint face before bounding it.
 The operation keeps the kernel double-cross metric, including non-unit normals.
 Incumbent filtering returns no answer only when the entire certified maximum is
 below the cutoff; an ambiguous cutoff refuses. Cancellation and proof failures
@@ -81,14 +82,22 @@ analytic net. The original gen1839 All row remains a separate obligation. Full
 case and downstream audits remain pending.
 
 
-The retained numerical contract follows the [accepted zero-slack review on #2840](https://github.com/tangency-labs/solidcore/pull/2840#discussion_r4496188362):
-`dist_tol` is retention slack, not a demand for an exact irrational floating-point
-objective. A candidate needs a finite definition enclosure; its width does not
-have to fit `dist_tol`. A box may be pruned only when its upper bound is within
-`dist_tol + width(I_best) + max(width(I_point))` of the best feasible lower bound,
-with outward-rounded interval arithmetic. `I_point` are actual point evaluations
-in that box, not the box enclosure. This permits zero slack to certify simple
-maxima to their own rounding without inventing an absolute tolerance floor.
+The numerical contract follows the [maintainer's explicit review on #2840](https://github.com/tangency-labs/solidcore/pull/2840#discussion_r4496188362):
+"`dist_tol` is retention slack, not the accuracy of the solve". Earlier versions
+of this finding incorrectly inferred permission to stop optimization within
+`dist_tol` from another implementation. That inference and the corresponding
+Single stopping rule are superseded by commit 5c66fb436.
+
+A reported candidate scalar must lie inside its independently computed definition
+metric interval; it is not used to enlarge that interval. Every pruned rectangle
+has an objective upper bound no greater than the returned candidate's upper
+endpoint. Selection keeps that upper endpoint monotone, so later candidates
+continue to cover all previously discarded rectangles. No caller slack, another
+point's interval width, or geometric box width is added. Retention slack remains
+only in the outward-rounded incumbent cutoff. An unresolved rectangle exhausts
+the documented finite budget with an explicit refusal. This strict checkpoint
+requires a fresh cohort replay before any corrected Single goldens are accepted.
+
 
 
 Nonclamped knot ends are explicitly unsupported: the native B-spline API calls

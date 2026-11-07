@@ -22,7 +22,7 @@
 //! - **Projected Single maxima (#3060).** Definition enclosures and feasible
 //!   witnesses replace the incomplete stationary search; subdivision is bounded
 //!   to 32,768 boxes and depth 48 in `projected_pair`. Proof failures propagate.
-//!   A structural finite-affine All class shares the definition enclosures and
+//!   Structural affine and identical monotone NURBS All classes share the definition enclosures and
 //!   preserves the existing retention and ordered duplicate rules.
 //! - **Curves and kernel.** The solver's trees only name their curves by the
 //!   caller's handle ([`crate::geom::tree::Tree::owner_object`]), so the solver
@@ -1345,6 +1345,24 @@ impl Curve {
             );
         }
 
+        // Identical native NURBS in one continuous union span form a separate
+        // structural class. The whole-union derivative-sign proof must succeed;
+        // a selected uncertainty is never routed back to the legacy solver.
+        if op == Op::ProjectedMaximize
+            && requested == SolutionRequested::All
+            && super::projected_pair_monotone::supports([self, other], [*interval, *other_interval])
+        {
+            return super::projected_pair_monotone::solve(
+                k,
+                [self, other],
+                [*interval, *other_interval],
+                opt(0)?,
+                dist_tol,
+                opts.handles,
+                opts.target_distance,
+            );
+        }
+
         // init outputs
         let mut sols: SolutionArray<O> = SolutionArray::new();
 
@@ -2592,6 +2610,50 @@ mod tests {
                 })
             ));
         }
+    }
+
+    #[test]
+    fn projected_pair_maximum_retention_does_not_relax_interior_peak() {
+        use crate::curve::hermite_curve::HermiteCurve;
+        let k = Kernel::default();
+        let a = segment([-1.0, 0.0, 7.0], [1.0, 0.0, -9.0]);
+        // y(t) = 1 - (t - 0.3)^2 has its strict maximum between the
+        // initial endpoint/midpoint samples. Projection discards varying z.
+        let b = Curve::from(HermiteCurve::new(
+            Vec3::new(0.0, 0.91, 2.0),
+            Vec3::new(0.0, 0.6, 3.0),
+            Vec3::new(0.0, 0.51, 5.0),
+            Vec3::new(0.0, -1.4, 3.0),
+            3,
+        ));
+        let normal = [Vec3::new(0.0, 0.0, 1.0)];
+        let opts = CurveSolveOptions {
+            handles: handles(&a, &b),
+            opt_vectors: Some(&normal),
+            ..CurveSolveOptions::default()
+        };
+        let solve = |tolerance| {
+            a.global_curve_solve(
+                &k,
+                &a.natural_interval(),
+                &b,
+                &b.natural_interval(),
+                SolverOperation::ProjectedMaximize,
+                tolerance,
+                &opts,
+                SolutionRequested::Single,
+            )
+        };
+        let zero = solve(0.0).unwrap();
+        let slack = solve(0.5).unwrap();
+        let exact = 2.0_f64.sqrt();
+        let point = &zero.as_slice()[0].start;
+        assert!((point.solution_value - exact).abs() < 2e-14);
+        assert_eq!(point.parameters, slack.as_slice()[0].start.parameters);
+        assert_eq!(
+            point.solution_value,
+            slack.as_slice()[0].start.solution_value
+        );
     }
 
     #[test]

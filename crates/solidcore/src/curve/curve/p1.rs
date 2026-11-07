@@ -26,6 +26,8 @@
 //!   exactly. Certificates account for their own rounding separately from
 //!   retention slack. Projected extrema refuse uncovered cache domains and
 //!   propagate solve errors rather than publishing uncertified partial results.
+//!   Affine joins are omitted only after exact dyadic continuity and directed
+//!   collinearity predicates, never from the cache's approximate G1 label alone.
 //! - **Projected endpoint extrema.** Eligible finite boundaries are candidates
 //!   independently of the stationary-point search. Finding a stationary
 //!   point does not establish that it beats the interval endpoints.
@@ -1048,6 +1050,11 @@ fn iv_lerp(a: [Ivl; 3], b: [Ivl; 3], t: Ivl) -> [Ivl; 3] {
 // supply 4224 bits. This fixed bound is independent of caller magnitudes.
 /// Test a signed sum of four binary64 products exactly using bounded integer storage.
 pub(crate) fn dyadic_four_products_zero(terms: [(f64, f64, bool); 4]) -> bool {
+    dyadic_products_zero(&terms)
+}
+
+/// At most eight products need 4199 bits; the same 4224-bit storage suffices.
+fn dyadic_products_zero(terms: &[(f64, f64, bool)]) -> bool {
     /// Split a finite binary64 value into its sign, integer significand and exponent.
     fn parts(value: f64) -> Option<(bool, u64, i32)> {
         if !value.is_finite() {
@@ -1085,9 +1092,12 @@ pub(crate) fn dyadic_four_products_zero(terms: [(f64, f64, bool); 4]) -> bool {
         }
         true
     }
+    if terms.len() > 8 {
+        return false;
+    }
     let mut positive = [0_u64; 66];
     let mut negative = [0_u64; 66];
-    for (a, b, negate) in terms {
+    for &(a, b, negate) in terms {
         let Some((sa, ma, ea)) = parts(a) else {
             return false;
         };
@@ -1108,6 +1118,112 @@ pub(crate) fn dyadic_four_products_zero(terms: [(f64, f64, bool); 4]) -> bool {
         }
     }
     positive == negative
+}
+
+/// Omit an affine boundary only when adjoining definitions are exactly smooth.
+/// Cache G1 is an angular tolerance and cannot establish this identity.
+fn exact_affine_join(curve: &Curve, t: f64) -> bool {
+    if matches!(curve.kind(), CurveKind::Line(_)) {
+        return true;
+    }
+    let CurveKind::BSpline(spline) = curve.kind() else {
+        return false;
+    };
+    let Some(nurb) = spline.gw_nurb() else {
+        return false;
+    };
+    if nurb.degree() != 1 {
+        return false;
+    }
+    let natural = spline.natural_interval();
+    let left_t = if t == natural.min() { natural.max() } else { t };
+    let right_t = if t == natural.max() { natural.min() } else { t };
+    let span = |parameter: f64, left: bool| {
+        let after = nurb.knots().partition_point(|knot| {
+            if left {
+                *knot < parameter
+            } else {
+                *knot <= parameter
+            }
+        });
+        let i = after.checked_sub(1)?;
+        let (&lo, &hi) = nurb.knots().get(i).zip(nurb.knots().get(i + 1))?;
+        let contains = if left {
+            lo < parameter && parameter <= hi
+        } else {
+            lo <= parameter && parameter < hi
+        };
+        (contains && hi > lo && i > 0).then_some(i)
+    };
+    let Some((li, ri)) = span(left_t, true).zip(span(right_t, false)) else {
+        return false;
+    };
+    if li == ri && left_t == right_t {
+        // An artificial subdivision inside the same affine span.
+        return true;
+    }
+    let controls = |i: usize| {
+        let (a, b) = nurb.cpts().get(i - 1).zip(nurb.cpts().get(i))?;
+        let weight = if a.w == crate::nurbs::math::NOW && b.w == a.w {
+            1.0
+        } else if a.w == b.w && a.w > 0.0 && a.w.is_finite() {
+            a.w
+        } else {
+            return None;
+        };
+        let coordinates = |p: &crate::nurbs::math::CPoint| {
+            [
+                p.x,
+                p.y,
+                if p.z == crate::nurbs::math::NOZ {
+                    0.0
+                } else {
+                    p.z
+                },
+            ]
+        };
+        Some((coordinates(a), coordinates(b), weight))
+    };
+    let Some(((a, b, w), (c, d, v))) = controls(li).zip(controls(ri)) else {
+        return false;
+    };
+    // Homogeneous positions must agree even at repeated knots or a closed seam.
+    if !b
+        .into_iter()
+        .zip(c)
+        .all(|(b, c)| dyadic_products_zero(&[(b, v, false), (c, w, true)]))
+    {
+        return false;
+    }
+    let [ax, ay, az] = a;
+    let [bx, by, bz] = b;
+    let [cx, cy, cz] = c;
+    let [dx, dy, dz] = d;
+    let parallel = [
+        (ax, ay, bx, by, cx, cy, dx, dy),
+        (ay, az, by, bz, cy, cz, dy, dz),
+        (az, ax, bz, bx, cz, cx, dz, dx),
+    ]
+    .into_iter()
+    .all(|(ai, aj, bi, bj, ci, cj, di, dj)| {
+        dyadic_products_zero(&[
+            (bi, dj, false),
+            (bi, cj, true),
+            (ai, dj, true),
+            (ai, cj, false),
+            (bj, di, true),
+            (bj, ci, false),
+            (aj, di, false),
+            (aj, ci, true),
+        ])
+    });
+    // Parallel but reversed chords form a cusp, not a smooth join. Comparisons
+    // determine difference signs exactly without subtracting or normalizing.
+    parallel
+        && a.into_iter()
+            .zip(b)
+            .zip(c.into_iter().zip(d))
+            .any(|((a, b), (c, d))| (b > a && d > c) || (b < a && d < c))
 }
 
 /// Test exact parallelism before rounding the difference of the two input points.
@@ -1405,10 +1521,15 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             return Err(affine_refusal());
         }
         let fraction = Ivl::new(foot.lo.clamp(0.0, 1.0), foot.hi.clamp(0.0, 1.0));
+        let smooth = [
+            (conts[0] as i32) >= (ContinuityType::G1 as i32)
+                && exact_affine_join(curve, interval.min()),
+            (conts[1] as i32) >= (ContinuityType::G1 as i32)
+                && exact_affine_join(curve, interval.max()),
+        ];
         if !maximize
             && definition.isolated_end.is_none()
-            && ((foot.hi <= 0.0 && (conts[0] as i32) >= (ContinuityType::G1 as i32))
-                || (foot.lo >= 1.0 && (conts[1] as i32) >= (ContinuityType::G1 as i32)))
+            && ((foot.hi <= 0.0 && smooth[0]) || (foot.lo >= 1.0 && smooth[1]))
         {
             return Ok(true);
         }
@@ -1419,8 +1540,8 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             optimum.hi = optimum.hi.min(isolated.hi);
         }
         let mut parameters = Vec::new();
-        for (t, continuity) in [(interval.min(), conts[0]), (interval.max(), conts[1])] {
-            if (continuity as i32) < (ContinuityType::G1 as i32) {
+        for (t, omit) in [(interval.min(), smooth[0]), (interval.max(), smooth[1])] {
+            if !omit {
                 parameters.push(t);
             }
         }
@@ -2839,6 +2960,69 @@ impl Curve {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn affine_join_requires_exact_position_direction_and_orientation() {
+        use crate::nurbs::math::CPoint;
+        let join = |points: Vec<CPoint>, repeated: bool| {
+            let knots = if repeated {
+                vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0]
+            } else {
+                vec![0.0, 0.0, 1.0, 2.0, 2.0]
+            };
+            let net = crate::nurbs::crv_basic::Curve::new(points, 1, knots).unwrap();
+            Curve::from(BSplineCurve::from_nurb(net, 3, false))
+        };
+        let p = |x, y, w| CPoint::new(x, y, 0.0, w);
+        for scale in [f64::from_bits(1), 1.0, 2.0_f64.powi(500)] {
+            let straight = join(
+                vec![p(-scale, 0.0, 1.0), p(0.0, 0.0, 1.0), p(scale, 0.0, 1.0)],
+                false,
+            );
+            assert!(exact_affine_join(&straight, 1.0));
+            let kink = join(
+                vec![
+                    p(-scale, scale, 1.0),
+                    p(0.0, 0.0, 1.0),
+                    p(scale, scale, 1.0),
+                ],
+                false,
+            );
+            assert!(!exact_affine_join(&kink, 1.0));
+        }
+        let cusp = join(
+            vec![p(1.0, 0.0, 1.0), p(0.0, 0.0, 1.0), p(1.0, 0.0, 1.0)],
+            false,
+        );
+        assert!(!exact_affine_join(&cusp, 1.0));
+        let weighted = join(
+            vec![
+                p(0.0, 0.0, 1.0),
+                p(1.0, 0.0, 1.0),
+                p(2.0, 0.0, 2.0),
+                p(4.0, 0.0, 2.0),
+            ],
+            true,
+        );
+        assert!(exact_affine_join(&weighted, 1.0));
+        let gap = join(
+            vec![
+                p(0.0, 0.0, 1.0),
+                p(1.0, 0.0, 1.0),
+                p(next_parameter_up(2.0), 0.0, 2.0),
+                p(4.0, 0.0, 2.0),
+            ],
+            true,
+        );
+        assert!(!exact_affine_join(&gap, 1.0));
+        // Rounded direction subtraction loses the middle control's tiny offset.
+        let tiny = 2.0_f64.powi(-60);
+        let rounded = join(
+            vec![p(-1.0, -1.0, 1.0), p(0.0, tiny, 1.0), p(1.0, 1.0, 1.0)],
+            false,
+        );
+        assert!(!exact_affine_join(&rounded, 1.0));
+    }
 
     #[test]
     fn affine_parallel_identity_is_orientation_and_scale_independent() {

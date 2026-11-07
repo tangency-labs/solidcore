@@ -2,8 +2,8 @@
 //!
 //! Not upstream. The branch-and-bound invariant follows Neumaier (2004),
 //! sections 11 and 12: only a feasible point supplies a lower bound, and every
-//! parameter rectangle must have an upper bound within caller slack plus the
-//! explicitly enclosed rounding at feasible points (as in `projected_affine`).
+//! parameter rectangle must have an upper bound inside the returned feasible
+//! point's own arithmetic enclosure. Caller slack affects retention only.
 //! Deviations: iterative subdivision; at most 32,768 boxes, depth 48 and degree
 //! 18. Unsupported definitions and unresolved bounds return a typed refusal.
 
@@ -277,11 +277,16 @@ impl Query<'_> {
                 "candidate value has no finite definition enclosure",
             ));
         }
+        if reported < value.lo || reported > value.hi {
+            return Err(refused(
+                "reported candidate lies outside its definition enclosure",
+            ));
+        }
         Ok(Candidate {
             parameters: [s, t],
             reported,
-            lower: value.lo.min(reported),
-            upper: value.hi.max(reported),
+            lower: value.lo,
+            upper: value.hi,
         })
     }
 
@@ -292,6 +297,25 @@ impl Query<'_> {
         let (pb, db) = b.jet(cell.b.range, cell.b.knot)?;
         let d = project(sub(pa, pb), n);
         let direct = norm_squared(d);
+        // A fixed derivative sign proves the maximum occurs on that endpoint
+        // face. This is geometric contraction, not an arithmetic allowance.
+        let ds = dot(d, project(da, n));
+        let reverse_dt = dot(d, project(db, n));
+        let dt = Ivl::new(-reverse_dt.hi, -reverse_dt.lo);
+        let endpoint = |range: Ivl, derivative: Ivl| {
+            if derivative.lo >= 0.0 {
+                Ivl::from(range.hi)
+            } else if derivative.hi <= 0.0 {
+                Ivl::from(range.lo)
+            } else {
+                range
+            }
+        };
+        let ar = endpoint(cell.a.range, ds);
+        let br = endpoint(cell.b.range, dt);
+        let (ea, _) = a.jet(ar, cell.a.knot)?;
+        let (eb, _) = b.jet(br, cell.b.knot)?;
+        let contracted = norm_squared(project(sub(ea, eb), n));
         let s = cell.a.range.mid();
         let t = cell.b.range.mid();
         let (ca, _) = a.jet(Ivl::from(s), cell.a.knot)?;
@@ -301,7 +325,7 @@ impl Query<'_> {
             - Ivl::from(2.0) * dot(d, project(db, n)) * (cell.b.range - Ivl::from(t));
         Ok(Ivl::new(
             direct.lo.max(centered.lo),
-            direct.hi.min(centered.hi),
+            direct.hi.min(centered.hi).min(contracted.hi),
         ))
     }
 }
@@ -384,28 +408,21 @@ pub(super) fn solve<O: SolutionObject>(
                 if visited > MAX_BOXES {
                     return Err(refused("projected maximum exhausted its enclosure budget"));
                 }
-                let mut point_rounding = 0.0_f64;
                 for s in [cell.a.range.lo, cell.a.range.mid(), cell.a.range.hi] {
                     for t in [cell.b.range.lo, cell.b.range.mid(), cell.b.range.hi] {
                         let candidate = query.candidate(s, t)?;
-                        point_rounding = point_rounding
-                            .max((Ivl::from(candidate.upper) - Ivl::from(candidate.lower)).hi);
-                        if candidate.lower > best.lower {
+                        // Keep the certified pruning threshold monotone: a later
+                        // candidate must still enclose every previously pruned box.
+                        if candidate.upper > best.upper {
                             best = candidate;
                         }
                     }
                 }
                 let bound = query.bound(cell)?;
-                // Mirror projected_affine: subtract only arithmetic uncertainty
-                // enclosed at feasible points, never geometric box width. Any
-                // remaining optimization gap must fit the caller's retention slack.
-                let rounding =
-                    (Ivl::from(best.upper) - Ivl::from(best.lower)) + Ivl::from(point_rounding);
-                if !rounding.hi.is_finite() {
-                    return Err(refused("maximum has no finite arithmetic enclosure"));
-                }
-                let threshold =
-                    (Ivl::from(best.lower) + Ivl::from(tolerance) + Ivl::from(rounding.hi)).lo;
+                // Retention slack is not solve accuracy. Every discarded box
+                // fits the returned point's own independently computed enclosure;
+                // neither another sample's width nor geometric width is added.
+                let threshold = best.upper;
                 if bound.lo <= bound.hi && bound.sqrt().hi <= threshold {
                     global_upper = global_upper.max(bound.sqrt().hi);
                     continue;
