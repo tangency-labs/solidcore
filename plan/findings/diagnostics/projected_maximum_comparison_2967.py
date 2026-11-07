@@ -78,7 +78,11 @@ def draw_vertex_answers():
     assert len(after) == 11
     theta = np.linspace(0, 2 * np.pi, 1001)
     fig, axes = plt.subplots(1, 2, figsize=(11, 5), layout="constrained")
-    for ax, title, selected in zip(axes, ["Before: 3 returned", "After: all 11 within tolerance"], [before, after]):
+    panels = [("Before: 3 returned", before), ("After: all 11 within tolerance", after)]
+    # Enforce strict pairing while retaining Python 3.9 support.
+    if len(axes) != len(panels):
+        raise ValueError("Each comparison panel requires exactly one axis")
+    for ax, (title, selected) in zip(axes, panels):
         ax.plot(query[0] + limit * np.cos(theta), query[1] + limit * np.sin(theta),
                 "--", color="#999999", label="Best distance + caller tolerance")
         ax.scatter(points[:, 0], points[:, 1], marker="x", color="#999999", label="Fixture vertices")

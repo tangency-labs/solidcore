@@ -786,7 +786,8 @@ fn check_zero_slack_plane_candidate(normal: Vec3) {
     .is_err());
 
     // Retention slack must not make a feasible but suboptimal point a maximum.
-    // The center has projected distance |normal|^2, below sqrt(2.5)|normal|^2.
+    // For these normals parallel to Z, the center has projected distance
+    // |normal|^2, below sqrt(2.5)|normal|^2.
     let mut suboptimal = solver.base.clone();
     suboptimal.tolerance_3d = 10.0 * expected;
     let mut changed = *solution;
@@ -794,6 +795,14 @@ fn check_zero_slack_plane_candidate(normal: Vec3) {
     changed.start.parameters[1] = 0.0;
     changed.start.solution_value = normal.length_squared();
     suboptimal.solutions.set_at(0, &changed).unwrap();
+    super::projected_bound::certify_candidate(
+        &k,
+        &objects,
+        CacheObject::Face(face),
+        query,
+        &suboptimal,
+    )
+    .unwrap();
     assert!(super::projected_bound::certify(
         &k,
         &objects,

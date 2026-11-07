@@ -5,6 +5,8 @@ rational span. Endpoints complete the compact-domain extrema oracle; plots are
 diagnostics, not substitutes for the stationary-polynomial calculation.
 """
 import json
+from fractions import Fraction
+from decimal import Decimal, localcontext
 from pathlib import Path
 import numpy as np
 from numpy.polynomial import Polynomial as P
@@ -97,6 +99,51 @@ def oracle(case):
     return best,evaluate,plotted,candidates
 
 
+def exact_line_refresh(record):
+    """Check refreshed points against the exact stored affine definition.
+
+    This independent rational diagnostic does not call the private production
+    interval certificate. Decimal square roots only display exact rational
+    squared-distance results; the golden-comparison check uses exact squares.
+    """
+    r=record["line_refresh"]
+    def cross(a,b):
+        return [a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]
+    def dot(a,b):
+        return sum(x*y for x,y in zip(a,b))
+    def dec(x):
+        return Decimal(x.numerator)/Decimal(x.denominator)
+    f=Fraction
+    n=list(map(f,r["n"]));q=list(map(f,r["q"]))
+    anchor=list(map(f,r["anchor"]));v=list(map(f,r["direction"]))
+    nat=list(map(f,r["natural"]));step=list(map(f,r["step"]))
+    assert not r["inside_out"]
+    slope=(step[1]-step[0])/(nat[1]-nat[0])
+    intercept=step[0]-slope*nat[0];scale=f(r["scale"])
+    a=[aa+scale*intercept*vv-qq for aa,vv,qq in zip(anchor,v,q)]
+    d=[scale*slope*vv for vv in v]
+    x=cross(cross(n,a),n);y=cross(cross(n,d),n)
+    dd=dot(y,y);xd=dot(x,y);t=-xd/dd
+    minimum_squared=dot(x,x)-xd*xd/dd
+    ct=f(record["after"][6]);reported=f(record["after"][5])
+    requested=list(map(f,record["inputs"]["ivl"]))
+    assert nat[0]<t<nat[1] and requested[0]<t<requested[1]
+    assert nat[0]<ct<nat[1] and requested[0]<ct<requested[1]
+    at=[xx+ct*yy for xx,yy in zip(x,y)]
+    actual_squared=dot(at,at)
+    relative=f(1,10**9)
+    # This stricter symmetric band suffices for the unchanged relative rule.
+    assert (reported*(1-relative))**2 <= actual_squared <= (reported*(1+relative))**2
+    with localcontext() as context:
+        context.prec=90
+        return {"exact_minimum_parameter":str(dec(t)),
+                "exact_minimum_distance":str(dec(minimum_squared).sqrt()),
+                "reported_minus_exact_metric":str(dec(reported)-dec(actual_squared).sqrt()),
+                "candidate_objective_gap":str(dec(actual_squared).sqrt()-dec(minimum_squared).sqrt()),
+                "parameter_admissible":True,
+                "unchanged_relative_golden_comparison_passes":True}
+
+
 def main():
     """Validate all saved records and reproduce seven comparison figures."""
     here=Path(__file__).resolve().parent
@@ -140,11 +187,13 @@ def main():
             ax.set_title(f"{name}: {op}; best {best[0]:.9g}; slack {case['tol']:g}")
             ax.set_ylabel("Projected distance")
         ax.set_xlabel("Curve parameter");ax.legend(fontsize=7)
+        if "line_refresh" in record:
+            item["exact_line_refresh"]=exact_line_refresh(record)
         report.append(item)
     for unused in range((len(report)-1)%8+1,8):axes.flat[unused].set_visible(False)
     for i,fig in enumerate(figures,1):
         fig.suptitle("Point/curve golden changes: old red, current green; blue domain/objective",fontsize=12)
-        fig.savefig(here.parent/"figures"/f"projected-global-goldens-2968-{i}.png",dpi=140)
+        fig.savefig(here.parent/"figures"/f"projected-global-goldens-2968-{i}.png",dpi=140,bbox_inches="tight")
         plt.close(fig)
     (here/"projected_global_golden_changes_2968_report.json").write_text(json.dumps(report,indent=2)+"\n")
     print(f"Validated {len(report)} cases; {sum('oracle_distance' in x for x in report)} numerical extrema and {sum('oracle_distance' not in x for x in report)} explicit domain refusals.")

@@ -12,7 +12,7 @@
     ],
     "tolerance": 0.05,
     "oracle_distance": 9.248675280586827,
-    "oracle_parameter": 0.8258440787616159,
+    "oracle_parameter": 0.8258440787616158,
     "returned": [
       {
         "parameter": 0.8258440787616184,
@@ -63,13 +63,21 @@
     "oracle_parameter": 7.42437811529785,
     "returned": [
       {
-        "parameter": 7.424378115297848,
-        "reported": 2.4569516620450993,
-        "evaluated": 2.4569516620450997,
-        "gap_to_best": 0.0
+        "parameter": 7.4243781152978485,
+        "reported": 2.4569516620451006,
+        "evaluated": 2.4569516620450993,
+        "gap_to_best": 4.440892098500626e-16
       }
     ],
-    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum.",
+    "exact_line_refresh": {
+      "exact_minimum_parameter": "7.42437811529784933976834993654167129182980057076417863697895461117254343157280090980330544",
+      "exact_minimum_distance": "2.45695166204509951525124043604543716180904067734702415337798222940573063174772246171853553",
+      "reported_minus_exact_metric": "1.11087929334695252934838284552351578934695176570349572697056719697164291054E-15",
+      "candidate_objective_gap": "1.3341294196389679343649967025206709854239768508056663855393E-31",
+      "parameter_admissible": true,
+      "unchanged_relative_golden_comparison_passes": true
+    }
   },
   {
     "case": "gen0159",
@@ -131,14 +139,14 @@
       1.0
     ],
     "tolerance": 1e-05,
-    "oracle_distance": 28.24679060307276,
-    "oracle_parameter": 0.9800794161911351,
+    "oracle_distance": 28.246790603072753,
+    "oracle_parameter": 0.9800794161911333,
     "returned": [
       {
         "parameter": 0.9800794161911365,
         "reported": 28.246790603072732,
         "evaluated": 28.24679060307275,
-        "gap_to_best": 1.0658141036401503e-14
+        "gap_to_best": 3.552713678800501e-15
       }
     ],
     "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
@@ -241,26 +249,26 @@
       1.0
     ],
     "tolerance": 0.05,
-    "oracle_distance": 0.007157691503532662,
-    "oracle_parameter": 0.5072601353765416,
+    "oracle_distance": 0.007157691503532711,
+    "oracle_parameter": 0.5072601353765418,
     "returned": [
       {
         "parameter": 0.5072601353765418,
         "reported": 0.007157691503532663,
         "evaluated": 0.00715769150353267,
-        "gap_to_best": 8.673617379884035e-18
+        "gap_to_best": 4.0766001685454967e-17
       },
       {
         "parameter": 0.5755734276019697,
         "reported": 0.01673787598683193,
         "evaluated": 0.01673787598683195,
-        "gap_to_best": 0.009580184483299288
+        "gap_to_best": 0.009580184483299238
       },
       {
         "parameter": 0.4150189544154023,
         "reported": 0.02270442517931608,
         "evaluated": 0.022704425179316083,
-        "gap_to_best": 0.015546733675783422
+        "gap_to_best": 0.015546733675783372
       }
     ],
     "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
@@ -278,7 +286,7 @@
     ],
     "tolerance": 1e-06,
     "oracle_distance": 1.4420595249547048,
-    "oracle_parameter": 0.3048406581069285,
+    "oracle_parameter": 0.304840658106929,
     "returned": [
       {
         "parameter": 0.30484065810692407,
@@ -301,14 +309,14 @@
       4.152191856457154
     ],
     "tolerance": 0.001,
-    "oracle_distance": 10.557927271679802,
-    "oracle_parameter": 4.068384879258986,
+    "oracle_distance": 10.5579272716798,
+    "oracle_parameter": 4.0683848792589705,
     "returned": [
       {
         "parameter": 4.068384879258986,
         "reported": 10.557927271679803,
         "evaluated": 10.557927271679802,
-        "gap_to_best": 0.0
+        "gap_to_best": 1.7763568394002505e-15
       }
     ],
     "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
@@ -542,7 +550,7 @@
     ],
     "tolerance": 0.05,
     "oracle_distance": 9.351878512795954,
-    "oracle_parameter": 0.011215716748249243,
+    "oracle_parameter": 0.011215716748249293,
     "returned": [
       {
         "parameter": 0.01121571674824913,
@@ -610,7 +618,7 @@
     ],
     "tolerance": 0.001,
     "oracle_distance": 44.19963875446307,
-    "oracle_parameter": 0.5244107227973043,
+    "oracle_parameter": 0.5244107227973039,
     "returned": [
       {
         "parameter": 0.5244107227973037,
@@ -658,7 +666,7 @@
     ],
     "tolerance": 0.05,
     "oracle_distance": 4.3438322141615755,
-    "oracle_parameter": 0.2037351722050348,
+    "oracle_parameter": 0.20373517220503531,
     "returned": [
       {
         "parameter": 0.20373517220503476,
@@ -756,7 +764,7 @@
     ],
     "tolerance": 0.05,
     "oracle_distance": 22.088438326716776,
-    "oracle_parameter": 0.004984724386921911,
+    "oracle_parameter": 0.004984724386921985,
     "returned": [
       {
         "parameter": 0.004984724386922088,
@@ -929,14 +937,14 @@
       1.0
     ],
     "tolerance": 1e-05,
-    "oracle_distance": 28.857905823233743,
-    "oracle_parameter": 1.0,
+    "oracle_distance": 28.857905823233747,
+    "oracle_parameter": 0.9999999999999998,
     "returned": [
       {
         "parameter": 1.0,
         "reported": 28.857905823233743,
         "evaluated": 28.857905823233743,
-        "gap_to_best": 0.0
+        "gap_to_best": 3.552713678800501e-15
       }
     ],
     "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
@@ -954,7 +962,7 @@
     ],
     "tolerance": 1e-06,
     "oracle_distance": 8.054213986722065,
-    "oracle_parameter": 0.07476690439844118,
+    "oracle_parameter": 0.07476690439844152,
     "returned": [
       {
         "parameter": 0.07476690439844116,
@@ -1002,7 +1010,7 @@
     ],
     "tolerance": 0.05,
     "oracle_distance": 7.97383781884869,
-    "oracle_parameter": 0.06596314686589874,
+    "oracle_parameter": 0.06596314686589866,
     "returned": [
       {
         "parameter": 0.06596314686589877,
@@ -1088,7 +1096,7 @@
     ],
     "tolerance": 1e-06,
     "oracle_distance": 4.619860707258027,
-    "oracle_parameter": 0.06661996696637791,
+    "oracle_parameter": 0.06661996696637801,
     "returned": [
       {
         "parameter": 0.06661996696638076,
@@ -1115,13 +1123,21 @@
     "oracle_parameter": 2.5540707534588067,
     "returned": [
       {
-        "parameter": 2.5540707534588063,
+        "parameter": 2.5540707534588067,
         "reported": 0.27002492486264307,
-        "evaluated": 0.2700249248626438,
-        "gap_to_best": 7.216449660063518e-16
+        "evaluated": 0.27002492486264307,
+        "gap_to_best": 0.0
       }
     ],
-    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum.",
+    "exact_line_refresh": {
+      "exact_minimum_parameter": "2.55407075345880682006100149533093973451610063908259523552008027603922830305148683093600204",
+      "exact_minimum_distance": "0.270024924862643305384243528326393543736802371160306137528048401910787517719779016702132138",
+      "reported_minus_exact_metric": "-2.37792993327250365254508054344316754124539502871936593625183621861555113916E-16",
+      "candidate_objective_gap": "8.029907871541027541737011454470025806107463842844852981778E-33",
+      "parameter_admissible": true,
+      "unchanged_relative_golden_comparison_passes": true
+    }
   },
   {
     "case": "gen2524",
@@ -1135,14 +1151,14 @@
       1.0
     ],
     "tolerance": 1e-06,
-    "oracle_distance": 0.1645210110322491,
-    "oracle_parameter": 0.5161062644162441,
+    "oracle_distance": 0.16452101103224892,
+    "oracle_parameter": 0.5161062644162462,
     "returned": [
       {
         "parameter": 0.5161062644162443,
         "reported": 0.16452101103224887,
         "evaluated": 0.16452101103224906,
-        "gap_to_best": 2.7755575615628914e-17
+        "gap_to_best": 1.3877787807814457e-16
       }
     ],
     "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
@@ -1198,7 +1214,7 @@
     ],
     "tolerance": 0.001,
     "oracle_distance": 39.76686609721482,
-    "oracle_parameter": 0.12365865927611254,
+    "oracle_parameter": 0.12365865927611304,
     "returned": [
       {
         "parameter": 0.12365865927611258,
