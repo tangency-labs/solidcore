@@ -8,7 +8,7 @@
 //! refuses. No production dispatch or All completeness claim yet.
 
 use super::projected_pair::{
-    dot, norm_squared, project, sub, Candidate, Cell, Definition, Piece, Query,
+    bounded_domain, dot, norm_squared, project, sub, Candidate, Cell, Definition, Piece, Query,
 };
 use super::{Curve, CurveKind};
 use crate::blend::fillet_section::certificate::curve_derivs_over;
@@ -16,6 +16,7 @@ use crate::blend::fillet_section::interval::Ivl;
 use crate::blend::fillet_section::series::V3;
 use crate::error::{Result, SolidError};
 use crate::geom::extent1d::Extent1d;
+use crate::geom::solution_array::{SolutionArray, SolutionObject};
 use crate::kernel::Kernel;
 use crate::math::Vec3;
 
@@ -29,6 +30,33 @@ fn refused(reason: &'static str) -> SolidError {
         operation: OP,
         reason,
     }
+}
+
+/// Select identical native noncircular ellipse definitions before proof.
+/// Projection degeneracy, traversal and root ambiguity remain typed refusals.
+pub(super) fn supports(curves: [&Curve; 2], intervals: [Extent1d; 2]) -> bool {
+    let [a, b] = curves;
+    let (CurveKind::Ellipse(ea), CurveKind::Ellipse(eb)) = (a.kind(), b.kind()) else {
+        return false;
+    };
+    let (Some(na), Some(nb)) = (ea.base().gw_nurb(), eb.base().gw_nurb()) else {
+        return false;
+    };
+    ea.x_radius() != ea.y_radius()
+        && ea.x_radius() == eb.x_radius()
+        && ea.y_radius() == eb.y_radius()
+        && ea.position().origin() == eb.position().origin()
+        && ea.position().x_axis() == eb.position().x_axis()
+        && ea.position().y_axis() == eb.position().y_axis()
+        && ea.inside_out() == eb.inside_out()
+        && ea.base().dim() == eb.base().dim()
+        && na.degree() == 2
+        && nb.degree() == 2
+        && na.knots() == nb.knots()
+        && na.cpts() == nb.cpts()
+        && curves.into_iter().zip(intervals).all(|(curve, interval)| {
+            bounded_domain(curve, interval).is_ok_and(|domain| domain.min() < domain.max())
+        })
 }
 
 fn finite(x: Ivl) -> bool {
@@ -302,8 +330,34 @@ fn roots_over(
 }
 
 fn candidate_over(query: &Query<'_>, a: Piece, b: Piece) -> Result<MaximumCandidate> {
-    let point = query.candidate(a.range.mid(), b.range.mid())?;
-    let objective = query.bound(Cell { a, b, depth: 0 })?.sqrt();
+    let mut point = query.candidate(a.range.mid(), b.range.mid())?;
+    for s in [a.range.lo, a.range.mid(), a.range.hi] {
+        for t in [b.range.lo, b.range.mid(), b.range.hi] {
+            let candidate = query.candidate(s, t)?;
+            if candidate.upper > point.upper {
+                point = candidate;
+            }
+        }
+    }
+    let mut objective = if a.range.lo == a.range.hi && b.range.lo == b.range.hi {
+        Ivl::new(point.lower, point.upper)
+    } else {
+        query.bound(Cell { a, b, depth: 0 })?.sqrt()
+    };
+    // Root isolation width is geometric. A second-order enclosure keeps its
+    // remaining contribution explicit, rather than calling it point rounding.
+    let [definition_a, definition_b] = &query.definitions;
+    for (fixed, moving, fixed_definition, moving_definition) in [
+        (a, b, definition_a, definition_b),
+        (b, a, definition_b, definition_a),
+    ] {
+        if fixed.range.lo == fixed.range.hi && moving.range.lo < moving.range.hi {
+            let (value, _) = fixed_definition.jet(fixed.range, fixed.knot)?;
+            let taylor =
+                edge_value_over(moving_definition, moving, value, query.normal, moving.range)?;
+            objective = Ivl::new(objective.lo.max(taylor.lo), objective.hi.min(taylor.hi));
+        }
+    }
     if !finite(objective) {
         return Err(refused("finite maximum has no objective enclosure"));
     }
@@ -480,6 +534,65 @@ fn finite_candidates(query: &Query<'_>, domains: [Extent1d; 2]) -> Result<Vec<Ma
     Ok(maxima)
 }
 
+/// Construct the complete finite maximum set before applying caller retention.
+/// A root representative must enclose its root objective using only its own
+/// point arithmetic interval; unresolved geometry is never retention slack.
+pub(super) fn solve<O: SolutionObject>(
+    kernel: &Kernel,
+    curves: [&Curve; 2],
+    intervals: [Extent1d; 2],
+    normal: Vec3,
+    tolerance: f64,
+    handles: [Option<O>; 2],
+    target: Option<f64>,
+) -> Result<SolutionArray<O>> {
+    kernel.check_cancelled(OP)?;
+    if !(tolerance.is_finite()
+        && tolerance >= 0.0
+        && normal.x.is_finite()
+        && normal.y.is_finite()
+        && normal.z.is_finite())
+        || target.is_some_and(|value| !value.is_finite())
+    {
+        return Err(refused(
+            "finite ellipse query needs finite retention and projection",
+        ));
+    }
+    let [a, b] = curves;
+    let [ia, ib] = intervals;
+    let domains = [bounded_domain(a, ia)?, bounded_domain(b, ib)?];
+    let [da, db] = domains;
+    let query = Query {
+        kernel,
+        curves,
+        normal,
+        definitions: [Definition::of(a, da)?, Definition::of(b, db)?],
+    };
+    let maxima = finite_candidates(&query, domains)?;
+    let mut retained = Vec::new();
+    for maximum in maxima {
+        let candidate = maximum.point;
+        if maximum.objective.hi > candidate.upper {
+            return Err(refused(
+                "isolated root objective exceeds its representative enclosure",
+            ));
+        }
+        if let Some(target) = target {
+            let cutoff = Ivl::from(target.abs()) - Ivl::from(tolerance);
+            if candidate.upper < cutoff.lo {
+                continue;
+            }
+            if candidate.lower < cutoff.hi {
+                return Err(refused(
+                    "ellipse maximum straddles the external incumbent cutoff",
+                ));
+            }
+        }
+        retained.push(candidate);
+    }
+    super::projected_pair_all::accumulate(&query, retained, tolerance, handles)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -558,6 +671,10 @@ mod tests {
             )
         };
         let circle = make(2.0, 2.0, 100.0, false);
+        assert!(!supports(
+            [&circle, &circle],
+            [circle.natural_interval(); 2]
+        ));
         let circle_definition = Definition::of(&circle, circle.natural_interval()).unwrap();
         assert!(projected_frame(&circle, &circle_definition, Vec3::Z).is_err());
         let reversed = make(4.0, 2.0, 100.0, true);
@@ -594,6 +711,7 @@ mod tests {
             )
             .unwrap(),
         );
+        assert!(supports([&curve, &curve], [curve.natural_interval(); 2]));
         let definition = Definition::of(&curve, curve.natural_interval()).unwrap();
         projected_frame(&curve, &definition, Vec3::Z).unwrap();
         assert!(projected_frame(&curve, &definition, Vec3::ZERO).is_err());
@@ -635,6 +753,26 @@ mod tests {
             normal: Vec3::Z,
         };
         let maxima = finite_candidates(&query, [curve.natural_interval(); 2]).unwrap();
+        for tolerance in [0.0, 1e-5, 0.5] {
+            let answers = solve::<crate::geom::solution_array::OperandObject>(
+                &kernel,
+                [&curve, &curve],
+                [curve.natural_interval(); 2],
+                Vec3::Z,
+                tolerance,
+                [None, None],
+                None,
+            )
+            .unwrap();
+            assert!(!answers.is_empty());
+            if tolerance > 0.0 {
+                assert_eq!(answers.len(), 2);
+            }
+            for answer in answers.as_slice() {
+                assert!((answer.start.solution_value - 6.327472493603755).abs() < 1e-12);
+            }
+        }
+
         let global_upper = maxima
             .iter()
             .map(|m| m.objective.hi)

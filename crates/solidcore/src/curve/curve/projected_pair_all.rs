@@ -259,23 +259,6 @@ pub(super) fn construct<O: SolutionObject>(
     classify: fn(&Query<'_>, [Piece; 2], f64, f64) -> Result<bool>,
 ) -> Result<SolutionArray<O>> {
     let [pa, pb] = pieces;
-    // Exactly one adaptation call, as in global_curve_solve: stand-ins supply
-    // the natural domains used by ordered duplicate comparison.
-    if handles == [None, None] {
-        let [a, b] = query.curves;
-        return Ok(construct(
-            query,
-            pieces,
-            tolerance,
-            [
-                Some(OperandObject::Curve(0, a.natural_interval())),
-                Some(OperandObject::Curve(1, b.natural_interval())),
-            ],
-            target,
-            classify,
-        )?
-        .without_objects());
-    }
     let mut corners: Vec<Candidate> = Vec::new();
     let mut lower = 0.0_f64;
     for s in [pa.range.lo, pa.range.hi] {
@@ -317,6 +300,31 @@ pub(super) fn construct<O: SolutionObject>(
         retained.push(candidate);
     }
 
+    accumulate(query, retained, tolerance, handles)
+}
+
+/// Preserve public All retention and ordered-parameter duplicate semantics.
+/// Every input must already be a certified isolated maximum representative.
+pub(super) fn accumulate<O: SolutionObject>(
+    query: &Query<'_>,
+    mut retained: Vec<Candidate>,
+    tolerance: f64,
+    handles: [Option<O>; 2],
+) -> Result<SolutionArray<O>> {
+    // Exactly one adaptation call supplies domains for duplicate comparison.
+    if handles == [None, None] {
+        let [a, b] = query.curves;
+        return Ok(accumulate(
+            query,
+            retained,
+            tolerance,
+            [
+                Some(OperandObject::Curve(0, a.natural_interval())),
+                Some(OperandObject::Curve(1, b.natural_interval())),
+            ],
+        )?
+        .without_objects());
+    }
     retained.sort_by(|a, b| b.reported.total_cmp(&a.reported));
     let mut accumulation = AllSolutions {
         base: GlobalSolver::new(),
