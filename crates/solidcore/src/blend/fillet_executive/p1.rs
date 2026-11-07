@@ -14,6 +14,7 @@
 //! |----------------------------------------|-------------------------------------------------------|
 //! | [`FilletLaw::new`] (co-port)           | `SmFilletLaw::SmFilletLaw`, `~SmFilletLaw`, `~SmBSplineFilletLaw` (`Drop`) |
 //! | [`FilletLaw::evaluate`]                | `SmFilletLaw::Evaluate`, `SmLinearFilletLaw::Evaluate`, `SmBSplineFilletLaw::Evaluate` |
+//! | [`FilletLaw::fillet_radius`]           | `SmVariableRadiusFS::GetFilletRadius`                 |
 //! | [`FilletLaw::is_linear_law`] (co-port) | `SmFilletLaw::IsLinearLaw`, `SmLinearFilletLaw::IsLinearLaw`, `SmBSplineFilletLaw::IsLinearLaw` |
 //! | [`FilletLaw::law_curve`]               | `SmBSplineFilletLaw::GetLawCurve`                     |
 //! | [`FilletLaw::extended_curve`]          | `SmBSplineFilletLaw::GetExtendedCurve`                |
@@ -252,6 +253,49 @@ impl FilletLaw {
                 reverse,
             ),
         }
+    }
+
+    /// `SmVariableRadiusFS::GetFilletRadius`: the radius [`FilletLaw::evaluate`] gives at
+    /// `parameter`. Upstream's `SER` inside that `double` function returns a failed
+    /// evaluation's `SmStatus` as the radius, and so does this, except for the errors that
+    /// are not statuses: an unported or cancelled callee, and a law continued past its
+    /// curve to a radius the solver cannot use, which stays the refusal naming its station
+    /// (#2706). A corner's law interval can be narrowed to its setback
+    /// (`FilletCorner::adjust_vertex_law_intervals`), so a station of the edge itself can
+    /// be past the law's curve.
+    ///
+    /// # Errors
+    /// [`SolidError::Unported`], [`SolidError::Cancelled`] and
+    /// [`SolidError::RoundRefused`] ([`RoundRefusal::LawRadiusUnusable`]) from
+    /// [`FilletLaw::evaluate`].
+    pub fn fillet_radius(
+        &mut self,
+        parameter: f64,
+        interval: &Extent1d,
+        reverse: bool,
+    ) -> Result<f64> {
+        match self.evaluate(parameter, interval, reverse) {
+            Ok([radius, _, _]) => Ok(radius),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
+            Err(
+                e @ SolidError::RoundRefused {
+                    refusal: RoundRefusal::LawRadiusUnusable { .. },
+                    ..
+                },
+            ) => Err(e),
+            Err(e) => Ok(f64::from(status_of(&e))),
+        }
+    }
+}
+
+/// The `SmStatus` upstream's `SER` returns for a failed callee.
+fn status_of(e: &SolidError) -> i32 {
+    match e {
+        SolidError::Upstream { code, .. } => *code,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => {
+            crate::error::SM_ERR_INVALID_INPUT
+        }
+        _ => crate::error::SM_ERR,
     }
 }
 
@@ -2001,6 +2045,36 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn the_fillet_radius_keeps_the_refusal_of_a_law_narrowed_to_its_setback() {
+        // The law 1 to 1e308 on the edge [0, 10], its interval narrowed to [0, 5] by a
+        // corner whose setback is at 5: the edge's end, 10, is the law's parameter 2, past
+        // its curve, where the continued radius overflows. GetFilletRadius's SER would read
+        // the failure as a status radius (1001); the refusal naming the station stays.
+        let mut law = bspline(
+            radius_curve(&[1.0, 1e308], 1, 0.0, 1.0),
+            Extent1d::from_min_max(0.0, 1.0),
+        );
+        let narrowed = Extent1d::from_min_max(0.0, 5.0);
+        assert!(close(
+            law.fillet_radius(0.0, &narrowed, false).expect("r"),
+            1.0
+        ));
+        match law.fillet_radius(10.0, &narrowed, false) {
+            Err(SolidError::RoundRefused {
+                refusal: RoundRefusal::LawRadiusUnusable { at, .. },
+                ..
+            }) => assert!(close(at, 2.0), "{at}"),
+            other => panic!("{other:?}"),
+        }
+        // any other failed evaluation is still its status as the radius
+        let mut base = FilletLaw::new(FilletLawKind::Base);
+        assert_eq!(
+            base.fillet_radius(0.0, &narrowed, false).expect("status"),
+            f64::from(crate::error::SM_ERR)
+        );
     }
 
     #[test]
