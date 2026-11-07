@@ -1,0 +1,133 @@
+{
+  "cases": [
+    {
+      "name": "projected_max_line_derivative_scale_0_5",
+      "inputs": {
+        "op": "property",
+        "curve": {
+          "line": {
+            "p": [
+              0,
+              0,
+              0
+            ],
+            "v": [
+              1,
+              0,
+              0
+            ],
+            "domain": [
+              0,
+              1
+            ],
+            "scale": 1,
+            "inside_out": false
+          }
+        },
+        "prop": 21,
+        "t": 0.25,
+        "val": null,
+        "vecs": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0.5
+          ]
+        ],
+        "sqtol": 1e-24,
+        "signal": false
+      }
+    },
+    {
+      "name": "projected_max_line_derivative_scale_1",
+      "inputs": {
+        "op": "property",
+        "curve": {
+          "line": {
+            "p": [
+              0,
+              0,
+              0
+            ],
+            "v": [
+              1,
+              0,
+              0
+            ],
+            "domain": [
+              0,
+              1
+            ],
+            "scale": 1,
+            "inside_out": false
+          }
+        },
+        "prop": 21,
+        "t": 0.25,
+        "val": null,
+        "vecs": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            1
+          ]
+        ],
+        "sqtol": 1e-24,
+        "signal": false
+      }
+    },
+    {
+      "name": "projected_max_line_derivative_scale_2",
+      "inputs": {
+        "op": "property",
+        "curve": {
+          "line": {
+            "p": [
+              0,
+              0,
+              0
+            ],
+            "v": [
+              1,
+              0,
+              0
+            ],
+            "domain": [
+              0,
+              1
+            ],
+            "scale": 1,
+            "inside_out": false
+          }
+        },
+        "prop": 21,
+        "t": 0.25,
+        "val": null,
+        "vecs": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            2
+          ]
+        ],
+        "sqtol": 1e-24,
+        "signal": false
+      }
+    }
+  ]
+}

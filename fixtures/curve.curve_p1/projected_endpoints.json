@@ -1,0 +1,40 @@
+{
+  "cases": [
+    {
+      "name": "issue_2840_projected_min_beyond_end",
+      "inputs": {
+        "op": "gps",
+        "curve": {"bspline": {"dim": 3, "cpts": [[0, 0, 0, 1], [0.001, 0, 0, 1]], "p": 1, "u": [0, 0, 1, 1]}},
+        "ivl": [0, 1], "sop": 14, "p": [0.02, 0.0004, 0.009],
+        "tol": 1e-10, "target": null, "vecs": [[0, 0, 1]], "req": 0
+      }
+    },
+    {
+      "name": "issue_2840_projected_max_beyond_end",
+      "inputs": {
+        "op": "gps",
+        "curve": {"bspline": {"dim": 3, "cpts": [[0, 0, 0, 1], [0.001, 0, 0, 1]], "p": 1, "u": [0, 0, 1, 1]}},
+        "ivl": [0, 1], "sop": 15, "p": [0.02, 0.0004, 0.009],
+        "tol": 1e-10, "target": null, "vecs": [[0, 0, 1]], "req": 0
+      }
+    },
+    {
+      "name": "issue_2840_projected_min_before_start",
+      "inputs": {
+        "op": "gps",
+        "curve": {"bspline": {"dim": 3, "cpts": [[0, 0, 0, 1], [0.001, 0, 0, 1]], "p": 1, "u": [0, 0, 1, 1]}},
+        "ivl": [0, 1], "sop": 14, "p": [-0.02, 0.0004, 0.009],
+        "tol": 1e-10, "target": null, "vecs": [[0, 0, 1]], "req": 0
+      }
+    },
+    {
+      "name": "issue_2840_projected_max_before_start",
+      "inputs": {
+        "op": "gps",
+        "curve": {"bspline": {"dim": 3, "cpts": [[0, 0, 0, 1], [0.001, 0, 0, 1]], "p": 1, "u": [0, 0, 1, 1]}},
+        "ivl": [0, 1], "sop": 15, "p": [-0.02, 0.0004, 0.009],
+        "tol": 1e-10, "target": null, "vecs": [[0, 0, 1]], "req": 0
+      }
+    }
+  ]
+}
