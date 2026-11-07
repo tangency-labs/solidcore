@@ -73,13 +73,16 @@ nonempty output and admissible native parameters. It introduces no accuracy
 threshold and makes no maximum certificate claim. The separate defining-boundary
 construction in #2840 owns this solver behavior; a stacked validation is pending.
 
-Affected goldens, Clippy, wasm and broader integration checks remain pending
+Affected goldens, wasm and broader integration checks remain pending
 at this draft checkpoint. No expected output or tolerance has been changed.
 
 The final three public regressions also pass as a standalone test binary linked to
 the freshly rebuilt corrected kernel. The native plot exporter is compiled against
 each kernel and the plot script checks that the native points are identical before
-labeling the second panel as After. Private tests and lint checks are still queued.
+labeling the second panel as After. The normal Cargo run also passes all three public tests, eight existing private
+IsoCurve tests, and strict library/tests Clippy. Changed Rust files pass rustfmt.
+Full workspace `cargo fmt --all --check` encounters Windows command-length error
+206 before formatting, so that workspace check remains for Linux.
 
 
 ## Independent continuity-cohort audit
