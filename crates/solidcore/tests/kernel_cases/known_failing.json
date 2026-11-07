@@ -57,7 +57,7 @@
   {
     "case": "fillets/cov-fillet-g2-oblique-three-edge-corner",
     "issue": "tangency-labs/solidcore#2697",
-    "reason": "the G2 setback corner (blend_setback_open) waits on the certified G2 corner fill; each edge's equal-area thumbweight is resolved at every station from its own wedge already, and SMLib d01d7b0 fails it too"
+    "reason": "not run here: the corner is a blend_setback_open call, which the rig has not ported yet; it waits on that port and on the certified G2 corner fill"
   },
   {
     "case": "fillets/cov-fillet-g2-pocket-corner",
