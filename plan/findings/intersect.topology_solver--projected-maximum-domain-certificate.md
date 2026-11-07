@@ -285,3 +285,70 @@ checks on the changed Rust files also pass. Actual full affected-unit golden
 capture remains a separate integration gate; no golden has been automatically
 blessed by this construction change. Existing figures depict the same
 sphere/torus geometries; no new render is claimed here.
+
+### Golden metadata audit of the native construction
+
+The seven `analytic_face_*_5_15` cases now return successful native solutions.
+The runner's compressed `values.static.block` change is not itself a distance
+change: `crates/goldens/src/units/intersect_topology_solver_p2.rs` flattens the
+solution type, parameter/object counts, object IDs, scalar, UV, and five node
+presence flags into one array. `crates/goldens/src/golden.rs` then stores its
+sum, absolute sum and position-weighted sum.
+
+The prior point/curve route copied the temporary curve solver's two tree nodes
+into the renamed face solution. The native construction does not traverse those
+curve trees and leaves these optional provenance fields null. The field contract
+in `geom::solution_array::Solution::nodes` is "tree nodes the solution was found
+in", not a surface parameter or a feasibility certificate. Existing analytic
+line/ellipse constructions also clear node handles. The topology candidate and
+whole-face proofs use the named object and native parameters, not these nodes;
+temporary silhouette-curve nodes must not be fabricated as face provenance.
+
+For these fixtures the flags occupy static-vector indices 14 and 15. Changing
+two ones to zeros therefore changes the three stored sums by exactly
+`(-2, -2, -31)`. The hosted differences have this pattern. The raw `cf11091a9` baseline and actual `0a085981d` outputs confirm that the
+first five cases have identical scalar and UV. The two torus cases change as
+follows (all native domains contain the parameters):
+
+| Case | Old UV | New UV | Old scalar | New scalar |
+|---|---|---|---|---|
+| Full torus | `(.5,.973792780432655)` | `(.5,.9737927798795768)` | `1.5652946437965907` | `1.565294643796591` |
+| Half torus | `(1,.973792780432655)` | `(.9999999999999999,.9737927796622545)` | `1.5652946437965907` | `1.565294643796591` |
+
+An independent public evaluator constructs each stored native torus from the
+fixture, evaluates those exact UV values, and recomputes the requested double-cross
+metric. All four scalars agree **exactly** with the raw records. The new native
+points are `(-.03801429688152889,-1.2470929242868016,-2)` and
+`(-.03801429720296449,-1.24709292423735,-1.9999999999999991)`. The change is a
+one-ULP scalar improvement with nearby parameter representatives, not a lost
+parameter or a lower objective. The native point and whole-face proof controls
+above remain the acceptance evidence; ideal closed forms are only an independent
+geometric diagnostic.
+
+Reproducible evidence:
+
+- [Seven frozen inputs and raw before/after records](diagnostics/native_face_proposal_seven_records.jsonl), including each exact expected record at `0a085981d`.
+- [Field/domain/closed-form checker](diagnostics/native_face_proposal_seven_check.py).
+- [Standalone native torus evaluator](diagnostics/native_face_proposal_torus_evaluate.rs).
+
+Run `python plan/findings/diagnostics/native_face_proposal_seven_check.py`.
+Optionally compile the evaluator against the audited kernel rlib and pass
+`--native-exe <evaluator>` to re-evaluate all four native points. The captured
+public evaluator linked `33c941ad4` (the torus/revolution definitions and residual
+are identical to `0a085981d`), with immutable rlib SHA256
+`3695c1f4be98facfb38467381cec46b0269b6a9f16d512c1efd36fc4b8127379`.
+It performs no solver call and introduces no tolerance.
+
+The exact-head full unit run contains 2575 cases, exactly these seven golden
+changes, no additions/removals and no broken case. The saved expected records
+also preserve the distinction from `cf11091a9`: the old sphere-band golden had
+an approximately `3e-14` UV difference already absent from that raw baseline.
+Only the seven actual runner records are justified for migration; this evidence
+commit does not modify expectations or synthesize golden numeric records.
+
+The subsequent golden migration copies exactly those seven rows from an isolated
+capture of the actual `0a085981d` runner. All 2,560 other stored rows remain
+unchanged; eight existing excluded cases are not stored in the expected file.
+The complete case set still has 2,575 cases. Each migrated compressed block was
+checked against the frozen raw array above, and every non-static output field
+and record metadata field is unchanged. No exclusion or tolerance is added.
