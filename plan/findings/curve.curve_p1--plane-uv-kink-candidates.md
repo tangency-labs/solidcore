@@ -245,3 +245,13 @@ extrapolation refusal and reflected-break query scoping. The metadata success
 control passes alongside direct and outer-wrapper projected refusal controls.
 Formatting and diff checks pass. Strict Clippy, panic inventory and integrated
 golden replay remain pending; no ready or complete claim is made for this draft.
+### Integrated metadata golden capture
+
+The optimized runner built at `3407928fb` regenerated `curve.offset_curve` in an
+isolated golden directory. Exactly the 19 independently audited metadata records
+changed; every captured status and output array equals its independently derived
+`expected_metadata` in `projected_offset_reversal_proof_green.jsonl`. Every other
+record is byte-equivalent as parsed data, and there are no added, removed or
+broken cases. These 19 records are now committed. The four broad 1007 refusals
+are not blessed: the metadata API succeeds with rounded reflected knots. No
+curve evaluator, tolerance or comparison floor changes in this migration.
