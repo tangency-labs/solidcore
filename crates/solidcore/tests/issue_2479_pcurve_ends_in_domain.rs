@@ -128,8 +128,10 @@ const CASES: &[Case] = &[
 /// cross-section 0) end an ulp past `v = 1` with the fix too, and so does one trim of the
 /// box bottom's rounds (cross-section 1) at `u = 1`, which the face shrink keeps since it
 /// keeps trims on a trim that keeps the surface's map (WR-700; it removed and projected
-/// them again before). That code is being replaced by the generic blend (AGENTS.md §4b),
-/// so they are surveyed, not asserted.
+/// them again before; recorded in
+/// `plan/findings/blend.fillet_executive--box-bottom-round-trim-ends-an-ulp-past-its-domain.md`).
+/// That code is being replaced by the generic blend (AGENTS.md §4b), so they are surveyed,
+/// not asserted.
 const SURVEY_ONLY: &[Case] = &[
     ("chamfered box top", |k| {
         let mut plate = create_box(k, p(0.0, 0.0, 0.0), 30.0, 20.0, 10.0).unwrap();
