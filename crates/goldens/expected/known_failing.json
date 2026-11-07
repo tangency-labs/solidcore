@@ -5,7 +5,8 @@
     "real-box-high-corner-setback-eight": "tangency-labs/solidcore#2933: the corner patch overruns the setback of 8 along the top round and folds (pinched creases, two sliver faces); edge tolerance 5.17e-5"
   },
   "offset.offset_executive_p1": {
-    "extend_bilinear_huge": "tangency-labs/solidcore#3000: a 5e8 extension of a bilinear sheet extends 3 of 4 sides; the opposite side's diameter is rounded on the whole net and reads as collapsed"
+    "extend_bilinear_huge": "tangency-labs/solidcore#3000: a 5e8 extension of a bilinear sheet extends 3 of 4 sides; the opposite side's diameter is rounded on the whole net and reads as collapsed",
+    "gen0445": "tangency-labs/solidcore#3000: extended 5e7 on every side, UMax reads as collapsed (its ends 1.0 apart) and is not extended; the v sides are certified at the grown box's middle and reach 18.6 and 13.4 at the face (tangency-labs/solidcore#3057)"
   },
   "offset.offset_executive_p2": {
     "fuzz00108": "tangency-labs/solidcore#3023: the edge's arc crosses its closed offset curve's seam, no interval gives it; the edge is left bad and status is success",
