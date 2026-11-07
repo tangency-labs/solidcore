@@ -994,6 +994,8 @@ pub fn blend_ordered(
     )
 }
 
+/// [`blend`] and [`blend_ordered`]: the edges and setback vertices picked natively or through
+/// `order`, blended with every pass turning as `turn`.
 fn blend_impl(
     body: &Body,
     order: Option<&crate::Order>,
@@ -1519,6 +1521,7 @@ fn chamfer_sides_impl(
             earlier: &[],
             patches: false,
             overflow: None,
+            // a swept turn is a round's: these are chamfers
             turn: Turn::Mitre,
         };
         if let Err(e) = pass_or_refuse(k, b, p)? {
@@ -1725,6 +1728,7 @@ fn fillet_variable_impl(
             earlier: &[],
             patches: false,
             overflow: None,
+            // one edge: no two rounds meet to turn
             turn: Turn::Mitre,
         };
         if let Err(e) = pass_or_refuse(k, b, p)? {
