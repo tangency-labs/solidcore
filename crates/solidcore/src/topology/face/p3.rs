@@ -2369,18 +2369,20 @@ fn remove_intersection_entry(
     types: &mut Vec<TsectCurveType>,
     ii: usize,
 ) {
-    if ii < curves.len() {
-        curves.remove(ii);
-    }
-    if ii < uv1.len() {
-        uv1.remove(ii);
-    }
-    if ii < uv2.len() {
-        uv2.remove(ii);
-    }
-    if ii < types.len() {
-        types.remove(ii);
-    }
+    drop_entry(curves, ii);
+    drop_entry(uv1, ii);
+    drop_entry(uv2, ii);
+    drop_entry(types, ii);
+}
+
+/// Drops entry `ii` of `list`, if it has one, keeping the others in order.
+fn drop_entry<T>(list: &mut Vec<T>, ii: usize) {
+    let mut at = 0;
+    list.retain(|_| {
+        let keep = at != ii;
+        at += 1;
+        keep
+    });
 }
 
 /// `FaceIntersect`: the curves (and, when asked, points) where face `f` meets
