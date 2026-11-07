@@ -217,3 +217,76 @@ this change's endpoint-enclosure API and bounded endpoint reduction. The ledger,
 native face construction and fresh-request hook do not overlap that checkpoint's
 production changes. Merge the final parent stack once, do not rebase, and rerun the
 frozen output comparison and focused lifecycle checks on the merged head.
+
+
+### Executable native audit protocol
+
+`run_affine_face_audit_3110.py` uses existing rlibs only. It runs its standalone
+Rust compiler and replays under `nice -n 10`, and requires every scratch file,
+executable and log to be inside a designated artifact/storage directory. The
+baseline validator now checks the two pinned hashes above before trusting case
+counts or writing its manifest. The final fixture/generator freeze must match the
+original bytes, preserving signed zero and other representation details.
+
+Run three labeled replays: the historical `cf11091a9` build, the immediate parent,
+and the final #3110 build. The historical build must reproduce its pinned outputs;
+the immediate-parent comparison separates inherited proposal changes from this
+PR's native pair changes. Supply exact rlib filenames from each build rather than
+choosing the newest cache file by timestamp. The script records their content
+hashes; its operator-supplied revision label does **not** independently prove rlib
+origin. Associate those hashes with the exact-head build log before presenting the
+results as final validation.
+
+With `REPO`, `STORAGE`, `ARTIFACTS`, `DEPS`, and the three `*_RLIB` variables set to
+the reviewed build and designated artifact storage, the commands are:
+
+```sh
+python "$REPO/plan/findings/diagnostics/freeze_affine_face_audit_3110.py" "$ARTIFACTS"
+python "$REPO/plan/findings/diagnostics/run_affine_face_audit_3110.py" \
+  --repo "$REPO" --storage-root "$STORAGE" --artifact-dir "$ARTIFACTS" \
+  --deps "$DEPS" --goldens-rlib "$GOLDENS_RLIB" \
+  --solidcore-rlib "$SOLIDCORE_RLIB" --serde-json-rlib "$SERDE_JSON_RLIB" \
+  --revision "$BUILT_HEAD" --proof-revision "$PAIR_HEAD" --label "$RUN_LABEL"
+```
+
+For the historical replay add `--case-root "$ARTIFACTS/input-root"
+--expect-baseline`. For the final replay add
+`--reference-outputs "$ARTIFACTS/$PARENT_LABEL/outputs.jsonl"
+--expect-certified`. Use a new label on every attempt; the tool will not overwrite
+the pinned before directory or an existing attempt. The point/residual audit uses
+a mechanically import-adapted copy of the explicitly identified proof source,
+recording both source hashes. This permits the same independently reviewed native
+certificate to examine historical outputs without pretending the historical
+solver implemented it.
+
+The native audit recreates the adapter's exact line and analytic surface
+constructors, then checks each actual returned endpoint and UV. Curve controls,
+normal and requested interval are constants in the adapter, not fixture JSON
+fields: the driver pins the full adapter source hash
+`ab07e2085d02e1025ea981d9456b54fd819e0feb42b32b0471752f7eeb83dcc8`,
+saves that source and its explicit geometry contract, and refuses source drift.
+The native helper verifies that contract plus each input's entry, operation,
+request and inclusion flag; each surface is reconstructed from its actual input. Its point
+arithmetic follows the defining endpoint's division by its stored unit weight,
+the default native surface knot side, and the same outward double-cross norm.
+Both endpoint residuals must fit that retained point's own upper enclosure. The
+negative control is one representable value below the rigorous witness enclosure's
+lower endpoint, rather than below an unqualified rounded scalar. A failed global
+certificate is reported as unproved, not automatically as a counterexample; a
+scalar outside its own native enclosure is a distinct attainment failure.
+
+The driver writes all changed outputs, every refusal, native obligations and
+source/library hashes before applying its final gates. `--expect-certified`
+requires all fourteen native rows to satisfy every obligation and no new refusal
+against either historical or immediate-parent output. Failure requires
+investigation, not tolerance changes, golden replacement or new exclusions.
+The prepared native helper and orchestration still require their first executable
+replay; syntax/format checks alone are not native proof evidence.
+
+
+The merged production checkpoint `17353d3ac` passed all 28 native/history tests,
+all 15 generic global-solver tests and strict library/tests Clippy after the
+reviewed parent native-proposal repair was integrated. These are kernel test
+results, not a claim that the prepared standalone native audit has run. The
+immediate-parent evidence/golden-only follow-up does not change kernel sources;
+its source identity is checked separately when propagated.
