@@ -83,13 +83,14 @@ pub(super) fn blend_extended(
     k: &Kernel,
     pb: &ProceduralBlend,
     dom: &Extent2d,
+    at: &Extent2d,
     side: BoxSide,
     distance: f64,
-) -> Result<Extended> {
+) -> Result<Option<Extended>> {
     let (a, b, swapped) = pb.definition_map();
     // the definition's s is the net's u, its t the net's v (the other way round swapped)
     if side.is_u() != swapped {
-        return along(k, pb, dom, side, distance);
+        return along(k, pb, dom, at, side, distance);
     }
     let order = pb.order();
     let n = order as usize;
@@ -100,13 +101,17 @@ pub(super) fn blend_extended(
         _ => 3 * n + 1,
     };
     let source_net = pb.net.gw_nurb().ok_or_else(|| SolidError::sm_err(OP))?;
-    let grown = Surface::from(pb.net.clone()).extended_by_distance(
+    // a distance below the net side's resolution: none (the blend as it is)
+    let Some(grown) = Surface::from(pb.net.clone()).extended_by_distance(
         k,
         dom,
         side,
         Continuity::Natural,
         distance,
-    )?;
+    )?
+    else {
+        return Ok(None);
+    };
     let SurfaceKind::BSpline(net) = grown.surface.kind() else {
         return Err(SolidError::port_invariant(
             OP,
@@ -177,10 +182,10 @@ pub(super) fn blend_extended(
     };
     out.def.bound = bound;
     out.renew();
-    Ok(Extended {
+    Ok(Some(Extended {
         surface: Surface::from(out),
         ..grown
-    })
+    }))
 }
 
 /// The thumbweight of `pb`'s G^n section over its face, `[lo, hi]`: a constant one, or the
@@ -297,9 +302,10 @@ fn along(
     k: &Kernel,
     pb: &ProceduralBlend,
     dom: &Extent2d,
+    at: &Extent2d,
     side: BoxSide,
     distance: f64,
-) -> Result<Extended> {
+) -> Result<Option<Extended>> {
     let (a, b, swapped) = pb.definition_map();
     let t_of = |q: f64| a[1] + b[1] * q;
     if swapped || t_of(dom.min().y) != 0.0 || t_of(dom.max().y) != 1.0 {
@@ -340,6 +346,8 @@ fn along(
     }
     let target = pb.bound();
     let rate = b[0].abs();
+    // the shortest span the net's knot fixup keeps where two pieces join, as at the side
+    let least = source.least_step()?;
     // the definition and its spans from the side to s_new for the ask e (in the net's
     // parameter), outward, each with its part `[x, y]` in s
     let pieces_of = |e: f64| -> Result<Option<(ProceduralBlend, Vec<Piece>)>> {
@@ -369,10 +377,17 @@ fn along(
                 }
                 Err(e) => return Err(e),
             };
+            let length = (y - x) / rate;
+            // a piece clipped shorter than a span the knot fixup keeps (the side just before a
+            // station, or the ask just past one) would join on a knot it merges or spreads
+            // (the source's net not kept): an ask that does not work, as a weight not positive
+            if length < least {
+                return Ok(None);
+            }
             pieces.push(Piece {
                 span,
                 part: [(x - sa) / (sb - sa), (y - sa) / (sb - sa)],
-                length: (y - x) / rate,
+                length,
             });
         }
         if !up {
@@ -407,12 +422,15 @@ fn along(
         )))
     };
     let across =
-        |m: &Option<Surface>| match m.as_ref().map(|s| s.length_across_side(k, dom, side, REL)) {
+        |m: &Option<Surface>| match m.as_ref().map(|s| s.length_across_side(k, at, side, REL)) {
             None | Some(Err(SolidError::NotConverged { .. })) => Ok(None),
             Some(Ok(a)) => Ok(Some(a)),
             Some(Err(e)) => Err(e),
         };
-    let ((surface, extension), enclosure) = solve(&made, &across, &source, distance)?;
+    // a distance below the side's resolution: none (the blend as it is)
+    let Some(((surface, extension), enclosure)) = solve(&made, &across, &source, distance)? else {
+        return Ok(None);
+    };
     let surface = surface.ok_or_else(op_err)?;
     let SurfaceKind::BSpline(net) = surface.kind() else {
         return Err(SolidError::port_invariant(
@@ -454,14 +472,14 @@ fn along(
     };
     out.def.bound = pb.bound().max(piece + floor + extension) * (1.0 + gamma(2));
     out.renew();
-    Ok(Extended {
+    Ok(Some(Extended {
         surface: Surface::from(out),
         source: 0.0,
         extension,
         across: enclosure,
         dom: *dom,
         sides: BoxSide::ALL,
-    })
+    }))
 }
 
 /// One span of a definition an extension along its spine runs: the span, the part of it
@@ -643,6 +661,7 @@ fn continued_curve(c: &BSplineCurve, s_new: f64, up: bool) -> Result<BSplineCurv
         p,
         rational,
         err: 0.0,
+        err_w: 0.0,
         q: 0,
         frame: None,
         across: Vec::new(),
