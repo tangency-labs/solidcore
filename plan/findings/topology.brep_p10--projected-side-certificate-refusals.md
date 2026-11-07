@@ -13,6 +13,12 @@ control points below that line except for their endpoints on it. Bernstein
 convexity proves their interiors lie below it. These are geometric checks,
 independent of a golden's previous output.
 
+![Before-fix cutter and face votes](figures/projected-side-certificate-refusals.png)
+
+The same view applies after the caller change: neither the cutter nor the face
+is changed. The narrow-gap operation returns its certificate refusal rather
+than deleting a face from an uncertified vote.
+
 ## Measured failure
 
 At knot gaps 1.5e-12 and 1.9e-12, the rectangle's vertex and midpoint side
@@ -56,3 +62,22 @@ cargo test -p solidcore --lib projected_vote_preserves_refusal_and_control_signa
 ```
 
 Green validation is pending. No golden has been blessed.
+
+## Intended golden change
+
+Exactly these eight cases must change from successful reversed classification
+(KeepPoint: zero faces; DeletePoint: one face) to status 1021 with no successful
+result. The public test additionally verifies that classification-only refusal
+leaves the original face present.
+
+| fixture family | gaps | modes |
+|---|---|---|
+| `raw_vote_vertex` | `1.5e-12`, `1.9e-12` | `trim0`, `trim1` |
+| `raw_vote_midpoint` | `1.5e-12`, `1.9e-12` | `trim0`, `trim1` |
+
+The four gap-1e-8 controls must keep their successful face counts 1 / 0.
+The ordinary `project_t0_Defeature_inset_cube`,
+`project_t1_Defeature_inset_cube`, `project_t0_Defeature_brep1`, and
+`project_tols_inset_cube` are independently handled by the parent's representable
+minimum certificate; they must not be swept into this refusal justification.
+
