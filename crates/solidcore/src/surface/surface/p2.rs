@@ -68,9 +68,10 @@
 //! - **`SwapUV` keeps an analytic's definition (WR-701).** As the fork's
 //!   tangency-labs/smlib@0c00de7 (`SwapUVDefinition`), a cone, sphere, torus or surface
 //!   of revolution swapped by [`Surface::swap_uv`] keeps its frame, generator and
-//!   domains, and only rebuilds its polar converter on the transposed net (its status
-//!   passed on). A plane keeps the definition its `ToggleSwapUVBit` swapped. Upstream
-//!   re-derives each from the net, status ignored.
+//!   domains, and only rebuilds its polar converter on the transposed net. The swap is
+//!   made on a copy first: a net the converter refuses fails the swap with the surface as
+//!   it was and nothing notified. A plane keeps the definition its `ToggleSwapUVBit`
+//!   swapped. Upstream re-derives each from the net, status ignored.
 //! - **Output arrays.** `GlobalSurfaceIntersect`'s output arrays are a
 //!   `&mut SurfaceIntersection` threaded through the kind dispatchers and the special
 //!   cases that can fail after appending (the `*_into` functions), so a failure leaves in
@@ -3460,53 +3461,47 @@ impl Surface {
                 )
             }
             SurfaceKind::Plane(s) => s.swap_uv_notifying(&mut own),
+            // A cone, sphere, torus or surface of revolution keeps its definition (WR-701, the
+            // fork's 0c00de7 `SwapUVDefinition`): the swap bit and the transposed net, and the
+            // polar converter made again on that net. The swap is made on a copy first, so a
+            // net the converter refuses leaves the surface as it was, with nothing notified;
+            // then the surface itself is swapped with its notifications and takes the copy.
             SurfaceKind::Cone(s) => {
-                // SmBSplineSurface::SwapUV: the inherited
-                // SmSurfOfRevolution::ToggleSwapUVBit before SetCanonical's notifications
-                // (restored on failure), the NURB swap, then (WR-701, the fork's 0c00de7)
-                // SmSurfOfRevolution::SwapUVDefinition: the polar converter made again on
-                // the transposed net (SER)
-                s.rev.toggle_swap_uv_bit();
-                if let Err(e) = s.base_mut().swap_uv_notifying(&mut own) {
-                    s.rev.toggle_swap_uv_bit();
-                    return Err(e);
-                }
-                s.rebuild_cone_polar_converter(k)
+                let mut swapped = s.clone();
+                swapped.rev.toggle_swap_uv_bit();
+                swapped.base_mut().swap_uv()?;
+                swapped.rebuild_cone_polar_converter(k)?;
+                s.base_mut().swap_uv_notifying(&mut own)?;
+                *s = swapped;
+                Ok(())
             }
             SurfaceKind::Sphere(s) => {
-                // SmBSplineSurface::SwapUV: the inherited
-                // SmSurfOfRevolution::ToggleSwapUVBit before SetCanonical's notifications
-                // (restored on failure), the NURB swap, then (WR-701, the fork's 0c00de7)
-                // SmSurfOfRevolution::SwapUVDefinition
-                s.base.toggle_swap_uv_bit();
-                if let Err(e) = s.base.base_mut().swap_uv_notifying(&mut own) {
-                    s.base.toggle_swap_uv_bit();
-                    return Err(e);
-                }
-                s.rebuild_polar_converter(k)
+                let mut swapped = s.clone();
+                swapped.base.toggle_swap_uv_bit();
+                swapped.base.base_mut().swap_uv()?;
+                swapped.rebuild_polar_converter(k)?;
+                s.base.base_mut().swap_uv_notifying(&mut own)?;
+                *s = swapped;
+                Ok(())
             }
             SurfaceKind::Torus(s) => {
-                // SmBSplineSurface::SwapUV: the inherited
-                // SmSurfOfRevolution::ToggleSwapUVBit before SetCanonical's notifications
-                // (restored on failure), the NURB swap, then (WR-701, the fork's 0c00de7)
-                // SmSurfOfRevolution::SwapUVDefinition
-                s.base.toggle_swap_uv_bit();
-                if let Err(e) = s.base.base_mut().swap_uv_notifying(&mut own) {
-                    s.base.toggle_swap_uv_bit();
-                    return Err(e);
-                }
-                s.rebuild_polar_converter(k)
+                let mut swapped = s.clone();
+                swapped.base.toggle_swap_uv_bit();
+                swapped.base.base_mut().swap_uv()?;
+                swapped.rebuild_polar_converter(k)?;
+                s.base.base_mut().swap_uv_notifying(&mut own)?;
+                *s = swapped;
+                Ok(())
             }
             SurfaceKind::SurfOfRevolution(s) => {
-                // As in `reverse`: the stored NURB stands for GetOrCreateGwNurbPointer;
-                // the bit toggles before SetCanonical's notifications (restored on failure).
-                s.toggle_swap_uv_bit();
-                if let Err(e) = s.base_mut().swap_uv_notifying(&mut own) {
-                    s.toggle_swap_uv_bit();
-                    return Err(e);
-                }
-                // WR-701 (fork 0c00de7): SmSurfOfRevolution::SwapUVDefinition
-                s.rebuild_polar_converter(k, &SurfOfRevolution::own_sweep_iso)
+                // the stored NURB stands for GetOrCreateGwNurbPointer, as in `reverse`
+                let mut swapped = s.clone();
+                swapped.toggle_swap_uv_bit();
+                swapped.base_mut().swap_uv()?;
+                swapped.rebuild_polar_converter(k, &SurfOfRevolution::own_sweep_iso)?;
+                s.base_mut().swap_uv_notifying(&mut own)?;
+                *s = swapped;
+                Ok(())
             }
             SurfaceKind::SurfOfExtrusion(s) => {
                 // SmBSplineSurface::SwapUV: GetCanonical's GetOrCreateGwNurbPointer (the
