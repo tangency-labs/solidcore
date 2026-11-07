@@ -16,10 +16,12 @@ from compare_projected_pair_audit_3060 import status
 
 
 def digest(path):
+    """Fingerprint the exact artifact bytes used by this replay."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def main():
+    """Compile standalone auditors, replay frozen inputs and report all proof gates."""
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("repo", "storage-root", "artifact-dir", "deps", "goldens-rlib", "solidcore-rlib", "serde-json-rlib"):
         parser.add_argument("--" + name, type=Path, required=True)
@@ -124,12 +126,14 @@ def main():
             == {r["case"] for r in after if r["focal_native_pair"]}, "native audit case set changed")
     obligations = ("admissible", "report_in_own_enclosure", "native_metric_in_own_enclosure",
                    "left_domain_proved", "right_domain_proved", "reduced_threshold_refused")
+    audit_errors = [r["case"] for r in native if "native_audit_error" in r]
     failed = [r["case"] for r in native if "native_audit_error" in r
               or not all(r.get("native", {}).get(key) is True for key in obligations)]
     summary = {"cases": len(after), "changed": sum(r["changed"] for r in changes),
         "new_refusals": sum(r["new_refusal"] for r in changes),
         "decode_errors": sum(r["decode_error"] is not None for r in changes),
-        "native_cases": len(native), "native_unproved_or_invalid": failed,
+        "native_cases": len(native), "native_audit_errors": audit_errors,
+        "native_unproved_or_invalid": failed,
         "after_outputs_sha256": digest(out / "outputs.jsonl"), "provenance": provenance}
     if args.reference_outputs:
         reference = rows(args.reference_outputs)
@@ -151,6 +155,7 @@ def main():
     (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(summary, indent=2))
     require(summary["decode_errors"] == 0, "output decoding failed")
+    require(not audit_errors, "native audit could not evaluate its declared geometry contract")
     if args.expect_certified:
         require(not failed and summary["new_refusals"] == 0
                 and summary.get("immediate_parent", {}).get("new_refusals", 0) == 0,

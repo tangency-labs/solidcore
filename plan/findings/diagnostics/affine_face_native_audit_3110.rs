@@ -27,6 +27,7 @@ use std::io::{self, Write};
 type AuditResult<T> = Result<T, Box<dyn std::error::Error>>;
 // These frozen canonical nets are continuous. The singleton uses the native
 // right-hand span, except at the last natural endpoint; no two-sided hull.
+/// Enumerate continuous native knot pieces and choose the default singleton side.
 fn knot_cuts(
     knots: &[f64],
     p: usize,
@@ -54,9 +55,11 @@ fn knot_cuts(
         })
         .collect())
 }
+/// Require a numeric field from the immutable diagnostic record.
 fn number(v: &Value) -> AuditResult<f64> {
     Ok(v.as_f64().ok_or("missing number")?)
 }
+/// Decode a three-coordinate vector without supplying missing defaults.
 fn vector(v: &Value) -> AuditResult<Vec3> {
     let a = v.as_array().ok_or("missing vector")?;
     if a.len() != 3 {
@@ -64,6 +67,7 @@ fn vector(v: &Value) -> AuditResult<Vec3> {
     }
     Ok(Vec3::new(number(&a[0])?, number(&a[1])?, number(&a[2])?))
 }
+/// Rebuild the canonical native surface using the pinned adapter formulas.
 fn surface(k: &Kernel, s: &Value) -> AuditResult<Surface> {
     let x = vector(&s["x"])?;
     let y = vector(&s["y"])?;
@@ -145,11 +149,13 @@ fn surface(k: &Kernel, s: &Value) -> AuditResult<Surface> {
         _ => return Err("unsupported frozen surface kind".into()),
     })
 }
+/// Enclose a defining line endpoint with the production control-weight division.
 fn endpoint(x: f64) -> [Ivl; 3] {
     // Same defining-control division as affine_point_definition_enclosure:
     // the original nonrational degree-one curve stores NOW, interpreted as 1.
     [x, 0., 0.].map(|a| Ivl::from(a) / Ivl::from(1.))
 }
+/// Preserve the production interval cross-product operation order.
 fn cross(a: [Ivl; 3], b: [Ivl; 3]) -> [Ivl; 3] {
     [
         a[1] * b[2] - a[2] * b[1],
@@ -157,6 +163,7 @@ fn cross(a: [Ivl; 3], b: [Ivl; 3]) -> [Ivl; 3] {
         a[0] * b[1] - a[1] * b[0],
     ]
 }
+/// Enclose only the returned native point pair and its arithmetic rounding.
 fn own_metric(net: &Nurbs, uv: Vec2, q: [Ivl; 3]) -> solidcore::Result<Ivl> {
     let u = knot_cuts(&net.u, net.p, net.nu, uv.x, uv.x, 0)?[0].2;
     let v = knot_cuts(&net.v, net.q, net.nv, uv.y, uv.y, 0)?[0].2;
@@ -166,6 +173,7 @@ fn own_metric(net: &Nurbs, uv: Vec2, q: [Ivl; 3]) -> solidcore::Result<Ivl> {
     let square = |v: Ivl| Ivl::checked(v.mig() * v.mig(), v.mag() * v.mag());
     Ok(((square(d[0]) + square(d[1])) + square(d[2])).sqrt())
 }
+/// Check one focal output against its input, adapter contract and native domain.
 fn audit(row: &Value, contract: &Value) -> AuditResult<Value> {
     if contract["adapter_source_sha256"]
         != "ab07e2085d02e1025ea981d9456b54fd819e0feb42b32b0471752f7eeb83dcc8"
@@ -234,7 +242,8 @@ fn audit(row: &Value, contract: &Value) -> AuditResult<Value> {
     if t != 0.0 && t != 1.0 {
         return Err("focal endpoint audit received an interior curve parameter".into());
     }
-    let net = Nurbs::of(&as_b_spline(&k, &surface)?.ok_or("missing defining net")?)?;
+    let defining = as_b_spline(&k, &surface)?.ok_or("missing defining net")?;
+    let net = Nurbs::of(defining.as_ref())?;
     let own = own_metric(&net, uv, endpoint(if t == 0.0 { -1.0 } else { 1.0 }))?;
     let left = residual::maximum_is_bounded_from_definition(
         &k,
@@ -274,6 +283,7 @@ fn audit(row: &Value, contract: &Value) -> AuditResult<Value> {
         "left_domain_proved":left,"right_domain_proved":right,
         "reduced_threshold":reduced,"reduced_threshold_basis":"own_enclosure_lower","reduced_threshold_refused":!reduced_proved}))
 }
+/// Emit independent native checks for every focal row without hiding failures.
 fn main() -> AuditResult<()> {
     let file = std::env::args()
         .nth(1)

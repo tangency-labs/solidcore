@@ -7,12 +7,14 @@ use std::{
     io::{self, Write},
     path::PathBuf,
 };
+/// Select the native affine pair fixtures without applying golden exclusions.
 fn focal(input: &Value) -> bool {
     input["op"] == "static"
         && input["operation"] == 15
         && input["request"] == 0
         && matches!(input["entry"].as_u64(), Some(6 | 7))
 }
+/// Decode focal Single answers while retaining explicit non-success states.
 fn decode(case: &Case, output: &goldens::Output) -> Result<Value, &'static str> {
     if !focal(&case.inputs) {
         return Ok(Value::Null);
@@ -63,6 +65,7 @@ fn decode(case: &Case, output: &goldens::Output) -> Result<Value, &'static str> 
     }
     Ok(json!(answers))
 }
+/// Freeze the real runner case list or replay exactly the supplied JSONL inputs.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
     let root = PathBuf::from(args.get(1).ok_or("missing root")?);

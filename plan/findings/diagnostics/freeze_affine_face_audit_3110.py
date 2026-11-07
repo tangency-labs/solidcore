@@ -11,20 +11,24 @@ PINNED = {
 
 
 def require(condition, message):
+    """Reject invalid audit evidence even when Python assertions are disabled."""
     if not condition:
         raise ValueError(message)
 
 
 def rows(path):
+    """Read nonempty JSONL records in their original order."""
     return [json.loads(line) for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
 
 
 def focal(value):
+    """Select the native curve/edge-face Single projected maximum fixtures."""
     return (value.get("op") == "static" and value.get("operation") == 15
             and value.get("request") == 0 and value.get("entry") in (6, 7))
 
 
 def validate(root, write=True):
+    """Check pinned baseline bytes, cohort identity and decoder completeness."""
     root = Path(root)
     hashes = {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in PINNED}
     require(hashes == PINNED, "immutable baseline hash mismatch")
