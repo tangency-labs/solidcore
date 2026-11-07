@@ -1456,7 +1456,7 @@ pub struct UpstreamFixes {
     /// `SmApiConstantRadiusFillet`'s options) keeps them. Upstream's approximated end
     /// section of a round is up to 1.6e-3 (r 2) off the exact section of an analytic round
     /// it joins (the tangent peg's concave torus and the round along the front round's end
-    /// on the cylinder), which the shrink's kept trims (WR-700) and
+    /// on the cylinder), which the face shrink, keeping exact trims, and
     /// the blend corner then leave off their edges (WR-708; the fork's
     /// tangency-labs/smlib@523bc25, smlib#79).
     pub fillet_exact_arc_sections: bool,
