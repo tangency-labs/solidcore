@@ -2728,6 +2728,30 @@ fn a_cylinder_widens_by_small_distances_along_its_axis() {
 
 /// Diagnostic matrix for #2980; retained to reproduce the before/after evidence.
 #[test]
+fn circle_chord_interval_encloses_both_sides_of_a_diameter() {
+    for a in [1e-8, 1e-4, 0.5, PI - 1e-6, PI, PI + 1e-6, 2.0 * PI - 1e-6] {
+        let (r, er, ea) = (1.25, 1e-14, 1e-14);
+        let (length, rounding) = super::measure::circle_from_angle((r, er), (a, ea)).unwrap();
+        for radius in [r - er, r, r + er] {
+            for angle in [a - ea, a, a + ea] {
+                let want = radius * angle;
+                assert!((want - length).abs() <= rounding,
+                    "angle={a:e} want={want:e} length={length:e} rounding={rounding:e}");
+            }
+        }
+    }
+}
+
+#[test]
+fn an_uncertain_circle_turn_does_not_certify_the_short_arc() {
+    let sense = super::measure::turn_sign(Vec3::X, Vec3::X, Vec3::Z, 1e-14, 1e-14);
+    assert!(!sense.1);
+    let a = super::measure::across(super::measure::oriented_arc((1e-6, 1e-14), (1.0, 1e-14), sense).unwrap());
+    assert!(!super::exact(&a, 0.0, 1e-6));
+    assert!(a.enclosure.upper >= 2.0 * PI - 1e-6);
+}
+
+#[test]
 fn a_far_ball_patch_extends_by_the_same_small_distance_as_at_the_origin() {
     use crate::surface::implicit::{lies_on, Implicit};
     let kk = k();

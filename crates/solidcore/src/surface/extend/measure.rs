@@ -3,6 +3,31 @@
 //! Not upstream. Translation is linear in homogeneous coordinates, as in `Local::natural`.
 //! Fused multiply-add forms H - O w with ONE rounding of the local result, rather than
 //! separately rounding O w at the part's position. No recursion.
+//!
+//! # Certificate model
+//!
+//! The stored binary controls and the chosen anchor are exact inputs. Translating
+//! them changes neither the rational map nor its parameterisation. One FMA per
+//! coordinate gives `|delta H| <= gamma_1 |RN(H-Ow)|`; positive rational basis
+//! functions then give a Euclidean perturbation <= `sqrt(3) max|delta H|/w_min`.
+//! `certified_partials` supplies the independent de Boor/projection contribution.
+//! Two such point balls give a chord ball by the triangle inequality and the
+//! Euclidean norm's 1-Lipschitz property. No cancellation condition number divides
+//! this absolute bound. A linear span's difference is evaluated as a scaled FULL
+//! chord, rather than subtracting two rounded, almost equal interpolated points.
+//!
+//! Radius and chord INTERVALS are passed through monotone asin, retaining its
+//! unbounded conditioning at a diameter. An uncertified orientation encloses both
+//! arcs. Construction error is included in these input intervals, not put in a
+//! stop allowance. `local_iso` separately bounds the actual world-restoration
+//! residual, so its already-stored quantisation is not discarded or replaced by
+//! a claim that local evaluation makes construction exact.
+//!
+//! Arithmetic uses Higham, Accuracy and Stability of Numerical Algorithms,
+//! 2nd ed., §§3.1–3.4, with `u=2^-53`, `gamma_n=nu/(1-nu)`, no overflow or
+//! underflow. Nonfinite bounds are refused by exact acceptance. As for the
+//! kernel's other closed forms, sin/asin/cos are modelled with one-ulp error;
+//! this is a separate elementary-function assumption, not a theorem of Higham.
 
 use super::{not_exact, op_err};
 use crate::error::Result;
@@ -110,17 +135,9 @@ pub(super) fn chord(s: &BSplineSurface, a: Point2, b: Point2) -> Result<(f64, f6
 }
 
 fn endpoint_chord(s: &BSplineSurface, a: Point2, b: Point2) -> Result<(f64, f64)> {
-    chord_between(s, a, s, b)
-}
-
-/// Two isopoints from canonical forms sharing one analytic definition. This avoids
-/// measuring the old side at a numerically inverted UV in the rebuilt form.
-pub(super) fn chord_between(
-    s: &BSplineSurface, a: Point2, t: &BSplineSurface, b: Point2,
-) -> Result<(f64, f64)> {
     let origin = s.evaluate_point(a)?;
     let (x, ex) = point(s, a, origin)?;
-    let (y, ey) = point(t, b, origin)?;
+    let (y, ey) = point(s, b, origin)?;
     let chord = (y - x).length();
     // gamma_8: coordinate differences, three squares, two sums and sqrt; adding the
     // two evaluation errors uses the triangle inequality, not independence (Higham §3).
@@ -169,6 +186,48 @@ pub(super) fn arc(chord: (f64, f64), radius: (f64, f64), long: bool) -> Result<(
         return Err(not_exact(None));
     }
     Ok((length, rounding))
+}
+
+/// A sign used to select an arc is certified separately from its length. `e`
+/// bounds each radial vector, `en` the unit normal. A 3x3 scalar triple product
+/// has six products, three differences and a dot product (gamma_32 including
+/// bound arithmetic). Multilinearity encloses the input perturbations.
+pub(super) fn turn_sign(a: Vec3, b: Vec3, n: Vec3, e: f64, en: f64) -> (bool, bool) {
+    let (x, y) = (a.length(), b.length());
+    let value = a.cross(b).dot(n);
+    let error = ((x + y) * e + e * e + en * (x + e) * (y + e)
+        + gamma(32) * x * y) * (1.0 + gamma(16));
+    (value < 0.0, value.abs() > error)
+}
+
+/// Uncertain orientation must enclose BOTH arcs, not silently pick the short one.
+/// The nominal value remains available to bracket a root; infinite/large bounds
+/// cannot pass the existing exactness test.
+pub(super) fn oriented_arc(
+    chord: (f64, f64), radius: (f64, f64), sense: (bool, bool),
+) -> Result<(f64, f64)> {
+    let (length, error) = arc(chord, radius, sense.0)?;
+    let error = if sense.1 { error } else {
+        error + 2.0 * PI * (radius.0 + radius.1) * (1.0 + gamma(8))
+    };
+    Ok((length, error))
+}
+
+/// The side-centred circle offset has chord 2 r sin(angle/2). This evaluates
+/// the difference directly, without subtracting nearly equal radial points.
+/// Angle and radius uncertainties are propagated BEFORE asin. Higham §§3.1–3.4:
+/// gamma_8 covers halving, sine (one ulp), the two products and bound arithmetic;
+/// |sin'| <= 1 supplies the absolute input-angle contribution.
+pub(super) fn circle_from_angle(
+    (r, er): (f64, f64), (angle, ea): (f64, f64),
+) -> Result<(f64, f64)> {
+    let sine = (0.5 * angle).sin().abs();
+    let chord = 2.0 * r * sine;
+    let ec = (2.0 * er * sine + (r + er) * ea + gamma(8) * chord) * (1.0 + gamma(8));
+    let (length, error) = arc((chord, ec), (r, er), angle > PI)?;
+    // If the angle interval straddles PI, the two choices of arc differ by
+    // <= 2 r ea. Include that instead of assuming a reliable branch at a diameter.
+    Ok((length, (error + 2.0 * (r + er) * ea) * (1.0 + gamma(4))))
 }
 
 pub(super) fn across((length, rounding): (f64, f64)) -> Across {
