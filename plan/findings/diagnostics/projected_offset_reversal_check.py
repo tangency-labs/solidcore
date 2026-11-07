@@ -7,9 +7,9 @@ parser.add_argument('--native',type=Path,default=Path(__file__).with_name('proje
 parser.add_argument('--require-success',action='store_true')
 a=parser.parse_args()
 base=Path(__file__).parent
-inputs=list(map(json.loads,(base/'projected_offset_reversal_inputs.jsonl').read_text().splitlines()))
-changes={r['case']:r for r in map(json.loads,(base/'projected_offset_reversal_before_prior.jsonl').read_text().splitlines())}
-native={r['case']:r for r in map(json.loads,a.native.read_text().splitlines())}
+inputs=list(map(json.loads,(base/'projected_offset_reversal_inputs.jsonl').read_text(encoding='utf-8-sig').splitlines()))
+changes={r['case']:r for r in map(json.loads,(base/'projected_offset_reversal_before_prior.jsonl').read_text(encoding='utf-8-sig').splitlines())}
+native={r['case']:r for r in map(json.loads,a.native.read_text(encoding='utf-8-sig').splitlines())}
 proof=[]
 for r in inputs:
  name=r['case'];i=r['input'];record={'case':name,'before':changes[name]['before'],'prior_parent':changes[name]['after'],'current':{k:native[name]['native'][k] for k in ['status','out']}};assert native[name]['native']['status']==record['current']['status'];assert native[name]['native']['out']==record['current']['out']

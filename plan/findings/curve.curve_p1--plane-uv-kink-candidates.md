@@ -145,7 +145,11 @@ indices; their meaning is unchanged by this metadata ordering correction.
 | Reversed continuity index correspondence | gen0082, gen1583, gen1806 | All 3 preserve the prior labels under reversed index order. This does not independently certify inherited absolute nonzero-offset continuity labels. |
 | Overly broad metadata refusal | gen0237, gen0701, gen1381, gen1670 | Prior parent returned 1007 because a reflected float did not map back exactly. This is an API regression, not a golden to bless. Metadata must remain available; numerical certificates check mapping accuracy separately. |
 
-![Reflected knot and query membership](diagnostics/projected_offset_reversal_map.svg)
+![Native gen1381 curve before and after: identical geometry, then six available reflected knot records](diagnostics/projected_offset_reversal_native_plot.png)
+
+The native planar curve is evaluated at the same 257 parameters in both panels.
+Only the metadata overlay changes; this is a sampled geometry plot, not a numerical
+certificate or a VectorCraft schematic. The knot proof below is independent.
 
 For each of the four refusals, the exact rational inverse lies between adjacent
 binary64 wrapper parameters whose evaluator images straddle, but skip, the source
@@ -157,9 +161,11 @@ location as an exactly smooth join would be unsafe.
 
 The existing metadata regression now expects `[0, 0.9, 1]` with multiplicities
 `[2, 1, 2]` although `1-(1-0.1) != 0.1`. It fails with the old 1007 guard against
-the parent kernel. Its integrated green and the separate projected-refusal
-regression are pending the coordinated wrapper validation; no golden has been
-changed by this audit.
+the parent kernel. Both its metadata-success regression and the separate projected-refusal regression
+pass in the coordinated 42-test wrapper run. A preserved regular kernel from that
+run (SHA256 `f84ee61ef8adfc3519216690a7043cf328c7227b00cc821a708ec03c1866a119`)
+passes the standalone native replay and exact independent checker for **all 19**
+records, including the four corrected successes. No golden is changed by this audit.
 
 Reproducible evidence:
 
@@ -176,6 +182,12 @@ native replay against the integrated fix, pass `--native <new-replay.jsonl>
 --require-success` to require all 19 corrected metadata results. No numerical
 tolerance is used in this metadata check; exact binary64 values and rational
 inverse relationships are compared.
+
+Green evidence: [native replay](diagnostics/projected_offset_reversal_native_green.jsonl)
+and [all 19 proofs](diagnostics/projected_offset_reversal_proof_green.jsonl).
+The [geometry plot script](diagnostics/projected_offset_reversal_plot.py) reads
+[actual native evaluations](diagnostics/projected_offset_reversal_native_plot.json),
+exported by the native replay executable with a second `--plot` argument.
 
 ## Nonlinear wrapper definition audit (validation in progress)
 

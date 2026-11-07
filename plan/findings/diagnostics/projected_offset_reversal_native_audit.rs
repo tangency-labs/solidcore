@@ -238,6 +238,32 @@ fn main() {
         let r: serde_json::Value = serde_json::from_str(line).unwrap();
         let i: Inputs = serde_json::from_value(r["input"].clone()).unwrap();
         let (base, c) = build(&i).unwrap();
+        if std::env::args().nth(2).as_deref() == Some("--plot") {
+            if r["case"] == "gen1381" {
+                let samples: Vec<_> = (0..=256)
+                    .map(|j| {
+                        let t = f64::from(j) / 256.0;
+                        let p = c.evaluate_point(&k, t).unwrap();
+                        [t, p.x, p.y, p.z]
+                    })
+                    .collect();
+                let markers: Vec<_> = c
+                    .knots(&k, None)
+                    .unwrap()
+                    .0
+                    .into_iter()
+                    .map(|t| {
+                        let p = c.evaluate_point(&k, t).unwrap();
+                        [t, p.x, p.y, p.z]
+                    })
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::json!({"case":r["case"],"native_samples":samples,"rounded_knot_points":markers})
+                );
+            }
+            continue;
+        }
         let native = match &i.op {
             OpIn::Knots { ivl, mults } => {
                 let interval = ivl.map(|[a, b]| Extent1d::from_min_max(a, b));
