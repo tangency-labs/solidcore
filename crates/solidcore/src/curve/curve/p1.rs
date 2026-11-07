@@ -1876,6 +1876,57 @@ impl AffineDefinition {
         (bound.lo.is_finite() && bound.hi.is_finite()).then_some(bound)
     }
 
+    /// Lower-bound the full projected carrier in a frame centered at `t`.
+    /// For X = P(C(t)-Q) and a nonzero projected direction D, completing the
+    /// square gives min_s |X+sD|^2 = |X|^2 - (X.D)^2 / |D|^2. The carrier
+    /// contains the requested span, so this is also its lower bound. Centering
+    /// near the stationary parameter avoids the cancellation in a remote-anchor
+    /// triple product; the candidate's own arithmetic enclosure is unchanged.
+    fn centered_carrier_lower(
+        &self,
+        curve: &Curve,
+        t: f64,
+        point: Vec3,
+        normal: Vec3,
+    ) -> Option<f64> {
+        let direction = match self.direction {
+            AffineDirection::Controls(a, b) => {
+                let [ax, ay, az] = a.map(Ivl::from);
+                let [bx, by, bz] = b.map(Ivl::from);
+                [
+                    carrier_sub(bx, ax),
+                    carrier_sub(by, ay),
+                    carrier_sub(bz, az),
+                ]
+            }
+            AffineDirection::MappedLine { vector, .. } => iv_point(vector),
+        };
+        // Nonzero scalar parameter/weight factors do not change this carrier.
+        // A zero projected direction is handled by the constant construction.
+        let n = iv_point(normal);
+        let d = carrier_cross(carrier_cross(n, direction), n);
+        let denominator = carrier_dot(d, d);
+        if !carrier_finite(denominator) || denominator.lo <= 0.0 {
+            return None;
+        }
+        let [a, b, c] = self.tight_point(curve, t)?;
+        let offset = [
+            carrier_sub(a, Ivl::from(point.x)),
+            carrier_sub(b, Ivl::from(point.y)),
+            carrier_sub(c, Ivl::from(point.z)),
+        ];
+        let x = carrier_cross(carrier_cross(n, offset), n);
+        let residual = carrier_dot(x, d);
+        let correction = carrier_div(carrier_mul(residual, residual), denominator);
+        let squared = carrier_sub(carrier_dot(x, x), correction);
+        if !carrier_finite(squared) {
+            return None;
+        }
+        // The exact squared norm is nonnegative. One outward sqrt step covers
+        // IEEE rounding, including a subnormal result, without a geometric floor.
+        Some(next_parameter_down(squared.lo.max(0.0).sqrt()).max(0.0))
+    }
+
     /// Enclose the affine point at the caller's raw parameter.
     fn point(&self, t: f64) -> [Ivl; 3] {
         let fraction = (Ivl::from(t) - Ivl::from(self.interval.min()))
@@ -2555,6 +2606,14 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         };
         if let Some(carrier) = definition.carrier_minimum(curve, point, normal) {
             optimum.lo = optimum.lo.max(carrier.lo);
+        }
+        if let Some(lower) = definition.centered_carrier_lower(
+            curve,
+            interval.evaluate(fraction.mid()),
+            point,
+            normal,
+        ) {
+            optimum.lo = optimum.lo.max(lower);
         }
         if let Some(position) = definition.isolated_end {
             let isolated = iv_length(projected(position));

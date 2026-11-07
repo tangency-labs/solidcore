@@ -2340,3 +2340,121 @@ mod stored_spline_labels {
         }
     }
 }
+
+mod centered_affine_minima {
+    //! Ordinary oblique line projections have attainable minima despite carrier-bound dependency.
+    use solidcore::{
+        curve::curve::{p1::GlobalPointSolveOptions, Curve},
+        geom::{
+            global_solver::{SolutionRequested, SolverOperation},
+            solution_array::{ObjectKind, SolutionObject},
+        },
+        math::Vec3,
+        primitive::api_curves,
+        Kernel,
+    };
+    #[derive(Clone, Copy, PartialEq)]
+    struct Object;
+    impl SolutionObject for Object {
+        fn kind(&self) -> ObjectKind {
+            ObjectKind::Curve
+        }
+    }
+    fn check(start: Vec3, end: Vec3, normal: Vec3, point: Vec3, expected: f64) {
+        let k = Kernel::default();
+        let curve = Curve::from(api_curves::create_line_segment(start, end).unwrap());
+        for tolerance in [0.0, 1e-6] {
+            for requested in [SolutionRequested::Single, SolutionRequested::All] {
+                let answers = curve
+                    .global_point_solve::<Object>(
+                        &k,
+                        &curve.natural_interval(),
+                        SolverOperation::ProjectedMinimize,
+                        point,
+                        tolerance,
+                        requested,
+                        &GlobalPointSolveOptions {
+                            opt_vectors: Some(&[normal]),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(answers.len(), 1);
+                let answer = &answers.as_slice()[0];
+                let t = answer.start.parameters[0];
+                assert!(t > 0.0 && t < 1.0);
+                let native = curve.evaluate_point(&k, t).unwrap();
+                assert_eq!(
+                    answer.start.solution_value,
+                    normal.cross(native - point).cross(normal).length()
+                );
+                // The reference is independently rounded from exact rational defining
+                // coefficients. This comparison allows arithmetic rounding only;
+                // neither the construction nor this check uses retention as accuracy.
+                assert!(
+                    (answer.start.solution_value - expected).abs() <= 4.0 * f64::EPSILON * expected
+                );
+            }
+        }
+    }
+    #[test]
+    fn ordinary_oblique_projection_0() {
+        check(
+            Vec3::new(-3.894398052128492, 3.8587511241420906, 17.729563382732575),
+            Vec3::new(4.606891033441505, 3.73721355265872, 17.729563382732575),
+            Vec3::new(
+                0.01743086555439506,
+                -0.09109708179454899,
+                -0.1493022056749114,
+            )
+            .unitize()
+            .unwrap(),
+            Vec3::new(-1.7690757807359927, -0.8831997460150274, 0.9101188222002574),
+            4.71764651872117,
+        );
+    }
+    #[test]
+    fn ordinary_oblique_projection_1() {
+        check(
+            Vec3::new(-5.483666909400865, 3.7359418500677646, 6.857357179858783),
+            Vec3::new(16.34892834629792, 3.3584721852969905, 6.857357179858783),
+            Vec3::new(0.0889704855343518, -0.008523026748961729, -1.0)
+                .unitize()
+                .unwrap(),
+            Vec3::new(
+                -0.02551809547616868,
+                -1.7733953083705631,
+                -0.9360354725942557,
+            ),
+            5.35960281390249,
+        );
+    }
+    #[test]
+    fn ordinary_oblique_projection_2() {
+        check(
+            Vec3::new(-12.423555212966619, 9.669598386804747, 5.0),
+            Vec3::new(37.27066563889986, 10.032245827791767, 5.0),
+            Vec3::new(
+                0.017044433970330952,
+                -0.0410992424988931,
+                -2.3887968887759023,
+            ),
+            Vec3::new(0.0, 24.847110425933238, -0.0),
+            86.59806893767214,
+        );
+    }
+    #[test]
+    fn ordinary_oblique_projection_3() {
+        check(
+            Vec3::new(-12.423555212966619, 9.669598386804747, 5.0),
+            Vec3::new(37.27066563889986, 10.032245827791767, 5.0),
+            Vec3::new(
+                0.017044433970330952,
+                -0.0410992424988931,
+                -2.3887968887759023,
+            ),
+            Vec3::new(24.847110425933238, 24.847110425933238, 0.0),
+            85.56319489742404,
+        );
+    }
+}
