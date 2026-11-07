@@ -395,9 +395,20 @@ its record changes from 1587 to 1703 values. It is explicitly unverified under
 
 Validation on the factorized line-direction implementation: formatting, strict
 workspace/all-target Clippy, WASM, and all 21 projected-query integration tests
-pass. All 12 affected golden units pass with no unexpected changes, additions,
-removals or broken cases. Before the final line-direction refinement, the complete
-283-unit golden sweep also passed; the final refinement was checked by rerunning
-the 12 affected units. The full default-profile Rust suite and kernel rig are
-still running. The earlier optimized library suite passed 3621 tests with four
-ignored; its superseded integration run was stopped to validate the final code.
+pass. The complete golden sweep passes all 283 units with no unexpected changes
+or broken cases, using the documented known-failure exclusions. The full Rust
+suite passes 5235/5235 tests, with 47 skipped, using CI's pinned Nextest 0.9.150
+and goldens profile (overflow checks and debug assertions enabled). This includes
+all 14 internal affine/cache tests. The doctest command also succeeds; the crate
+currently has no executable doctests. The earlier sequential debug/optimized
+integration runs were superseded by this complete CI-profile run.
+
+The kernel rig remains blocked by the unchanged 180-second deadline for
+`fillets/cov-fillet-section-curvature-boss-root-r2`, already tracked on main in
+#2989. It graded 368 cases: 285 pass, one timeout, 69 unsupported and 13
+known-failing; 711 cases were not run. A case-only replay also timed out at
+180.03 seconds. Other validation jobs were paused during that replay, but were
+running at its start; this is not a controlled main-versus-PR timing comparison
+and does not establish regression attribution. The captured union-case replay
+passes. No deadline, tolerance, fixture or classification was changed to hide
+the timeout. Hosted CI separately requires repository-admin workflow approval.
