@@ -58,7 +58,7 @@
 //!
 //! Deviations: none (no upstream counterpart). No recursion.
 
-use super::{keeps, op_err, solve, Continuity, Extended, Local, Made, H, OP, REL};
+use super::{beside, keeps, op_err, solve, Continuity, Extended, Local, Made, H, OP, REL};
 use crate::blend::fillet_section::recertify::recertify_with_thumbweight;
 use crate::blend::fillet_section::recertify::{
     net_distance, precision_floor, span_of_definition, DefinitionSpan,
@@ -78,18 +78,20 @@ use crate::surface::procedural_blend::ProceduralBlend;
 use crate::surface::side::BoxSide;
 use crate::surface::surface::{Surface, SurfaceKind};
 
-/// The blend `pb` extended `distance` past side `side` of `dom` (module docs).
+/// The blend `pb` extended `distance` past side `side` of `dom` (module docs), its length
+/// across measured at the middle of `face`'s side (`beside`).
 pub(super) fn blend_extended(
     k: &Kernel,
     pb: &ProceduralBlend,
     dom: &Extent2d,
     side: BoxSide,
     distance: f64,
+    face: &Extent2d,
 ) -> Result<Extended> {
     let (a, b, swapped) = pb.definition_map();
     // the definition's s is the net's u, its t the net's v (the other way round swapped)
     if side.is_u() != swapped {
-        return along(k, pb, dom, side, distance);
+        return along(k, pb, dom, side, distance, face);
     }
     let order = pb.order();
     let n = order as usize;
@@ -100,12 +102,13 @@ pub(super) fn blend_extended(
         _ => 3 * n + 1,
     };
     let source_net = pb.net.gw_nurb().ok_or_else(|| SolidError::sm_err(OP))?;
-    let grown = Surface::from(pb.net.clone()).extended_by_distance(
+    let grown = Surface::from(pb.net.clone()).extended_beside(
         k,
         dom,
         side,
         Continuity::Natural,
         distance,
+        face,
     )?;
     let SurfaceKind::BSpline(net) = grown.surface.kind() else {
         return Err(SolidError::port_invariant(
@@ -299,6 +302,7 @@ fn along(
     dom: &Extent2d,
     side: BoxSide,
     distance: f64,
+    face: &Extent2d,
 ) -> Result<Extended> {
     let (a, b, swapped) = pb.definition_map();
     let t_of = |q: f64| a[1] + b[1] * q;
@@ -406,8 +410,9 @@ fn along(
             bound,
         )))
     };
+    let at = beside(dom, face, side);
     let across =
-        |m: &Option<Surface>| match m.as_ref().map(|s| s.length_across_side(k, dom, side, REL)) {
+        |m: &Option<Surface>| match m.as_ref().map(|s| s.length_across_side(k, &at, side, REL)) {
             None | Some(Err(SolidError::NotConverged { .. })) => Ok(None),
             Some(Ok(a)) => Ok(Some(a)),
             Some(Err(e)) => Err(e),

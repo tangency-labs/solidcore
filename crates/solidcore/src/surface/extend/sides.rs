@@ -7,7 +7,12 @@
 //! not ported, this exact path replaces it.
 //!
 //! Each asked side, in [`BoxSide::ALL`]'s order, is extended on the box the sides before it
-//! left (the result's natural box), so a later side runs along the earlier extensions. A side
+//! left (the result's natural box), so a later side runs along the earlier extensions. Its
+//! length across is measured at the middle of the source's own side, as the first side's is,
+//! not at the middle of that grown box: out there the earlier extensions can have widened the
+//! surface so far that a side meeting its distance there falls far short of it at the face
+//! (every extension here keeps the source's parameters, so the source's box is the face's on
+//! every result). A side
 //! is left as it is, and said so, where the surface closes in its direction (a full turn: an
 //! extension would lap the surface) or where the side is not proved longer than a point (a
 //! pole or an apex: its certified diameter's lower bound is 0), as upstream leaves a closed
@@ -207,6 +212,8 @@ impl Surface {
         let mut on = BoxSide::ALL;
         let mut sides = [SideExtension::NotAsked; 4];
         let (mut source, mut extension) = (0.0_f64, 0.0_f64);
+        // the face: the source's box, on every result's parameters too
+        let face = self.natural_uv_domain_with_nurb(k)?;
         for ((&source_side, done), at) in BoxSide::ALL.iter().zip(sides.iter_mut()).zip(0..) {
             if !asked.contains(&source_side) {
                 continue;
@@ -245,7 +252,7 @@ impl Surface {
                 *done = SideExtension::AroundAxis;
                 continue;
             }
-            let grown = surface.extended_by_distance(k, &dom, side, how, distance)?;
+            let grown = surface.extended_beside(k, &dom, side, how, distance, &face)?;
             for s in &mut on {
                 *s = grown.side_of(*s);
             }
