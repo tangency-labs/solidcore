@@ -95,11 +95,7 @@ impl<'a> Definition<'a> {
         let mut pw = Vec::new();
         for cp in raw.cpts() {
             let w = if cp.w == NOW { 1.0 } else { cp.w };
-            let z = if bs.dim() == 2 || cp.z == NOZ {
-                0.0
-            } else {
-                cp.z
-            };
+            let z = if cp.z == NOZ { 0.0 } else { cp.z };
             if !(w > 0.0 && w.is_finite() && cp.x.is_finite() && cp.y.is_finite() && z.is_finite())
             {
                 return Err(refused(
@@ -144,12 +140,51 @@ impl<'a> Definition<'a> {
         if pieces.is_empty() {
             return Err(refused("curve interval has no knot piece"));
         }
+        // The public B-spline evaluator returns first/last controls at natural
+        // endpoints, including nonclamped nets. Enclose these isolated values
+        // separately from the one-sided polynomial pieces.
+        for (endpoint, knots) in [
+            (net.u.get(net.p), net.u.get(..=net.p)),
+            (net.u.get(net.n), net.u.get(net.n..)),
+        ] {
+            if let (Some(&endpoint), Some(knots)) = (endpoint, knots) {
+                if range.lo <= endpoint
+                    && endpoint <= range.hi
+                    && !knots.iter().all(|&knot| knot == endpoint)
+                {
+                    pieces.push(Piece {
+                        range: Ivl::from(endpoint),
+                        knot: None,
+                    });
+                }
+            }
+        }
         Ok(pieces)
     }
 
     pub(super) fn jet(&self, range: Ivl, knot: Option<usize>) -> Result<(V3<Ivl>, V3<Ivl>)> {
         match self {
             Self::Nurbs(net) => {
+                if range.lo == range.hi && knot.is_none() {
+                    let control = if net.u.get(net.p) == Some(&range.lo) {
+                        net.pw.get(..4)
+                    } else if net.u.get(net.n) == Some(&range.lo) {
+                        net.pw.get(net.pw.len().saturating_sub(4)..)
+                    } else {
+                        None
+                    };
+                    if let Some([x, y, z, w]) = control {
+                        let weight = Ivl::from(*w);
+                        return Ok((
+                            V3 {
+                                x: Ivl::from(*x) / weight,
+                                y: Ivl::from(*y) / weight,
+                                z: Ivl::from(*z) / weight,
+                            },
+                            V3::from_vec3(Vec3::new(0.0, 0.0, 0.0)),
+                        ));
+                    }
+                }
                 let jet = curve_derivs_over(net, range, 1, knot)?;
                 Ok((
                     *jet.first()

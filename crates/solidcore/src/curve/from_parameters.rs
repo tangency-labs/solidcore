@@ -551,8 +551,10 @@ pub(crate) fn ellipse_form_is_exact(e: &Ellipse) -> Result<bool> {
         return Ok(false);
     }
     let mut form = e.base().clone_exact();
-    if form.dim() == 2 {
-        form.convert_to_3d()?;
+    for point in form.get_or_create_gw_nurb()?.cpts_mut() {
+        if point.z == NOZ {
+            point.z = 0.0;
+        }
     }
     curve_on_quadrics(&form, &quadrics(o, x, y, rx, ry, false))
 }
