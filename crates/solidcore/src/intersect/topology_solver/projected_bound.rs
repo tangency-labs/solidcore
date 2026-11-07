@@ -239,11 +239,12 @@ pub(super) fn native_uv_proposals(
             .cross(normal)
             .length();
         let own = value_at(net, uv, point, normal)?;
-        if !domain.contains_point(uv, 0.0)
-            || !value.is_finite()
-            || !own.lo.is_finite()
-            || !own.hi.is_finite()
-            || !(own.lo <= value && value <= own.hi)
+        if !(domain.contains_point(uv, 0.0)
+            && value.is_finite()
+            && own.lo.is_finite()
+            && own.hi.is_finite()
+            && own.lo <= value
+            && value <= own.hi)
         {
             return Err(refused(
                 "native UV proposal does not fit its own point enclosure",

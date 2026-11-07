@@ -1,5 +1,11 @@
 # Projected point/face maximum: whole-domain certificate
 
+**Current acceptance:** the integration correction at the end of this record uses
+native UV proposals and the returned point's own arithmetic enclosure. The earlier
+mean-value/tolerance account below is a historical checkpoint, not today's rule.
+Caller tolerance controls retention; the unchanged homogeneous Bernstein residual
+proves the whole-face maximum against the selected native point enclosure.
+
 The reported operation is a single projected point/face maximum. Its candidate
 curves now evaluate `S(uv(t))`; an independent fitted spatial curve is not measured.
 This removes the original extra fit error but is not, by itself, a certificate.
@@ -180,3 +186,102 @@ vertices) or `0.4242640687119285` (40); line/vertices `0.5`; vertices/vertices
 This representative `subdivided_0_14_1_12_11_2_1` view uses the fixture's actual
 vertices and query. The old returned vertex IDs are `7, 8, 3`; the new set is
 IDs `1` through `11`. Vertex `0` remains outside the tolerance circle.
+
+
+## Integration correction: native UV proposals, independent global proof
+
+At `32c78bb2a`, integrating the defining-wrapper boundary checks exposed seven
+previously successful entry-5 projected maximum fixtures as error 1021:
+`analytic_face_{cyl_x,halfcyl_x,cone_x,sphere_band,sphere_quarter,torus_x,torus_half_x}_5_15`.
+The hosted kernel run also failed six existing silhouette tests. The temporary
+nonlinear `CrvOnSurf` candidate solver reached an artificial cache boundary and
+correctly refused a join whose defining regularity it could not prove. That
+stronger curve-extremum obligation was unnecessary for constructing a feasible
+point to be checked by the independent whole-face certificate.
+
+The repair is `c5896c6cc`, integrated with the current child/main as `4cb14dcff`
+(main `7a593124c9`). It changes the certified Single point/face branch before any
+curve solve: UV silhouette and exact-trim curves supply hints, while native knot
+rectangles supply further proposals. No failed curve solve is caught or retried,
+and no generic wrapper boundary predicate is weakened. All and other operation
+classes retain their existing path.
+
+The deterministic construction:
+
+- Checks the existing native definition/exactness class, rectangular trim and
+  finite domain/metric. Active knot cells are counted before cut-vector allocation;
+  the supported domain remains at most 4096 cells, as in the residual proof.
+- Keeps all four domain corners. At most 4096 total UV seeds are spread across
+  the full native cell index range and the full trace-hint index range. When hints
+  exist, part of the budget is reserved for them; each selected hint contributes
+  at most 17 parameter points, including its endpoints and midpoint. Dense trace
+  approximation knots do not increase this work budget.
+- Refines each proposal on the native surface with the existing bounded 48-step
+  active-set Newton construction before scalar selection. Undefined/non-improving
+  Newton steps stop refinement; a seed is never evidence that all maxima were found.
+- Re-evaluates every proposed scalar on the native surface and checks it against
+  that actual point's own interval enclosure, using the native default knot side.
+  Existing naming, retention ordering, candidate checks and rollback remain.
+- Refuses if a generated native proposal cannot be evaluated or enclosed. The
+  current controls cover pole and knot cases, but this conservative behavior is
+  not a claim that every otherwise certifiable surface will produce a candidate.
+- Requires the unchanged whole-face residual certificate, immediately for a local
+  solve or against the final selected incumbent for deferred B-rep faces. A bounded
+  proposal set that misses the maximum still refuses; no sample spacing or caller
+  tolerance enters acceptance.
+
+This separates the role of local feasible-point construction from global proof,
+as described in Neumaier, [Complete Search in Continuous Global Optimization,
+section 13](https://arnold-neumaier.at/glopt/mss/Neu04.pdf). The preserved residual
+uses the Bernstein convex-hull enclosure; see Dang and Testylier,
+[section 3.1, Lemma 1](https://www-verimag.imag.fr/~tdang/Papers/bernstein-rap.pdf).
+These references motivate the separation; the implemented residual and directed
+arithmetic, rather than sampled values, prove this kernel's returned result.
+The residual module is byte-identical to the pre-correction source at
+`32c78bb2a`, Git blob `9210112674430a035465ba9962adcd852aadbf63`.
+
+### Direct controls and checkpoint
+
+The seven fixture constructors, query vertex `(0.2,0.3,2)`, Z normal, and
+VertexFace dispatch are reproduced in the native test. Their projected closed
+forms are:
+
+| Geometry | Closed-form maximum |
+|---|---|
+| Full/half X cylinder | `sqrt(.7^2 + .8^2)` |
+| X cone, heights .5 to 1.5 | `sqrt(.3^2 + (.3 + 1.5*tan(30deg))^2)` |
+| Full-longitude sphere band | `.5 + sqrt(.2^2 + .3^2)` |
+| Half-longitude sphere quarter | `sqrt(.7^2 + .3^2)` |
+| Full/half X torus | `.25 + sqrt(.2^2 + 1.3^2)` |
+
+These analytic values explain the geometry; each returned native point is also
+checked against its own enclosure and the actual native whole-domain residual,
+without replacing the stored rational definition by an ideal quadric.
+
+Additional controls preserve the contract:
+
+- A 512-cell affine tensor still certifies its exact corner maximum within the
+  candidate's own enclosure; the fixed seed budget does not impose a new 455-cell
+  domain restriction.
+- The exact degree-six scalar surface
+  `x(u)=120*u^2*(1-u)^2*(u-.5)^2` has zero stationary values at every supplied
+  proposal but a feasible witness `x(.25)=135/512`. The unchanged global proof
+  rejects every inadequate proposal.
+- Native full-sphere pole proposals are valid, but the collapsed topological trim
+  is still refused by the unchanged exact-rectangle feasibility requirement.
+- The cached-fit control deliberately displaces fitted geometry in coordinates
+  that affect the metric. Native UV evaluation, and the final returned point,
+  remain the source of the measurement.
+
+The integrated checkpoint passes all **48** focused topology tests:
+`cargo test -p solidcore --lib intersect::topology_solver`. This includes all
+seven fixture inputs, all six formerly failing tests, the negative certificates,
+and the 512-cell control. The final end-to-end poisoned-cache control also passes:
+the real B-rep trim is prepared first, the cache supplies a fitted line displaced
+by 10 in X and Z, and the production solve returns native UV `(1,1)` with value
+`sqrt(2)`. Measuring the fitted line under the requested Z projection would exceed
+10. `cargo clippy -p solidcore --lib --tests -- -D warnings` and formatting
+checks on the changed Rust files also pass. Actual full affected-unit golden
+capture remains a separate integration gate; no golden has been automatically
+blessed by this construction change. Existing figures depict the same
+sphere/torus geometries; no new render is claimed here.
