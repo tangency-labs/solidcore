@@ -477,6 +477,31 @@ fn widened(
     side: BoxSide,
     distance: f64,
 ) -> Result<Extended> {
+    // Rebuilding the canonical form and mapping the kept box can leave a root
+    // residual larger than the local measure's rounding. Correct the construction,
+    // not its certificate or the stop allowance.
+    let mut ask = distance;
+    for _ in 0..32 {
+        let grown = widened_candidate(k, s, dom, side, ask)?;
+        if matches!(says(Some(&grown.across), 0.0, distance), Says::Met) {
+            return Ok(grown);
+        }
+        let next = ask + (distance - grown.across.enclosure.mid());
+        if !(next > 0.0 && next.is_finite() && next != ask) {
+            break;
+        }
+        ask = next;
+    }
+    Err(not_exact(None))
+}
+
+fn widened_candidate(
+    k: &Kernel,
+    s: &Surface,
+    dom: &Extent2d,
+    side: BoxSide,
+    distance: f64,
+) -> Result<Extended> {
     let grown = s.continued(k, dom, side, distance)?;
     let map = |uv: Point2| -> Result<Point2> {
         grown.convert_uv_from_step_to_nurbs(k, s.convert_uv_from_nurbs_to_step(k, uv)?)
@@ -505,12 +530,11 @@ fn widened(
         .and_then(|i| sides.get(i))
         .copied()
         .ok_or_else(op_err)?;
-    let across = grown.length_across_side(k, &on, to, REL)?;
-    // the widened's length across is the distance, by its closed form: checked as any
-    // extension's is
-    if !matches!(says(Some(&across), 0.0, distance), Says::Met) {
-        return Err(not_exact(None));
-    }
+    // Keep the existing stored-net resolution allowance unchanged. Only the certificate
+    // is replaced: the analytic's local chord/arc, rather than the general integrator.
+    let resolution = grown.length_across_side(k, &on, to, REL)?.resolution;
+    let mut across = analytic::widened_across(k, (s, dom, side), (&grown, &on, to))?;
+    across.resolution = resolution;
     Ok(Extended {
         surface: grown,
         source: 0.0,
@@ -1981,6 +2005,7 @@ fn keeps(net: &Net, out: &Net, side: BoxSide) -> Result<bool> {
 mod analytic;
 mod ball;
 mod blend;
+mod measure;
 mod sides;
 pub use sides::{ExtendedSides, SideExtension};
 

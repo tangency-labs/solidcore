@@ -54,7 +54,7 @@ use crate::nurbs::srf_basic::Direction;
 use crate::nurbs::srf_tool::p1::extract_iso_crv;
 use crate::surface::ball_patch::BallPatch;
 use crate::surface::implicit::{lies_on, Implicit};
-use crate::surface::side::{Across, BoxSide, Bracket};
+use crate::surface::side::{Across, BoxSide};
 use crate::surface::surface::Surface;
 use std::f64::consts::PI;
 
@@ -245,6 +245,7 @@ pub(super) fn source_iso(
 #[derive(Debug, Clone, Copy)]
 struct Measure {
     length: f64,
+    rounding: f64,
     turn: f64,
 }
 
@@ -294,30 +295,51 @@ fn extend_side(
             Point2::new(middle.x, x)
         }
     };
-    // the iso's circle, its plane through the source's own points (`source_iso`), its
-    // normal turning from the source's far end through the side, outward
-    let (x_far, x_half) = source_iso(cur, &dom, side, middle)?;
-    let x_side = cur.evaluate_point(middle)?;
-    let n = {
-        let n = (x_half - x_far).cross(x_side - x_half);
-        let len = n.length();
-        if len.is_nan() || len <= 0.0 {
-            return Err(SolidError::sm_err(OP));
-        }
-        n * (1.0 / len)
+    // Work about the sphere centre when finding the source iso's plane, too: its
+    // normal must not inherit absolute-coordinate evaluation errors.
+    let (lo, hi) = (dom.min(), dom.max());
+    let far = if side.is_u() {
+        Point2::new(if side.is_high() { lo.x } else { hi.x }, middle.y)
+    } else {
+        Point2::new(middle.x, if side.is_high() { lo.y } else { hi.y })
     };
+    let half = Point2::new(0.5 * (lo.x + hi.x), 0.5 * (lo.y + hi.y));
+    let (x_far, ef) = super::measure::point(cur, far, c)?;
+    let (x_half, eh) = super::measure::point(cur, half, c)?;
+    let (x_side, es) = super::measure::point(cur, middle, c)?;
+    let (a, b) = (x_half - x_far, x_side - x_half);
+    let raw = a.cross(b);
+    let norm = raw.length();
+    // Higham §§3.1–3.4: gamma_16 covers the two differences, six cross-product
+    // products and three differences, squares/sums/sqrt, and bound arithmetic.
+    let ea = ef + eh + gamma(2) * (x_half.length() + x_far.length());
+    let eb = es + eh + gamma(2) * (x_side.length() + x_half.length());
+    let en = (a.length() * eb + b.length() * ea + ea * eb + gamma(16) * a.length() * b.length())
+        * (1.0 + gamma(8));
+    if !(norm > en) {
+        return Err(refused(ExtendRefusal::NotExact, None));
+    }
+    let n = raw * (1.0 / norm);
+    let nerr = (2.0 * en / (norm - en) + gamma(8)) * (1.0 + gamma(8));
     let measure = |s: &BSplineSurface| -> Result<Measure> {
-        let x0 = s.evaluate_point(at(s, 0.0))? - c;
-        let x1 = s.evaluate_point(at(s, 1.0))? - c;
+        let (x0, e0) = super::measure::point(s, at(s, 0.0), c)?;
+        let (x1, _) = super::measure::point(s, at(s, 1.0), c)?;
         let cc = n * n.dot(x0);
         let (u0, u1) = (x0 - cc, x1 - cc);
-        let mut phi = u0.cross(u1).dot(n).atan2(u0.dot(u1));
-        if phi < 0.0 {
-            phi += 2.0 * PI;
-        }
+        let radius = u0.length();
+        // The projection's sensitivity to its normal and point, plus its dot,
+        // product, difference and norm's gamma_16 (Higham §§3.1–3.4).
+        let er = (2.0 * e0
+            + (2.0 * nerr + nerr * nerr) * x0.length()
+            + gamma(16) * (x0.length() + radius))
+            * (1.0 + gamma(8));
+        let chord = super::measure::chord(s, at(s, 0.0), at(s, 1.0))?;
+        let long = u0.cross(u1).dot(n) < 0.0;
+        let (length, rounding) = super::measure::arc(chord, (radius, er), long)?;
         let (t0, t1) = (x0 - z * x0.dot(z), x1 - z * x1.dot(z));
         Ok(Measure {
-            length: u0.length() * phi,
+            length,
+            rounding,
             turn: angle(t0, t1),
         })
     };
@@ -330,24 +352,11 @@ fn extend_side(
             None => None,
         })
     };
-    // the length across an extension whose construction bound is `bound`, with the closed
-    // form's rounding (the evaluations at the points' size, the cross products, the atan2)
-    // and the points' construction bound through the angle
-    let size = c.length() + r;
     let across_of = |s: &BSplineSurface, bound: f64| -> Result<Across> {
-        let length = measure(s)?.length;
-        let rounding = gamma(64) * (length + size) + 4.0 * bound;
-        Ok(Across {
-            enclosure: Bracket {
-                lower: (length - rounding).max(0.0),
-                upper: length + rounding,
-            },
-            truncation: 0.0,
-            rounding,
-            converged: true,
-            // a closed form at the points' size: its rounding part is sized on the part
-            resolution: 0.0,
-        })
+        let m = measure(s)?;
+        // Retain the construction contribution until its correlation with the chord
+        // has a proof; measuring in a local frame alone cannot remove this term.
+        Ok(super::measure::across((m.length, m.rounding + 4.0 * bound)))
     };
     let range = source.range()?;
     let least = source.least_step()?;
@@ -400,7 +409,7 @@ fn extend_side(
             super::workable(Some(&across), bound),
         ));
     }
-    certify_circle(&grown, side, middle, c, size)?;
+    certify_circle(&grown, side, middle, c)?;
     Ok(Some((grown, across, capped, bound)))
 }
 
@@ -509,8 +518,10 @@ pub(super) fn reach(
     }
 }
 
-/// Bisection of `[lo, hi]` (`f(lo) < target <= f(hi)`) until `f` is within `MEET` of the
-/// target, asking nothing below `least` (`least` itself when the target is below its value).
+/// Bisection of `[lo, hi]` (`f(lo) < target <= f(hi)`) until the value is within
+/// one relative machine epsilon, asking nothing below `least`. The acceptance
+/// criterion remains `MEET`; a tighter solve avoids relying on a broad rounding
+/// enclosure to hide the root-search residual.
 fn bisect(
     f: &dyn Fn(f64) -> Result<Option<f64>>,
     target: f64,
@@ -525,7 +536,7 @@ fn bisect(
             break;
         }
         let v = f(m)?.ok_or_else(|| SolidError::sm_err(OP))?;
-        if (v - target).abs() <= MEET * target {
+        if (v - target).abs() <= f64::EPSILON * target {
             return Ok(m);
         }
         if v < target {
@@ -539,15 +550,9 @@ fn bisect(
 
 /// Whether the iso across `side` of `s` at the side's middle `middle` lies in a plane:
 /// every determinant of three spread homogeneous control points (from the centre `c`) and
-/// a fourth is zero within its rounding (`size` the points' absolute size), and the three
+/// a fourth is zero within its rounding in the sphere's own frame, and the three
 /// span a plane. Refused as not exact otherwise.
-fn certify_circle(
-    s: &BSplineSurface,
-    side: BoxSide,
-    middle: Point2,
-    c: Vec3,
-    size: f64,
-) -> Result<()> {
+fn certify_circle(s: &BSplineSurface, side: BoxSide, middle: Point2, c: Vec3) -> Result<()> {
     let net = s.gw_nurb().ok_or_else(|| SolidError::sm_err(OP))?;
     // the iso along the side's across direction: a u-curve across a u side
     let (t, dir) = if side.is_u() {
@@ -560,8 +565,16 @@ fn certify_circle(
     let mut mags: Vec<f64> = Vec::new();
     for p in iso.cpts() {
         let w = if p.w == NOW { 1.0 } else { p.w };
-        rows.push([p.x - c.x * w, p.y - c.y * w, p.z - c.z * w, w]);
-        mags.push(p.x.abs().max(p.y.abs()).max(p.z.abs()) + (size + 1.0) * w.abs());
+        // One fused rounding per local coordinate, already covered by the
+        // determinant's gamma_32 below; never round C w separately at |C|.
+        let local = [
+            (-c.x).mul_add(w, p.x),
+            (-c.y).mul_add(w, p.y),
+            (-c.z).mul_add(w, p.z),
+            w,
+        ];
+        mags.push(local.iter().fold(0.0_f64, |m, x| m.max(x.abs())));
+        rows.push(local);
     }
     let n = rows.len();
     let (Some(&r0), Some(&rm), Some(&rl)) = (rows.first(), rows.get(n / 2), rows.last()) else {

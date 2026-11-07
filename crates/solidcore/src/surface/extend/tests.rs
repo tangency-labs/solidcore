@@ -2841,19 +2841,35 @@ fn difference_form_certificate_table() {
         let cone = Surface::from(cone);
         let c = Vec3::new(o, o, 0.0);
         let (net, _, _) = crate::blend::blend_corner::ball::ball_triangle_patch(
-            c, 2.0, &[Vec3::X, Vec3::Y, Vec3::Z], 0, false,
-        ).unwrap();
-        let ball = Surface::from(crate::surface::ball_patch::BallPatch::create(&net, c, 2.0).unwrap());
+            c,
+            2.0,
+            &[Vec3::X, Vec3::Y, Vec3::Z],
+            0,
+            false,
+        )
+        .unwrap();
+        let ball =
+            Surface::from(crate::surface::ball_patch::BallPatch::create(&net, c, 2.0).unwrap());
         for d in [1e-5, 1e-4, 1e-3] {
-            let e = cone.extended_by_distance(&kk, &dom(&cone), BoxSide::UMin, Continuity::Natural, d);
-            println!("TABLE cone o={o:e} d={d:e} {:?}", e.as_ref().map(|e| e.as_ref().map(|e| e.across.rounding)));
+            let e =
+                cone.extended_by_distance(&kk, &dom(&cone), BoxSide::UMin, Continuity::Natural, d);
+            println!(
+                "TABLE cone o={o:e} d={d:e} {:?}",
+                e.as_ref().map(|e| e.as_ref().map(|e| e.across.rounding))
+            );
             let e = ball.extended_sides(&kk, &[BoxSide::UMin], Continuity::Natural, d);
-            println!("TABLE ball o={o:e} d={d:e} {:?}", e.as_ref().map(|e| (e.sides, e.extension)));
+            println!(
+                "TABLE ball o={o:e} d={d:e} {:?}",
+                e.as_ref().map(|e| (e.sides, e.extension))
+            );
         }
     }
     let s = unit_cylinder(&kk);
     for d in [5e-9, 1e-8, 1e-7, 1e-6, 5e-6] {
         let e = s.extended_by_distance(&kk, &dom(&s), BoxSide::VMax, Continuity::Natural, d);
-        println!("TABLE cylinder d={d:e} {:?}", e.as_ref().map(|e| e.as_ref().map(|e| e.across.rounding)));
+        println!(
+            "TABLE cylinder d={d:e} {:?}",
+            e.as_ref().map(|e| e.as_ref().map(|e| e.across.rounding))
+        );
     }
 }
