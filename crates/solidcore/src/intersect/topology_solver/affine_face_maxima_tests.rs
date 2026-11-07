@@ -27,6 +27,10 @@ use crate::topology::{
 use crate::Kernel;
 
 fn check_torus(major_end: f64) {
+    check_torus_options(major_end, 1.0, false, Extent1d::from_min_max(0.0, 1.0));
+}
+
+fn check_torus_options(major_end: f64, scale: f64, swapped: bool, interval: Extent1d) {
     let mut k = Kernel::default();
     let mut torus = Torus::new(
         &k,
@@ -91,7 +95,7 @@ fn check_torus(major_end: f64) {
     // The query is external to the face B-rep; its handle names that supplied
     // definition and is never a lookup of one of the face's seam curves.
     let query_handle = CacheObject::Other(arena_identity(CacheObject::Brep));
-    let normal = Vec3::Z;
+    let normal = Vec3::Z * scale;
     let mut solver = TopologySolver::new(
         &k,
         &objects,
@@ -101,26 +105,39 @@ fn check_torus(major_end: f64) {
         0.0,
         &[normal],
     );
-    let mut local = LocalSolver::new(LocalSolverKind::CurveFace, false, None);
+    let mut local = LocalSolver::new(LocalSolverKind::CurveFace, swapped, None);
     local.set_curve(
         Some(CurveRef {
             curve: &curve,
             handle: query_handle,
         }),
-        Extent1d::from_min_max(0.0, 1.0),
+        interval,
     );
+    let named_face = Some(CacheObject::Surface(face));
     local
-        .solve_it(&k, &mut solver, None, Some(CacheObject::Surface(face)))
+        .solve_it(
+            &k,
+            &mut solver,
+            if swapped { named_face } else { None },
+            if swapped { None } else { named_face },
+        )
         .unwrap();
     assert_eq!(solver.base.solutions.len(), 1);
     let answer = &solver.base.solutions.as_slice()[0];
-    let t = answer.start.parameters[0];
-    let uv = Vec2::new(answer.start.parameters[1], answer.start.parameters[2]);
-    assert!((0.0..=1.0).contains(&t) && domain.contains_point(uv, 0.0));
+    let t = answer.start.parameters[if swapped { 2 } else { 0 }];
+    let uv = if swapped {
+        Vec2::new(answer.start.parameters[0], answer.start.parameters[1])
+    } else {
+        Vec2::new(answer.start.parameters[1], answer.start.parameters[2])
+    };
+    assert!(interval.min() <= t && t <= interval.max() && domain.contains_point(uv, 0.0));
     let a = curve.evaluate_point(&k, t).unwrap();
     let p = surface.evaluate_point(&k, uv).unwrap();
     let measured = normal.cross(a - p).cross(normal).length();
-    let exact = 2.0_f64.sqrt() + 0.25;
+    let reach = (-1.0 + 2.0 * interval.min())
+        .abs()
+        .max((-1.0 + 2.0 * interval.max()).abs());
+    let exact = ((reach * reach + 1.0).sqrt() + 0.25) * scale * scale;
     let arithmetic_check = 8.0 * f64::EPSILON * exact;
     assert!(
         (answer.start.solution_value - measured).abs() <= arithmetic_check,
@@ -140,4 +157,23 @@ fn full_torus_curve_face_maximum_is_native_and_global() {
 #[test]
 fn half_torus_curve_face_maximum_keeps_pair_fix() {
     check_torus(180.0);
+}
+
+#[test]
+fn full_torus_affine_pair_preserves_swapped_parameter_order() {
+    check_torus_options(360.0, 1.0, true, Extent1d::from_min_max(0.0, 1.0));
+}
+#[test]
+fn full_torus_affine_pair_respects_curve_subdomain() {
+    check_torus_options(360.0, 1.0, false, Extent1d::from_min_max(0.2, 0.8));
+}
+#[test]
+fn full_torus_affine_pair_preserves_normal_squared_scale() {
+    for scale in [0.001, 1000.0] {
+        check_torus_options(360.0, scale, false, Extent1d::from_min_max(0.0, 1.0));
+    }
+}
+#[test]
+fn full_torus_affine_pair_zero_normal_has_zero_metric() {
+    check_torus_options(360.0, 0.0, false, Extent1d::from_min_max(0.0, 1.0));
 }

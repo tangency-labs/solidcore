@@ -96,7 +96,7 @@ pub(super) fn refine_candidate<O: crate::geom::solution_array::SolutionObject>(
 /// domain side releases only when the gradient points into the domain. No caller
 /// retention tolerance is a convergence condition; non-improving/undefined steps
 /// stop candidate refinement and leave acceptance to the independent certificate.
-fn refine_uv(
+pub(super) fn refine_uv(
     k: &Kernel,
     surface: &crate::surface::surface::Surface,
     domain: &Extent2d,
@@ -173,7 +173,7 @@ fn refine_uv(
     Ok(uv)
 }
 
-fn face_net<O: crate::geom::solution_array::SolutionObject>(
+pub(super) fn face_net<O: crate::geom::solution_array::SolutionObject>(
     k: &Kernel,
     objects: &dyn super::p1::TopologyObjects<O>,
     face: O,
@@ -421,6 +421,37 @@ fn norm_squared(v: V3<Ivl>) -> Ivl {
 
 /// Enclose the metric at a feasible parameter, including arithmetic rounding.
 pub(super) fn value_at(net: &Nurbs, uv: Vec2, point: Vec3, normal: Vec3) -> Result<Ivl> {
+    value_at_definition(net, uv, [point.x, point.y, point.z].map(Ivl::from), normal)
+}
+
+/// Native pair metric at a surface parameter and one fixed exact curve endpoint.
+pub(super) fn value_at_definition(
+    net: &Nurbs,
+    uv: Vec2,
+    point: [Ivl; 3],
+    normal: Vec3,
+) -> Result<Ivl> {
+    let q = native_point_at(net, uv)?;
+    Ok(pair_metric(q, point, normal))
+}
+
+/// Metric enclosure for two fixed exact definition points.
+pub(super) fn pair_metric(a: [Ivl; 3], b: [Ivl; 3], normal: Vec3) -> Ivl {
+    let [ax, ay, az] = a;
+    let [bx, by, bz] = b;
+    norm_squared(projected(
+        V3 {
+            x: ax - bx,
+            y: ay - by,
+            z: az - bz,
+        },
+        V3::from_vec3(normal),
+    ))
+    .sqrt()
+}
+
+/// One native surface definition point, without unrelated knot-side limits.
+pub(super) fn native_point_at(net: &Nurbs, uv: Vec2) -> Result<[Ivl; 3]> {
     // A point uses the native span (the right-hand piece at an interior knot,
     // the last piece at the upper natural endpoint). The generic box routine
     // hulls both sides: at a discontinuous knot that hull includes a geometric
@@ -436,11 +467,8 @@ pub(super) fn value_at(net: &Nurbs, uv: Vec2, point: Vec3, normal: Vec3) -> Resu
         .ok_or_else(|| refused("missing candidate v span"))?
         .2;
     let p = nurbs_partials_over_piece(net, ku, kv, uv.x, uv.x, uv.y, uv.y, 0)?;
-    Ok(norm_squared(projected(
-        relative(p.at(0, 0), point),
-        V3::from_vec3(normal),
-    ))
-    .sqrt())
+    let q = p.at(0, 0);
+    Ok([q.x, q.y, q.z])
 }
 
 /// Check the stored boundary, without trusting the tolerance-based rectangular flag.

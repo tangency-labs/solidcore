@@ -276,12 +276,11 @@ fn residual(
     controls: &[[Ivl; 4]],
     p: usize,
     q: usize,
-    point: Vec3,
+    query: [Ivl; 3],
     normal: Vec3,
     upper: f64,
 ) -> Option<Vec<Ivl>> {
     let normal = [normal.x, normal.y, normal.z].map(Ivl::from);
-    let query = [point.x, point.y, point.z].map(Ivl::from);
     let mut weights = Vec::new();
     let mut projected = [Vec::new(), Vec::new(), Vec::new()];
     for &[x, y, z, w] in controls {
@@ -369,7 +368,28 @@ pub(super) fn maximum_is_bounded(
     normal: Vec3,
     upper: f64,
 ) -> Result<bool> {
-    if net.p == 0
+    maximum_is_bounded_from_definition(
+        k,
+        net,
+        domain,
+        [point.x, point.y, point.z].map(Ivl::from),
+        normal,
+        upper,
+    )
+}
+
+/// Bound against one fixed exact endpoint enclosed by `point`. The interval is
+/// definition arithmetic uncertainty, never a sampled or fitted point error.
+pub(super) fn maximum_is_bounded_from_definition(
+    k: &Kernel,
+    net: &Nurbs,
+    domain: &Extent2d,
+    point: [Ivl; 3],
+    normal: Vec3,
+    upper: f64,
+) -> Result<bool> {
+    if !point.iter().all(|x| finite(*x))
+        || net.p == 0
         || net.q == 0
         || net.p > MAX_DEGREE
         || net.q > MAX_DEGREE
@@ -380,9 +400,6 @@ pub(super) fn maximum_is_bounded(
             domain.min().y,
             domain.max().x,
             domain.max().y,
-            point.x,
-            point.y,
-            point.z,
             normal.x,
             normal.y,
             normal.z,

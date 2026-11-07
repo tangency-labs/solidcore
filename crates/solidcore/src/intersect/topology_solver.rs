@@ -9,6 +9,7 @@
 pub mod p1;
 pub mod p2;
 
+mod projected_affine_face;
 mod projected_bound;
 pub(super) mod projected_residual;
 

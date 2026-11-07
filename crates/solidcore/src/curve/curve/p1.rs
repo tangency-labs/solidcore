@@ -28,6 +28,7 @@
 //!   propagate solve errors rather than publishing uncertified partial results.
 //!   Native joins are omitted only after defining continuity/collinearity or
 //!   one-sided objective-sign proofs, never from an approximate G1 label alone.
+//!   The affine curve/face endpoint API refuses more than 128 defining spans.
 //! - **Projected endpoint extrema.** Eligible finite boundaries are candidates
 //!   independently of the stationary-point search. Finding a stationary
 //!   point does not establish that it beats the interval endpoints.
@@ -1932,6 +1933,16 @@ pub(crate) fn affine_projected_point_enclosure(
     point: Vec3,
     normal: Vec3,
 ) -> Option<Ivl> {
+    let position = affine_point_definition_enclosure(curve, t)?;
+    let bound = iv_length(iv_cross(
+        iv_cross(iv_point(normal), iv_sub(position, iv_point(point))),
+        iv_point(normal),
+    ));
+    (bound.lo.is_finite() && bound.hi.is_finite()).then_some(bound)
+}
+
+/// Enclose the actual affine definition point, preserving native knot-side ownership.
+pub(crate) fn affine_point_definition_enclosure(curve: &Curve, t: f64) -> Option<[Ivl; 3]> {
     let natural = curve.natural_interval();
     if !t.is_finite() || t < natural.min() || t > natural.max() {
         return None;
@@ -1985,11 +1996,65 @@ pub(crate) fn affine_projected_point_enclosure(
         }
         _ => return None,
     };
-    let bound = iv_length(iv_cross(
-        iv_cross(iv_point(normal), iv_sub(position, iv_point(point))),
-        iv_point(normal),
-    ));
-    (bound.lo.is_finite() && bound.hi.is_finite()).then_some(bound)
+    position
+        .iter()
+        .all(|x| x.lo.is_finite() && x.hi.is_finite())
+        .then_some(position)
+}
+
+/// Endpoint reduction for continuous native affine definitions. Other structural
+/// classes return None before solving. At most 128 defining spans are processed.
+pub(crate) fn affine_curve_endpoints(
+    curve: &Curve,
+    requested: Extent1d,
+) -> Result<Option<Vec<(f64, [Ivl; 3])>>> {
+    let natural = curve.natural_interval();
+    let interval = Extent1d::from_min_max(
+        requested.min().max(natural.min()),
+        requested.max().min(natural.max()),
+    );
+    if !interval.min().is_finite()
+        || !interval.max().is_finite()
+        || interval.min() >= interval.max()
+    {
+        return Ok(None);
+    }
+    match curve.kind() {
+        CurveKind::Line(_) => {}
+        CurveKind::BSpline(spline) => {
+            let Some(net) = spline.gw_nurb() else {
+                return Ok(None);
+            };
+            if net.degree() != 1 || net.knots().iter().filter(|&&t| t == natural.min()).count() != 2
+                || net.knots().iter().filter(|&&t| t == natural.max()).count() != 2
+                || net.knots().windows(2).any(|pair| matches!(pair, [a,b] if a == b && *a > natural.min() && *a < natural.max())) {
+                return Ok(None);
+            }
+        }
+        _ => return Ok(None),
+    }
+    let Some(spans) = complete_affine_definition(curve, interval) else {
+        return Ok(None);
+    };
+    if spans.len() > 128 {
+        return Err(SolidError::Unsupported {
+            operation: "curve::curve::affine_curve_endpoints",
+            reason: "affine endpoint reduction exceeds 128 defining spans",
+        });
+    }
+    let mut endpoints = Vec::new();
+    for span in spans {
+        for t in [span.min(), span.max()] {
+            if endpoints.last().is_some_and(|(previous, _)| *previous == t) {
+                continue;
+            }
+            let Some(point) = affine_point_definition_enclosure(curve, t) else {
+                return Err(affine_refusal());
+            };
+            endpoints.push((t, point));
+        }
+    }
+    Ok(Some(endpoints))
 }
 
 /// Certificates belong to the actual leaf candidates, not their scalar ordering.

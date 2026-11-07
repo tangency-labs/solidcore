@@ -407,6 +407,129 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
         }
         let face = face.ok_or(SolidError::invalid_input(OP_CF, "surface without a face"))?;
         let curve = self.curve.ok_or(SolidError::null_pointer(OP_CF))?;
+        if ts.base.operation == SolverOperation::ProjectedMaximize
+            && ts.base.solution_requested == SolutionRequested::Single
+            && self.curve_face.is_none()
+            && self.surface_curve.is_none()
+        {
+            if let Some(endpoints) =
+                crate::curve::curve::p1::affine_curve_endpoints(curve.curve, self.interval)?
+            {
+                use super::projected_affine_face as native;
+                use crate::blend::fillet_section::interval::Ivl;
+                let normal = *ts
+                    .base
+                    .opt_vectors
+                    .first()
+                    .ok_or_else(|| native::refused("missing projection normal"))?;
+                let query_owner =
+                    owner.ok_or_else(|| native::refused("missing affine curve owner"))?;
+                let target = if ts.base.solutions.is_empty() {
+                    best_answer_so_far(&ts.base)
+                } else {
+                    None
+                };
+                let (candidate, net, domain) =
+                    native::construct(k, ts.objects, face, curve.curve, &endpoints, normal)?;
+                native::certify(k, &net, &domain, &endpoints, normal, candidate.enclosure.hi)?;
+                if !ts.base.tolerance_3d.is_finite() || ts.base.tolerance_3d < 0.0 {
+                    return Err(native::refused("invalid retention slack"));
+                }
+                if let Some(target) = target {
+                    let cutoff = Ivl::from(target.abs()) - Ivl::from(ts.base.tolerance_3d);
+                    if candidate.enclosure.hi < cutoff.lo {
+                        return Ok(());
+                    }
+                    if candidate.enclosure.lo < cutoff.hi {
+                        return Err(native::refused(
+                            "native pair enclosure straddles external incumbent cutoff",
+                        ));
+                    }
+                }
+                let mut solution = Solution::new();
+                solution.solution_type = SolutionType::SingleValue;
+                solution.num_variables = 3;
+                for (index, value) in candidate.parameters.into_iter().enumerate() {
+                    *solution.start.param_mut(index)? = value;
+                }
+                solution.start.solution_value = candidate.reported;
+                name_curve_face(&mut solution, named, surface_handle, face);
+                if self.swap_order {
+                    swap_curve_surface_parameters(&mut solution)?;
+                }
+                let previous = ts.base.solutions.get(0).copied();
+                let previous_bound = previous
+                    .as_ref()
+                    .map(|previous| {
+                        native::retained_bound(
+                            k,
+                            ts.objects,
+                            previous,
+                            query_owner,
+                            curve.curve,
+                            normal,
+                        )
+                    })
+                    .transpose()?;
+                let required_upper = previous_bound.map_or(candidate.enclosure.hi, |bound| {
+                    bound.hi.max(candidate.enclosure.hi)
+                });
+                ts.add_sorted_solution(&solution, SortKey::BySolutionValue, true)?;
+                let retained =
+                    ts.base.solutions.get(0).ok_or_else(|| {
+                        native::refused("certified pair was lost during retention")
+                    })?;
+                let retained_bound = native::retained_bound(
+                    k,
+                    ts.objects,
+                    retained,
+                    query_owner,
+                    curve.curve,
+                    normal,
+                )?;
+                if retained_bound.hi < required_upper {
+                    // Preserve a certified alternative when scalar ordering drops
+                    // the only own enclosure covering every previously solved domain.
+                    let replacement = if candidate.enclosure.hi >= required_upper {
+                        &solution
+                    } else {
+                        previous.as_ref().ok_or_else(|| {
+                            native::refused("missing certified incumbent alternative")
+                        })?
+                    };
+                    ts.base.solutions.set_size(0);
+                    ts.base.solutions.add(replacement);
+                }
+                let retained = ts
+                    .base
+                    .solutions
+                    .get(0)
+                    .ok_or_else(|| native::refused("missing final native pair"))?;
+                let bound = native::retained_bound(
+                    k,
+                    ts.objects,
+                    retained,
+                    query_owner,
+                    curve.curve,
+                    normal,
+                )?;
+                native::certify(k, &net, &domain, &endpoints, normal, bound.hi)?;
+                if let Some(previous) = previous.as_ref() {
+                    native::certify_previous_domain(
+                        k,
+                        ts.objects,
+                        previous,
+                        query_owner,
+                        curve.curve,
+                        normal,
+                        bound.hi,
+                    )?;
+                }
+                ts.base.best_answer_so_far_sq =
+                    retained.start.solution_value * retained.start.solution_value;
+                return Ok(());
+            }
+        }
         if ts.base.projected_operation {
             let (curves, uv_curves) = p1::face_silhouettes(
                 ts.kernel,

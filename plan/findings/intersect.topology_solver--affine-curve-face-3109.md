@@ -2,7 +2,8 @@
 
 Issue #3109; draft #3110. This is the face-owned pair boundary left after #3077,
 not a replacement for its bounded curve/curve construction or #2968's point/face
-certificate. No production change is present at this evidence checkpoint.
+certificate. The initial evidence checkpoint was 4f883e2dd; the following native construction
+is a work-in-progress checkpoint, pending traversal-domain accounting.
 
 ![Current native returned pair and exact reference in the same projected view.](figures/torus-pair-attainment-3109.png)
 
@@ -66,6 +67,23 @@ contracts are not silently converted to Single.
 ## Validation status
 
 Native evaluation and full-query baseline replays are complete. Dedicated full
-and half torus kernel regressions are prepared; their targeted red build is pending
-shared-cache availability. Production implementation, endpoint-enclosure interface
+and half torus kernel regressions ran on the integrated base: the full-torus test
+fails with reported 1.6642154866673036 versus native 1.6642135459403802, while the
+half-torus control passes (one pass, one expected failure). Production implementation, endpoint-enclosure interface
 review, affected-case audit, final before/after rendering and broad gates remain.
+
+
+## Native local construction checkpoint
+
+The native endpoint residual construction passes six dedicated tests: the original
+full and half torus, reversed operand order, trimmed curve interval, normals scaled
+by .001 and 1000, and the zero normal. The seven existing residual tests and twelve
+projected-bound tests also pass. The full-torus red regression now succeeds without
+using caller slack as accuracy or returning a fitted-silhouette scalar.
+
+This is not the complete repair: topology traversal can have skipped or discarded
+domains before the local face solve. A previous candidate's attainment enclosure
+does not prove coverage of that history. The next checkpoint records original
+domain groups before pruning and independently certifies them against the final
+retained pair. Unknown mixed domains must refuse. This draft is not ready until
+that traversal proof, cross-owner tests and the affected-case audit are complete.
