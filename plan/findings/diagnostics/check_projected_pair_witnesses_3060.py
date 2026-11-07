@@ -11,6 +11,10 @@ from scipy.optimize import differential_evolution, minimize
 
 def curve(spec):
     kind, data = next(iter(spec.items()))
+    if kind == 'circle':
+        kind, data = 'ellipse', {'c': data['center'], 'x': data['x'], 'y': data['y'],
+            'radii': [data['radius'], data['radius']],
+            'domain': [data['a0'], data['a1']], 'inside_out': False}
     if kind == 'line':
         origin, direction = np.array(data['p']), np.array(data['v'])
         direction = direction / np.linalg.norm(direction) * data['scale']

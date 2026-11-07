@@ -1,0 +1,99 @@
+# Frozen projected-pair audit at ab5107e26
+
+This record audits the scoped Single and finite affine All construction. It does not claim to close #3060. Baseline is the parent implementation; all inputs are frozen and replayed unchanged. No tolerance, expected output or exclusion is changed by this evidence commit.
+
+## Single and cylinder cohort
+
+All 31 generated Single projected maximum requests among the 3,000 seeds, plus four cylinder fixtures, were replayed. There are 31 changed outputs, no new refusals and no decode errors. The three empty natural-domain intersections (gen2506, gen2915, gen2993) and the incumbent-filtered gen0717 remain unchanged. The OOB-enabled gen2915 result preserves existing cache-domain clipping; it does not certify extrapolation outside the natural interval.
+
+Every returned pair is admissible, and independent native line/Hermite/homogeneous-rational evaluation agrees with the reported scalar within 7.11e-15. Independent grid/optimization search found no larger witness beyond caller slack; that search is a diagnostic, **not a completeness proof**. The production whole-domain interval invariant supplies the certificate. Four cylinder maxima equal sqrt(2.5) and their returned parameters independently attain it.
+
+Some new Single candidates are slightly lower than an older candidate while still certified within unchanged retention slack. Fourteen rows have independently found improvements inside that slack; this is not represented as exact optimization. The largest found gap is approximately 0.001340204 in gen1658, whose slack is 0.5.
+
+| Case | Before values (status) | After values | Slack | Largest independently found improvement |
+|---|---|---|---|---|
+| gen0131 | 27.292406300295426 ([0]) | 38.353127377015475 | 0.01 | 3.499643547e-06 |
+| gen0144 | 70.88929067495704 ([0]) | 90.48291006330427 | 0.5 | 0 |
+| gen0155 | 37.87672736773793 ([0]) | 41.698189029504405 | 0.01 | 0.000177133632 |
+| gen0302 | empty ([0]) | 4.217760138079574 | 0.0001 | 0 |
+| gen0313 | 3.5885710823184898 ([0]) | 3.677514032092783 | 0.001 | 8.248222469e-06 |
+| gen0373 | 6.113465906772089 ([0]) | 8.28482615770044 | 1e-06 | 3.31673693e-08 |
+| gen0421 | 17.11468532354081 ([0]) | 17.114615887656527 | 0.01 | 6.943588429e-05 |
+| gen0445 | 2.1774745915837537 ([0]) | 10.052741867014833 | 1e-06 | 0 |
+| gen0743 | 83.90388228273946 ([0]) | 87.12927007129669 | 0.0001 | 3.70933094e-07 |
+| gen0844 | 0.0 ([0]) | 10.979584714079621 | 0.5 | 0 |
+| gen0880 | 10.50084800781891 ([0]) | 10.50084768493114 | 0.0001 | 3.228877699e-07 |
+| gen1086 | 17.609097780432535 ([0]) | 73.99422438322947 | 0.01 | 0 |
+| gen1116 | 9.918860532286931 ([0]) | 10.39940044414268 | 0.0001 | 6.122036211e-11 |
+| gen1458 | 1.1799020931977433 ([0]) | 1.7703234057949422 | 0.5 | 9.969708975e-05 |
+| gen1658 | empty ([0]) | 8.000523649275099 | 0.5 | 0.001340203579 |
+| gen1744 | empty ([0]) | 9.878574576753216 | 0.5 | 0 |
+| gen2017 | 19.071210555301338 ([0]) | 21.504888840235413 | 0.5 | 0 |
+| gen2131 | 65.62255209558627 ([0]) | 94.33068553136792 | 1e-05 | 1.497642188e-08 |
+| gen2189 | 0.09248840291760957 ([0]) | 4.5154998991468 | 0.0001 | 0 |
+| gen2325 | 0.8055899438915088 ([0]) | 0.9235167127270163 | 1e-05 | 1.380251979e-07 |
+| gen2440 | 2.44769534587924 ([0]) | 8.615017213813696 | 0.001 | 6.146905207e-11 |
+| gen2603 | empty ([0]) | 7.017259270988454 | 1e-05 | 4.864872718e-07 |
+| gen2768 | 6.160254511384329 ([0]) | 8.199193821009183 | 0.001 | 5.69599368e-06 |
+| gen2771 | 12.110728525770247 ([0]) | 18.087676035977736 | 0.001 | 0 |
+| gen2962 | 82.52299106097162 ([0]) | 107.269468795851 | 0.01 | 1.303067592e-07 |
+| gen2969 | empty ([0]) | 55.95810876408308 | 1e-05 | 0 |
+| gen2976 | 5.583408252286654 ([0]) | 9.516387163386291 | 0.01 | 1.074340616e-11 |
+| analytic_face_cyl_x_6_15 | 0.5 (None) | 1.5811388300841898 | fixture | 0 |
+| analytic_face_cyl_x_7_15 | 0.5 (None) | 1.5811388300841898 | fixture | 0 |
+| analytic_face_halfcyl_x_6_15 | 0.5 (None) | 1.5811388300841898 | fixture | 0 |
+| analytic_face_halfcyl_x_7_15 | 0.5 (None) | 1.5811388300841898 | fixture | 0 |
+
+Exact inputs, output parameters, statuses, object counts and scalar values are in [before](diagnostics/projected_pair_single_before_3060.jsonl) and [after](diagnostics/projected_pair_single_after_3060.jsonl); [independent checks](diagnostics/projected_pair_single_witnesses_3060.jsonl) preserve every measurement.
+
+## Seven changed finite affine All cases
+
+Each projected operand is affine and has a nonzero projected direction. Squared distance is strictly convex in each parameter, so every isolated constrained local maximum is a rectangle corner. The signs of both inward derivatives classify those corners completely; no interior or edge maximum is omitted. An independent 80-digit Decimal reconstruction evaluates all four corners and derivatives. The unchanged caller slack then gives the retained set below. The [complete corner checks](diagnostics/projected_pair_affine_all_proof_3060.jsonl) include the rejected corners and derivative signs.
+
+| Case | Before values | After values | Retained count |
+|---|---|---|---|
+| gen0011 | empty | 7.674280832269905 | 1 |
+| gen1860 | empty | 1.5824476883128602 | 1 |
+| gen2016 | 2.2711480262147923 | 3.4856960129819874 | 1 |
+| gen2050 | 6.137135877339201e-08, 6.137136311338198e-08, 6.137136653148528e-08 | 40.001231972795864, 40.00123193297711 | 2 |
+| gen2187 | 0.09955759757712836, 0.09955759757712898, 0.09955759757712898 | 6.310837322899526 | 1 |
+| gen2501 | 0.6112768486652884 | 1.2800395290048499 | 1 |
+| gen2585 | 0.0001286767978428912, 0.0001286767978681419, 0.0001286767978948102 | 0.9962268759220879, 0.983409688864426 | 2 |
+
+For gen2187 the other strict corner maximum is 6.300451372620962, outside slack 1e-6. For gen2050 both 40.001231972795864 and 40.00123193297711 lie within slack 1e-4. For gen2585 both 0.9962268759220879 and 0.983409688864426 lie within slack 0.5. These are the original All requests, not Single substitutions.
+
+The distinct offset-circle compatibility fixture remains unchanged: two seam parameter representatives attain 4.5, the triangle-inequality bound 3 + 1 + 0.5.
+
+## Same-view geometry
+
+The curves below are independently evaluated from the stored definitions. Each row uses identical projection, limits and magnification before/after. Dashed segments join the returned pairs; markers identify the endpoints. Curve sampling is for rendering only and is not a certificate. Titles show maximum reported value and answer count; exact complete values are in the tables/data above.
+
+![Before and after projected curve pairs, group 1.](figures/projected-pair-audit-3060-1.png)
+
+![Before and after projected curve pairs, group 2.](figures/projected-pair-audit-3060-2.png)
+
+![Before and after projected curve pairs, group 3.](figures/projected-pair-audit-3060-3.png)
+
+![Before and after projected curve pairs, group 4.](figures/projected-pair-audit-3060-4.png)
+
+![Before and after projected curve pairs, group 5.](figures/projected-pair-audit-3060-5.png)
+
+![Before and after projected curve pairs, group 6.](figures/projected-pair-audit-3060-6.png)
+
+The cylinder geometry and closed-form witness are drawn in the [original construction record](curve.curve_p9--projected-pair-maximum-3060.md).
+
+## Remaining unchanged enumeration defects
+
+The 75-row All replay changes only the seven affine rows above. An independent witness search disproves at least one returned maximum in 46 **unchanged** rows. Exact inputs, old outputs and admissible larger-pair parameters are preserved in [the witness list](diagnostics/projected_pair_unchanged_all_witnesses_3060.jsonl). These belong to the existing incomplete curved enumeration scope of #3060; none is blessed or silently counted as repaired. gen1839 is the separately coordinated monotonicity follow-up; gen0472 belongs to #3081. A numerical larger witness disproves the returned maximum but does not identify the exact global maximum or prove identical internal root causes for every row.
+
+## Reproduction
+
+The Rust public-runner helper `diagnostics/projected_pair_audit_3060.rs` freezes/replays the cohorts. The following operate on the committed frozen artifacts:
+
+```text
+python plan/findings/diagnostics/check_projected_pair_witnesses_3060.py plan/findings/diagnostics/projected_pair_single_after_3060.jsonl
+python plan/findings/diagnostics/check_projected_pair_affine_all_3060.py plan/findings/diagnostics/projected_pair_affine_all_after_3060.jsonl
+python plan/findings/diagnostics/plot_projected_pair_audit_3060.py
+```
+
+At this implementation, 22 focused tests and library/tests strict Clippy pass; Linux full formatting passes. Broad workspace gates and affected golden migration are recorded separately when complete.
