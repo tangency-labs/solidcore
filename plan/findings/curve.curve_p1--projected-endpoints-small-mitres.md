@@ -486,6 +486,29 @@ The squared-distance derivative divided by two is bounded below by
 first endpoint. Its side expression `3*(qy+2)-21*(qx-100)` is positive
 throughout the box and at the reference. The filleted box is a subset.
 
+The returned geometry is checked directly by
+`missed_cutter_keeps_geometry::{pat_plain_misses_retains_complete_input_geometry,
+pat_misses_retains_complete_filleted_input_geometry}` in
+`crates/solidcore/tests/projected_curve_queries.rs`. Both tests construct the
+exact golden fixture through the same public box, fillet, curve and trim APIs.
+Before and after the trim they compare complete binary curve and surface
+records: analytic definitions and placements, NURBS control points, weights,
+knots and orientations, plus UV trim definitions. They also compare vertex
+positions, edge intervals, face domains, tolerances and oriented boundary
+connectivity. This is exact record equality, with no sampling or numerical
+tolerance, and establishes the same bounded surface definitions and enclosed
+body. Serialization-only NURBs are materialized on ordinary surface copies
+with fresh cache slots, so the check does not prime the operation's cache.
+
+The optimized production library passes both checks: 198 geometry/topology
+records for the plain box and 786 for the filleted box are unchanged. As a
+negative control, each test constructs a valid box translated by `(1,2,3)`
+with identical face/edge/vertex counts and confirms the same comparison rejects
+it. A matching face's full surface-definition bytes must differ too; a change
+in arena identifiers alone cannot satisfy the control. Thus topology counts
+cannot conceal a moved or altered returned body. No golden or kernel code is
+changed by this additional regression evidence.
+
 For the raw-knot lens, both forward boundaries have `x=-1+2s`, with
 `y_upper=0.2s+0.8s^2` and `y_lower=-0.2s+1.2s^2` for `0<=s<=1`.
 They lie below the cutting segment `y=s` in the interior. The reference
