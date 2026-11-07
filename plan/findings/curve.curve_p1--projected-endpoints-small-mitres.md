@@ -775,8 +775,11 @@ including all eight cases that the strict mean-value bound previously refused.
 The original plane, sphere, trimmed/banded sphere, tilted projection, torus and
 traversal-order expectations are unchanged. The seven residual-specific tests
 include independent polynomial, rational-weight, knot-extraction and degree-limit
-controls. Static checks and broad golden validation remain separate gates;
-earlier full-suite totals above belong to their identified historical checkpoints.
+controls. Strict library/tests Clippy and formatting pass. The panic-site
+inventory reports no unlisted sites; its Windows base-revision lookup uses a
+backslash path, so the authoritative base-list ratchet remains a Linux gate.
+Broad golden validation remains separate; earlier full-suite totals above
+belong to their identified historical checkpoints.
 
 ## Exact joins and strict affine construction
 

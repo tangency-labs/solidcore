@@ -243,7 +243,7 @@ fn choose(n: usize, k: usize) -> Option<f64> {
     row.get(k).copied()
 }
 
-/// Product identity B_i^p B_j^p = C(p,i) C(p,j)/C(2p,i+j) B_(i+j)^(2p).
+/// Product identity `B_i^p B_j^p = C(p,i) C(p,j)/C(2p,i+j) B_(i+j)^(2p)`.
 fn product(a: &[Ivl], b: &[Ivl], p: usize, q: usize) -> Option<Vec<Ivl>> {
     let mut result = Vec::new();
     for i in 0..=2 * p {

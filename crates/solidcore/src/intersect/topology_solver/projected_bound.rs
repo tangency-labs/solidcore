@@ -142,7 +142,6 @@ fn refine_uv(
         let hold_u = (uv.x == domain.min.x && gu <= 0.0) || (uv.x == domain.max.x && gu >= 0.0);
         let hold_v = (uv.y == domain.min.y && gv <= 0.0) || (uv.y == domain.max.y && gv >= 0.0);
         let delta = match (hold_u, hold_v) {
-            (true, true) => break,
             (true, false) if hvv < 0.0 => Vec2::new(0.0, -gv / hvv),
             (false, true) if huu < 0.0 => Vec2::new(-gu / huu, 0.0),
             (false, false) => {
