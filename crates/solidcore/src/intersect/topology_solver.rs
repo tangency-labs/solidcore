@@ -10,6 +10,7 @@ pub mod p1;
 pub mod p2;
 
 mod projected_bound;
+pub(super) mod projected_residual;
 
 #[cfg(test)]
 mod silhouette_accuracy_tests;
