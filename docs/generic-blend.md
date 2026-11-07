@@ -276,7 +276,7 @@ never returns "no kind": a configuration the table does not name is a Setback.
 | **Turn** | two blends sharing a face, turning at a sharp unrounded side edge (a boss base, a pocket's floor or rim; also blends meeting G1 where a side edge between their faces is sharp, such as a ruled loft's side edge at its rim) | **Mitre** (default) or **Swept** (option) |
 | **Ball** | three equal rounds of one convexity at a vertex of three faces, the vertex not set back | the corner ball's sphere |
 | **Chamfer** | every edge at the vertex chamfered, each chamfer a plane between two planes | **Mitre** (default): the chamfer planes run on to their common point; or **Facet** (option): one plane through the rails' crossings |
-| **Setback** | everything else: unequal radii, four or more blends, mixed convexity, a vertex set back, and any corner where G2 is selected | the setback hole and its certified convex fill |
+| **Setback** | everything else: unequal radii, four or more blends, mixed convexity, a vertex set back by a given distance (one only marked set back, with no distance, stays the N x N corner), and any corner where G2 is selected | the setback hole and its certified convex fill |
 
 ![Plan views of the four corner kinds: mitre crease, swept torus, ball sphere patch, setback hole.](generic-blend/corner-events.svg)
 
