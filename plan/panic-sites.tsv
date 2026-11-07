@@ -798,7 +798,7 @@ crates/solidcore/src/primitive/primitive_creation/p2/taper_walls.rs	seam_pcurve	
 crates/solidcore/src/primitive/primitive_creation/p2/taper_walls.rs	walls_closing_at_apexes	int-rem	1	proven	(i + count - 1) % count	inside for i in 0..count, so count > 0
 crates/solidcore/src/primitive/primitive_creation/p2/taper_walls.rs	walls_closing_at_apexes	int-rem	2	proven	(i + 1) % count	inside for i in 0..count, so count > 0
 crates/solidcore/src/primitive/primitive_creation/p2/taper_walls.rs	with_tangent_planes	int-rem	1	proven	(i + count - 1) % count	inside for i in 0..count, so count > 0
-crates/solidcore/src/primitive/primitive_creation/p3/sweeps.rs	split_curves_on_axis	with_capacity	1	proven	Vec::with_capacity(middle.len() + 1)	middle.len() + 1 <= pieces.len(), an in-memory Vec length	
+crates/solidcore/src/primitive/primitive_creation/p3/sweeps.rs	split_curves_on_axis	with_capacity	1	proven	Vec::with_capacity(middle.len() + 1)	middle.len() + 1 <= at.len() + 1, an in-memory Vec length
 crates/solidcore/src/query/api_queries.rs	edge_piece_points	windows	1	proven	windows(2)	constant non-zero size
 crates/solidcore/src/query/face/p3.rs	find_and_classify_loop_bisector_cached	int-div	1	proven	sample_cnt / 2	constant non-zero divisor
 crates/solidcore/src/query/face/p3.rs	find_and_classify_loop_bisector_cached	int-rem	1	proven	in_loop.len() % 2	constant non-zero divisor

@@ -989,10 +989,22 @@ mod tests {
             .unlock_mark(PrimitiveModel::MAIN, MarkType::Mark)
             .is_ok());
 
-        let m1 = model.lock_mark(PrimitiveModel::MAIN, 0).unwrap();
-        let m2 = model.lock_mark(PrimitiveModel::MAIN, 0).unwrap();
+        let m1 = model
+            .lock_mark(PrimitiveModel::MAIN, MarkType::Mark.code())
+            .unwrap();
+        let m2 = model
+            .lock_mark(PrimitiveModel::MAIN, MarkType::Mark2.code())
+            .unwrap();
+        assert_ne!(m1, m2);
+        assert!(model.k.context.is_mark_locked(m1));
+        assert!(model.k.context.is_mark_locked(m2));
+
+        assert!(model.unlock_mark(PrimitiveModel::MAIN, m1).is_ok());
+        assert!(!model.k.context.is_mark_locked(m1));
+        assert!(model.k.context.is_mark_locked(m2));
+
         assert!(model.unlock_mark(PrimitiveModel::MAIN, m2).is_ok());
-        assert!(model.unlock_mark(PrimitiveModel::MAIN, m1).is_ok());
-        assert!(model.unlock_mark(PrimitiveModel::MAIN, m1).is_ok());
+        assert!(!model.k.context.is_mark_locked(m2));
+        assert!(model.unlock_mark(PrimitiveModel::MAIN, m2).is_ok());
     }
 }
