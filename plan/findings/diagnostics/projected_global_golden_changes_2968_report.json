@@ -1,0 +1,1274 @@
+[
+  {
+    "case": "gen0002",
+    "operation": "max",
+    "requested": [
+      0.6256821477105545,
+      0.9635580665549801
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.05,
+    "oracle_distance": 9.248675280586827,
+    "oracle_parameter": 0.8258440787616159,
+    "returned": [
+      {
+        "parameter": 0.8258440787616184,
+        "reported": 9.248675280586827,
+        "evaluated": 9.248675280586829,
+        "gap_to_best": 1.7763568394002505e-15
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen0069",
+    "operation": "max",
+    "requested": [
+      0.0,
+      4.233976762715762
+    ],
+    "stored_domain": [
+      0.0,
+      4.233976762715762
+    ],
+    "tolerance": 1e-05,
+    "oracle_distance": 8.890176791918218,
+    "oracle_parameter": 4.233976762715762,
+    "returned": [
+      {
+        "parameter": 4.233976762715762,
+        "reported": 8.890176791918215,
+        "evaluated": 8.890176791918218,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen0073",
+    "operation": "min",
+    "requested": [
+      4.489046856986363,
+      8.409301280757333
+    ],
+    "stored_domain": [
+      4.489046856986363,
+      8.409301280757333
+    ],
+    "tolerance": 1e-06,
+    "oracle_distance": 2.4569516620450997,
+    "oracle_parameter": 7.42437811529785,
+    "returned": [
+      {
+        "parameter": 7.424378115297848,
+        "reported": 2.4569516620450993,
+        "evaluated": 2.4569516620450997,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen0159",
+    "operation": "max",
+    "requested": [
+      -0.47533396966888564,
+      1.1388624755787422
+    ],
+    "stored_domain": [
+      -1.568164173628337,
+      4.3680987103505355
+    ],
+    "tolerance": 0.001,
+    "oracle_distance": 1.033541203184561,
+    "oracle_parameter": 1.1388624755787422,
+    "returned": [
+      {
+        "parameter": 1.1388624755787422,
+        "reported": 1.033541203184561,
+        "evaluated": 1.033541203184561,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen0268",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.05,
+    "oracle_distance": 95.2820752154917,
+    "oracle_parameter": 1.0,
+    "returned": [
+      {
+        "parameter": 1.0,
+        "reported": 95.28207521549169,
+        "evaluated": 95.2820752154917,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen0312",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 1e-05,
+    "oracle_distance": 28.24679060307276,
+    "oracle_parameter": 0.9800794161911351,
+    "returned": [
+      {
+        "parameter": 0.9800794161911365,
+        "reported": 28.246790603072732,
+        "evaluated": 28.24679060307275,
+        "gap_to_best": 1.0658141036401503e-14
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen0419",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 1e-05,
+    "oracle_distance": 332.0668401537411,
+    "oracle_parameter": 1.0,
+    "returned": [
+      {
+        "parameter": 1.0,
+        "reported": 332.06684015374105,
+        "evaluated": 332.0668401537411,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen0429",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.05,
+    "oracle_distance": 22.540316380568978,
+    "oracle_parameter": 0.0,
+    "returned": [
+      {
+        "parameter": 0.0,
+        "reported": 22.540316380568978,
+        "evaluated": 22.540316380568978,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen0457",
+    "operation": "min",
+    "requested": [
+      -0.15450174803462408,
+      0.35218219198212913
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 1e-05,
+    "reason": "Requested interval is not covered by the stored-domain cache; status 1021 refuses an uncertified partial or empty search."
+  },
+  {
+    "case": "gen0478",
+    "operation": "max",
+    "requested": [
+      0.2992869716851293,
+      0.7458088017685005
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.05,
+    "oracle_distance": 4.761903029580107,
+    "oracle_parameter": 0.7458088017685005,
+    "returned": [
+      {
+        "parameter": 0.7458088017685005,
+        "reported": 4.761903029580106,
+        "evaluated": 4.761903029580107,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen0572",
+    "operation": "min",
+    "requested": [
+      0.4150189544154023,
+      0.5755734276019697
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.05,
+    "oracle_distance": 0.007157691503532662,
+    "oracle_parameter": 0.5072601353765416,
+    "returned": [
+      {
+        "parameter": 0.5072601353765418,
+        "reported": 0.007157691503532663,
+        "evaluated": 0.00715769150353267,
+        "gap_to_best": 8.673617379884035e-18
+      },
+      {
+        "parameter": 0.5755734276019697,
+        "reported": 0.01673787598683193,
+        "evaluated": 0.01673787598683195,
+        "gap_to_best": 0.009580184483299288
+      },
+      {
+        "parameter": 0.4150189544154023,
+        "reported": 0.02270442517931608,
+        "evaluated": 0.022704425179316083,
+        "gap_to_best": 0.015546733675783422
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen0660",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 1e-06,
+    "oracle_distance": 1.4420595249547048,
+    "oracle_parameter": 0.3048406581069285,
+    "returned": [
+      {
+        "parameter": 0.30484065810692407,
+        "reported": 1.4420595249547044,
+        "evaluated": 1.4420595249547048,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen0757",
+    "operation": "max",
+    "requested": [
+      3.1521918564571543,
+      4.152191856457154
+    ],
+    "stored_domain": [
+      3.1521918564571543,
+      4.152191856457154
+    ],
+    "tolerance": 0.001,
+    "oracle_distance": 10.557927271679802,
+    "oracle_parameter": 4.068384879258986,
+    "returned": [
+      {
+        "parameter": 4.068384879258986,
+        "reported": 10.557927271679803,
+        "evaluated": 10.557927271679802,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen0852",
+    "operation": "max",
+    "requested": [
+      1.0788892254595575,
+      1.080659349514678
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 1e-06,
+    "reason": "Requested interval is not covered by the stored-domain cache; status 1021 refuses an uncertified partial or empty search."
+  },
+  {
+    "case": "gen0869",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 1e-06,
+    "oracle_distance": 14.774212810947542,
+    "oracle_parameter": 1.0,
+    "returned": [
+      {
+        "parameter": 1.0,
+        "reported": 14.77421281094755,
+        "evaluated": 14.774212810947542,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen0877",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 1e-06,
+    "oracle_distance": 10.649300098095047,
+    "oracle_parameter": 1.0,
+    "returned": [
+      {
+        "parameter": 1.0,
+        "reported": 10.649300098095045,
+        "evaluated": 10.649300098095047,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen0903",
+    "operation": "max",
+    "requested": [
+      1.2914264682598677,
+      11.17949511127583
+    ],
+    "stored_domain": [
+      1.2914264682598677,
+      11.17949511127583
+    ],
+    "tolerance": 0.05,
+    "oracle_distance": 5.356230494346432,
+    "oracle_parameter": 1.2914264682598677,
+    "returned": [
+      {
+        "parameter": 1.2914264682598677,
+        "reported": 5.356230494346432,
+        "evaluated": 5.356230494346432,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen0909",
+    "operation": "min",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.001,
+    "oracle_distance": 0.57314391403148,
+    "oracle_parameter": 0.0,
+    "returned": [
+      {
+        "parameter": 0.0,
+        "reported": 0.5731439140314799,
+        "evaluated": 0.57314391403148,
+        "gap_to_best": 0.0
+      },
+      {
+        "parameter": 1.0,
+        "reported": 0.5731439140314794,
+        "evaluated": 0.57314391403148,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen0975",
+    "operation": "max",
+    "requested": [
+      9.11108388782278,
+      11.50075760044348
+    ],
+    "stored_domain": [
+      0.0,
+      9.828519172103537
+    ],
+    "tolerance": 0.05,
+    "reason": "Requested interval is not covered by the stored-domain cache; status 1021 refuses an uncertified partial or empty search."
+  },
+  {
+    "case": "gen0983",
+    "operation": "min",
+    "requested": [
+      -1.5012244873106328,
+      -0.8598364289126778
+    ],
+    "stored_domain": [
+      0.0,
+      7.949247479784024
+    ],
+    "tolerance": 1e-06,
+    "reason": "Requested interval is not covered by the stored-domain cache; status 1021 refuses an uncertified partial or empty search."
+  },
+  {
+    "case": "gen1092",
+    "operation": "max",
+    "requested": [
+      0.18923156763757654,
+      0.6442727658993079
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 1e-06,
+    "oracle_distance": 1.9538402164155868,
+    "oracle_parameter": 0.6442727658993079,
+    "returned": [
+      {
+        "parameter": 0.6442727658993079,
+        "reported": 1.9538402164155864,
+        "evaluated": 1.9538402164155868,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen1110",
+    "operation": "max",
+    "requested": [
+      13.331564199800287,
+      13.726611511845006
+    ],
+    "stored_domain": [
+      4.077019910934792,
+      13.794242546308984
+    ],
+    "tolerance": 0.05,
+    "oracle_distance": 2.3980925297368407,
+    "oracle_parameter": 13.726611511845006,
+    "returned": [
+      {
+        "parameter": 13.726611511845006,
+        "reported": 2.3980925297368416,
+        "evaluated": 2.3980925297368407,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen1172",
+    "operation": "min",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.05,
+    "oracle_distance": 0.0,
+    "oracle_parameter": 0.28602071545115765,
+    "returned": [
+      {
+        "parameter": 0.28602071545115765,
+        "reported": 0.0,
+        "evaluated": 0.0,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen1256",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.05,
+    "oracle_distance": 9.351878512795954,
+    "oracle_parameter": 0.011215716748249243,
+    "returned": [
+      {
+        "parameter": 0.01121571674824913,
+        "reported": 9.351878512795953,
+        "evaluated": 9.351878512795954,
+        "gap_to_best": 0.0
+      },
+      {
+        "parameter": 0.0,
+        "reported": 9.347610679993858,
+        "evaluated": 9.34761067999386,
+        "gap_to_best": 0.004267832802094418
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen1267",
+    "operation": "max",
+    "requested": [
+      1.3782439467163963,
+      1.7097656369276324
+    ],
+    "stored_domain": [
+      -4.726850202966768,
+      0.6832062488480473
+    ],
+    "tolerance": 0.001,
+    "reason": "Requested interval is not covered by the stored-domain cache; status 1021 refuses an uncertified partial or empty search."
+  },
+  {
+    "case": "gen1273",
+    "operation": "min",
+    "requested": [
+      0.43118160003066436,
+      0.5390451942605863
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.001,
+    "oracle_distance": 0.0652549513768318,
+    "oracle_parameter": 0.5390451942605863,
+    "returned": [
+      {
+        "parameter": 0.5390451942605863,
+        "reported": 0.0652549513768319,
+        "evaluated": 0.0652549513768318,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen1302",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.001,
+    "oracle_distance": 44.19963875446307,
+    "oracle_parameter": 0.5244107227973043,
+    "returned": [
+      {
+        "parameter": 0.5244107227973037,
+        "reported": 44.19963875446307,
+        "evaluated": 44.19963875446307,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen1448",
+    "operation": "max",
+    "requested": [
+      -4.042331494768778,
+      -3.042331494768778
+    ],
+    "stored_domain": [
+      -4.042331494768778,
+      -3.042331494768778
+    ],
+    "tolerance": 1e-06,
+    "oracle_distance": 12.294570408306024,
+    "oracle_parameter": -3.042331494768778,
+    "returned": [
+      {
+        "parameter": -3.042331494768778,
+        "reported": 12.29457040830604,
+        "evaluated": 12.294570408306024,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen1457",
+    "operation": "min",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.05,
+    "oracle_distance": 4.3438322141615755,
+    "oracle_parameter": 0.2037351722050348,
+    "returned": [
+      {
+        "parameter": 0.20373517220503476,
+        "reported": 4.343832214161575,
+        "evaluated": 4.3438322141615755,
+        "gap_to_best": 0.0
+      },
+      {
+        "parameter": 0.0,
+        "reported": 4.379714797750515,
+        "evaluated": 4.379714797750516,
+        "gap_to_best": 0.0358825835889407
+      },
+      {
+        "parameter": 1.0,
+        "reported": 4.379714797750516,
+        "evaluated": 4.379714797750516,
+        "gap_to_best": 0.0358825835889407
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen1520",
+    "operation": "min",
+    "requested": [
+      2.384908614883602,
+      11.464097233391549
+    ],
+    "stored_domain": [
+      2.384908614883602,
+      11.464097233391549
+    ],
+    "tolerance": 1e-05,
+    "oracle_distance": 33.78937905650686,
+    "oracle_parameter": 2.384908614883602,
+    "returned": [
+      {
+        "parameter": 2.384908614883602,
+        "reported": 33.78937905650685,
+        "evaluated": 33.78937905650686,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen1548",
+    "operation": "min",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 1e-05,
+    "oracle_distance": 0.7582241153226542,
+    "oracle_parameter": 0.0,
+    "returned": [
+      {
+        "parameter": 0.0,
+        "reported": 0.758224115322654,
+        "evaluated": 0.7582241153226542,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen1554",
+    "operation": "max",
+    "requested": [
+      -0.01422384120194417,
+      1.1169569330124063
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.05,
+    "reason": "Requested interval is not covered by the stored-domain cache; status 1021 refuses an uncertified partial or empty search."
+  },
+  {
+    "case": "gen1621",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.05,
+    "oracle_distance": 22.088438326716776,
+    "oracle_parameter": 0.004984724386921911,
+    "returned": [
+      {
+        "parameter": 0.004984724386922088,
+        "reported": 22.088438326716776,
+        "evaluated": 22.088438326716776,
+        "gap_to_best": 0.0
+      },
+      {
+        "parameter": 0.0,
+        "reported": 22.085041647697494,
+        "evaluated": 22.085041647697494,
+        "gap_to_best": 0.0033966790192820895
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen1657",
+    "operation": "min",
+    "requested": [
+      0.0,
+      1.0913921071936865
+    ],
+    "stored_domain": [
+      0.0,
+      1.0913921071936865
+    ],
+    "tolerance": 0.05,
+    "oracle_distance": 0.38028968742366376,
+    "oracle_parameter": 0.0,
+    "returned": [
+      {
+        "parameter": 0.0,
+        "reported": 0.3802896874236637,
+        "evaluated": 0.38028968742366376,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen1695",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 1e-05,
+    "oracle_distance": 39.869632717513085,
+    "oracle_parameter": 0.0,
+    "returned": [
+      {
+        "parameter": 0.0,
+        "reported": 39.86963271751308,
+        "evaluated": 39.869632717513085,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen1699",
+    "operation": "min",
+    "requested": [
+      4.717774132626097,
+      5.717774132626097
+    ],
+    "stored_domain": [
+      4.717774132626097,
+      5.717774132626097
+    ],
+    "tolerance": 1e-05,
+    "oracle_distance": 1.3941829382067272,
+    "oracle_parameter": 5.717774132626097,
+    "returned": [
+      {
+        "parameter": 5.717774132626097,
+        "reported": 1.394182938206742,
+        "evaluated": 1.3941829382067272,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen1732",
+    "operation": "min",
+    "requested": [
+      4.86141236791868,
+      5.4345167309139475
+    ],
+    "stored_domain": [
+      4.210979387831999,
+      5.445985044776654
+    ],
+    "tolerance": 1e-06,
+    "oracle_distance": 1.5611572970102852,
+    "oracle_parameter": 4.86141236791868,
+    "returned": [
+      {
+        "parameter": 4.86141236791868,
+        "reported": 1.5611572970102852,
+        "evaluated": 1.5611572970102852,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen1872",
+    "operation": "min",
+    "requested": [
+      0.30246197898095156,
+      0.3850638703472609
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 1e-06,
+    "oracle_distance": 7.354956422976352,
+    "oracle_parameter": 0.3850638703472609,
+    "returned": [
+      {
+        "parameter": 0.3850638703472609,
+        "reported": 7.354956422976355,
+        "evaluated": 7.354956422976352,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen1876",
+    "operation": "max",
+    "requested": [
+      -4.541072704548112,
+      -2.632602213219906
+    ],
+    "stored_domain": [
+      -4.541072704548112,
+      -2.632602213219906
+    ],
+    "tolerance": 1e-06,
+    "oracle_distance": 1.3914285882969526,
+    "oracle_parameter": -2.632602213219906,
+    "returned": [
+      {
+        "parameter": -2.632602213219906,
+        "reported": 1.3914285882969528,
+        "evaluated": 1.3914285882969526,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen2021",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 1e-05,
+    "oracle_distance": 28.857905823233743,
+    "oracle_parameter": 1.0,
+    "returned": [
+      {
+        "parameter": 1.0,
+        "reported": 28.857905823233743,
+        "evaluated": 28.857905823233743,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen2092",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 1e-06,
+    "oracle_distance": 8.054213986722065,
+    "oracle_parameter": 0.07476690439844118,
+    "returned": [
+      {
+        "parameter": 0.07476690439844116,
+        "reported": 8.054213986722067,
+        "evaluated": 8.054213986722065,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen2126",
+    "operation": "max",
+    "requested": [
+      -1.6603099904635754,
+      2.810003225616906
+    ],
+    "stored_domain": [
+      -1.6603099904635754,
+      2.810003225616906
+    ],
+    "tolerance": 1e-05,
+    "oracle_distance": 5.556128313677057,
+    "oracle_parameter": 2.810003225616906,
+    "returned": [
+      {
+        "parameter": 2.810003225616906,
+        "reported": 5.556128313677057,
+        "evaluated": 5.556128313677057,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen2196",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.05,
+    "oracle_distance": 7.97383781884869,
+    "oracle_parameter": 0.06596314686589874,
+    "returned": [
+      {
+        "parameter": 0.06596314686589877,
+        "reported": 7.973837818848691,
+        "evaluated": 7.97383781884869,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen2207",
+    "operation": "max",
+    "requested": [
+      0.8741910021750652,
+      0.9445909271578647
+    ],
+    "stored_domain": [
+      -0.23881952170832665,
+      0.7611804782916733
+    ],
+    "tolerance": 0.001,
+    "reason": "Requested interval is not covered by the stored-domain cache; status 1021 refuses an uncertified partial or empty search."
+  },
+  {
+    "case": "gen2218",
+    "operation": "max",
+    "requested": [
+      2.0261404497837283,
+      3.0261404497837283
+    ],
+    "stored_domain": [
+      2.0261404497837283,
+      3.0261404497837283
+    ],
+    "tolerance": 1e-05,
+    "oracle_distance": 3.5683265921762812,
+    "oracle_parameter": 3.0261404497837283,
+    "returned": [
+      {
+        "parameter": 3.0261404497837283,
+        "reported": 3.5683265921762817,
+        "evaluated": 3.5683265921762812,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen2292",
+    "operation": "min",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 1e-05,
+    "oracle_distance": 4.514280326608741,
+    "oracle_parameter": 0.0,
+    "returned": [
+      {
+        "parameter": 0.0,
+        "reported": 4.514280326608742,
+        "evaluated": 4.514280326608741,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen2361",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 1e-06,
+    "oracle_distance": 4.619860707258027,
+    "oracle_parameter": 0.06661996696637791,
+    "returned": [
+      {
+        "parameter": 0.06661996696638076,
+        "reported": 4.619860707258027,
+        "evaluated": 4.619860707258028,
+        "gap_to_best": 8.881784197001252e-16
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen2450",
+    "operation": "min",
+    "requested": [
+      1.605137878795821,
+      5.219709512318794
+    ],
+    "stored_domain": [
+      1.605137878795821,
+      5.219709512318794
+    ],
+    "tolerance": 1e-06,
+    "oracle_distance": 0.27002492486264307,
+    "oracle_parameter": 2.5540707534588067,
+    "returned": [
+      {
+        "parameter": 2.5540707534588063,
+        "reported": 0.27002492486264307,
+        "evaluated": 0.2700249248626438,
+        "gap_to_best": 7.216449660063518e-16
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen2524",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 1e-06,
+    "oracle_distance": 0.1645210110322491,
+    "oracle_parameter": 0.5161062644162441,
+    "returned": [
+      {
+        "parameter": 0.5161062644162443,
+        "reported": 0.16452101103224887,
+        "evaluated": 0.16452101103224906,
+        "gap_to_best": 2.7755575615628914e-17
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen2525",
+    "operation": "min",
+    "requested": [
+      6.584379542178297,
+      9.302417216704255
+    ],
+    "stored_domain": [
+      0.09791053918259607,
+      8.493777719153695
+    ],
+    "tolerance": 1e-05,
+    "reason": "Requested interval is not covered by the stored-domain cache; status 1021 refuses an uncertified partial or empty search."
+  },
+  {
+    "case": "gen2611",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.9527886930591525
+    ],
+    "stored_domain": [
+      0.0,
+      1.9527886930591525
+    ],
+    "tolerance": 0.001,
+    "oracle_distance": 34.17341506338262,
+    "oracle_parameter": 0.12001180281343077,
+    "returned": [
+      {
+        "parameter": 0.12001180281343077,
+        "reported": 34.17341506338261,
+        "evaluated": 34.17341506338262,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen2740",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.001,
+    "oracle_distance": 39.76686609721482,
+    "oracle_parameter": 0.12365865927611254,
+    "returned": [
+      {
+        "parameter": 0.12365865927611258,
+        "reported": 39.76686609721482,
+        "evaluated": 39.76686609721483,
+        "gap_to_best": 7.105427357601002e-15
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen2874",
+    "operation": "min",
+    "requested": [
+      0.0,
+      5.85598046274109
+    ],
+    "stored_domain": [
+      0.0,
+      5.85598046274109
+    ],
+    "tolerance": 1e-06,
+    "oracle_distance": 42.29405054598111,
+    "oracle_parameter": 5.85598046274109,
+    "returned": [
+      {
+        "parameter": 5.85598046274109,
+        "reported": 42.294050545981115,
+        "evaluated": 42.29405054598111,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  },
+  {
+    "case": "gen2883",
+    "operation": "min",
+    "requested": [
+      0.9300363540079557,
+      1.119641960869513
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.001,
+    "reason": "Requested interval is not covered by the stored-domain cache; status 1021 refuses an uncertified partial or empty search."
+  },
+  {
+    "case": "gen2942",
+    "operation": "max",
+    "requested": [
+      0.0,
+      1.0
+    ],
+    "stored_domain": [
+      0.0,
+      1.0
+    ],
+    "tolerance": 0.05,
+    "oracle_distance": 1.2588335544914846,
+    "oracle_parameter": 1.0,
+    "returned": [
+      {
+        "parameter": 1.0,
+        "reported": 1.2588335544914846,
+        "evaluated": 1.2588335544914846,
+        "gap_to_best": 0.0
+      }
+    ],
+    "reason": "All returned parameters evaluate to the reported projected distance and lie within requested retention slack of the independent span-root/end-point extremum."
+  }
+]

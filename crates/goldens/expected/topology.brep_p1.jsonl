@@ -1113,7 +1113,7 @@
 {"case":"find_side_3","deferred":null,"error":null,"ints":{},"topology":null,"values":{"out":[1001.0,2.0]}}
 {"case":"find_side_4","deferred":null,"error":null,"ints":{},"topology":null,"values":{"out":[0.0,0.0]}}
 {"case":"find_side_5","deferred":null,"error":null,"ints":{},"topology":null,"values":{"out":[0.0,1.0]}}
-{"case":"find_side_6","deferred":null,"error":null,"ints":{},"topology":null,"values":{"out":[1001.0,2.0]}}
+{"case":"find_side_6","deferred":null,"error":null,"ints":{},"topology":null,"values":{"out":[0.0,0.0]}}
 {"case":"find_side_7","deferred":null,"error":null,"ints":{},"topology":null,"values":{"out":[1001.0,2.0]}}
 {"case":"find_side_8","deferred":null,"error":null,"ints":{},"topology":null,"values":{"out":[0.0,0.0]}}
 {"case":"find_side_9","deferred":null,"error":null,"ints":{},"topology":null,"values":{"out":[0.0,0.0]}}
