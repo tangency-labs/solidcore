@@ -240,7 +240,7 @@ pub fn lies_on(form: &BSplineSurface, a: &Implicit) -> Result<bool> {
     Ok(true)
 }
 
-const OP_EXACT: &str = "surface::implicit::check_exact_net";
+pub(crate) const OP_EXACT: &str = "surface::implicit::check_exact_net";
 
 /// A quadric `x.A.x + 2 b.x + c = 0` as `(A, b, c)`.
 pub type QuadricEquation = ([[f64; 3]; 3], [f64; 3], f64);

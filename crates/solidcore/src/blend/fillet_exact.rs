@@ -2487,8 +2487,16 @@ fn keep_definition(
     let Some(surface) = pseudo.geom_mut(g)?.fillet_surface_mut(None)? else {
         return Err(SolidError::null_pointer(OP));
     };
-    round.recertify(k, surface)?;
-    surface.set_exact_round(Some(round));
+    // The class is read within the body's tolerance, the certificate to rounding. Supports that
+    // are only that close to the class (a cylinder's axis 1e-13 off square to a plane, as read
+    // from a record) make a net that is the round but not provably on the class's surface: no
+    // bound of 0, so it keeps no definition, as a nodal quartic does.
+    match round.recertify(k, surface) {
+        Ok(_) => surface.set_exact_round(Some(round)),
+        Err(SolidError::InvalidInput { operation, .. })
+            if operation == crate::surface::implicit::OP_EXACT => {}
+        Err(e) => return Err(e),
+    }
     Ok(())
 }
 
