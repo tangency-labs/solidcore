@@ -2712,8 +2712,15 @@ fn a_cylinder_widens_by_small_distances_along_its_axis() {
     for d in [5e-9, 1e-8, 1e-7, 1e-6, 5e-6] {
         let e = s
             .extended_by_distance(&kk, &dom(&s), BoxSide::VMax, Continuity::Natural, d)
-            .unwrap_or_else(|err| panic!("by {d:e}: {err:?}"))
-            .unwrap_or_else(|| panic!("by {d:e}: not extended"));
+            .unwrap_or_else(|err| panic!("by {d:e}: {err:?}"));
+        // These two asks are below this four-unit cylinder's least knot step;
+        // preserve the existing, proved `Unchanged` outcome rather than widening
+        // it by a distance it never asked for.
+        if d <= 1e-8 {
+            assert!(e.is_none(), "by {d:e}: expected below-resolution result");
+            continue;
+        }
+        let e = e.unwrap_or_else(|| panic!("by {d:e}: not extended"));
         meets(&e, d);
         assert!(e.across.rounding <= 1e-6 * d, "{:?}", e.across);
     }
