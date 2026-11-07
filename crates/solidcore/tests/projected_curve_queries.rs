@@ -1929,3 +1929,99 @@ mod g1_joins {
             .all(|answer| answer.start.parameters[0] == 0.0 || answer.start.parameters[0] == 2.0));
     }
 }
+
+mod surface_wrappers {
+    //! True UV corners remain candidates when an angular cache label says G1.
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use solidcore::curve::{
+        crv_on_surf::CrvOnSurf,
+        curve::{p1::GlobalPointSolveOptions, Curve},
+    };
+    use solidcore::geom::{
+        extent1d::Extent1d,
+        extent2d::Extent2d,
+        global_solver::{SolutionRequested, SolverOperation},
+        solution_array::{ObjectKind, SolutionObject},
+    };
+    use solidcore::math::{Vec2, Vec3};
+    use solidcore::nurbs::{
+        b_spline_curve::p1::BSplineCurve,
+        crv_basic::Curve as NurbCurve,
+        math::{CPoint, NOW},
+    };
+    use solidcore::surface::{plane::Plane, surface::p2::Surface};
+    use solidcore::Kernel;
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    struct Handle;
+    impl SolutionObject for Handle {
+        fn kind(&self) -> ObjectKind {
+            ObjectKind::Other
+        }
+    }
+    #[test]
+    fn projected_extrema_keep_small_uv_kinks_on_a_plane() {
+        for maximize in [false, true] {
+            let k = Kernel::default();
+            // Exact dyadic data: delta > a^2 makes distance strictly increase
+            // to the maximum join (or decrease to the minimum join). Neither
+            // open affine span contains a stationary point.
+            let a = 1.0 / 1024.0;
+            let delta = 1.0 / 524288.0;
+            let y = if maximize { 1.0 - delta } else { 1.0 + delta };
+            let uv = Curve::from(BSplineCurve::from_nurb(
+                NurbCurve::new(
+                    vec![
+                        CPoint::new(-a, y, 0.0, NOW),
+                        CPoint::new(0.0, 1.0, 0.0, NOW),
+                        CPoint::new(a, y, 0.0, NOW),
+                    ],
+                    1,
+                    vec![0.0, 0.0, 1.0, 2.0, 2.0],
+                )
+                .unwrap(),
+                2,
+                false,
+            ));
+            let domain = Extent2d::from_points(Vec2::new(-2.0, -2.0), Vec2::new(2.0, 2.0));
+            let surface = Surface::from(Plane::new(
+                Vec3::ZERO,
+                Vec3::X,
+                Vec3::Y,
+                Vec2::new(1.0, 1.0),
+                &domain,
+            ));
+            let curve = Curve::from(CrvOnSurf::new(&k, uv, surface, None, 2).unwrap());
+            let expected = 1.0;
+            let (_, continuity) = curve.calculate_continuities(&k, 0.5).unwrap();
+            assert!(
+                (continuity[1] as i32)
+                    >= (solidcore::geom::geom_utility::ContinuityType::G1 as i32)
+            );
+            let options = GlobalPointSolveOptions {
+                opt_vectors: Some(&[Vec3::Z]),
+                ..Default::default()
+            };
+            let op = if maximize {
+                SolverOperation::ProjectedMaximize
+            } else {
+                SolverOperation::ProjectedMinimize
+            };
+            for requested in [SolutionRequested::Single, SolutionRequested::All] {
+                let answers = curve
+                    .global_point_solve::<Handle>(
+                        &k,
+                        &Extent1d::from_min_max(0.0, 2.0),
+                        op,
+                        Vec3::ZERO,
+                        1e-12,
+                        requested,
+                        &options,
+                    )
+                    .unwrap();
+                assert_eq!(answers.len(), 1);
+                assert_eq!(answers.as_slice()[0].start.parameters[0], 1.0);
+                assert_eq!(answers.as_slice()[0].start.solution_value, expected);
+            }
+        }
+    }
+}

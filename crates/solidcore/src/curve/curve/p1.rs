@@ -1395,12 +1395,58 @@ fn exact_native_spline_join(curve: &Curve, t: f64, require_linear: bool) -> bool
             .any(|((a, b), (c, d))| (b > a && d > c) || (b < a && d < c))
 }
 
-/// Keep native spline knots unless their defining data proves smoothness.
-/// Other geometry kinds retain their existing endpoint policy.
+/// Require defining smoothness for native spline and plane-UV joins.
+/// A plane is an affine map of UV: it preserves an exact UV tangent identity.
+/// In particular, native UV non-knots remain artificial subdivisions rather
+/// than becoming extrema merely because the curve is wrapped by a surface.
 fn omit_projected_boundary(curve: &Curve, t: f64, continuity: ContinuityType) -> bool {
-    (continuity as i32) >= (ContinuityType::G1 as i32)
-        && (!matches!(curve.kind(), CurveKind::BSpline(_))
-            || exact_native_spline_join(curve, t, false))
+    if (continuity as i32) < (ContinuityType::G1 as i32) {
+        return false;
+    }
+    match curve.kind() {
+        CurveKind::BSpline(_) => exact_native_spline_join(curve, t, false),
+        CurveKind::CrvOnSurf(on_surface) => {
+            if on_surface.surface().procedural_definition().is_some() {
+                return false;
+            }
+            let crate::surface::surface::p2::SurfaceKind::Plane(plane) =
+                on_surface.surface().kind()
+            else {
+                return false;
+            };
+            let uv = on_surface.uv_curve();
+            let CurveKind::BSpline(spline) = uv.kind() else {
+                return false;
+            };
+            let Some(net) = spline.gw_nurb() else {
+                return false;
+            };
+            // Plane evaluation clamps outside its analytic domain. Prove the
+            // defining positive-weight UV hull stays strictly inside, so that
+            // clamping cannot introduce another, hidden nonsmooth join.
+            let domain = plane.step_uv_domain();
+            let inside = net.cpts().iter().all(|control| {
+                let weight = if control.w == crate::nurbs::math::NOW {
+                    1.0
+                } else {
+                    control.w
+                };
+                if !weight.is_finite() || weight <= 0.0 {
+                    return false;
+                }
+                let x = Ivl::from(control.x) / Ivl::from(weight);
+                let y = Ivl::from(control.y) / Ivl::from(weight);
+                x.lo > domain.min().x
+                    && x.hi < domain.max().x
+                    && y.lo > domain.min().y
+                    && y.hi < domain.max().y
+            });
+            inside && exact_native_spline_join(uv, t, false)
+        }
+        // Other curve kinds retain their existing boundary policy; this proof
+        // does not establish smoothness of their wrapped definitions.
+        _ => true,
+    }
 }
 
 /// Exclude a continuous native C0 knot when a one-sided derivative proves that
@@ -3953,6 +3999,63 @@ mod tests {
                 Extent1d::from_min_max(0.0, 3.0),
             ] {
                 assert!(complete_affine_definition(&curve, outside).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn projected_plane_uv_boundary_uses_defining_join_not_cache_angle() {
+        use crate::curve::crv_on_surf::CrvOnSurf;
+        use crate::geom::extent2d::Extent2d;
+        use crate::math::Vec2;
+        use crate::nurbs::math::{CPoint, NOW};
+        use crate::surface::{plane::Plane, surface::p2::Surface};
+        let k = Kernel::default();
+        for (height, domain_y, kept_definition, smooth) in [
+            (0.999999, 2.0, false, false),
+            (1.0, 2.0, false, true),
+            (1.0, 1.0, false, false),
+            (1.0, 2.0, true, false),
+        ] {
+            let uv = Curve::from(BSplineCurve::from_nurb(
+                crate::nurbs::crv_basic::Curve::new(
+                    vec![
+                        CPoint::new(-0.001, height, 0.0, NOW),
+                        CPoint::new(0.0, 1.0, 0.0, NOW),
+                        CPoint::new(0.001, height, 0.0, NOW),
+                    ],
+                    1,
+                    vec![0.0, 0.0, 1.0, 2.0, 2.0],
+                )
+                .unwrap(),
+                2,
+                false,
+            ));
+            let domain = Extent2d::from_points(Vec2::new(-2.0, -2.0), Vec2::new(2.0, domain_y));
+            let mut surface = Surface::from(Plane::new(
+                Vec3::ZERO,
+                Vec3::X,
+                Vec3::Y,
+                Vec2::new(1.0, 1.0),
+                &domain,
+            ));
+            if kept_definition {
+                use crate::surface::procedural_blend::corner::{CornerDefinition, EndDefinition};
+                surface.set_corner_definition(CornerDefinition::End(EndDefinition {
+                    support: Box::new(surface.clone()),
+                    boundary: Vec::new(),
+                }));
+            }
+            let curve = Curve::from(CrvOnSurf::new(&k, uv, surface, None, 2).unwrap());
+            assert_eq!(
+                omit_projected_boundary(&curve, 1.0, ContinuityType::G1),
+                smooth
+            );
+            if domain_y == 2.0 && !kept_definition {
+                // The same underlying affine span on either side of an
+                // artificial subdivision remains exactly smooth.
+                assert!(omit_projected_boundary(&curve, 0.5, ContinuityType::G1));
+                assert!(omit_projected_boundary(&curve, 1.5, ContinuityType::G1));
             }
         }
     }
