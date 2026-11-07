@@ -18,7 +18,8 @@ cases=[]
 for r in rows('projected_pair_single_after_3060.jsonl'):
  if r['unit']=='curve.curve_p9' and r['output']!=before[r['case']]['output']:
   cases.append((r,before[r['case']]['solutions']))
-for r in rows('projected_pair_affine_all_after_3060.jsonl'):cases.append((r,r['before_solutions']))
+for name in ['projected_pair_affine_all_after_3060.jsonl','projected_pair_monotone_all_after_3060.jsonl']:
+ for r in rows(name):cases.append((r,r['before_solutions']))
 plt.rcParams.update({'font.family':'DejaVu Sans','font.size':9})
 for page,start in enumerate(range(0,len(cases),6),1):
  group=cases[start:start+6];fig,axes=plt.subplots(len(group),2,figsize=(10,3.1*len(group)),squeeze=False)

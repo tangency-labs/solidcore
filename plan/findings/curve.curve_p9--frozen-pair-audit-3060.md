@@ -1,4 +1,4 @@
-# Frozen projected-pair audit at ab5107e26
+# Frozen projected-pair audit at ab5107e26 and 8948e0bc2
 
 This record audits the scoped Single and finite affine All construction. It does not claim to close #3060. Baseline is the parent implementation; all inputs are frozen and replayed unchanged. No tolerance, expected output or exclusion is changed by this evidence commit.
 
@@ -64,6 +64,26 @@ For gen2187 the other strict corner maximum is 6.300451372620962, outside slack 
 
 The distinct offset-circle compatibility fixture remains unchanged: two seam parameter representatives attain 4.5, the triangle-inequality bound 3 + 1 + 0.5.
 
+## Integrated identical-monotone All case
+
+The final 75-row replay at `8948e0bc2` has eight changes and no new refusals or
+decode errors. The sole additional change is original All `gen1839`:
+three old values at or below 4.243690092983992e-12 become one value
+4.408015599603469 at native parameters
+(0.43561427937496744, 0.034742159860404488).
+[Exact frozen input/output](diagnostics/projected_pair_monotone_all_after_3060.jsonl).
+The existing exact-rational derivative-numerator check proves the native
+coordinates monotone on the complete union span; increasing ordered parameter
+separation increases the projected distance, so the extreme feasible pair is
+global. The production interval sign proof agrees. This is the original All
+request, not a Single variant. The independent public-API test and unchanged
+offset-circle compatibility test pass among the 30 focused tests.
+
+The planned golden migration can remove the five repaired #3060 exclusions:
+gen0844, gen1839, gen2050, gen2187 and gen2585. gen0472 remains open in #3081.
+Final parent/main integration and broad validation remain prerequisites to that
+migration; unchanged, unverified All outputs are not blessed.
+
 ## Same-view geometry
 
 The curves below are independently evaluated from the stored definitions. Each row uses identical projection, limits and magnification before/after. Dashed segments join the returned pairs; markers identify the endpoints. Curve sampling is for rendering only and is not a certificate. Titles show maximum reported value and answer count; exact complete values are in the tables/data above.
@@ -84,7 +104,7 @@ The cylinder geometry and closed-form witness are drawn in the [original constru
 
 ## Remaining unchanged enumeration defects
 
-The 75-row All replay changes only the seven affine rows above. An independent witness search disproves at least one returned maximum in 46 **unchanged** rows. Exact inputs, old outputs and admissible larger-pair parameters are preserved in [the witness list](diagnostics/projected_pair_unchanged_all_witnesses_3060.jsonl). These belong to the existing incomplete curved enumeration scope of #3060; none is blessed or silently counted as repaired. gen1839 is the separately coordinated monotonicity follow-up; gen0472 belongs to #3081. A numerical larger witness disproves the returned maximum but does not identify the exact global maximum or prove identical internal root causes for every row.
+The initial 75-row All replay changes only the seven affine rows above; the final integrated replay additionally repairs gen1839 as recorded above. An independent witness search disproves at least one returned maximum in 46 **unchanged** rows. Exact inputs, old outputs and admissible larger-pair parameters are preserved in [the witness list](diagnostics/projected_pair_unchanged_all_witnesses_3060.jsonl). These belong to the existing incomplete curved enumeration scope of #3060; none is blessed or silently counted as repaired. The preserved initial list contains gen1839, subsequently repaired by the integrated monotonicity construction; 45 witnessed rows remain unchanged at 8948e0bc2. gen0472 belongs to #3081. A numerical larger witness disproves the returned maximum but does not identify the exact global maximum or prove identical internal root causes for every row.
 
 ## Reproduction
 
@@ -96,4 +116,4 @@ python plan/findings/diagnostics/check_projected_pair_affine_all_3060.py plan/fi
 python plan/findings/diagnostics/plot_projected_pair_audit_3060.py
 ```
 
-At this implementation, 22 focused tests and library/tests strict Clippy pass; Linux full formatting passes. Broad workspace gates and affected golden migration are recorded separately when complete.
+At ab5107e26, 22 focused tests and library/tests strict Clippy pass; at 8948e0bc2, 30 focused tests and library/tests strict Clippy pass; Linux full formatting passes. Broad workspace gates and affected golden migration are recorded separately when complete.
