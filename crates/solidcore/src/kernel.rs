@@ -805,15 +805,6 @@ pub struct UpstreamFixes {
     /// `plan/upstream-issues/WR-84--addendum-2026-11-01-propagate-step-off-failure.md`).
     /// Off by default for pinned C++ parity.
     pub edgeuse_convexity_propagates_step_off_failure: bool,
-    /// `SmPointSet3d::SetUpCentroid` sums every full 50-point block when the point count
-    /// is a positive multiple of 50 (`extras == 0`) instead of starting with a 0-point
-    /// block that drops the last 50 points (returning `(0, 0, 0)` for 50 points), and
-    /// marks `Cache::CENTROID` (`m_bCentroidSet = TRUE`) after computing it so repeated
-    /// centroid queries reuse the cached value and do not depend on whether `GetNormal`
-    /// ran first (WR-15, #2134; see
-    /// `plan/upstream-issues/WR-15--addendum-2026-10-31-centroid-multiples-of-50.md`).
-    /// Off by default for pinned C++ parity.
-    pub point_set_centroid_all_blocks: bool,
     /// `SmLocalSolve1d::SolveIt` clamps the Newton step `delta_t` to
     /// `0.08 * m_vInterval.GetLength() + SM_EFF_ZERO` (scaled by `0.99`) only when
     /// `m_bUseInterval` is `true`, instead of evaluating `m_vInterval.GetLength()` on the
@@ -1264,6 +1255,7 @@ pub struct UpstreamFixes {
     pub fillet_mitre_gap_patch: bool,
     /// Each fan of faces at a vertex where the body touches itself is a corner of its own: `SmFilletExecutive::SetFilletParameters` splits each filleted edge's vertex whose edge uses form several fans sharing no edge (two cubes sharing a corner; the up and down halves of squares drawn edge to edge, touching at the origin) into one vertex per fan at its point (`SmBrep::SplitVertexByFans`, `crate::topology::brep::vertex_fans`), `DoFilleting` joins the target's vertices still at a split point after the blends, whether they built or not (`SmBrep::JoinVertexFans`), and `SmFilletCorner::Create` builds no two-edge corner where an edge not blended there is a knife edge (its faces tangent and folded back on each other, `SmFilletSolver::IsKnifeEdge`). Upstream `SmFilletCorner::Create` walked one fan's faces, found the blended edges of both fans and built an Nx2 corner of edges sharing no face, failing with status 1001 ("unable to make topology") (WR-665; the fork's tangency-labs/smlib@4ecfbab and @e418750).
     pub fillet_corner_per_vertex_fan: bool,
+    /// No longer read: `TrimExtendedEdge` always does this, so the field goes when SolidCraft's set drops it.
     /// `TrimExtendedEdge` takes, on a closed curve, the arc that runs where its base edge does, not always the interval between its two trim points: a hemisphere's rim, two arcs of one circle, no longer becomes one arc twice (WR-463, #403; the fork's tangency-labs/smlib@34eaa6b (was fa7ff4a)).
     pub offset_closed_curve_trim_arc: bool,
     /// `TrimExtendedEdge` never takes an open edge's first trim point again as its second, by point as well as by parameter: on the closed curve a rim half of a sphere cap lifts onto (the whole offset circle), the first point's twin across the curve's seam (another parameter, the same point, often the far end of the coincident range the other rim half's offset gives) is refused, so the half no longer gets the whole circle (or nothing) and its offset loop no gap. Thickening the cap above z = 5 of a sphere whose rim is two half circles placed against its seam (the sphere cut by a turned box) failed with `SM_ERR_OFFSET_EDGE_VANISHES` (1043) under `offset_closes_loop_gaps`, and gave a non-manifold body without it (WR-673, #2174; the fork's tangency-labs/smlib@7ee0876, for #1502).
@@ -1308,8 +1300,6 @@ pub struct UpstreamFixes {
     pub ssi_low_angle_start_on_probation: bool,
     /// `SmSurfaceIntersector` traces an open tangent curve once: `AddStartPoint` keeps one start point per cluster of tangent boundary start points (`IsSameTangentCluster`), a finished trace removes the clusters at its ends (`DoIntersection`), `TraceCurve` runs its "already traced" test on a first step that snapped onto another start point, and a near-tangent trace stops at the free end of a curve already found instead of running over it (WR-76, #392; the SolidCraft fork's tangency-labs/smlib@920da20 (was 0ce09f2)).
     pub ssi_trace_tangent_curves_once: bool,
-    /// `SmSurfaceIntersector::DoIntersection` and `FindInteriorCurves` trace a curve back the other way only when the trace produced points: `TraceCurve` returns an empty curve when its start point already lies on a found curve, and upstream then reverses the empty list and fails the whole intersection with `SM_ERR_NULL_POINTER` (WR-80; the fork's tangency-labs/smlib@0dbe681).
-    pub ssi_no_reverse_of_empty_trace: bool,
     /// `SmAdvSurfaceIntersector::ComputeSingularityPoint` starts a curve at a singularity from the first singular direction that points into both domains, whose angle is the search's `dAngleMin`, before the later inside directions are searched for the one closest to the previous direction. Upstream leaves the output at `aSingDirections[0]`, so where the first inside direction is the nearest (or the only one) the curve starts along a direction that need not point into either domain (WR-512, #1522; the fork's tangency-labs/smlib#52).
     pub ssi_singular_start_inside_direction: bool,
     /// `SmSurfaceIntersector::IsPointOnStartPoint` compares the squared distance of each

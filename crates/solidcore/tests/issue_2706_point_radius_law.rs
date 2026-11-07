@@ -98,7 +98,7 @@ struct Rounded {
 /// The box with its edge x = 10, z = 30 rounded with `law` (start radius 3, circular section,
 /// continuity 1), checked a closed manifold solid with a clean Level 2 check. For a constant
 /// law `constant` on the definition kernel, every face the round made is a procedural blend
-/// whose law is that constant along the edge and past its ends.
+/// whose law is that constant (to 1e-12), with no slope, along the edge and past its ends.
 fn rounded_box(build: Build, law: FilletLaw, constant: Option<f64>) -> Rounded {
     let mut k = Kernel::default();
     if let Build::Definition = build {
@@ -146,8 +146,13 @@ fn rounded_box(build: Build, law: FilletLaw, constant: Option<f64>) -> Rounded {
             let len = ivl.length();
             for f in [-0.25, 0.0, 0.5, 1.0, 1.25] {
                 let t = ivl.min() + f * len;
+                // the constant to rounding: the definition keeps its own copy of the law
                 let v = law.evaluate(t, &ivl, false).unwrap();
-                assert_eq!(v, [r, 0.0, 0.0], "the definition's law at {t}");
+                let near = |a: f64, b: f64| (a - b).abs() <= 1e-12 * r;
+                assert!(
+                    near(v[0], r) && near(v[1], 0.0) && near(v[2], 0.0),
+                    "the definition's law at {t}: {v:?}"
+                );
             }
         }
     }
