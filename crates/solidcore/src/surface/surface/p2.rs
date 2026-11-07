@@ -8998,6 +8998,26 @@ mod swap_definition_tests {
         .unwrap();
     }
 
+    /// WR-701: a swap keeps the surface as it was made, swapped: a torus marked inside out
+    /// whose copy constructor drops the mark (`keeps_inside_out` false) is still inside out
+    /// after the swap, as it was before the swap was made on a copy.
+    #[test]
+    fn a_swap_keeps_an_inside_out_torus_inside_out() {
+        let k = Kernel::default();
+        let frame = Axis2Placement::default();
+        let mut torus =
+            Torus::create_canonical(&k, &frame, 4.0, 1.5, TorusOptions::default(), None).unwrap();
+        torus.inside_out = true;
+        torus.keeps_inside_out = false;
+        let mut s = Surface::from(torus);
+        s.swap_uv(&k).unwrap();
+        let SurfaceKind::Torus(t) = s.kind() else {
+            panic!("a torus");
+        };
+        assert!(t.inside_out, "the swap dropped the torus's inside-out mark");
+        assert!(t.base().swap_uv());
+    }
+
     /// WR-701: a swap whose polar converter cannot be made on the transposed net (every sweep
     /// iso circle degenerate) fails with nothing swapped and nothing notified: the cone,
     /// sphere, torus and surface of revolution are bit for bit as they were.
