@@ -1,7 +1,8 @@
 //! Whole-domain bounds for a projected point/surface maximum.
 //!
 //! Not upstream. Candidate generation is deliberately independent of this check:
-//! every knot rectangle must exclude a value larger than the candidate plus tolerance.
+//! every knot rectangle must exclude a value larger than the candidate plus retention
+//! slack and the arithmetic enclosure widths of individual evaluated points.
 //! The mean-value enclosure uses the existing outward-rounded NURBS partials.
 //! Deviations: no recursion; at most 16,384 boxes and 48 bisections along a path.
 
@@ -36,9 +37,11 @@ pub(super) fn certify<O: crate::geom::solution_array::SolutionObject>(
     point: Vec3,
     solver: &crate::geom::global_solver::GlobalSolver<'_, O>,
 ) -> Result<()> {
-    let (net, domain, normal, reported) = checked_candidate(k, objects, face, point, solver)?;
-    let upper = (Ivl::from(reported) + Ivl::from(solver.tolerance_3d)).lo;
-    if !maximum_is_bounded(k, &net, &domain, point, normal, upper)? {
+    let (net, domain, normal, candidate_lower, rounding) =
+        checked_candidate(k, objects, face, point, solver)?;
+    let upper =
+        (Ivl::from(candidate_lower) + Ivl::from(solver.tolerance_3d) + Ivl::from(rounding)).lo;
+    if !maximum_with_rounding_is_bounded(k, &net, &domain, point, normal, upper, true)? {
         return Err(refused(
             "whole-face projected maximum could not be certified within tolerance",
         ));
@@ -64,7 +67,7 @@ fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
     face: O,
     point: Vec3,
     solver: &crate::geom::global_solver::GlobalSolver<'_, O>,
-) -> Result<(Nurbs, Extent2d, Vec3, f64)> {
+) -> Result<(Nurbs, Extent2d, Vec3, f64, f64)> {
     use crate::blend::fillet_section::station::as_b_spline;
     use crate::surface::surface::SurfaceKind;
     let surface = objects.surface(objects.face_surface(face)?)?;
@@ -105,6 +108,10 @@ fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
     {
         return Err(refused("projected maximum has no finite error budget"));
     }
+    let mut rounding = 0.0;
+    // Other objects supply a previously validated feasible incumbent. Without
+    // this face's point enclosure, grant it no additional arithmetic allowance.
+    let mut candidate_lower = reported;
     if solution.objects.contains(&Some(face)) {
         if solution.solution_type != crate::geom::solution_array::SolutionType::SingleValue {
             return Err(refused(
@@ -124,15 +131,19 @@ fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
             return Err(refused("projected candidate is outside the face domain"));
         }
         let value = value_at(&net, uv, point, normal)?;
+        candidate_lower = value.lo;
+        rounding = (Ivl::from(value.hi) - Ivl::from(value.lo)).hi;
+        let budget = (Ivl::from(solver.tolerance_3d) + Ivl::from(rounding)).lo;
         if !(value - Ivl::from(reported)).mag().is_finite()
-            || (value - Ivl::from(reported)).mag() > solver.tolerance_3d
+            || !rounding.is_finite()
+            || (value - Ivl::from(reported)).mag() > budget
         {
             return Err(refused(
                 "projected candidate value is not enclosed within tolerance",
             ));
         }
     }
-    Ok((net, domain, normal, reported))
+    Ok((net, domain, normal, candidate_lower, rounding))
 }
 
 #[derive(Clone, Copy)]
@@ -381,6 +392,7 @@ fn bound(net: &Nurbs, cell: Cell, point: Vec3, normal: V3<Ivl>) -> Result<Ivl> {
 /// Prove an upper bound on the projected distance over the supplied rectangle.
 /// This alone does NOT certify candidate feasibility, trimming, or an analytic
 /// definition's agreement with this net; callers must establish those separately.
+#[cfg(test)]
 pub(super) fn maximum_is_bounded(
     k: &Kernel,
     net: &Nurbs,
@@ -388,6 +400,20 @@ pub(super) fn maximum_is_bounded(
     point: Vec3,
     normal: Vec3,
     upper: f64,
+) -> Result<bool> {
+    maximum_with_rounding_is_bounded(k, net, domain, point, normal, upper, false)
+}
+
+/// Point evaluations contribute arithmetic enclosure width, never the width of
+/// a parameter box. This keeps zero retention slack distinct from exact arithmetic.
+fn maximum_with_rounding_is_bounded(
+    k: &Kernel,
+    net: &Nurbs,
+    domain: &Extent2d,
+    point: Vec3,
+    normal: Vec3,
+    upper: f64,
+    allow_point_rounding: bool,
 ) -> Result<bool> {
     if !upper.is_finite()
         || upper < 0.0
@@ -401,6 +427,7 @@ pub(super) fn maximum_is_bounded(
     }
     let us = knot_cuts(&net.u, net.p, net.nu, domain.min.x, domain.max.x, 0)?;
     let vs = knot_cuts(&net.v, net.q, net.nv, domain.min.y, domain.max.y, 0)?;
+    let normal_vector = normal;
     let normal = V3::from_vec3(normal);
     let mut visited = 0;
     for &(ua, ub, ku) in &us {
@@ -418,9 +445,24 @@ pub(super) fn maximum_is_bounded(
                 if visited > MAX_BOXES {
                     return Ok(false);
                 }
+                let cell_upper = if allow_point_rounding {
+                    let value = value_at(
+                        net,
+                        Vec2::new(cell.u.mid(), cell.v.mid()),
+                        point,
+                        normal_vector,
+                    )?;
+                    let width = (Ivl::from(value.hi) - Ivl::from(value.lo)).hi;
+                    if !width.is_finite() {
+                        return Ok(false);
+                    }
+                    (Ivl::from(upper) + Ivl::from(width)).lo
+                } else {
+                    upper
+                };
                 match bound(net, cell, point, normal) {
-                    Ok(value) if value.lo <= value.hi && value.sqrt().hi <= upper => continue,
-                    Ok(value) if value.sqrt().lo > upper => return Ok(false),
+                    Ok(value) if value.lo <= value.hi && value.sqrt().hi <= cell_upper => continue,
+                    Ok(value) if value.sqrt().lo > cell_upper => return Ok(false),
                     Err(e @ SolidError::Cancelled { .. }) => return Err(e),
                     // A denominator not separated from zero may become provable
                     // after subdivision. An unresolved box never counts as passed.
@@ -478,6 +520,37 @@ mod tests {
             v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             pw,
         }
+    }
+
+    #[test]
+    fn zero_retention_uses_only_point_evaluation_rounding() {
+        let k = Kernel::default();
+        let net = hidden_peak();
+        let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        let normal = Vec3::new(0.0, 0.0, 1.0);
+        let value = value_at(&net, Vec2::new(0.5, 0.5), Vec3::ZERO, normal).unwrap();
+        let width = (Ivl::from(value.hi) - Ivl::from(value.lo)).hi;
+        let upper = (Ivl::from(value.lo) + Ivl::from(width)).lo;
+        assert!(maximum_with_rounding_is_bounded(
+            &k,
+            &net,
+            &domain,
+            Vec3::ZERO,
+            normal,
+            upper,
+            true,
+        )
+        .unwrap());
+        assert!(!maximum_with_rounding_is_bounded(
+            &k,
+            &net,
+            &domain,
+            Vec3::ZERO,
+            normal,
+            1.0,
+            true,
+        )
+        .unwrap());
     }
 
     #[test]
