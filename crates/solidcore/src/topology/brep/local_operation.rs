@@ -2325,7 +2325,20 @@ mod tests {
                     "{radius}: {why:?}"
                 );
             } else {
-                assert_eq!(why, Some(unsound_check(7, 61)), "{radius}");
+                // refused as not sound, the first new failure an edge's curve owner (#61);
+                // how many more lines the check gives depends on how the body was built
+                assert!(
+                    matches!(
+                        why,
+                        Some(OffsetFailure::Unsound {
+                            what: crate::error::offset::Unsoundness::Check {
+                                first: Some((_, 61)),
+                                ..
+                            }
+                        })
+                    ),
+                    "{radius}: {why:?}"
+                );
             }
         }
     }
