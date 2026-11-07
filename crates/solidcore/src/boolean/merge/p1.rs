@@ -72,6 +72,7 @@ use crate::kernel::Kernel;
 use crate::math::{Point3, Vec3};
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::query::brep::{self as qbrep, BoundingBoxOptions, BrepQuery};
+use crate::surface::surface::p2::{Surface, SurfaceKind};
 use crate::topology::brep::p4;
 use crate::topology::edgeuse::p1 as eu;
 use crate::topology::shell;
@@ -251,6 +252,49 @@ pub fn finish_face_coincidence(
     Ok(brep_edges(brep)?.len() != edge_counts.0 || brep_edges(other)?.len() != edge_counts.1)
 }
 
+/// Whether the surfaces of two faces coincide within their tolerances. A radial sector
+/// only compares the faces at a mated edge, where tangent surfaces that part further
+/// along (a fillet against a fillet 1e-4 off) read as coincident; faces are coincident
+/// only when their surfaces are.
+///
+/// # Errors
+///
+/// A null-pointer error for a face without a surface (the radial sector that found
+/// the pair has dereferenced both); those of the surface coincidence check.
+pub fn faces_coincide(
+    k: &Kernel,
+    brep: &Brep,
+    face: FaceId,
+    other: &Brep,
+    other_face: FaceId,
+) -> Result<bool> {
+    // Both faces come from a radial sector, whose classification dereferenced their surfaces.
+    let (Some(a), Some(b)) = (
+        brep.face(face)?.surface.as_ref(),
+        other.face(other_face)?.surface.as_ref(),
+    ) else {
+        return Err(SolidError::null_pointer(OP));
+    };
+    // Only analytic pairs part where the sector cannot see (two planes keep their gap, which
+    // its step-off measures). The sampled check of other kinds (offset, B-spline) is not exact
+    // enough to overrule the sector: gating offset against offset reads the faces of the golden
+    // case `round_merge_deleted_surface_user_problemShell15_face8_inset` as apart and moves it.
+    let plane = |s: &Surface| matches!(s.kind(), SurfaceKind::Plane(_));
+    let analytic = |s: &Surface| {
+        plane(s)
+            || matches!(
+                s.kind(),
+                SurfaceKind::Cone(_) | SurfaceKind::Sphere(_) | SurfaceKind::Torus(_)
+            )
+    };
+    if !(analytic(a) && analytic(b)) || (plane(a) && plane(b)) {
+        return Ok(true);
+    }
+    let tol = crate::topology::face::p2::tolerance(brep, face)?
+        .max(crate::topology::face::p2::tolerance(other, other_face)?);
+    Ok(a.coincidence_check(k, b, tol, false)?.are_coincident)
+}
+
 /// Classify an other-operand face use into a primary region. A single primary
 /// region wins immediately. Otherwise try mated-edge radial sectors, then sample
 /// unmated edges at 0.456789 of their interval and classify each point.
@@ -288,6 +332,15 @@ pub fn find_brep_region_of_other_face(
         else {
             continue;
         };
+        // a face found coincident here is coincident only when its surface is (WR-755)
+        if let (Some(fu), false) = (sector.coincident_faceuse, sector.zero_sector) {
+            let face = eu::faceuse_face(brep, fu)?.ok_or_else(|| SolidError::null_pointer(OP))?;
+            let other_face =
+                eu::face(other, other_eu)?.ok_or_else(|| SolidError::null_pointer(OP))?;
+            if !faces_coincide(k, brep, face, other, other_face)? {
+                continue;
+            }
+        }
         let region = if let Some(eu_id) = sector.radial_edgeuse {
             let shell = eu::shell(brep, eu_id)?.ok_or_else(|| SolidError::null_pointer(OP))?;
             eu::shell_region(brep, shell)?
@@ -796,6 +849,60 @@ pub(crate) fn boolean_post_process_with_notifications(
                     k.fixes.brep_edit_statuses_pass_on,
                 )?)?;
             }
+        }
+    }
+    Ok(())
+}
+
+/// Not upstream (#3090): places each of `vertices` whose gap to one of its faces is past the
+/// B-rep's intersection tolerance at the corner its faces define
+/// ([`calc_corner_from_faces`](crate::topology::vertex::corner::calc_corner_from_faces): the
+/// midpoint of two parallel faces that part, else the faces' surface intersection).
+/// `SmVertex::AssertValid` requires every vertex/face gap under that tolerance whatever the
+/// vertex's own, and a vertex the imprint kept where a vertex of an operand stood (its ball
+/// holds the other operand's point) lies on one face and a sliver off the other, as the
+/// two tangent fillets of operands a hair apart part by dx^2 / 4. Only a vertex whose
+/// tolerance is past the intersection tolerance can hold such a gap, and a corner further
+/// than that tolerance is left alone: the vertex keeps its ball.
+///
+/// # Errors
+/// Those of the vertex/face gap and corner calculations, and of `SmVertex::SetPoint`.
+pub(crate) fn place_vertices_on_face_corners(
+    k: &mut Kernel,
+    brep: &mut Brep,
+    vertices: &[VertexId],
+    notifications: &mut edge::NotifyEnv<'_>,
+) -> Result<()> {
+    use crate::topology::vertex::corner;
+    let xsect_tol = corner::xsect_tol_3d_of_brep(k, brep);
+    for &v in vertices {
+        if brep.vertex(v).is_err() {
+            continue;
+        }
+        let tolerance = vertex::tolerance(brep, v)?;
+        if tolerance <= xsect_tol || corner::is_within_xsect_tol_3d_of_faces(k, brep, v, false)?.0 {
+            continue;
+        }
+        let at = corner::calc_corner_from_faces(k, brep, v)?;
+        if !at.found_point || at.max_gap_3d > tolerance {
+            continue;
+        }
+        let this = (notifications.key_of)(EntityRef::Vertex(v));
+        vertex::set_point(
+            brep,
+            v,
+            at.best_point,
+            notifications.records,
+            notifications.attributes,
+            notifications.context.as_deref_mut(),
+            this,
+            &|vu| (notifications.key_of)(EntityRef::Vertexuse(vu)),
+        )?;
+        // the gaps cached on the vertex's uses are of its old place
+        for vu in vertex::vertexuses(brep, v)? {
+            let r = brep.vertexuse_mut(vu)?;
+            r.vertex_face_gap.reset();
+            r.vertex_edge_gap.reset();
         }
     }
     Ok(())
