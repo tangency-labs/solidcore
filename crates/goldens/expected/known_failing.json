@@ -4,12 +4,29 @@
     "issue-2349-teardrop-full-r3": "tangency-labs/solidcore#2349: the closed-angle mitre is not certified; tangency-labs/solidcore#2404 tracks the refusal size whose fresh build fails validity",
     "real-box-high-corner-setback-eight": "tangency-labs/solidcore#2933: the corner patch overruns the setback of 8 along the top round and folds (pinched creases, two sliver faces); edge tolerance 5.17e-5"
   },
+  "curve.curve_p9": {
+    "gen0472": "tangency-labs/solidcore#3060: reported projected maximum is suboptimal (5.010571561172592 versus feasible 5.346613700814649); an endpoint/parameter update does not fix the curve-pair maximum",
+    "gen0844": "tangency-labs/solidcore#3060: reported projected maximum is suboptimal (0 versus feasible 10.979584714079621); an endpoint/parameter update does not fix the curve-pair maximum",
+    "gen1839": "tangency-labs/solidcore#3060: reported projected maximum is suboptimal (near zero versus feasible 4.40801559960347); an endpoint/parameter update does not fix the curve-pair maximum",
+    "gen2050": "tangency-labs/solidcore#3060: reported projected maximum is suboptimal (about 6.1371363e-8 versus feasible 40.00123197279587); an endpoint/parameter update does not fix the curve-pair maximum",
+    "gen2187": "tangency-labs/solidcore#3060: reported projected maximum is suboptimal (0.09955759757712898 versus feasible 6.310837322899527); an endpoint/parameter update does not fix the curve-pair maximum",
+    "gen2585": "tangency-labs/solidcore#3060: reported projected maximum is suboptimal (about 0.000128676797868 versus feasible 0.9962268759220879); an endpoint/parameter update does not fix the curve-pair maximum"
+  },
+  "intersect.topology_solver_p2": {
+    "analytic_face_sphere_band_5_15": "tangency-labs/solidcore#2967: approximate-silhouette maximum 0.8605419808705617 misses the exact 0.860555127546399 by 1.314667583729e-5, exceeding the requested 1e-5; the separate accuracy fix is #2968"
+  },
   "offset.offset_executive_p2": {
     "fuzz00108": "tangency-labs/solidcore#3023: the edge's arc crosses its closed offset curve's seam, no interval gives it; the edge is left bad and status is success",
     "fuzz00117": "tangency-labs/solidcore#3023: the edge's arc crosses its closed offset curve's seam, no interval gives it; the edge is left bad and status is success",
     "pe_Fillet_box_diff_cyl_f0_d0_out_ext": "tangency-labs/solidcore#3023: the edge's arc crosses its closed offset curve's seam, no interval gives it; the edge is left bad and status is success",
     "pe_Fillet_box_diff_cyl_f1_d0_out_ext": "tangency-labs/solidcore#3023: the edge's arc crosses its closed offset curve's seam, no interval gives it; the edge is left bad and status is success",
     "pe_Fillet_box_diff_cyl_f2_d0_out_ext": "tangency-labs/solidcore#3023: the edge's arc crosses its closed offset curve's seam, no interval gives it; the edge is left bad and status is success"
+  },
+  "primitive.api_trim_ops": {
+    "gen0018": "tangency-labs/solidcore#3061: finite-cutter keep/delete result lacks an independent geometric contract; current face votes explain the output but do not justify blessing it as the intended region",
+    "gen0070": "tangency-labs/solidcore#3061: finite-cutter keep/delete result lacks an independent geometric contract; current face votes explain the output but do not justify blessing it as the intended region",
+    "gen0084": "tangency-labs/solidcore#3061: finite-cutter keep/delete result lacks an independent geometric contract; current face votes explain the output but do not justify blessing it as the intended region",
+    "gen0086": "tangency-labs/solidcore#3061: finite-cutter keep/delete result lacks an independent geometric contract; current face votes explain the output but do not justify blessing it as the intended region"
   },
   "primitive.primitive_creation_p2": {
     "gen0092": "tangency-labs/solidcore#2794: a circle of radius 1e-3 swept along two 1e-2 legs at a right angle returns success, but the body fails check_brep level 2 (vertex 1.8284271e-3 off its faces); a refusal or the valid body of volume 6.2832e-8 is right; fix in #2840",

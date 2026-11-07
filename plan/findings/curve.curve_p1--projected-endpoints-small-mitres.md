@@ -80,14 +80,22 @@ Outward-rounded intervals enclose the objective and candidates. Parameter
 neighbors are checked in the original knot coordinates, without rebuilding knots.
 An isolated upper-knot value remains a separate candidate from the left limit.
 
-The review corrections separate retention slack from enclosure rounding, derive
-analytic-line directions from mapped endpoints, refuse an interior minimum that
-has no representable interior parameter, and refuse projected requests not covered
-by the cached domain. The optimized projected-query integration suite passes
-all 19 tests with these changes. The new zero-slack and collapsed-line tests
-both fail with status 1021 against the previous library and pass with the fix;
-the existing truly unrepresentable-minimum refusal still passes. Internal cache
-and adjacent-float regressions, strict checks, and the goldens are being refreshed.
+The review corrections separate retention slack from enclosure rounding, use
+exact factors of the mapped analytic-line direction, refuse an interior minimum
+that has no representable interior parameter, and refuse projected requests not
+covered by the cached domain. Zero-slack and collapsed-line regressions fail with
+status 1021 before their fixes. The true unrepresentable-minimum refusal remains
+covered, including an adjacent-float span whose fixture explicitly preserves raw
+knots. The 14 internal cache/affine tests passed after that fixture correction.
+
+For an analytic line, the mapped endpoint difference factors as
+`scale * (b-a) * V`, times a nonzero query/natural-span ratio for bounded maps.
+Zero factors are checked before multiplication; otherwise exact parallelism of
+`V` decides whether the projection is constant. Subtracting rounded endpoint
+positions is insufficient: it can lose true parallelism or erase a tiny
+transverse component. Both additional regressions fail against `e71a2e1b9`
+and pass with the factorized proof. All 21 projected-query tests pass in the
+current debug and optimized builds.
 
 ![Narrow parameter span and representable candidates](figures/projected-affine-parameter-conditioning.png)
 ![Isolated upper-knot value and left limit](figures/projected-upper-knot-limit.png)
@@ -340,3 +348,56 @@ checks the actual elbow's Level2 validity and analytic volume.
   `r/abs(axis dot normal)`.
 - The repository's `docs/definitions-and-certificates.md`, section 4.2: rounded
   interval enclosures include arithmetic error and are not sample estimates.
+
+## Goldens migration after numerical review
+
+The reviewed run updates or adds 201 records (190 existing, 11 new fixtures).
+The exact old/new serialized values are in the corresponding golden-file diff;
+small within-comparison rounding changes are retained too. Eleven records are
+excluded instead of blessed: six disproved pair maxima under #3060, four
+unverified finite-cutter keep/delete results under #3061, and the sphere-band
+accuracy failure under #2967. The existing #2794 records owned by #2811 are kept.
+
+| Unit | Updated/added | Geometric or API justification |
+|---|---:|---|
+| blend.hcr | 1 | gen0392's constrained endpoint is 1.153538106000102e-5 from the vertex, within the existing 2e-5 classification zone; Unknown becomes Vertex. |
+| curve.curve_p1 | 61 | Per-span stationary-root and boundary audit above; affine enclosures; newly uncovered requests return 1021 rather than a result over a strict subset. Six fixtures exercise endpoints and local/global distinctions. |
+| curve.curve_p4 | 24 | Negating the maximization stationary function also negates its derivative. For circle_property_21, +0.64309503671411716 becomes -0.64309503671411716. Three line fixtures check the scaled derivative directly. |
+| curve.curve_p5 | 7 | Correct derivatives change local Newton basins and convergence. Returned roots were independently checked; gen1760 and gen2940 explicitly report nonconvergence, not a falsely certified maximum. |
+| curve.curve_p7 | 16 | Added roots satisfy the stationary polynomial; this property-analysis path is not asserted to return the constrained global maximum. The independent classifications above disclose minima and secondary maxima. |
+| curve.curve_p9 | 1 | circle_projected_max keeps distance 4.5 = center separation 3 + radii 1 + 0.5; seam parameters become exact endpoints. All six suboptimal pair cases are excluded under #3060. |
+| geom.global_solver | 2 | New scaled-normal fixtures verify disk radii and center distances use the same double-cross metric as the incumbent. |
+| intersect.topology_solver_p1 | 42 | Valid endpoint additions/rounding are retained; incomplete domains return 1021. gen1646 now completes all three calls with reported distance 0 and t=0.6406108473689741, within its arithmetic enclosure of the near-zero true distance. Reported 0 is not an assertion of exact incidence. |
+| intersect.topology_solver_p2 | 40 | Closed-form cylinder/cone/sphere/torus audits and unchanged-best subdivision endpoint additions above. The torus point-face maximum differs from the exact oracle by 1.949364369036e-6, within its 1e-5 request. The sphere-band case is excluded. |
+| primitive.api_trim_ops | 2 | pat_misses and pat_plain_misses retain the complete box, proved by the finite-cutter side inequality below. Four unverified finite-cutter outputs are excluded under #3061. |
+| topology.brep_p1 | 1 | find_side_6 changes 1001/UNSURE to success/left, by the endpoint tangent cross product above. |
+| topology.brep_p10 | 4 | The raw-knot lens is entirely reference-side: KeepPoint retains one face and DeletePoint retains none, for both narrow knot widths. |
+
+For the two missed-box trim cases, the cutter is
+`x(t)=100+3t`, `y(t)=-2+21t-36t^2+19t^3`, `0<=t<=1`.
+The box and reference project into `0<=qx<=10`, `0<=qy<=5`.
+The squared-distance derivative divided by two is bounded below by
+`3*(x-qx)+(y-qy)*y' >= 270-147 = 123 > 0`, so the nearest point is the
+first endpoint. Its side expression `3*(qy+2)-21*(qx-100)` is positive
+throughout the box and at the reference. The filleted box is a subset.
+
+For the raw-knot lens, both forward boundaries have `x=-1+2s`, with
+`y_upper=0.2s+0.8s^2` and `y_lower=-0.2s+1.2s^2` for `0<=s<=1`.
+They lie below the cutting segment `y=s` in the interior. The reference
+`(-1.5,-1)` is on that same side, proving retained-face counts 1/0 for
+KeepPoint/DeletePoint. The affine tests independently check the underlying
+minimum; correct face votes alone are not used as its certificate.
+
+The fresh finite-trim case gen0018 is TrimProjectParallel on a filleted box,
+with a finite arc and DeletePoint. It returns 27 faces / 60 edges / 33 vertices;
+its record changes from 1587 to 1703 values. It is explicitly unverified under
+#3061, alongside gen0070, gen0084 and gen0086, not silently blessed.
+
+Validation on the factorized line-direction implementation: formatting, strict
+workspace/all-target Clippy, WASM, and all 21 projected-query integration tests
+pass. All 12 affected golden units pass with no unexpected changes, additions,
+removals or broken cases. Before the final line-direction refinement, the complete
+283-unit golden sweep also passed; the final refinement was checked by rerunning
+the 12 affected units. The full default-profile Rust suite and kernel rig are
+still running. The earlier optimized library suite passed 3621 tests with four
+ignored; its superseded integration run was stopped to validate the final code.
