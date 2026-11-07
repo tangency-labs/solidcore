@@ -4549,6 +4549,10 @@ impl OffsetGeometryCreation {
             && shell_tangent_gap
         {
             if let (Some(off), Some(other_off)) = (offset_edgeuse, other_offset_edgeuse) {
+                let off_e = brep.edgeuse_edge(off)?.ok_or(dangling("off edge"))?;
+                let other_off_e = brep
+                    .edgeuse_edge(other_off)?
+                    .ok_or(dangling("other off edge"))?;
                 let v1 = brep.edgeuse_vertex(off)?;
                 let mate = brep.edgeuse_mate(off)?;
                 let v2 = mate.and_then(|m| brep.edgeuse_vertex(m).ok()).flatten();
@@ -4565,74 +4569,90 @@ impl OffsetGeometryCreation {
 
                 if let (Some(p1), Some(p2), Some(p1_o), Some(p2_o)) = (p1, p2, p1_other, p2_other) {
                     if (p1 - p2).length() > 1e-6 && (p1_o - p2_o).length() > 1e-6 {
-                        let d_same = (p1 - p1_o).length();
-                        let d_cross = (p1 - p2_o).length();
-                        let (r2_start, r2_end) = if d_same <= d_cross {
-                            (p1_o, p2_o)
-                        } else {
-                            (p2_o, p1_o)
+                        // Check if the edge curve already spans between its respective vertices.
+                        let tol = brep.edge_tolerance(off_e)?;
+                        let tol2 = brep.edge_tolerance(other_off_e)?;
+                        let check_ends = |e: O, q1: Point3, q2: Point3| -> Result<bool> {
+                            if let Some(ch) = brep.edge_curve(e)? {
+                                let cv = curve_of(brep, ch)?;
+                                let ivl = brep.edge_interval(e)?;
+                                let e0 = cv.evaluate_point(k, ivl.min())?;
+                                let e1 = cv.evaluate_point(k, ivl.max())?;
+                                let t = brep.edge_tolerance(e)?;
+                                let tol_margin = 10.0 * t.max(1e-5);
+                                Ok(((q1 - e0).length() <= tol_margin
+                                    || (q1 - e1).length() <= tol_margin)
+                                    && ((q2 - e0).length() <= tol_margin
+                                        || (q2 - e1).length() <= tol_margin))
+                            } else {
+                                Ok(false)
+                            }
                         };
-                        let r1 = BSplineCurve::create_line_segment(3, p1, p2)?;
-                        let r2 = BSplineCurve::create_line_segment(3, r2_start, r2_end)?;
-                        rail1 = Some(r1.clone());
-                        rail2 = Some(r2);
+                        let off_matched = check_ends(off_e, p1, p2)?;
+                        if !off_matched {
+                            let d_same = (p1 - p1_o).length();
+                            let d_cross = (p1 - p2_o).length();
+                            let (r2_start, r2_end) = if d_same <= d_cross {
+                                (p1_o, p2_o)
+                            } else {
+                                (p2_o, p1_o)
+                            };
+                            let r1 = BSplineCurve::create_line_segment(3, p1, p2)?;
+                            let r2 = BSplineCurve::create_line_segment(3, r2_start, r2_end)?;
+                            rail1 = Some(r1.clone());
+                            rail2 = Some(r2);
 
-                        // Update off edge curve to span p1..p2
-                        let off_face = brep.edgeuse_face(off)?.ok_or(dangling("face"))?;
-                        let surf1 = brep.face_surface(off_face)?.ok_or(dangling("surf"))?;
-                        let s1 = surface_of(brep, surf1)?;
-                        let tol =
-                            brep.edge_tolerance(brep.edgeuse_edge(off)?.ok_or(dangling("edge"))?)?;
-                        let (uv1, _) = s1.step_inversion_unbounded(k, p1, 10.0 * tol)?;
-                        let (uv2, _) = s1.step_inversion_unbounded(k, p2, 10.0 * tol)?;
-                        let uv_curve1 = BSplineCurve::create_line_segment(
-                            2,
-                            Point3::new(uv1.x, uv1.y, 0.0),
-                            Point3::new(uv2.x, uv2.y, 0.0),
-                        )?;
-                        let h_c1 = store_curve(brep, Curve::from(r1))?;
-                        let h_uv1 = store_curve(brep, Curve::from(uv_curve1))?;
-                        self.replace_edge_curves(
-                            k,
-                            brep,
-                            off,
-                            Some(h_c1),
-                            Some(h_uv1),
-                            Some(original_edgeuse),
-                        )?;
+                            // Update off edge curve to span p1..p2
+                            let off_face = brep.edgeuse_face(off)?.ok_or(dangling("face"))?;
+                            let surf1 = brep.face_surface(off_face)?.ok_or(dangling("surf"))?;
+                            let s1 = surface_of(brep, surf1)?;
+                            let (uv1, _) = s1.step_inversion_unbounded(k, p1, 10.0 * tol)?;
+                            let (uv2, _) = s1.step_inversion_unbounded(k, p2, 10.0 * tol)?;
+                            let uv_curve1 = BSplineCurve::create_line_segment(
+                                2,
+                                Point3::new(uv1.x, uv1.y, 0.0),
+                                Point3::new(uv2.x, uv2.y, 0.0),
+                            )?;
+                            let h_c1 = store_curve(brep, Curve::from(r1))?;
+                            let h_uv1 = store_curve(brep, Curve::from(uv_curve1))?;
+                            self.replace_edge_curves(
+                                k,
+                                brep,
+                                off,
+                                Some(h_c1),
+                                Some(h_uv1),
+                                Some(original_edgeuse),
+                            )?;
 
-                        // Update other_off edge curve to span p1_o..p2_o
-                        let other_off_face =
-                            brep.edgeuse_face(other_off)?.ok_or(dangling("face"))?;
-                        let surf2 = brep.face_surface(other_off_face)?.ok_or(dangling("surf"))?;
-                        let s2 = surface_of(brep, surf2)?;
-                        let tol2 = brep.edge_tolerance(
-                            brep.edgeuse_edge(other_off)?.ok_or(dangling("edge"))?,
-                        )?;
-                        let (uv1_o, _) = s2.step_inversion_unbounded(k, p1_o, 10.0 * tol2)?;
-                        let (uv2_o, _) = s2.step_inversion_unbounded(k, p2_o, 10.0 * tol2)?;
-                        let uv_curve2 = BSplineCurve::create_line_segment(
-                            2,
-                            Point3::new(uv1_o.x, uv1_o.y, 0.0),
-                            Point3::new(uv2_o.x, uv2_o.y, 0.0),
-                        )?;
-                        let c2 = BSplineCurve::create_line_segment(3, p1_o, p2_o)?;
-                        let h_c2 = store_curve(brep, Curve::from(c2))?;
-                        let h_uv2 = store_curve(brep, Curve::from(uv_curve2))?;
-                        self.replace_edge_curves(
-                            k,
-                            brep,
-                            other_off,
-                            Some(h_c2),
-                            Some(h_uv2),
-                            Some(other_original_edgeuse),
-                        )?;
+                            // Update other_off edge curve to span p1_o..p2_o
+                            let other_off_face =
+                                brep.edgeuse_face(other_off)?.ok_or(dangling("face"))?;
+                            let surf2 =
+                                brep.face_surface(other_off_face)?.ok_or(dangling("surf"))?;
+                            let s2 = surface_of(brep, surf2)?;
+                            let (uv1_o, _) = s2.step_inversion_unbounded(k, p1_o, 10.0 * tol2)?;
+                            let (uv2_o, _) = s2.step_inversion_unbounded(k, p2_o, 10.0 * tol2)?;
+                            let uv_curve2 = BSplineCurve::create_line_segment(
+                                2,
+                                Point3::new(uv1_o.x, uv1_o.y, 0.0),
+                                Point3::new(uv2_o.x, uv2_o.y, 0.0),
+                            )?;
+                            let c2 = BSplineCurve::create_line_segment(3, p1_o, p2_o)?;
+                            let h_c2 = store_curve(brep, Curve::from(c2))?;
+                            let h_uv2 = store_curve(brep, Curve::from(uv_curve2))?;
+                            self.replace_edge_curves(
+                                k,
+                                brep,
+                                other_off,
+                                Some(h_c2),
+                                Some(h_uv2),
+                                Some(other_original_edgeuse),
+                            )?;
+                        }
                     }
                 }
             }
         }
-
-        // When not given an OffsetEdgeuse - make a Rail1Curve by approximating OrigEU->UVTrimCurve Offset
         if rail1.is_none() {
             // make temporary copy of the OrigEU->UVTrimCurve trimmed to sEdgeIvl
             let uv = brep
