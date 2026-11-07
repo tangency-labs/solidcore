@@ -42,11 +42,11 @@ pub(super) fn supports(curves: [&Curve; 2], intervals: [Extent1d; 2]) -> bool {
     let (Some(na), Some(nb)) = (ea.base().gw_nurb(), eb.base().gw_nurb()) else {
         return false;
     };
-    let span = ea.base().step_interval().length();
+    let span = ea.step_interval().length();
     span.is_finite()
         && span > 0.0
         && span < 360.0
-        && ea.base().step_interval() == eb.base().step_interval()
+        && ea.step_interval() == eb.step_interval()
         && ea.x_radius() != ea.y_radius()
         && ea.x_radius() == eb.x_radius()
         && ea.y_radius() == eb.y_radius()
@@ -574,8 +574,20 @@ pub(super) fn solve<O: SolutionObject>(
         definitions: [Definition::of(a, da)?, Definition::of(b, db)?],
     };
     let maxima = finite_candidates(&query, domains)?;
+    let lower = maxima
+        .iter()
+        .map(|maximum| maximum.point.lower)
+        .fold(target.map_or(0.0, f64::abs), f64::max);
+    let exclude = (Ivl::from(lower) - Ivl::from(tolerance)).lo;
     let mut retained = Vec::new();
+    let mut required_upper = 0.0_f64;
     for maximum in maxima {
+        // A certified root-objective bound can exclude an entire local maximum
+        // from the retention band before constructing its rounded representative.
+        // It never permits a coarse representative to be returned.
+        if maximum.objective.hi < exclude {
+            continue;
+        }
         let candidate = maximum.point;
         if maximum.objective.hi > candidate.upper {
             return Err(refused(
@@ -593,9 +605,26 @@ pub(super) fn solve<O: SolutionObject>(
                 ));
             }
         }
+        required_upper = required_upper.max(maximum.objective.hi);
         retained.push(candidate);
     }
-    super::projected_pair_all::accumulate(&query, retained, tolerance, handles)
+    let answers = super::projected_pair_all::accumulate(&query, retained, tolerance, handles)?;
+    if !answers.is_empty() {
+        let mut returned_upper = 0.0_f64;
+        for answer in answers.as_slice() {
+            let point = query.candidate(answer.start.param(0)?, answer.start.param(1)?)?;
+            returned_upper = returned_upper.max(point.upper);
+        }
+        // Reported-value retention may reorder numerically indistinguishable
+        // candidates. A discarded candidate's rounding cannot justify the
+        // returned set; at least one actual returned point must cover the bound.
+        if returned_upper < required_upper {
+            return Err(refused(
+                "All retention discarded the global objective enclosure",
+            ));
+        }
+    }
+    Ok(answers)
 }
 
 #[cfg(test)]
@@ -762,6 +791,23 @@ mod tests {
             normal: Vec3::Z,
         };
         let maxima = finite_candidates(&query, [curve.natural_interval(); 2]).unwrap();
+        let best_lower = maxima
+            .iter()
+            .map(|maximum| maximum.point.lower)
+            .fold(0.0_f64, f64::max);
+        for maximum in &maxima {
+            if maximum.objective.hi >= best_lower - 0.5 {
+                assert!(
+                    maximum.objective.hi <= maximum.point.upper,
+                    "root parameters={:?}, objective={:?}, point=[{},{}], reported={}",
+                    maximum.point.parameters,
+                    maximum.objective,
+                    maximum.point.lower,
+                    maximum.point.upper,
+                    maximum.point.reported
+                );
+            }
+        }
         for tolerance in [0.0, 1e-5, 0.5] {
             let answers = solve::<crate::geom::solution_array::OperandObject>(
                 &kernel,
