@@ -25,10 +25,8 @@
     clippy::indexing_slicing
 )] // test helpers
 
-use solidcore::blend::definition_check::{bare_blend_faces, BlendFaceLog};
+use solidcore::blend::definition_check::bare_blend_faces;
 use solidcore::blend::fillet_executive::api::fillet_edges;
-use solidcore::blend::fillet_executive::session::FilletSession;
-use solidcore::blend::fillet_solver::p1::FilletSurfaceGeneratorType;
 use solidcore::boolean::api_brep::{boolean_difference, boolean_union};
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::mass::integrator::properties::{
@@ -36,16 +34,14 @@ use solidcore::mass::integrator::properties::{
 };
 use solidcore::math::{Point3, PI};
 use solidcore::primitive::api_primitives::create_box;
-use solidcore::query::api_queries::edge_closest_point;
-use solidcore::surface::procedural_blend::chamfer::ChamferSize;
-use solidcore::topology::api_files::read_brep_from_file;
-use solidcore::topology::brep::p10::TopologyEnv;
 use solidcore::topology::brep::p2::is_manifold_solid;
-use solidcore::topology::brep::p5::{stitch_and_orient, StitchAndOrientOptions};
 use solidcore::topology::brep::validation::{check_brep, CheckLevel};
-use solidcore::topology::topology::NotifyRecords;
-use solidcore::topology::{loopuse, EdgeId};
+use solidcore::topology::EdgeId;
 use solidcore::{Brep, Kernel, Vec3};
+
+#[path = "support/mirrored_shell_rim.rs"]
+mod mirrored_shell_rim;
+use mirrored_shell_rim::{build_rim, edited_input, input, Kind};
 
 const A: f64 = 12.744_373_655_385_26;
 const B: f64 = 22.692_759_633_669_36;
@@ -181,40 +177,6 @@ fn wr649_without_the_band_check() {
 // (1-pi/4)*r^2 and first moment (5/6-pi/4)*r^3. A chamfer's are d^2/2 and d^3/6.
 // The floor adds material on the inward side; the rim removes it outward.
 
-/// Load the original captured operand with the rig's fix set.
-fn input() -> (Kernel, Brep) {
-    input_from_bytes(include_bytes!("data/issue_2903_shelled_box_rim.smb"))
-}
-
-/// Load the edited-height capture with the rig's fix set.
-fn edited_input() -> (Kernel, Brep) {
-    input_from_bytes(include_bytes!("data/issue_2903_edited_shelled_box_rim.smb"))
-}
-
-/// Read a fresh operand and enable definition logging without preparing its geometry.
-fn input_from_bytes(bytes: &[u8]) -> (Kernel, Brep) {
-    let mut k = Kernel::default();
-    let fixes: Vec<String> = serde_json::from_str(include_str!("kernel_cases/fixes.json")).unwrap();
-    for name in fixes {
-        *k.fixes.flag_mut(&name).unwrap() = true;
-    }
-    // The blend-face log records what made each new strip; it changes no result
-    // (definition-check issue_2489). The kernel gets it in this test alone.
-    k.blend_face_log = Some(BlendFaceLog::default());
-    let mut attributes = AttributeStore::default();
-    let mut records = NotifyRecords::new();
-    let mut env = TopologyEnv {
-        all_attributes: &[],
-        attributes: &mut attributes,
-        key_of: &loopuse::notify_ref,
-        records: &mut records,
-        next_key: 1 << 50,
-    };
-    let bytes = bytes.to_vec();
-    let b = read_brep_from_file(&mut k, Some(bytes), true, false, &mut env).unwrap();
-    (k, b)
-}
-
 /// The original cavity's inner planar contour length.
 fn perimeter() -> f64 {
     152.0 + 6.0 * PI
@@ -239,59 +201,10 @@ fn volume_is(k: &Kernel, b: &mut Brep, expected: f64) {
     );
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Kind {
-    Round,
-    Chamfer,
-}
-
 /// Blend one rim chain and check every new strip's definition or recorded exception.
 fn rim(k: &mut Kernel, b: &mut Brep, point: Vec3, kind: Kind, size: f64) -> solidcore::Result<()> {
     let original_faces = b.face_list().to_vec();
-    let picked = b
-        .edge_list()
-        .iter()
-        .copied()
-        .map(|e| {
-            (
-                e,
-                edge_closest_point(k, b, e, point).unwrap().closest.distance,
-            )
-        })
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .unwrap();
-    assert!(picked.1 < 1e-8, "rim selection missed {point:?}");
-    let edges =
-        solidcore::blend::blend_refusal::tangent_chain(k, b, &[picked.0], 0.5 * PI / 180.0)?;
-    assert_eq!(edges.len(), 8, "the entire inner rim");
-    {
-        let mut s = FilletSession::new(k, b)?;
-        s.set_swept_turns(false);
-        match kind {
-            Kind::Round => s.prepare_per_edge_constant_radius(
-                k,
-                &edges,
-                &[size],
-                &[FilletSurfaceGeneratorType::Circular],
-                1,
-                1.0,
-            )?,
-            Kind::Chamfer => {
-                s.prepare_chamfers_along(k, &edges, &[ChamferSize::Distances([size, size])], &[])?;
-            }
-        }
-        s.create_corners(k, None)?;
-        if kind == Kind::Chamfer {
-            for corner in s.fillet_corners()? {
-                s.set_corner_bevel(corner, true)?;
-            }
-        }
-        s.set_overflow_first(kind == Kind::Round);
-        s.set_classify_only(false);
-        s.do_filleting(k, None)?;
-    }
-    stitch_and_orient(k, b, &StitchAndOrientOptions::default())?;
-    b.refresh_cached_topology();
+    build_rim(k, b, point, kind, size)?;
     let strips: Vec<_> = b
         .face_list()
         .iter()
