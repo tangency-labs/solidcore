@@ -264,6 +264,22 @@ impl Surface {
         how: Continuity,
         distance: f64,
     ) -> Result<Option<Extended>> {
+        self.extended_by_distance_at(k, dom, dom, side, how, distance)
+    }
+
+    /// [`Surface::extended_by_distance`] with the length across measured at the middle of
+    /// `at`'s side (the same side coordinate as `dom`'s) rather than `dom`'s: where earlier
+    /// sides grew the box, `at` is the face's own extent along the side, so the distance is
+    /// met at the face, not where the surface has grown ([`Surface::extended_sides`]).
+    pub(super) fn extended_by_distance_at(
+        &self,
+        k: &Kernel,
+        dom: &Extent2d,
+        at: &Extent2d,
+        side: BoxSide,
+        how: Continuity,
+        distance: f64,
+    ) -> Result<Option<Extended>> {
         if !(distance.is_finite() && distance > 0.0) {
             return Err(SolidError::invalid_input(
                 OP,
@@ -271,10 +287,10 @@ impl Surface {
             ));
         }
         if let SurfaceKind::OffsetSurface(o) = self.kind() {
-            return offset_extended(k, o, dom, side, how, distance);
+            return offset_extended(k, o, dom, at, side, how, distance);
         }
         if let SurfaceKind::ProceduralBlend(pb) = self.kind() {
-            return blend::blend_extended(k, pb, dom, side, distance);
+            return blend::blend_extended(k, pb, dom, at, side, distance);
         }
         let analytic = AnalyticSupport::of(self).is_some();
         let form = crate::blend::fillet_section::station::as_b_spline(k, self)?.ok_or(
@@ -308,13 +324,14 @@ impl Surface {
             )))
         };
         // a length past the measure's leaf budget is no measurement, as a leaf not converged
-        let across =
-            |m: &Option<Surface>| match m.as_ref().map(|s| s.length_across_side(k, dom, side, REL))
-            {
-                None | Some(Err(SolidError::NotConverged { .. })) => Ok(None),
-                Some(Ok(a)) => Ok(Some(a)),
-                Some(Err(e)) => Err(e),
-            };
+        let across = |m: &Option<Surface>| match m
+            .as_ref()
+            .map(|s| s.length_across_side(k, at, side, REL))
+        {
+            None | Some(Err(SolidError::NotConverged { .. })) => Ok(None),
+            Some(Ok(a)) => Ok(Some(a)),
+            Some(Err(e)) => Err(e),
+        };
         if analytic && (how == Continuity::Natural || degree == 1) {
             // the one rule on every path: a distance the side's least step is proved past
             // is below its resolution, the side left as it is (where the face box ends at
@@ -430,13 +447,14 @@ fn offset_extended(
     k: &Kernel,
     o: &OffsetSurface,
     dom: &Extent2d,
+    at: &Extent2d,
     side: BoxSide,
     how: Continuity,
     distance: f64,
 ) -> Result<Option<Extended>> {
     let Some(base) = o
         .base_surface()
-        .extended_by_distance(k, dom, side, how, distance)?
+        .extended_by_distance_at(k, dom, at, side, how, distance)?
     else {
         return Ok(None);
     };
