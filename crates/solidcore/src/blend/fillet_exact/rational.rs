@@ -659,6 +659,21 @@ impl NodalArc {
             w,
         }
     }
+    /// The builder's 16 nodal segments, with their homogeneous sign chosen at the midpoint.
+    fn segments(&self, s0: f64, s1: f64) -> Vec<Segment> {
+        let mut segs = Vec::new();
+        let wsign = if self.gw(0.5).1 > 0.0 { 1.0 } else { -1.0 };
+        let n = 16;
+        for i in 0..n {
+            let a = s0 + (s1 - s0) * f64::from(i) / f64::from(n);
+            let bb = s0 + (s1 - s0) * f64::from(i + 1) / f64::from(n);
+            let mut sg = self.segment(a, bb);
+            sg.m = v_scale(&sg.m, wsign);
+            sg.w = scale(&sg.w, wsign);
+            segs.push(sg);
+        }
+        segs
+    }
 }
 
 /// `sm_NodalQuartic(crO1, crO2, crNode, crFrom, crTo, iBase, aBranch, aX, rW, rG)`: the
@@ -795,7 +810,6 @@ pub fn calc_rational_spine_fillet_geom(
         .ok_or_else(|| SolidError::null_pointer(OP))?;
     let ivl = edge::interval(b, e)?;
     let tol = b.tolerance();
-    let r = blend.radius;
     let arc = ops
         .solver()
         .fsg
@@ -992,20 +1006,34 @@ pub fn calc_rational_spine_fillet_geom(
                 s1 = sv;
             }
         }
-        let wsign = if arc_q.gw(0.5).1 > 0.0 { 1.0 } else { -1.0 };
-        let n = 16;
-        for i in 0..n {
-            let a = s0 + (s1 - s0) * f64::from(i) / f64::from(n);
-            let bb = s0 + (s1 - s0) * f64::from(i + 1) / f64::from(n);
-            let mut sg = arc_q.segment(a, bb);
-            sg.m = v_scale(&sg.m, wsign);
-            sg.w = scale(&sg.w, wsign);
-            segs.push(sg);
-        }
+        segs = arc_q.segments(s0, s1);
     } else {
         return Err(SolidError::invalid_input(OP, "not a rational spine"));
     }
 
+    let parts = rational_spine_parts(k, blend, segs, arc, tol)?;
+    store_parts(ops.solver(), pseudo, fillet_geom, parts)
+}
+
+/// Build the surface, rails and leader from the rational spine's segments.
+///
+/// Both the solver and the mixed-quadric regressions use this construction, including
+/// endpoint-weight normalization, bounded positive-weight subdivision and knot placement.
+/// All arithmetic and traversal orders are preserved from the original builder.
+///
+/// # Errors
+///
+/// Those of the original construction: nonpositive or excessive weight ranges, invalid
+/// canonical data, a surface off its ball or supports, and curve/surface evaluations.
+fn rational_spine_parts(
+    k: &Kernel,
+    blend: &ExactBlend,
+    mut segs: Vec<Segment>,
+    arc: bool,
+    tol: f64,
+) -> Result<FilletGeomParts> {
+    let r = blend.radius;
+    let [o0, o1] = blend.offsets;
     // each segment reparametrised (its weights times c^i) so that its end weights agree,
     // and scaled to meet the one before: the same curve, its weights 1 at every joint
     {
@@ -1265,23 +1293,19 @@ pub fn calc_rational_spine_fillet_geom(
             trim: None,
         })?
     };
-    store_parts(
-        ops.solver(),
-        pseudo,
-        fillet_geom,
-        FilletGeomParts {
-            surface: round,
-            rails: [rail0, rail1],
-            rail_intervals: rail_ivls,
-            center_line: Some(Curve::from(spine)),
-        },
-    )
+    Ok(FilletGeomParts {
+        surface: round,
+        rails: [rail0, rail1],
+        rail_intervals: rail_ivls,
+        center_line: Some(Curve::from(spine)),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::blend::fillet_exact::{classify_supports, keep_round_if_proved, ClassInputs};
+    use crate::curve::curve::CurveKind;
     use crate::geom::axis2_placement::Axis2Placement;
     use crate::surface::cone::Cone;
     use crate::surface::procedural_blend::convert::{exact_rebuild, exact_to_record};
@@ -1595,6 +1619,17 @@ mod tests {
                     for [from, to] in [ends, [ends[1], ends[0]]] {
                         let arc =
                             nodal_quartic(&a, &b, node, from - node, to - node, base).unwrap();
+                        // The original nodal test's endpoint-correspondence bar: the
+                        // supplied ray is rounded. These checks also exclude a constant
+                        // node, which would satisfy both quadric equations vacuously.
+                        for (t, expected) in [(0.0, from), (1.0, to)] {
+                            let end = arc.segment(t, t);
+                            let actual = v_eval(&end.m, 0.0) / eval(&end.w, 0.0);
+                            assert!(
+                                actual.distance(expected) < 1e-9,
+                                "{a:?}, {b:?}, base {base}, end {t}"
+                            );
+                        }
                         for i in 0..16 {
                             let curve = segment_curve(
                                 &arc.segment(f64::from(i) / 16.0, f64::from(i + 1) / 16.0),
@@ -1612,70 +1647,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    /// The same Bernstein contact rows as the builder, as one tensor-product patch.
-    fn round_patch(
-        offsets: [BlendQuadric; 2],
-        contact: [f64; 2],
-        segment: &Segment,
-        radius: f64,
-    ) -> Surface {
-        let a = contact_of(&offsets[0], contact[0], segment);
-        let b = contact_of(&offsets[1], contact[1], segment);
-        let (mut rows, mut weights) = if !a.bw && b.bw {
-            let (mut rows, mut weights) = round_rows(&b, &a, segment, [radius; 2], true);
-            rows.reverse();
-            weights.reverse();
-            (rows, weights)
-        } else {
-            round_rows(&a, &b, segment, [radius; 2], true)
-        };
-        let degree = rows
-            .iter()
-            .flat_map(|row| &row.a)
-            .chain(&weights)
-            .map(|p| degree(p))
-            .max()
-            .unwrap();
-        for row in &mut rows {
-            for coordinate in &mut row.a {
-                *coordinate = elevate(coordinate, degree);
-            }
-        }
-        for row in &mut weights {
-            *row = elevate(row, degree);
-        }
-        let mut points = Vec::new();
-        let mut w = Vec::new();
-        for i in 0..=degree {
-            for (row, weights) in rows.iter().zip(&weights) {
-                let weight = weights[i];
-                assert!(weight > 0.0, "positive round weights: {weight:e}");
-                points.push(Point3::new(row.a[0][i], row.a[1][i], row.a[2][i]) / weight);
-                w.push(weight);
-            }
-        }
-        let maximum = w.iter().copied().fold(0.0_f64, f64::max);
-        for weight in &mut w {
-            *weight /= maximum;
-        }
-        Surface::from(
-            BSplineSurface::create_canonical(&CanonicalSurfaceData {
-                u_degree: degree,
-                v_degree: 2,
-                control_points: &points,
-                form: BSplineSurfaceForm::Unspecified,
-                u_multiplicities: &[degree + 1, degree + 1],
-                v_multiplicities: &[3, 3],
-                u_knots: &[0.0, 1.0],
-                v_knots: &[0.0, 1.0],
-                knot_type: KnotType::PiecewiseBezierKnots,
-                weights: Some(&w),
-                uv_domain: None,
-            })
-            .unwrap(),
-        )
     }
 
     /// The analytic support with the quadric's normal, plus a regular UV for classification.
@@ -1759,21 +1730,10 @@ mod tests {
                             offsets[1].offset(-signed[1], 1e-7),
                         ];
                         let [(a, uv_a), (b, uv_b)] = faces.map(|face| quadric_support(&k, face));
-                        let arc = nodal_quartic(
-                            &offsets[0],
-                            &offsets[1],
-                            node,
-                            from - node,
-                            to - node,
-                            0,
-                        )
-                        .unwrap();
-                        let segment = arc.segment(0.25, 0.3125);
-                        let leader = segment_curve(&segment);
                         let inputs = ClassInputs {
                             uv: [uv_a, uv_b],
                             offsets: signed,
-                            centre: leader.evaluate_point(0.5).unwrap(),
+                            centre: from,
                             tol: 1e-7,
                             ball_on_collapsed: false,
                             radii_can_change: false,
@@ -1784,13 +1744,38 @@ mod tests {
                             BlendSpine::NodalQuartic,
                             "{offsets:?}, {contact:?}"
                         );
-                        let mut net = round_patch(offsets, contact, &segment, radius);
+                        assert_eq!(blend.contact, contact);
+                        assert_eq!(blend.faces.map(|face| face.side), sides);
+                        assert!(blend.point.distance(node) < inputs.tol);
+                        let arc = nodal_quartic(
+                            &blend.offsets[0],
+                            &blend.offsets[1],
+                            blend.point,
+                            from - blend.point,
+                            to - blend.point,
+                            0,
+                        )
+                        .unwrap();
+                        let parts = rational_spine_parts(
+                            &k,
+                            &blend,
+                            arc.segments(0.0, 1.0),
+                            true,
+                            inputs.tol,
+                        )
+                        .unwrap();
+                        let mut net = parts.surface;
+                        let center_line = parts.center_line.unwrap();
+                        let CurveKind::BSpline(leader) = center_line.kind() else {
+                            panic!("the nodal leader is a rational quartic");
+                        };
+                        let domain = net.natural_uv_domain_with_nurb(&k).unwrap();
                         let round = ExactRound::create(
                             &k,
                             ExactClass::NodalQuartic,
                             [&a, &b],
                             radius,
-                            Some(&leader),
+                            Some(leader),
                             inputs,
                         )
                         .unwrap();
@@ -1804,11 +1789,14 @@ mod tests {
                         );
                         assert_eq!(net.procedural_blend().unwrap().recertify(&k).unwrap(), 0.0);
                         for i in 0..=4 {
-                            let u = f64::from(i) / 4.0;
+                            let u = domain.evaluate(f64::from(i) / 4.0, 0.0).x;
                             let centre = leader.evaluate_point(u).unwrap();
                             for j in 0..=4 {
                                 let p = net
-                                    .evaluate_point(&k, Point2::new(u, f64::from(j) / 4.0))
+                                    .evaluate_point(
+                                        &k,
+                                        Point2::new(u, domain.evaluate(0.0, f64::from(j) / 4.0).y),
+                                    )
                                     .unwrap();
                                 assert!((p.distance(centre) - radius).abs() < 1e-13);
                                 if j == 0 {

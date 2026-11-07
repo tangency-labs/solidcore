@@ -17,8 +17,9 @@ import shutil
 import subprocess
 import sys
 
+if len(sys.argv) != 3 or sys.argv[1] not in ("before", "after"):
+    sys.exit("usage: observe.py (before|after) OUTPUT")
 stage, directory = sys.argv[1:]
-assert stage in ("before", "after")
 root = Path.cwd()
 output = Path(directory).resolve()
 output.mkdir(parents=True, exist_ok=True)
