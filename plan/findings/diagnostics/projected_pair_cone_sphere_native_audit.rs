@@ -104,6 +104,23 @@ fn main() -> solidcore::Result<()> {
             1.5,
         ));
     }
+    let mut torus = solidcore::surface::torus::Torus::new(
+        &k,
+        Vec3::new(0., 0., -2.),
+        Vec3::Y,
+        Vec3::Z,
+        Extent2d::from_bounds(0., 0., 180., 360.),
+        1.,
+        0.25,
+        solidcore::surface::torus::TorusOptions::default(),
+    )?;
+    torus.make_nurb(&k)?;
+    surfaces.push((
+        "torus_half_x",
+        Surface::from(torus),
+        Vec2::new(0., 0.12499999813735485),
+        2_f64.sqrt() + 0.25,
+    ));
     for (name, surface, uv, ideal) in surfaces {
         let domain = surface.natural_uv_domain_with_nurb(&k)?;
         assert!(domain.contains_point(uv, 0.));
@@ -135,7 +152,7 @@ fn main() -> solidcore::Result<()> {
         );
         assert!(left && right);
         let negative =
-            residual::maximum_is_bounded(&k, &net, &domain, c, Vec3::Z, ideal.next_down())?;
+            residual::maximum_is_bounded(&k, &net, &domain, c, Vec3::Z, objective.next_down())?;
         assert!(!negative);
         println!("{{\"proof\":\"{name}\",\"own\":[{:.17e},{:.17e}],\"left_bounded\":{left},\"right_bounded\":{right},\"reduced_bound_rejected\":{}}}",own.lo,own.hi,!negative);
         let boundary = surface.evaluate_point(
