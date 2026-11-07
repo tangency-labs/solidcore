@@ -359,3 +359,15 @@ unchanged; eight existing excluded cases are not stored in the expected file.
 The complete case set still has 2,575 cases. Each migrated compressed block was
 checked against the frozen raw array above, and every non-static output field
 and record metadata field is unchanged. No exclusion or tolerance is added.
+
+The auxiliary native replay was subsequently repeated against a newly built
+Windows library from `c341e5309ab39973277f13ed30fc6a4e4c6a04f2`. The observed Cargo
+artifact record reports a rebuilt library (`fresh: false`), and the preserved
+library SHA256 is
+`2f600bf05200db5743ad00f2497918208ef4cdc49733f38529a4e43edef2eaaa`.
+The torus and revolution source files are identical to `0a085981d`. All seven
+record checks and all four direct old/new torus evaluations pass against this
+identified artifact, reproducing the recorded native points and scalars exactly.
+This supplies fresh corroboration; it does not retroactively establish the old
+shared-cache library's revision. The exact-head runner and native certificate
+tests remain the acceptance evidence for the production change.
