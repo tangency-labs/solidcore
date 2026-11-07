@@ -1479,6 +1479,60 @@ fn repeated_blend_picks_do_not_hide_invalid_later_sizes() {
     }
 }
 
+/// A traced turn is read as the operation takes it: absent (a trace older than the turn) or
+/// "mitre" the mitre, "swept" the swept turn, which SolidCraft refuses for a chamfer before the
+/// kernel; any other value is bad replay data, never a refusal.
+#[test]
+fn blend_replay_reads_the_traced_turn() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let body = Arc::new(solidcore_ops::make_box([0.0; 3], [20.0; 3]).unwrap());
+    let (record, order) = body.to_record().unwrap();
+    let edge = record
+        .edges
+        .iter()
+        .position(|e| {
+            e.vertices.iter().all(|&i| {
+                let p = record.vertices[i as usize].point;
+                p[1] == 0.0 && p[2] == 20.0
+            })
+        })
+        .unwrap();
+    let input = Slot {
+        body,
+        order: Some(order),
+    };
+    let step = |kind: &str, turn: Option<Value>| {
+        let mut params = serde_json::json!({
+            "kind": kind, "sizes": [2.0], "edges": {"kind": "edge", "picked": [{"index": edge}]}
+        });
+        if let Some(turn) = turn {
+            params["turn"] = turn;
+        }
+        serde_json::json!({"op": "blend_dropping", "params": params})
+    };
+    // one edge's round turns nowhere: each reading builds the same round
+    let expected = 8000.0 - 80.0 * (1.0 - std::f64::consts::FRAC_PI_4);
+    for turn in [None, Some("mitre"), Some("swept")] {
+        let made = call(&step("round", turn.map(Value::from)), &mut [input.clone()])
+            .unwrap()
+            .unwrap();
+        let v = made.body.volume(1e-9).unwrap();
+        assert!((v - expected).abs() / expected < 1e-9, "{turn:?}: {v}");
+    }
+    let chamfer = call(&step("chamfer", Some("swept".into())), &mut [input.clone()]).unwrap();
+    assert_eq!(
+        chamfer.err(),
+        Some(solidcore_ops::Error::Argument.to_string())
+    );
+    for bad in [Value::from("round"), Value::Null, Value::from(1)] {
+        assert!(
+            matches!(call(&step("round", Some(bad.clone())), &mut [input.clone()]),
+                Err(Stop::Fail(why)) if why.contains("turn")),
+            "{bad}"
+        );
+    }
+}
+
 fn handled_refusal_case() -> Value {
     session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     serde_json::json!({
@@ -2680,6 +2734,32 @@ fn union_all_replays_captured_cases() {
         checked > 0,
         "the union-all capture corpus must remain covered"
     );
+}
+
+/// The four turn cases replay their traced `turn`: the boss's base rounds and the pocket's
+/// floor rounds turn at the sharp upright edges mitred (the default) or swept, and the swept
+/// turn at the pocket's sharp concave corners is refused where the rig's was. Graded as the
+/// rig grades them (the volume to `expected.tolerance`, the records' counts), with its fixes.
+#[test]
+#[ignore = "replays corpus cases with the rig's fixes; run with the kernel rig (--ignored)"]
+fn turn_cases_replay_their_traced_turn() {
+    let fixes: Vec<String> =
+        serde_json::from_str(&std::fs::read_to_string(corpus().join("fixes.json")).unwrap())
+            .unwrap();
+    session::set_fixes(fixes.iter().map(String::as_str)).unwrap();
+    let listed = known_failing();
+    for (case, refused) in [
+        ("cov-fillet-turn-mitre-boss-base-r1", false),
+        ("cov-fillet-turn-swept-boss-base-r1", false),
+        ("cov-fillet-turn-mitre-pocket-floor-corners-r1", false),
+        ("cov-fillet-turn-swept-pocket-sharp-corner-refused-r1", true),
+    ] {
+        let entry = corpus().join(format!("fillets/{case}.json"));
+        let graded = grade(&entry, &listed, Duration::from_secs(180));
+        assert_eq!(graded.kind, Kind::Pass, "{case}: {}", graded.note);
+        // a built case is graded on its volume; a refused one has none
+        assert_eq!(graded.deviation.is_none(), refused, "{case}");
+    }
 }
 
 #[test]
