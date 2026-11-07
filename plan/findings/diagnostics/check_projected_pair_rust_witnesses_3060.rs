@@ -162,7 +162,14 @@ fn audit(row: &Value) -> Result<Value> {
 fn solve_case(row: &Value) -> Result<Value> {
     use solidcore::curve::curve::p9::CurveSolveOptions;
     use solidcore::geom::global_solver::{SolutionRequested, SolverOperation};
-    use solidcore::geom::solution_array::OperandObject;
+    use solidcore::geom::solution_array::{ObjectKind, SolutionObject};
+    #[derive(Clone, Copy, PartialEq)]
+    struct Handle;
+    impl SolutionObject for Handle {
+        fn kind(&self) -> ObjectKind {
+            ObjectKind::Curve
+        }
+    }
     let k = Kernel::default();
     let i = &row["input"];
     if i["op"] != "gcs" || i["sop"] != 15 {
@@ -183,7 +190,7 @@ fn solve_case(row: &Value) -> Result<Value> {
     };
     let b = other.as_ref().unwrap_or(&a);
     let normal = [vector(&i["vecs"][0])?];
-    let opts = CurveSolveOptions::<OperandObject> {
+    let opts = CurveSolveOptions::<Handle> {
         handles: [None, None],
         opt_vectors: Some(&normal),
         target_distance: i["target"].as_f64(),
