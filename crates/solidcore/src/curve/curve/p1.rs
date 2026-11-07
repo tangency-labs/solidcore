@@ -1047,7 +1047,7 @@ fn iv_lerp(a: [Ivl; 3], b: [Ivl; 3], t: Ivl) -> [Ivl; 3] {
 // Four same-sign products need at most 4198 bits above 2^-2148; 66 u64 words
 // supply 4224 bits. This fixed bound is independent of caller magnitudes.
 /// Test a signed sum of four binary64 products exactly using bounded integer storage.
-fn dyadic_four_products_zero(terms: [(f64, f64, bool); 4]) -> bool {
+pub(crate) fn dyadic_four_products_zero(terms: [(f64, f64, bool); 4]) -> bool {
     /// Split a finite binary64 value into its sign, integer significand and exponent.
     fn parts(value: f64) -> Option<(bool, u64, i32)> {
         if !value.is_finite() {

@@ -35,6 +35,9 @@
 //!   bound over the whole face domain, with exact rectangular trim feasibility
 //!   for a new face candidate. An unavailable or unresolved certificate refuses
 //!   and restores the solver state. Other operation classes are not certified here.
+//! - **Projected tree bounds.** Outward-rounded projected boxes use the queries'
+//!   double-cross metric, including its non-unit-normal scale; the upstream
+//!   projected sphere test compared an unscaled distance with scaled answers.
 //! - **Objects.** Tree objects and solution objects are a caller-chosen handle `O`
 //!   (upstream `SmObject*`; a null pointer is `None`). Everything the solvers read
 //!   through those pointers (the curve behind a tree object, a vertex's point and
@@ -598,29 +601,18 @@ impl<'t, 'a, O: SolutionObject + 't> TopologySolver<'t, 'a, O> {
             }
 
             SolverOperation::ProjectedMinimize | SolverOperation::ProjectedMaximize => {
-                let s1 = box1.sphere_bound();
-                let s2 = box2.sphere_bound();
-                let proj_pnt = point_project_to_plane(s2.center, s1.center, opt_vector(s, 0)?);
-                if s.operation == SolverOperation::ProjectedMinimize {
-                    let min_proj_dist = proj_pnt.distance(s1.center) - s1.radius - s2.radius;
-                    if min_proj_dist > 0.0
-                        && min_proj_dist * min_proj_dist > s.best_answer_so_far_sq
-                    {
-                        return Ok(false);
-                    }
-                }
-                if s.operation == SolverOperation::ProjectedMaximize {
-                    let max_proj_dist = proj_pnt.distance(s1.center) + s1.radius + s2.radius;
-                    if max_proj_dist * max_proj_dist < s.best_answer_so_far_sq {
-                        return Ok(false);
-                    }
-                }
-
-                // If we were unable to elimiate using above sphere tests then
-                // we just skip out here with a TRUE.
-                Ok(true)
+                let distance =
+                    super::projected_bound::projected_box_distance(box1, box2, opt_vector(s, 0)?);
+                let best =
+                    crate::blend::fillet_section::interval::Ivl::from(s.best_answer_so_far_sq)
+                        .sqrt();
+                let excluded = if s.operation == SolverOperation::ProjectedMinimize {
+                    distance.lo > best.hi
+                } else {
+                    distance.hi < best.lo
+                };
+                Ok(!excluded)
             }
-
             // If we are doing a directed minimization we can use the bounding
             // box information to eliminate additional comparisons
             SolverOperation::DirectedMinimize

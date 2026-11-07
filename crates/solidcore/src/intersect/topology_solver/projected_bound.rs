@@ -201,8 +201,6 @@ fn boundary_is_rectangle(
     boundary: &crate::topology::face::p1::OrientedTrimBoundary,
     domain: &Extent2d,
 ) -> bool {
-    use crate::curve::curve::CurveKind;
-    use crate::nurbs::math::NOW;
     if boundary.loops != [4] || boundary.curves.len() != 4 {
         return false;
     }
@@ -216,27 +214,9 @@ fn boundary_is_rectangle(
     let mut first = None;
     let mut previous = None;
     for curve in &boundary.curves {
-        let CurveKind::BSpline(bs) = curve.kind() else {
+        let Some((a, b)) = rectangle_segment_ends(curve, &corners) else {
             return false;
         };
-        let Some(net) = bs.gw_nurb() else {
-            return false;
-        };
-        let [a, b] = net.cpts() else { return false };
-        let [t0, t1, t2, t3] = net.knots() else {
-            return false;
-        };
-        if net.degree() != 1
-            || t0 != t1
-            || t2 != t3
-            || t1 >= t2
-            || curve.natural_interval().min() != *t1
-            || curve.natural_interval().max() != *t2
-            || ![a.w, b.w].iter().all(|w| *w == NOW || *w == 1.0)
-        {
-            return false;
-        }
-        let (a, b) = (Vec2::new(a.x, a.y), Vec2::new(b.x, b.y));
         let Some(i) = corners.iter().position(|p| *p == a) else {
             return false;
         };
@@ -259,6 +239,102 @@ fn boundary_is_rectangle(
         previous = Some(b);
     }
     edges == 15 && previous == first
+}
+
+/// Recognize affine trim definitions, rather than their sampled endpoints.
+fn rectangle_segment_ends(
+    curve: &crate::curve::curve::Curve,
+    corners: &[Vec2; 4],
+) -> Option<(Vec2, Vec2)> {
+    use crate::curve::curve::p1::dyadic_four_products_zero;
+    use crate::curve::curve::CurveKind;
+    use crate::nurbs::math::NOW;
+    if let CurveKind::Line(line) = curve.kind() {
+        let natural = line.natural_interval();
+        let analytic = line.step_interval();
+        if !line.is_bounded()
+            || !natural.length().is_finite()
+            || natural.length() <= 0.0
+            || !analytic.length().is_finite()
+            || analytic.length() <= 0.0
+            || crate::geom::tol::is_zero(natural.length())
+        {
+            return None;
+        }
+        let p = line.line_point();
+        let v = line.line_vector();
+        let scale = line.line_scale();
+        let component_matches = |origin, direction, parameter, target| {
+            let scaled = scale * direction;
+            dyadic_four_products_zero([
+                (scale, direction, false),
+                (scaled, 1.0, true),
+                (0.0, 0.0, false),
+                (0.0, 0.0, false),
+            ]) && dyadic_four_products_zero([
+                (origin, 1.0, false),
+                (parameter, scaled, false),
+                (target, 1.0, true),
+                (0.0, 0.0, false),
+            ])
+        };
+        let endpoint = |t| {
+            corners.iter().copied().find(|c| {
+                component_matches(p.x, v.x, t, c.x) && component_matches(p.y, v.y, t, c.y)
+            })
+        };
+        let (a, b) = if line.inside_out() {
+            (analytic.max(), analytic.min())
+        } else {
+            (analytic.min(), analytic.max())
+        };
+        return Some((endpoint(a)?, endpoint(b)?));
+    }
+    let CurveKind::BSpline(bs) = curve.kind() else {
+        return None;
+    };
+    let net = bs.gw_nurb()?;
+    let [a, b] = net.cpts() else { return None };
+    let [t0, t1, t2, t3] = net.knots() else {
+        return None;
+    };
+    if net.degree() != 1
+        || t0 != t1
+        || t2 != t3
+        || t1 >= t2
+        || curve.natural_interval().min() != *t1
+        || curve.natural_interval().max() != *t2
+        || ![a.w, b.w].iter().all(|w| *w == NOW || *w == 1.0)
+    {
+        return None;
+    }
+    Some((Vec2::new(a.x, a.y), Vec2::new(b.x, b.y)))
+}
+
+/// A conservative distance range between two projected boxes, in the same
+/// double-cross metric as the queries. In particular, N need not be unit length.
+pub(super) fn projected_box_distance(
+    a: &crate::geom::extent3d::Extent3d,
+    b: &crate::geom::extent3d::Extent3d,
+    normal: Vec3,
+) -> Ivl {
+    if [a, b].iter().any(|extent| {
+        let (lo, hi) = (extent.min(), extent.max());
+        ![lo.x, lo.y, lo.z, hi.x, hi.y, hi.z]
+            .iter()
+            .all(|x| x.is_finite())
+            || lo.x > hi.x
+            || lo.y > hi.y
+            || lo.z > hi.z
+    }) {
+        return Ivl::whole();
+    }
+    let delta = V3 {
+        x: Ivl::new(b.min().x, b.max().x) - Ivl::new(a.min().x, a.max().x),
+        y: Ivl::new(b.min().y, b.max().y) - Ivl::new(a.min().y, a.max().y),
+        z: Ivl::new(b.min().z, b.max().z) - Ivl::new(a.min().z, a.max().z),
+    };
+    norm_squared(projected(delta, V3::from_vec3(normal))).sqrt()
 }
 
 fn bound(net: &Nurbs, cell: Cell, point: Vec3, normal: V3<Ivl>) -> Result<Ivl> {
@@ -378,6 +454,60 @@ mod tests {
             u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             pw,
+        }
+    }
+
+    #[test]
+    fn analytic_trim_proof_uses_exact_members_not_a_stale_net_or_rounded_endpoints() {
+        use crate::curve::curve::Curve;
+        use crate::curve::line::Line;
+        use crate::geom::extent1d::Extent1d;
+        use crate::nurbs::b_spline_curve::BSplineCurve;
+        let y = 1e16;
+        let corners = [
+            Vec2::new(0.0, y),
+            Vec2::new(1.0, y),
+            Vec2::new(1.0, y + 2.0),
+            Vec2::new(0.0, y + 2.0),
+        ];
+        let base =
+            BSplineCurve::create_line_segment(2, Vec3::new(0.0, y, 0.0), Vec3::new(1.0, y, 0.0))
+                .unwrap();
+        let line = |dy| {
+            Curve::from(Line::from_parts(
+                base.clone(),
+                Vec3::new(0.0, y, 0.0),
+                Vec3::new(1.0, dy, 0.0),
+                Extent1d::from_min_max(0.0, 1.0),
+                1.0,
+                false,
+            ))
+        };
+        assert_eq!(
+            rectangle_segment_ends(&line(0.0), &corners),
+            Some((corners[0], corners[1]))
+        );
+        let tilted = line(0.25);
+        assert_eq!(tilted.evaluate_point(&Kernel::default(), 1.0).unwrap().y, y);
+        assert!(rectangle_segment_ends(&tilted, &corners).is_none());
+    }
+
+    #[test]
+    fn projected_box_bounds_preserve_the_double_cross_scale() {
+        use crate::geom::extent3d::Extent3d;
+        let a = Extent3d::from_point(Vec3::new(0.2, 0.3, 2.0));
+        let b = Extent3d::from_points(Vec3::new(-0.5, -0.5, -1.5), Vec3::new(0.5, 0.5, -0.5));
+        for scale in [0.001, 1.0, 1000.0] {
+            let n = Vec3::new(0.5, 0.0, 0.5) * scale;
+            let range = projected_box_distance(&a, &b, n);
+            for x in [-0.5, 0.5] {
+                for y in [-0.5, 0.5] {
+                    for z in [-1.5, -0.5] {
+                        let value = n.cross(Vec3::new(x, y, z) - a.min()).cross(n).length();
+                        assert!(range.lo <= value && value <= range.hi);
+                    }
+                }
+            }
         }
     }
 

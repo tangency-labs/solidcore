@@ -39,8 +39,11 @@ refuse; their displayed net cannot substitute for their definition.
 
 A newly returned face candidate must be a single point within the UV rectangle.
 The stored trim boundary must consist of one connected four-edge loop whose
-edges are full, clamped, degree-one, two-control-point UV segments joining the
-four exact rectangle corners. The tolerance-based rectangular flag is never
+edges are full, clamped, degree-one, two-control-point UV segments or analytic
+lines joining the four exact rectangle corners. Analytic lines are checked from
+their defining point/vector/scale/parameter interval with the existing exact
+binary64 product predicate; neither their stored net nor rounded endpoint samples
+prove that identity. The tolerance-based rectangular flag is never
 used as proof. The metric at the returned UV is enclosed independently, and the
 entire enclosure must agree with the reported scalar within the tolerance.
 A previous answer on another object is retained as the caller's already
@@ -55,8 +58,18 @@ uses no enlarged tolerance or sampled accuracy floor.
 
 This change is deliberately restricted to `PointFace`/`VertexFace`,
 `ProjectedMaximize`, `Single`. Curve/face and face/face queries, other operations,
-and requests enumerating all extrema retain the parent implementation. Earlier
+and requests enumerating all extrema retain the parent candidate implementation.
+The shared projected minimum/maximum topology-box culling now encloses the same
+double-cross metric, including non-unit normals. The former projected sphere
+test used an unscaled plane distance and could discard the face after seeing a
+vertex value scaled by `|N|^2`; the public traversal test exposed this at normal
+length 1000. Outward-rounded box bounds replace that mismatched comparison.
+Earlier
 child-branch pair-query measurements are investigation results, not evidence
 that this certificate covers those operations.
 
-Validation results are recorded in the PR description after the tests complete.
+Focused validation: all 27 topology-solver tests pass, including local and public
+B-rep traversal for the analytic fixtures. The sphere result is
+`0.860555127546399068` against analytic `0.860555127546398957`; the original
+inaccurate scalar is refused by the independent whole-domain bound.
+The full-suite and golden results are recorded in the PR description.

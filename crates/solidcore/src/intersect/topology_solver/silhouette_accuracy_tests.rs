@@ -244,7 +244,6 @@ fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expecte
     };
     let face = create_face_from_surface(&mut k, &mut b, Some(surface.clone()), &domain, &mut fenv)
         .unwrap();
-    assert!(super::projected_bound::is_exact_rectangle(&k, &b, face, &domain).unwrap());
     let mut preparation = crate::query::brep::RayPreparation::default();
     {
         let objects = BrepObjects {
@@ -267,6 +266,7 @@ fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expecte
     }
     let request = preparation.take_request().unwrap();
     preparation.prepare(&k, &mut b, request).unwrap();
+    assert!(super::projected_bound::is_exact_rectangle(&k, &b, face, &domain).unwrap());
     let objects = BrepObjects {
         preparation: Some(&preparation),
         brep: &b,
@@ -362,4 +362,39 @@ fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expecte
         )
         .is_err());
     }
+    // Exercise the public B-rep traversal as well as the reported local solve.
+    let mut cache =
+        crate::topology::brep_cache::BrepCache::new(crate::geom::a_object::BREP_TYPE).unwrap();
+    cache
+        .build_trees(
+            &k,
+            crate::topology::brep_cache::CacheSource::Brep(&b),
+            |object| object,
+            &arena_identity,
+        )
+        .unwrap();
+    let global_objects = BrepObjects {
+        cache: Some(&cache),
+        ..objects
+    };
+    let global = TopologySolver::brep_point_solve(
+        &k,
+        &global_objects,
+        Some(CacheObject::Brep),
+        query,
+        crate::intersect::topology_solver::p2::TopologySolveOptions {
+            operation: SolverOperation::ProjectedMaximize,
+            requested: SolutionRequested::Single,
+            tolerance_3d: tol,
+            best_answer_so_far_sq: 0.0,
+            opt_vectors: &[normal],
+        },
+    )
+    .unwrap();
+    assert_eq!(global.len(), 1);
+    assert!(
+        (global.as_slice()[0].start.solution_value - expected).abs() <= tol,
+        "global={:?}, normal={normal:?}, expected={expected}",
+        global.as_slice()
+    );
 }
