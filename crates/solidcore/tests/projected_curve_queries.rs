@@ -2247,3 +2247,96 @@ mod linear_wrappers {
         assert!(offset.knots(&Kernel::default(), None).is_err());
     }
 }
+
+mod stored_spline_labels {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use solidcore::{
+        curve::{
+            curve::{p1::GlobalPointSolveOptions, Curve},
+            ellipse::{Ellipse, PolarConversion},
+            hyperbola::Hyperbola,
+            parabola::Parabola,
+        },
+        geom::{
+            extent1d::Extent1d,
+            global_solver::{SolutionRequested, SolverOperation},
+            solution_array::{ObjectKind, SolutionObject},
+        },
+        math::Vec3,
+        nurbs::{
+            b_spline_curve::p1::BSplineCurve,
+            crv_basic::Curve as Net,
+            math::{CPoint, NOW},
+        },
+        topology::database_io::{DatabaseReader, DatabaseWriter, FileType, InputStream},
+        Kernel,
+    };
+    #[derive(Clone, Copy, PartialEq)]
+    struct H;
+    impl SolutionObject for H {
+        fn kind(&self) -> ObjectKind {
+            ObjectKind::Other
+        }
+    }
+    #[test]
+    fn stored_spline_labels_keep_the_actual_defining_corner() {
+        let k = Kernel::default();
+        let a = 1.0 / 1024.0;
+        let y = 1.0 - 1.0 / 524288.0;
+        let base = BSplineCurve::from_nurb(
+            Net::new(
+                vec![
+                    CPoint::new(-a, y, 0.0, NOW),
+                    CPoint::new(0.0, 1.0, 0.0, NOW),
+                    CPoint::new(a, y, 0.0, NOW),
+                ],
+                1,
+                vec![0.0, 0.0, 0.5, 2.0, 2.0],
+            )
+            .unwrap(),
+            3,
+            false,
+        );
+        for kind in 0..3 {
+            let mut w = DatabaseWriter::open_for_write(FileType::Binary);
+            w.write_doubles(&[0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 2., 1.]);
+            if kind != 2 {
+                w.write_double(1.);
+            }
+            if kind == 0 {
+                w.write_boolean(0);
+                PolarConversion::new()
+                    .write_to_db(&mut w, 33, None, 0)
+                    .unwrap();
+            }
+            base.write_to_db(&mut w, 33).unwrap();
+            let mut r =
+                DatabaseReader::with_stream(FileType::Binary, InputStream::new(w.into_bytes()));
+            let curve = match kind {
+                0 => Curve::from(Ellipse::read_from_db(&k, &mut r, 3, 33, false).unwrap()),
+                1 => Curve::from(Hyperbola::read_from_db(&mut r, 3, 33).unwrap()),
+                _ => Curve::from(Parabola::read_from_db(&mut r, 3, 33).unwrap()),
+            };
+            assert_eq!(
+                curve.evaluate_point(&k, 0.5).unwrap(),
+                Vec3::new(0., 1., 0.)
+            );
+            let ans = curve.global_point_solve::<H>(
+                &k,
+                &Extent1d::from_min_max(0., 2.),
+                SolverOperation::ProjectedMaximize,
+                Vec3::ZERO,
+                1e-12,
+                SolutionRequested::All,
+                &GlobalPointSolveOptions {
+                    opt_vectors: Some(&[Vec3::Z]),
+                    ..Default::default()
+                },
+            );
+            let answers = ans.unwrap();
+            assert_eq!(answers.len(), 1, "kind={kind}");
+            assert_eq!(answers.as_slice()[0].start.parameters[0], 0.5);
+            assert_eq!(answers.as_slice()[0].start.solution_value, 1.0);
+        }
+    }
+}
