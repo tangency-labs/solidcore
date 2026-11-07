@@ -1740,3 +1740,6 @@ fn fillet_variable_impl(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod overflow_contract_tests;
