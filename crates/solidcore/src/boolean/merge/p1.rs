@@ -267,10 +267,11 @@ pub fn faces_coincide(
     other: &Brep,
     other_face: FaceId,
 ) -> Result<bool> {
-    fn surface(b: &Brep, f: FaceId) -> Option<&Surface> {
-        b.face(f).ok().and_then(|f| f.surface.as_ref())
-    }
-    let (Some(a), Some(b)) = (surface(brep, face), surface(other, other_face)) else {
+    // A face without a surface cannot overrule the sector; a bad face id is an error.
+    let (Some(a), Some(b)) = (
+        brep.face(face)?.surface.as_ref(),
+        other.face(other_face)?.surface.as_ref(),
+    ) else {
         return Ok(true);
     };
     // Only analytic pairs part where the sector cannot see (two planes keep their gap, which
