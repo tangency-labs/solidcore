@@ -32,7 +32,7 @@ fn refused(reason: &'static str) -> SolidError {
     }
 }
 
-/// Select identical native noncircular ellipse definitions before proof.
+/// Select identical native noncircular open ellipse arcs before proof.
 /// Projection degeneracy, traversal and root ambiguity remain typed refusals.
 pub(super) fn supports(curves: [&Curve; 2], intervals: [Extent1d; 2]) -> bool {
     let [a, b] = curves;
@@ -42,7 +42,12 @@ pub(super) fn supports(curves: [&Curve; 2], intervals: [Extent1d; 2]) -> bool {
     let (Some(na), Some(nb)) = (ea.base().gw_nurb(), eb.base().gw_nurb()) else {
         return false;
     };
-    ea.x_radius() != ea.y_radius()
+    let span = ea.base().step_interval().length();
+    span.is_finite()
+        && span > 0.0
+        && span < 360.0
+        && ea.base().step_interval() == eb.base().step_interval()
+        && ea.x_radius() != ea.y_radius()
         && ea.x_radius() == eb.x_radius()
         && ea.y_radius() == eb.y_radius()
         && ea.position().origin() == eb.position().origin()
@@ -103,9 +108,9 @@ fn projected_frame(curve: &Curve, definition: &Definition<'_>, normal: Vec3) -> 
         ellipse.y_radius(),
     )?
     .ok_or_else(|| refused("ellipse form has no regular nonreversing traversal certificate"))?;
-    if !(sweep > 0.0 && sweep <= 360.0) {
+    if !(sweep > 0.0 && sweep < 360.0) {
         return Err(refused(
-            "ellipse form has no finite single-turn coverage certificate",
+            "ellipse form has no regular open-arc coverage certificate",
         ));
     }
     let scaled = |axis: Vec3, radius: f64| {
@@ -681,6 +686,10 @@ mod tests {
         let reversed_definition = Definition::of(&reversed, reversed.natural_interval()).unwrap();
         projected_frame(&reversed, &reversed_definition, Vec3::new(0.0, 0.0, 2.0)).unwrap();
         let closed = make(4.0, 2.0, 270.0, false);
+        assert!(!supports(
+            [&closed, &closed],
+            [closed.natural_interval(); 2]
+        ));
         let query = Query {
             kernel: &kernel,
             curves: [&closed, &closed],
