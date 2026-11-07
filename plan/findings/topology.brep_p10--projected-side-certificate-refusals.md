@@ -66,8 +66,11 @@ The public regression passes on the caller fix merged with parent `d3e2cfdc8`: a
 `curve.curve_p1` 3102 unchanged; `curve.crv_on_surf` 2407 unchanged;
 `topology.brep_p1` 2636 unchanged; `topology.brep_p10` 1436 cases with exactly
 the eight narrow-gap changes below and zero broken. The four ordinary Defeature
-cases are unchanged. Policy-unit and strict lint validation are pending.
-No golden has been blessed by this branch.
+cases are unchanged. The policy-unit test passed (one executed test), and
+`cargo clippy -p solidcore --lib --tests -- -D warnings` passed. Formatting and
+diff checks passed. The eight golden records below were copied from the actual
+Linux runner output, asserting each complete old JSONL line before replacement;
+no digest or numeric output was synthesized.
 
 ## Intended golden change
 
