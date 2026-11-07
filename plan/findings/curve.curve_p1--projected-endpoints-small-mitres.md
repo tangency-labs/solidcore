@@ -657,3 +657,36 @@ running at its start; this is not a controlled main-versus-PR timing comparison
 and does not establish regression attribution. The captured union-case replay
 passes. No deadline, tolerance, fixture or classification was changed to hide
 the timeout. Hosted CI separately requires repository-admin workflow approval.
+
+## Projected face review follow-up: retention slack and early exits
+
+The face certificate now distinguishes retention slack from arithmetic rounding.
+For a face-owned incumbent it uses the lower endpoint of its singleton metric
+interval, plus the caller's slack and that interval's width. Each parameter box
+may additionally use the width of the metric interval at its single midpoint.
+No geometric parameter-box width is counted as arithmetic error, and no absolute
+or relative accuracy floor is introduced. A previous feasible incumbent from
+another object receives no additional incumbent rounding allowance here.
+
+The zero-slack plane regression returns the exact constrained corner maximum for
+normals `Z` and `2Z`; changing the reported scalar by four times its computed point
+enclosure width is rejected in either direction. The quadratic hidden-peak test
+also closes at zero slack while rejecting a lower, nonmaximal candidate.
+This does not claim complete candidate construction for every surface: a radius
+0.5 sphere patch over longitude [-90,90] and latitude [-60,60], queried from
+(-1,0,2) along Z at zero slack, currently constructs a boundary value 1.25 and
+refuses it because the interior maximum is 1.5. Arithmetic allowance does not
+turn that missing-candidate case into a successful answer.
+
+The near-zero point-answer shortcut now excludes the entire Maximize category,
+including ordinary and directed maxima. A full torus with radii 1 and 0.25 queried
+at its sole seam vertex has maximum distance 2.5, rather than the early vertex
+answer 0; the directed case at an X offset of 5e-7 has maximum 2.5000005.
+The regression uses the body's proven owner identities and asserts two seam
+curves and one face are present in its cache. Arena-only keys on this generated
+fixture omitted the seam curves and were an invalid diagnostic setup, not a new
+kernel accuracy issue. Both analytic expectations remain unchanged.
+
+All 33 focused topology-solver tests pass for this review change. Full validation
+of the final parent/main merges remains a separate gate; earlier full-suite
+results above are not attributed to these later changes.
