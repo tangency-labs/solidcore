@@ -4,7 +4,9 @@ Updates: WR-701
 
 The fix is the default (tangency-labs/solidcore#2273, step 4a): `Surface::swap_uv_notifying` of a
 cone, sphere, torus or surface of revolution keeps its definition and only rebuilds its polar
-converter (status passed on), and `Plane::swap_uv_notifying` keeps the axes, domain and scales its
+converter. The swap is made on an exact copy first (`clone_exact` of the B-spline objects, a
+torus's inside-out mark as it is): a net the converter refuses fails the swap with the surface
+unchanged and nothing notified. `Plane::swap_uv_notifying` keeps the axes, domain and scales its
 `toggle_swap_uv_bit` swapped. The re-derivation from the transposed net after a swap
 (`RebuildSTEPFromNURBParameters` with its status ignored) is gone from `SwapUV`;
 `Plane::swap_uv_notifying_keeping` folds into `Plane::swap_uv_notifying`. `Surface::reverse` still
