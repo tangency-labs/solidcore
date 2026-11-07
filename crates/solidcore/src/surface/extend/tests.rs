@@ -2083,7 +2083,7 @@ fn a_rounding_sized_distance_leaves_a_widened_cylinder_unchanged() {
     }
     // a distance the widened's measure certifies is still widened (1e-7 and 1e-6 are past
     // the least step but refused `NotExact`: the measure's rounding, 4.6e-12, is above
-    // 1e-6 d there; notes-localop/HANDOFF-review2.md)
+    // 1e-6 d there; tangency-labs/solidcore#2980)
     let e = c
         .extended_by_distance(&kk, &dom(&c), BoxSide::VMax, Continuity::Natural, 1e-5)
         .unwrap();
@@ -2511,13 +2511,12 @@ fn a_pyramid_side_extends_by_its_tolerance_past_its_base_after_its_ends() {
     assert!(e.extension <= 1e-6 * d, "{}", e.extension);
 }
 
-/// Second review, finding 8 (open, notes-localop/HANDOFF-review2.md): the cone of the test
-/// above, a quarter turn, moved off the origin and extended round its axis by a
-/// tolerance-sized distance. At the origin and at 1e3 it is certified (rounding about 2e-12
+/// tangency-labs/solidcore#2980 (open): the cone of the test above, a quarter turn, moved
+/// off the origin and extended round its axis by a tolerance-sized distance. At the origin and at 1e3 it is certified (rounding about 2e-12
 /// and 5e-12); at 1e5 the closed form's rounding is sized on the part's position
 /// (`gamma(64) (length + size)`, 2.8e-10) and 1e-5 and 1e-4 are refused `NotExact`.
 #[test]
-#[ignore = "second review finding 8: the analytic closed forms' rounding is position-sized"]
+#[ignore = "tangency-labs/solidcore#2980: the analytic closed forms' rounding is position-sized"]
 fn a_far_cone_extends_round_its_axis_by_a_tolerance_as_at_the_origin() {
     let kk = k();
     for o in [0.0, 1e3, 1e5] {
