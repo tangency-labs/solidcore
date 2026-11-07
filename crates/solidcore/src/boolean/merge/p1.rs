@@ -259,7 +259,8 @@ pub fn finish_face_coincidence(
 ///
 /// # Errors
 ///
-/// Those of the face tolerances and of the surface coincidence check.
+/// A null-pointer error for a face without a surface (the radial sector that found
+/// the pair has dereferenced both); those of the surface coincidence check.
 pub fn faces_coincide(
     k: &Kernel,
     brep: &Brep,
@@ -267,16 +268,17 @@ pub fn faces_coincide(
     other: &Brep,
     other_face: FaceId,
 ) -> Result<bool> {
-    // A face without a surface cannot overrule the sector; a bad face id is an error.
+    // Both faces come from a radial sector, whose classification dereferenced their surfaces.
     let (Some(a), Some(b)) = (
         brep.face(face)?.surface.as_ref(),
         other.face(other_face)?.surface.as_ref(),
     ) else {
-        return Ok(true);
+        return Err(SolidError::null_pointer(OP));
     };
     // Only analytic pairs part where the sector cannot see (two planes keep their gap, which
-    // its step-off measures); the coincidence check of other kinds (offset, B-spline) is not
-    // exact enough to overrule the sector.
+    // its step-off measures). The sampled check of other kinds (offset, B-spline) is not exact
+    // enough to overrule the sector: gating offset against offset reads the faces of the golden
+    // case `round_merge_deleted_surface_user_problemShell15_face8_inset` as apart and moves it.
     let plane = |s: &Surface| matches!(s.kind(), SurfaceKind::Plane(_));
     let analytic = |s: &Surface| {
         plane(s)
