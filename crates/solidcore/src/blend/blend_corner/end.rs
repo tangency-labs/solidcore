@@ -12,6 +12,7 @@
 //! | `ball_touching_at` (private)      | `SmBlendCorner::BallTouchingAt` (54a4ee7 splits it out of 41a39ec's `RadiusReachingSideEdgeEnd`, bit for bit) |
 //! | `radius_reaching_side_edge_end` (private) | `SmBlendCorner::RadiusReachingSideEdgeEnd` |
 //! | `refuse_end_past_side_edge` (private) | `SmBlendCorner::RefuseEndPastSideEdge` |
+//! | `blend_runs_out_past_vertex` (private) | none (a round run on past a smooth vertex keeps going past its side edge's end) |
 //! | [`describe_end_past_side_edge`]   | `SmBlendCorner::DescribeEndPastSideEdge`  |
 //! | `refuse_end_overflowing_side_edge` (private), [`describe_end_overflowing_side_edge`] | `SmBlendCorner::RefuseEndOverflowingSideEdge` (54a4ee7, 63c7962) |
 //! | [`side_edgeuse_across_seam_vertex`] | `sm_SideEdgeuseAcrossSeamVertex` (`SmBlendCorner.cpp`, 63c7962) |
@@ -23,6 +24,7 @@
 //! | `side_edge_in_cap` (private)      | none (#2406: a cap edge along a side edge in the cap's plane) |
 //! | [`EndEdges`], `end_face_runs_on_past_side_edge`, `rail_face` (private) | none: an end face running on tangentially past the side edge is the global merge's, not refused |
 //! | `run_on_leaves_the_part` (private) | none (#2656: a blend run on past a smooth vertex that runs out of the part ends on the end face, not capped) |
+//! | `runs_on_across_seam` (private), [`RUNS_ON_ACROSS_SEAM`] | none (#2864: a round does not end at a seam's vertex; refused until it runs on across it) |
 //!
 //! Deviations: the fork's `NoteError(SM_FILERR_NO_ROOM, ...)` and `NoteFitRadius` before
 //! `SM_ERR` are returned ([`EndRefusal`]) for the executive's caller to note, which then
@@ -63,6 +65,10 @@ const OP: &str = "blend::blend_corner::end";
 /// The fork's comment of a rail rolling over its face's tangent edge into an End at a
 /// smooth vertex (`CalcEndCapEdges`).
 pub const ROLLS_INTO_SMOOTH_END: &str = "Fillet Error: the round's contact line rolls over its face's tangent edge where the round ends at a smooth vertex (a rail rolling over into an end is not built): no radius builds it";
+
+/// Not the fork's (tangency-labs/solidcore#2864): the comment of a round whose edge runs on
+/// across a seam's vertex into the rest of the same curve, not blended.
+pub const RUNS_ON_ACROSS_SEAM: &str = "Fillet Error: the round's edge runs on across a seam's vertex into the rest of the same curve between the same two faces, which is not blended, and a round does not end at a seam: blend that edge with it";
 
 /// The fork's comment of an End at a smooth vertex whose cap face fails
 /// (`CreateEndPatchOfEnd`).
@@ -592,6 +598,38 @@ fn end_face_runs_on_past_side_edge(
     }
     let eu = eu1::primary_edgeuse(target, e3)?.ok_or_else(nul)?;
     check_tangential_edgeuse_at_vertex(k, target, eu, far, rad_to_deg(corner.tangency_tol_radians))
+}
+
+/// Not the fork's (SolidCraft's `smooth_edges_and_unfinished_tangent_chains_are_refused_saying_why`,
+/// after #2656): whether this End is one where the blended edge runs on tangentially at the
+/// vertex into an edge not blended, and the blend run on runs out of the part
+/// ([`continuing_edges`] with and without that test). Such a round has no end rib to stop at:
+/// a rail past its side edge's far end goes on until the round leaves the material, and the
+/// global merge cuts it there, as it does where the rail stays on the side edge.
+///
+/// # Errors
+/// `SM_ERR_NULL_POINTER` without the corner's blended edge use, edge uses or vertex; those of
+/// [`continuing_edges`].
+fn blend_runs_out_past_vertex(
+    k: &Kernel,
+    target: &mut Brep,
+    corner: &FilletCorner,
+) -> Result<bool> {
+    let (Some(eus), Some(all), Some(vertex)) = (
+        corner.solver_eus.as_ref(),
+        corner.all_eus.as_ref(),
+        corner.vertex,
+    ) else {
+        return Err(nul());
+    };
+    let &fil_eu = eus.first().ok_or_else(nul)?;
+    let tol = rad_to_deg(corner.tangency_tol_radians);
+    let continues = continuing_edges(k, target, vertex, fil_eu, all, tol, &[], true, false)?;
+    if continues.is_empty() {
+        return Ok(false);
+    }
+    let capped = continuing_edges(k, target, vertex, fil_eu, all, tol, &[], true, true)?;
+    Ok(capped.is_empty())
 }
 
 /// The fork's `SmBlendCorner::DescribeEndPastSideEdge` (41a39ec): the reason of a refusal
@@ -1356,9 +1394,42 @@ fn end_rolls_over(
     Ok(false)
 }
 
+/// Not the fork's (tangency-labs/solidcore#2864): an End at a smooth vertex whose blended edge
+/// runs on there across a seam's vertex into the rest of its own curve, between the same two
+/// faces ([`side_edgeuse_across_seam_vertex`]'s narrow rule, the side edge's in 63c7962). A
+/// seam is the surface's parameterisation, not a feature: the round runs on there or not at
+/// all, and never ends in a step. Until the blend's chain runs on across a seam's vertex, the
+/// End is refused, no radius building it.
+///
+/// # Errors
+/// `SM_ERR_NULL_POINTER` without the corner's blended edge use or vertex; those of the seam
+/// and G1 tests.
+fn runs_on_across_seam(
+    k: &Kernel,
+    target: &mut Brep,
+    corner: &FilletCorner,
+) -> Result<Option<EndRefusal>> {
+    let fil_eu = corner
+        .solver_eus
+        .as_ref()
+        .and_then(|eus| eus.first().copied())
+        .ok_or_else(nul)?;
+    let vertex = corner.vertex.ok_or_else(nul)?;
+    let tol_deg = rad_to_deg(corner.tangency_tol_radians);
+    if side_edgeuse_across_seam_vertex(k, target, fil_eu, vertex, tol_deg)?.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(EndRefusal {
+        comment: RUNS_ON_ACROSS_SEAM.to_string(),
+        fit: 0.0,
+        edge: eu1::edge(target, fil_eu)?,
+    }))
+}
+
 /// The fork's `SmBlendCorner::CalcEndEdgeGeom` (41a39ec) before its closing
 /// `SmFilletCorner::CalcCornerEdgeGeom`, which the caller runs: an End at a smooth vertex
-/// computes its cap's edges ([`calc_end_cap_edges`]); an End's end rib (or, on more than
+/// computes its cap's edges ([`calc_end_cap_edges`]), unless its edge runs on there across a
+/// seam's vertex (refused, `runs_on_across_seam`; not the fork's); an End's end rib (or, on more than
 /// one end face, its two rail ends) whose rail misses its side edge — its end found on the
 /// side edge's line past the edge's end, or, in a cliff overflow (`cliff_overflow`), off
 /// the fillet — is, in a cliff overflow, left open (`note_open_end`, the end rib deleted),
@@ -1382,6 +1453,11 @@ pub fn calc_end_edge_geom(
 ) -> Result<EndEdges> {
     let end = corner.blend.map(|b| b.end).unwrap_or_default();
     if end == super::BlendEnd::AtSmooth {
+        // a round never ends at a seam's vertex (#2864): where the edge it runs on into is
+        // its own curve continued across one, the End is refused
+        if let Some(refusal) = runs_on_across_seam(k, target, corner)? {
+            return Ok(EndEdges::Refused(refusal));
+        }
         // the cap's edges on the side faces (they need only the vertices), then the end rib
         return Ok(EndEdges::of(calc_end_cap_edges(
             k, target, pseudo, corner, solvers,
@@ -1630,13 +1706,14 @@ pub fn calc_end_edge_geom(
         corner.edges.clear();
     } else if !runs_on
         && !both_miss
-        && end_face_runs_on_past_side_edge(
-            k,
-            target,
-            corner,
-            side_eu,
-            rail_face(fil_faces, side_faces),
-        )?
+        && (blend_runs_out_past_vertex(k, target, corner)?
+            || end_face_runs_on_past_side_edge(
+                k,
+                target,
+                corner,
+                side_eu,
+                rail_face(fil_faces, side_faces),
+            )?)
     {
         // Not the fork's: the end face runs on tangentially past the side edge's far end
         // (`end_face_runs_on_past_side_edge`): the end rib is deleted and the global merge

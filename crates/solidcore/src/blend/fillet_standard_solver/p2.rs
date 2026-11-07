@@ -100,6 +100,11 @@
 //!   [`SolidError::InvalidInput`].
 //! - No recursion; the loops are bounded by the caller's arrays and the solver's
 //!   iteration limits.
+//! - **The other rail's guess** (solidcore's, #2826): `LoadInitialValues` makes the other
+//!   edge use's UV trim curve where it has none (`GetOrCreateUVTrimCurve`), so the guess on
+//!   the other base is the edge use's own UV point. Upstream reads an existing curve only and
+//!   otherwise solves globally on the base, which finds a point on a closed surface's seam
+//!   once at each end of the period and refuses the two answers.
 
 use crate::blend::fillet_custom_solver::{
     face_owner, offset_compute_inward_vector, offset_evaluate_1st, offset_evaluate_point,
@@ -441,8 +446,9 @@ impl ConstantRadiusOps for SurfaceSurfaceFs {
 /// of a solver of class `S`. Without `do_surf2_calcs` nothing is touched (`None`).
 /// Otherwise the point of `surface1` at the guess `rGuessT[surface1_index..+2]` is
 /// carried to the other rail: through the other edge use's UV trim curve (when it lies
-/// on that rail's base surface) or a global point solve on the base when that UV point
-/// is near a parametric degeneracy, then refined by a local point solve on the other
+/// on that rail's base surface; made when missing, solidcore's, #2826) or a global point
+/// solve on the base when there is none or that UV point is near a parametric
+/// degeneracy, then refined by a local point solve on the other
 /// offset surface inside its extended base domain. That domain becomes
 /// `rIntervals[len(rGuessT)..+2]`, two `false` periodicities and the UV guess are
 /// appended. The other base evaluates out of bounds meanwhile (restored on every exit).
@@ -559,6 +565,16 @@ fn cr_initial_body<S: ConstantRadiusOps + ?Sized>(
             }
         }
 
+        // Not upstream (#2826): the edge use's own UV point is the guess, so its UV trim
+        // curve is made where it has none (an edge a boolean imprinted can come without one).
+        // A global solve on the base is no substitute on a closed surface: a point on its
+        // seam is found at both ends of the period, and the side of the seam the edge use
+        // lies on is the one its trim curve knows. Where the curve cannot be made the edge
+        // use has none, as before.
+        if let Some(eu) = other_eu {
+            let b = brep.as_deref_mut().ok_or_else(need_brep)?;
+            let _made = edgeuse_p3::get_or_create_uv_trim_curve(k, b, eu, false, false, true)?;
+        }
         let trimmed_eu = match other_eu {
             Some(eu) => {
                 let b = brep.as_deref().ok_or_else(need_brep)?;
@@ -3206,8 +3222,18 @@ impl CircularCrossSectionFsg {
         let cl = Curve::from(center_line.clone());
         let (sweep, revolve, _) =
             super::p1::circle_swept_or_revolved(k, &cl, rail1, rail2, approx_tol_3d)?;
+        // a round whose rails meet at an end has no ball there. A piece of a law-cornered
+        // round ends at its range instead, inside the rails, over which its law is enclosed
+        // above the tolerance (`stays`): its rails may run on to where the ball fades to a
+        // point
+        let piece = matches!(law_curves, Some((_, _, _, Some(_))));
         let ivl = rail1.natural_interval();
-        for t in [ivl.min(), ivl.max()] {
+        let ends = if piece {
+            Vec::new()
+        } else {
+            vec![ivl.min(), ivl.max()]
+        };
+        for t in ends {
             let end1 = rail1.evaluate_point(t)?;
             let end2 = rail2.evaluate_point(t)?;
             if end1.distance(end2) < approx_tol_3d {
