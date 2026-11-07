@@ -170,6 +170,8 @@
   },
   "public_query_reproduced": true,
   "claims_exact_global_minimum": false,
-  "parent_attribution_pending": true,
-  "issue": "https://github.com/tangency-labs/solidcore/issues/3119"
+  "parent_attribution_pending": false,
+  "issue": "https://github.com/tangency-labs/solidcore/issues/3119",
+  "fresh_same_platform_parent": "5a945cdf8",
+  "returned_output_identical_to_parent": true
 }

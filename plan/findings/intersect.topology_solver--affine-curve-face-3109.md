@@ -326,8 +326,8 @@ are independently disproved by the native admissible pair
 This ordinary-minimum defect is outside the projected-maximum construction.
 It is tracked separately in [#3119](https://github.com/tangency-labs/solidcore/issues/3119),
 with the independently rerun public reproduction and confirmed native witness.
-A fresh Windows immediate-parent replay is required to determine attribution;
-these outputs have not been blessed. The
+The fresh Windows immediate-parent replay below establishes that these four
+outputs are unchanged by this PR; they have not been blessed. The
 native fourteen-record audit includes both currently excluded full-torus cases,
 so their proof coverage does not depend on the golden exclusions.
 
@@ -336,3 +336,41 @@ pending; matching input bytes alone is not a before/after output comparison.
 The separate 28 native/history and 15 generic solver tests passed at the
 production-identical `17353d3ac` checkpoint. The later parent provenance merge
 changes documentation only.
+
+
+### Same-platform immediate-parent attribution
+
+A fresh Windows build of `5a945cdf8` was replayed against the identical 2,575
+frozen inputs and compared with the preserved `c341e5309` build. Its rebuilt
+kernel SHA256 is
+`c5c2886da3264999018ab0e05e2af17084189ef79e1bbaf4745e466f817c64af`.
+Exactly eight records change, all operation 15; there are zero new refusals,
+harness errors, or decoder errors. Every other output is unchanged. In
+particular, all four nonmaximum golden-delta records are byte-identical between
+these two fresh same-platform builds. Neither the ordinary-minimum defect #3119
+nor the seam/symmetric-candidate golden differences are introduced by #3110.
+
+The immediate-parent native audit independently fails exactly the two full-torus
+records: their reported scalar lies outside their actual native point enclosure,
+and neither endpoint's complete face domain is bounded by that enclosure. All
+fourteen final records pass the same independent obligations. Exact parent and
+final output arrays, parameters, native points and certificate outcomes are
+preserved together in the JSON artifact linked above.
+
+| Case | Parent value | Final value | Parent `(t,u,v)` | Final `(t,u,v)` |
+|---|---:|---:|---|---|
+| `analytic_face_sphere_band_6_15` | `1.5` | `1.5` | `(0, 2.3748193148539247e-09, 0.50000000000000022)` | `(0, 0, 0.50000000000000022)` |
+| `analytic_face_sphere_band_7_15` | `1.5` | `1.5` | `(0, 2.3748193148539247e-09, 0.50000000000000022)` | `(0, 0, 0.50000000000000022)` |
+| `analytic_face_sphere_quarter_6_15` | `1.5` | `1.5` | `(0, 2.0053231314788843e-09, 0.50000000000000011)` | `(0, 0, 0.50000000000000011)` |
+| `analytic_face_sphere_quarter_7_15` | `1.5` | `1.5` | `(0, 2.0053231314788843e-09, 0.50000000000000011)` | `(0, 0, 0.50000000000000011)` |
+| `analytic_face_torus_x_6_15` | `1.6642154866673036` | `1.6642135623730954` | `(0, 0.5, 0.12494065250506982)` | `(0, 2.1982488732768807e-17, 0.125)` |
+| `analytic_face_torus_x_7_15` | `1.6642154866673036` | `1.6642135623730954` | `(0, 0.5, 0.12494065250506982)` | `(0, 2.1982488732768807e-17, 0.125)` |
+| `analytic_face_torus_half_x_6_15` | `1.6642135623730949` | `1.6642135623730954` | `(0, 0, 0.12499999813735485)` | `(0, 4.3964977465537614e-17, 0.125)` |
+| `analytic_face_torus_half_x_7_15` | `1.6642135623730949` | `1.6642135623730954` | `(0, 0, 0.12499999813735485)` | `(0, 4.3964977465537614e-17, 0.125)` |
+
+The full-torus scalar changes repair unattained outputs; the sphere and half-torus
+rows refine native parameter construction while preserving their already-correct
+metric. No expectation or known-failure entry has been changed in this audit.
+The older `cf11091a9` cross-check and Linux native replay remain pending and are
+not claimed by this same-platform comparison. The production source is frozen;
+subsequent dependency reorganization must receive its own attribution and gates.

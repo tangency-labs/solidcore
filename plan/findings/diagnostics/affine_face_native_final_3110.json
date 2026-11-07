@@ -22,7 +22,30 @@
       ]
     },
     "proof_source_commit": "b69187f1d",
-    "proof_source_sha256": "7bdb97a39e507620e738659bc8fee9a2b0067420193658c9e73f9a29f5cbd1f7"
+    "proof_source_sha256": "7bdb97a39e507620e738659bc8fee9a2b0067420193658c9e73f9a29f5cbd1f7",
+    "immediate_parent_comparison": {
+      "parent": "5a945cdf8",
+      "final": "c341e5309",
+      "platform": "Windows",
+      "cases": 2575,
+      "changed": [
+        "analytic_face_sphere_band_6_15",
+        "analytic_face_sphere_band_7_15",
+        "analytic_face_sphere_quarter_6_15",
+        "analytic_face_sphere_quarter_7_15",
+        "analytic_face_torus_x_6_15",
+        "analytic_face_torus_x_7_15",
+        "analytic_face_torus_half_x_6_15",
+        "analytic_face_torus_half_x_7_15"
+      ],
+      "new_refusals": 0,
+      "parent_harness_errors": 0,
+      "parent_decode_errors": 0,
+      "kernel_rlib_sha256": "c5c2886da3264999018ab0e05e2af17084189ef79e1bbaf4745e466f817c64af",
+      "parent_outputs_sha256": "533130e2c5f527711c515d58f82bc136b070d839110515bf5414733bd9df2300",
+      "final_outputs_sha256": "2f1607b9c2a298639aec4ec8ec1cc4876063844cc28e30a807b0ada181b1e9f4",
+      "four_nonmaximum_golden_deltas_byte_identical": true
+    }
   },
   "records": [
     {
@@ -150,6 +173,95 @@
         }
       ],
       "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.5811388300841898,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.5811388300841769,
+          1.5811388300842026
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "reduced_threshold": 1.5811388300841767,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.5811388300841898,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          0.5,
+          0.0
+        ]
+      },
+      "immediate_parent_output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            999.0,
+            -2.0,
+            1.5811388300841898,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "immediate_parent_solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            999.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "type": 1.0,
+          "value": 1.5811388300841898
+        }
+      ],
+      "immediate_parent_native": {
         "admissible": true,
         "curve_point": [
           -1.0,
@@ -337,6 +449,95 @@
           0.5,
           0.0
         ]
+      },
+      "immediate_parent_output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            -2.0,
+            -2.0,
+            1.5811388300841898,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "immediate_parent_solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            -2.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "type": 1.0,
+          "value": 1.5811388300841898
+        }
+      ],
+      "immediate_parent_native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.5811388300841898,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.5811388300841769,
+          1.5811388300842026
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "reduced_threshold": 1.5811388300841767,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.5811388300841898,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          0.5,
+          0.0
+        ]
       }
     },
     {
@@ -464,6 +665,95 @@
         }
       ],
       "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.5811388300841898,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.5811388300841769,
+          1.5811388300842026
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "reduced_threshold": 1.5811388300841767,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.5811388300841898,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          0.5,
+          0.0
+        ]
+      },
+      "immediate_parent_output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            999.0,
+            -2.0,
+            1.5811388300841898,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "immediate_parent_solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            999.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "type": 1.0,
+          "value": 1.5811388300841898
+        }
+      ],
+      "immediate_parent_native": {
         "admissible": true,
         "curve_point": [
           -1.0,
@@ -651,6 +941,95 @@
           0.5,
           0.0
         ]
+      },
+      "immediate_parent_output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            -2.0,
+            -2.0,
+            1.5811388300841898,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "immediate_parent_solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            -2.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "type": 1.0,
+          "value": 1.5811388300841898
+        }
+      ],
+      "immediate_parent_native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.5811388300841898,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.5811388300841769,
+          1.5811388300842026
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "reduced_threshold": 1.5811388300841767,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.5811388300841898,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          0.5,
+          0.0
+        ]
       }
     },
     {
@@ -804,6 +1183,95 @@
           0.8660254037844386,
           0.0
         ]
+      },
+      "immediate_parent_output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            999.0,
+            -2.0,
+            1.7320508075688772,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "immediate_parent_solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            999.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "type": 1.0,
+          "value": 1.7320508075688772
+        }
+      ],
+      "immediate_parent_native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.7320508075688772,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.7320508075688605,
+          1.7320508075688943
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "reduced_threshold": 1.7320508075688603,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.7320508075688772,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          0.8660254037844386,
+          0.0
+        ]
       }
     },
     {
@@ -927,6 +1395,95 @@
         }
       ],
       "native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.7320508075688772,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.7320508075688605,
+          1.7320508075688943
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "reduced_threshold": 1.7320508075688603,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.7320508075688772,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          0.8660254037844386,
+          0.0
+        ]
+      },
+      "immediate_parent_output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            -2.0,
+            -2.0,
+            1.7320508075688772,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "immediate_parent_solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            -2.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "type": 1.0,
+          "value": 1.7320508075688772
+        }
+      ],
+      "immediate_parent_native": {
         "admissible": true,
         "curve_point": [
           -1.0,
@@ -1114,6 +1671,95 @@
           0.0,
           -1.0
         ]
+      },
+      "immediate_parent_output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            999.0,
+            -2.0,
+            1.5,
+            0.0,
+            2.3748193148539247e-09,
+            0.5000000000000002,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "immediate_parent_solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            999.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            2.3748193148539247e-09,
+            0.5000000000000002
+          ],
+          "type": 1.0,
+          "value": 1.5
+        }
+      ],
+      "immediate_parent_native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.5,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.499999999999986,
+          1.500000000000014
+        ],
+        "parameters": [
+          0.0,
+          2.3748193148539247e-09,
+          0.5000000000000002
+        ],
+        "reduced_threshold": 1.4999999999999858,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.5,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          6.7170033851925465e-09,
+          -1.0
+        ]
       }
     },
     {
@@ -1269,6 +1915,95 @@
         "surface_point": [
           0.5,
           0.0,
+          -1.0
+        ]
+      },
+      "immediate_parent_output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            -2.0,
+            -2.0,
+            1.5,
+            0.0,
+            2.3748193148539247e-09,
+            0.5000000000000002,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "immediate_parent_solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            -2.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            2.3748193148539247e-09,
+            0.5000000000000002
+          ],
+          "type": 1.0,
+          "value": 1.5
+        }
+      ],
+      "immediate_parent_native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.5,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.499999999999986,
+          1.500000000000014
+        ],
+        "parameters": [
+          0.0,
+          2.3748193148539247e-09,
+          0.5000000000000002
+        ],
+        "reduced_threshold": 1.4999999999999858,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.5,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          6.7170033851925465e-09,
           -1.0
         ]
       }
@@ -1428,6 +2163,95 @@
           0.0,
           -0.9999999999999999
         ]
+      },
+      "immediate_parent_output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            999.0,
+            -2.0,
+            1.5,
+            0.0,
+            2.0053231314788843e-09,
+            0.5000000000000001,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "immediate_parent_solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            999.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            2.0053231314788843e-09,
+            0.5000000000000001
+          ],
+          "type": 1.0,
+          "value": 1.5
+        }
+      ],
+      "immediate_parent_native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.5,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.4999999999999858,
+          1.5000000000000142
+        ],
+        "parameters": [
+          0.0,
+          2.0053231314788843e-09,
+          0.5000000000000001
+        ],
+        "reduced_threshold": 1.4999999999999856,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.5,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          2.835955172809295e-09,
+          -1.0
+        ]
       }
     },
     {
@@ -1584,6 +2408,95 @@
           0.49999999999999994,
           0.0,
           -0.9999999999999999
+        ]
+      },
+      "immediate_parent_output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            -2.0,
+            -2.0,
+            1.5,
+            0.0,
+            2.0053231314788843e-09,
+            0.5000000000000001,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "immediate_parent_solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            -2.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            2.0053231314788843e-09,
+            0.5000000000000001
+          ],
+          "type": 1.0,
+          "value": 1.5
+        }
+      ],
+      "immediate_parent_native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.5,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.4999999999999858,
+          1.5000000000000142
+        ],
+        "parameters": [
+          0.0,
+          2.0053231314788843e-09,
+          0.5000000000000001
+        ],
+        "reduced_threshold": 1.4999999999999856,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.5,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.5,
+          2.835955172809295e-09,
+          -1.0
         ]
       }
     },
@@ -1743,6 +2656,95 @@
           1.1767766952966372,
           -1.9999999999999998
         ]
+      },
+      "immediate_parent_output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            999.0,
+            -2.0,
+            1.6642154866673036,
+            0.0,
+            0.5,
+            0.12494065250506982,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "immediate_parent_solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            999.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.5,
+            0.12494065250506982
+          ],
+          "type": 1.0,
+          "value": 1.6642154866673036
+        }
+      ],
+      "immediate_parent_native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": false,
+        "native_metric": 1.6642135459403802,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.664213545940358,
+          1.6642135459404024
+        ],
+        "parameters": [
+          0.0,
+          0.5,
+          0.12494065250506982
+        ],
+        "reduced_threshold": 1.6642135459403578,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 1.940726923388425e-06,
+        "report_in_own_enclosure": false,
+        "reported": 1.6642154866673036,
+        "right_domain_proved": false,
+        "surface_point": [
+          0.1767071517102781,
+          -1.176846211535449,
+          -1.9999999999999996
+        ]
       }
     },
     {
@@ -1900,6 +2902,95 @@
           0.17677669529663692,
           1.1767766952966372,
           -1.9999999999999998
+        ]
+      },
+      "immediate_parent_output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            -2.0,
+            -2.0,
+            1.6642154866673036,
+            0.0,
+            0.5,
+            0.12494065250506982,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "immediate_parent_solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            -2.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.5,
+            0.12494065250506982
+          ],
+          "type": 1.0,
+          "value": 1.6642154866673036
+        }
+      ],
+      "immediate_parent_native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": false,
+        "native_metric": 1.6642135459403802,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.664213545940358,
+          1.6642135459404024
+        ],
+        "parameters": [
+          0.0,
+          0.5,
+          0.12494065250506982
+        ],
+        "reduced_threshold": 1.6642135459403578,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 1.940726923388425e-06,
+        "report_in_own_enclosure": false,
+        "reported": 1.6642154866673036,
+        "right_domain_proved": false,
+        "surface_point": [
+          0.1767071517102781,
+          -1.176846211535449,
+          -1.9999999999999996
         ]
       }
     },
@@ -2059,6 +3150,95 @@
           1.1767766952966372,
           -1.9999999999999998
         ]
+      },
+      "immediate_parent_output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            999.0,
+            -2.0,
+            1.664213562373095,
+            0.0,
+            0.0,
+            0.12499999813735485,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "immediate_parent_solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            999.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            0.12499999813735485
+          ],
+          "type": 1.0,
+          "value": 1.664213562373095
+        }
+      ],
+      "immediate_parent_native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.664213562373095,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.6642135623730723,
+          1.6642135623731176
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          0.12499999813735485
+        ],
+        "reduced_threshold": 1.664213562373072,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.664213562373095,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.17677669311441235,
+          1.1767766974788614,
+          -2.0
+        ]
       }
     },
     {
@@ -2216,6 +3396,95 @@
           0.17677669529663692,
           1.1767766952966372,
           -1.9999999999999998
+        ]
+      },
+      "immediate_parent_output": {
+        "deferred": null,
+        "error": null,
+        "ints": {},
+        "rejected": null,
+        "values": {
+          "static": [
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1e-05,
+            1.0,
+            1.0,
+            3.0,
+            2.0,
+            -2.0,
+            -2.0,
+            1.664213562373095,
+            0.0,
+            0.0,
+            0.12499999813735485,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": [
+            0.0
+          ]
+        }
+      },
+      "immediate_parent_solutions": [
+        {
+          "nodes": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "num_objects": 2.0,
+          "num_variables": 3.0,
+          "objects": [
+            -2.0,
+            -2.0
+          ],
+          "parameters": [
+            0.0,
+            0.0,
+            0.12499999813735485
+          ],
+          "type": 1.0,
+          "value": 1.664213562373095
+        }
+      ],
+      "immediate_parent_native": {
+        "admissible": true,
+        "curve_point": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "left_domain_proved": true,
+        "native_metric": 1.664213562373095,
+        "native_metric_in_own_enclosure": true,
+        "own_enclosure": [
+          1.6642135623730723,
+          1.6642135623731176
+        ],
+        "parameters": [
+          0.0,
+          0.0,
+          0.12499999813735485
+        ],
+        "reduced_threshold": 1.664213562373072,
+        "reduced_threshold_basis": "own_enclosure_lower",
+        "reduced_threshold_refused": true,
+        "report_error": 0.0,
+        "report_in_own_enclosure": true,
+        "reported": 1.664213562373095,
+        "right_domain_proved": true,
+        "surface_point": [
+          0.17677669311441235,
+          1.1767766974788614,
+          -2.0
         ]
       }
     }
