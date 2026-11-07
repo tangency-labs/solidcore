@@ -188,6 +188,94 @@ counts, temporary replay programs, and redundant validation snapshots are omitte
 | gen2938 | (-1.416959240152698, 842.2781967874612) | (-1.635855706635469, 223.8362336456594) | Both valid roots; native maximum, Rust minimum. Changed basin, not a false native result. |
 | gen2940 | (0.08124076285751645, 38.51742584776892) | not found | Native valid maximum; Rust misses it from this guess. Lost local convergence. |
 
+### Exact local-solve golden changes
+
+The seven `curve.curve_p5` changes below are the serialized baseline values,
+not rounded values from the historical reference audit above. All seven keep
+`status=[0]`, `error=null`, `deferred=null`, and `topology=null`.
+`out=[0]` means the local solve did not find an answer; it does **not** claim
+that no stationary point exists. `out=[1,1,t,d]` means found, SingleValue,
+parameter, and projected distance `d = |N x (C(t)-P) x N|`.
+
+| Case | Previous golden `out` | Current golden `out` |
+|---|---|---|
+| gen0042 | `[0.0]` | `[1.0, 1.0, 2.568630556952937, 53.055590916261835]` |
+| gen0773 | `[0.0]` | `[1.0, 1.0, 0.022531387570006292, 33.08376518405103]` |
+| gen1144 | `[1.0, 1.0, 0.2424349354598795, 47.309906397183966]` | `[1.0, 1.0, 0.7897693109735117, 37.0895839403429]` |
+| gen1760 | `[1.0, 1.0, 6.160833635900556, 1702.7465397258384]` | `[0.0]` |
+| gen2335 | `[0.0]` | `[1.0, 1.0, 0.2057706791318854, 1.5264012469032822]` |
+| gen2938 | `[1.0, 1.0, -1.416959240152698, 842.2781967874612]` | `[1.0, 1.0, -1.635855706635469, 223.83623364565938]` |
+| gen2940 | `[1.0, 1.0, 0.08124076285751645, 38.51742584768916]` | `[0.0]` |
+
+These cases exercise `ProjectedPointMaximize` through `local_property_analysis`,
+whose search is a local zero of the stationary equation. For the projection
+`A(v) = N x v x N`, set `V=A(C-P)`, `T=A(C')`, and `U=A(C'')`.
+The smooth equation before maximization's sign change is
+`F = dot(V,T)/|T|`, with derivative
+`F' = (dot(U,V)+dot(T,T))/|T| - dot(T,U)*dot(V,T)/|T|^3`.
+Negating `F` requires negating `F'` too. The previous implementation negated
+only `F`, reversing the Newton correction. The current implementation uses
+the derivative of the function it evaluates.
+
+That correction does not turn this local API into a maximum certificate.
+A zero of `F` can be a minimum or a maximum: gen0042, gen0773, and gen2335
+now report minima; gen1144 and gen2938 change from maxima to minima.
+The two `found=false` outcomes (gen1760 and gen2940) honestly report lost
+convergence from these guesses. Their old maxima still exist. None of these
+changes proves that the new result is a global maximum or that convergence
+improved for every input. Global projected maximum queries use the separate
+bounded query path; they must not treat this local result as that certificate.
+
+The [reproduction script](diagnostics/local_projected_roots_2968.py) reads the
+[seven saved public-generator inputs](diagnostics/local_projected_roots_2968.json),
+rebuilds their rational B-spline or cubic Hermite definitions independently with
+SciPy/NumPy, and checks each returned distance and stationary residual. Inputs
+come from the public `curve_curve_p5::Runner::generate`, initialized with
+`Rng::new(CaseContext::seed_for("curve.curve_p5", index))`; the seeds are saved
+alongside them. Before values
+are the golden at the PR's main baseline `99ed57c4d`; after values are at
+`ef59a836b`. No baseline was changed by this evidence update.
+
+Run `python plan/findings/diagnostics/local_projected_roots_2968.py` with NumPy,
+SciPy and Matplotlib. The checked distance agrees with every serialized value
+within `2e-12` relative. The table reports the normalized stationarity residual
+`dot(V,T)/(|V| |T|)` and `dot(T,T)+dot(V,U)`, half the second derivative of
+squared projected distance. Its sign classifies these isolated, nonzero-distance
+stationary points. These are floating-point checks of the explicit definitions,
+not interval certificates. The largest normalized residual is `2.4e-11`.
+
+| Case / output | Normalized residual | Half squared-distance second derivative | Classification |
+|---|---:|---:|---|
+| gen0042 / after | -4.25146e-17 | 635.070696 | minimum |
+| gen0773 / after | -1.50715e-16 | 140792.067 | minimum |
+| gen1144 / before | -9.34221e-17 | -13514.3407 | maximum |
+| gen1144 / after | -2.38074e-11 | 2620.16771 | minimum |
+| gen1760 / before | 4.86697e-13 | -988886.903 | maximum |
+| gen2335 / after | 3.49441e-16 | 4.09934356 | minimum |
+| gen2938 / before | -1.12319e-15 | -8832873.23 | maximum |
+| gen2938 / after | 1.44851e-14 | 1.10077701e+09 | minimum |
+| gen2940 / before | 1.75280e-16 | -20685.4014 | maximum |
+
+Each pair below uses the same projection, geometry, interval and axes. The top
+row shows the actual projected curve and returned point; the lower row shows
+distance over the requested parameter interval. `found=false` has no returned
+point and must not be read as an empty geometry or a proof that roots are absent.
+The sampled curves illustrate the analytic checks; they do not certify maxima.
+
+![gen0042: before and after projected curve, returned stationary point when present, and distance over the same interval.](figures/local-projected-root-gen0042-2968.png)
+
+![gen0773: before and after projected curve, returned stationary point when present, and distance over the same interval.](figures/local-projected-root-gen0773-2968.png)
+
+![gen1144: before and after projected curve, returned stationary point when present, and distance over the same interval.](figures/local-projected-root-gen1144-2968.png)
+
+![gen1760: before and after projected curve, returned stationary point when present, and distance over the same interval.](figures/local-projected-root-gen1760-2968.png)
+
+![gen2335: before and after projected curve, returned stationary point when present, and distance over the same interval.](figures/local-projected-root-gen2335-2968.png)
+
+![gen2938: before and after projected curve, returned stationary point when present, and distance over the same interval.](figures/local-projected-root-gen2938-2968.png)
+
+![gen2940: before and after projected curve, returned stationary point when present, and distance over the same interval.](figures/local-projected-root-gen2940-2968.png)
+
 | p4 case | Native derivative | Rust derivative | Qualification |
 |---|---:|---:|---|
 | circle_property_21 | 0.64309503671411716 | -0.64309503671411716 | Matches independent smooth derivative |
