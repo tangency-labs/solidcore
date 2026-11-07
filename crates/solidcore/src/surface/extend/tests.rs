@@ -2649,3 +2649,51 @@ fn tangent_past_one_mirror_step_leaves_no_sliver_span() {
         g.knots
     );
 }
+
+/// A ball patch's side is reported met only when its measured length is within the
+/// bisection's stop of the length it was solved to: one the bisection left short (out of
+/// tries) is not, nor one whose measure is too coarse to say; at the least step, a length
+/// past the goal (no shorter extension exists) is.
+#[test]
+fn a_ball_side_is_met_only_within_the_bisections_stop() {
+    use super::ball::solved_length_met;
+    let goal = 2.0;
+    let across = |mid: f64, rounding: f64| Across {
+        enclosure: crate::surface::side::Bracket {
+            lower: mid - rounding,
+            upper: mid + rounding,
+        },
+        truncation: 0.0,
+        rounding,
+        converged: true,
+        resolution: 0.0,
+    };
+    assert!(solved_length_met(
+        &across(goal * (1.0 + 1e-13), 5e-9),
+        1e-9,
+        goal,
+        false
+    ));
+    assert!(!solved_length_met(
+        &across(goal * (1.0 - 1e-6), 5e-9),
+        1e-9,
+        goal,
+        false
+    ));
+    assert!(
+        !solved_length_met(&across(goal, 1e-3), 1e-9, goal, false),
+        "measure too coarse"
+    );
+    assert!(solved_length_met(
+        &across(goal * 1.01, 5e-9),
+        1e-9,
+        goal,
+        true
+    ));
+    assert!(!solved_length_met(
+        &across(goal * 0.99, 5e-9),
+        1e-9,
+        goal,
+        true
+    ));
+}
