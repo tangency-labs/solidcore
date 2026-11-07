@@ -14,6 +14,7 @@ use solidcore::topology::brep_data_write::FromBrepEnv;
 use solidcore::topology::topology::NotifyRecords;
 use solidcore::Kernel;
 
+/// Replays the two seeded elbows, validates them and writes their diagnostic bodies.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = std::path::PathBuf::from(std::env::args().nth(1).ok_or("output directory required")?);
     std::fs::create_dir_all(&out)?;
@@ -27,8 +28,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .as_array()
             .ok_or("data")?
             .iter()
-            .map(|v| v.as_f64().unwrap())
-            .collect();
+            .map(|v| v.as_f64().ok_or("non-numeric data entry"))
+            .collect::<Result<_, _>>()?;
         assert_eq!(d.len(), 27);
         assert_eq!(&d[4..6], &[1., 2.]);
         let curves: Vec<Curve> = d[6..]
