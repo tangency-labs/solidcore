@@ -112,12 +112,42 @@ minimum near `t=0.6406108473689742`. Its exact distance is approximately
 ## Current global curve golden changes (review 4501494573)
 
 This audit compares `99ed57c4d4f4cd77d942ac6cd2e4d09f612acb20` with
-`2e5087da73b32eeaa3e362f0f6dadf135eeaf571`: all 55 changed existing
-`curve.curve_p1` records, on the unchanged generated inputs. It supersedes the
+`3407928fbb6496a5d0c8d22378a876cc3804fc7c`: all 55 changed existing
+`curve.curve_p1` records on the original frozen inputs. It supersedes the
 historical table below for this comparison. The [complete saved records](diagnostics/projected_global_golden_changes_2968.json)
-contain exact old/new golden records, inputs and expanded output arrays. A native
-replay of all 55 inputs reproduced the current records exactly, including the
-19-value arrays compressed into checksums for `gen0572` and `gen1457`.
+contain the old golden records, current measured records, exact inputs and full
+output arrays, including the two checksum-compressed records.
+
+The final optimized native replay preserves all 55 statuses and 53 raw output
+arrays bit for bit relative to the earlier `2e5087da7` evidence. Two analytic-line
+minima move by adjacent binary64 representations: `gen0073` changes distance
+`2.4569516620450993` to `2.4569516620451006` (three ULPs) and parameter
+`7.424378115297848` to `7.4243781152978485` (one ULP); `gen2450` keeps distance
+`0.27002492486264307` and changes parameter `2.5540707534588063` to
+`2.5540707534588067` (one ULP). Their previous arrays and the earlier evidence head
+remain in the JSON. No golden expectation changes for this within-tolerance drift.
+The frozen-input archive SHA256 is
+`f285cce9638cba8c5ebf0d12f73069efdac07cb6b89055f47f5d0c3557c4a46a`;
+the final 55-record raw replay SHA256 is
+`444b24249c7c30a47fcd4c518468397dbbc7f7f64bb02f55cc699de9e3836f96`.
+Reconstructing every frozen float from its exact u64 bits produces the same output
+as the ordinary JSON replay, excluding a transport-rounding explanation.
+
+For these two changed lines, the script additionally uses public native stored
+line factors and exact rational arithmetic to derive the quadratic minimum and
+evaluate the returned parameter. Both parameters are strictly inside their natural
+and requested intervals. The exact minima are approximately
+`2.45695166204509951525` and `0.27002492486264330538`; the reported-minus-exact
+point-metric errors are `1.11087929335e-15` and `-2.37792993327e-16`.
+Their objective gaps from the exact minima are about `1.3341e-31` and `8.0299e-33`.
+Exact squared comparisons pass the unchanged relative `1e-9` golden rule.
+This independent diagnostic does not invoke the private production point-enclosure
+certificate; that construction is covered separately by implementation and tests.
+The seven same-view figures are regenerated from these current measured arrays
+and visually inspected. The regenerated NumPy report has additional last-bit
+changes in its diagnostic polynomial roots across numerical-library versions;
+those are not native kernel-output changes. Native-array comparisons above use
+binary64 bits, independently of the numerical plotting oracle.
 
 The [independent evaluator and plotting script](diagnostics/projected_global_golden_changes_2968.py)
 expands every nonempty knot span into rational polynomials. For projection
@@ -153,7 +183,7 @@ from status 1021 with empty output. The linked JSON preserves every field.
 |---|---|---|---|
 | `gen0002` | no solutions | 9.2486752805868271 @ 0.82584407876161836 | max 9.2486752805868271 at 0.82584407876161592; largest returned gap 1.7764e-15 <= slack 0.050000000000000003. |
 | `gen0069` | no solutions | 8.8901767919182149 @ 4.2339767627157618 | max 8.8901767919182184 at 4.2339767627157618; largest returned gap 0 <= slack 1.0000000000000001e-05. |
-| `gen0073` | 2.4569516620450993 @ 7.4243781152978494 | 2.4569516620450993 @ 7.4243781152978476 | min 2.4569516620450997 at 7.4243781152978503; largest returned gap 0 <= slack 9.9999999999999995e-07. |
+| `gen0073` | 2.4569516620450993 @ 7.4243781152978494 | 2.4569516620451006 @ 7.4243781152978485 | Exact stored-line minimum 2.45695166204509951525; returned parameter admissible, objective gap about 1.3341e-31. |
 | `gen0159` | no solutions | 1.033541203184561 @ 1.1388624755787422 | max 1.033541203184561 at 1.1388624755787422; largest returned gap 0 <= slack 0.001. |
 | `gen0268` | 0 @ 0 | 95.282075215491687 @ 1 | max 95.282075215491702 at 1; largest returned gap 0 <= slack 0.050000000000000003. |
 | `gen0312` | no solutions | 28.246790603072732 @ 0.98007941619113648 | max 28.24679060307276 at 0.98007941619113514; largest returned gap 1.0658e-14 <= slack 1.0000000000000001e-05. |
@@ -198,7 +228,7 @@ from status 1021 with empty output. The linked JSON preserves every field.
 | `gen2218` | no solutions | 3.5683265921762817 @ 3.0261404497837283 | max 3.5683265921762812 at 3.0261404497837283; largest returned gap 0 <= slack 1.0000000000000001e-05. |
 | `gen2292` | 10.531529151927153 @ 0.97397763370896406 | 4.5142803266087421 @ 0 | min 4.5142803266087412 at 0; largest returned gap 0 <= slack 1.0000000000000001e-05. |
 | `gen2361` | no solutions | 4.6198607072580273 @ 0.066619966966380756 | max 4.6198607072580273 at 0.066619966966377911; largest returned gap 8.8818e-16 <= slack 9.9999999999999995e-07. |
-| `gen2450` | 0.27002492486264312 @ 2.5540707534588072 | 0.27002492486264307 @ 2.5540707534588063 | min 0.27002492486264307 at 2.5540707534588067; largest returned gap 7.2164e-16 <= slack 9.9999999999999995e-07. |
+| `gen2450` | 0.27002492486264312 @ 2.5540707534588072 | 0.27002492486264307 @ 2.5540707534588067 | Exact stored-line minimum 0.27002492486264330538; returned parameter admissible, objective gap about 8.0299e-33. |
 | `gen2524` | no solutions | 0.16452101103224887 @ 0.5161062644162443 | max 0.16452101103224909 at 0.51610626441624408; largest returned gap 2.7756e-17 <= slack 9.9999999999999995e-07. |
 | `gen2525` | no solutions | status 1021; `[]` | Request [6.5843795421782971, 9.3024172167042547] is not contained in cache domain [0.097910539182596068, 8.4937777191536945]. |
 | `gen2611` | 34.173415063360942 @ 0.12001180281277017 | 34.173415063382613 @ 0.12001180281343077 | max 34.17341506338262 at 0.12001180281343077; largest returned gap 0 <= slack 0.001. |
