@@ -3485,10 +3485,11 @@ mod tests {
         assert_eq!(b.vertex(d).unwrap().vertexuses.len(), 2);
         assert_eq!(b.vertex(kv).unwrap().vertexuses.len(), 2);
     }
-    /// `CheckAndFixDegeneracy` does not check `ComputeUVPoint`'s status: a degenerate
-    /// corner whose rail's original face has no surface (the projection fails with
-    /// `SM_ERR_NULL_POINTER`) still merges, keeps the UV position at `SM_UNDEF_DOUBLE`,
-    /// is marked degenerate and returns `TRUE`.
+    /// `CheckAndFixDegeneracy` refines a vertex's UV point only with a computed one, as
+    /// the fork does (tangency-labs/smlib 66b02de) and the default kernel now does: a
+    /// degenerate corner whose rail's original face has no surface (the projection fails
+    /// with `SM_ERR_NULL_POINTER`) still merges, keeps the UV position it had, is marked
+    /// degenerate and returns `TRUE`. Upstream wrote `SM_UNDEF_DOUBLE` there.
     #[test]
     fn degeneracy_fix_ignores_a_failed_uv_projection() {
         use crate::blend::fillet_geom::p1::{
@@ -3498,129 +3499,122 @@ mod tests {
             Edgeuse, EdgeuseOwner, Face, Faceuse, Loopuse, Vertexuse, VertexuseOwner,
         };
 
-        for checked in [false, true] {
-            let mut k = Kernel::default();
-            k.fixes.fillet_corner_statuses = checked;
-            let corner_pnt = Point3::new(1.0, 2.0, 3.0);
+        let mut k = Kernel::default();
+        let corner_pnt = Point3::new(1.0, 2.0, 3.0);
 
-            // the filleted B-rep: the corner vertex, used by a loop edge use of a face without
-            // surface
-            let mut target = Brep::default();
-            let shell = target.add_shell().unwrap();
-            let face = target.add_face_record(Face::new(shell)).unwrap();
-            let fu = target
-                .add_faceuse_record(Faceuse {
-                    shell: Some(shell),
-                    face: Some(face),
-                    ..Faceuse::default()
-                })
-                .unwrap();
-            target.face_mut(face).unwrap().faceuse = Some(fu);
-            let lu = target
-                .add_loopuse_record(Loopuse {
-                    faceuse: Some(fu),
-                    ..Loopuse::default()
-                })
-                .unwrap();
-            let cv = target.add_vertex(corner_pnt).unwrap();
-            let teu = target
-                .add_edgeuse_record(Edgeuse {
-                    owner: EdgeuseOwner::Loopuse(Some(lu)),
-                    ..Edgeuse::default()
-                })
-                .unwrap();
-            let tvu = target
-                .add_vertexuse_record(Vertexuse {
-                    vertex: Some(cv),
-                    owner: VertexuseOwner::Edgeuse(Some(teu)),
-                    ..Vertexuse::default()
-                })
-                .unwrap();
-            target.edgeuse_mut(teu).unwrap().vertexuse = Some(tvu);
-            target.vertex_mut(cv).unwrap().vertexuses.push(tvu);
+        // the filleted B-rep: the corner vertex, used by a loop edge use of a face without
+        // surface
+        let mut target = Brep::default();
+        let shell = target.add_shell().unwrap();
+        let face = target.add_face_record(Face::new(shell)).unwrap();
+        let fu = target
+            .add_faceuse_record(Faceuse {
+                shell: Some(shell),
+                face: Some(face),
+                ..Faceuse::default()
+            })
+            .unwrap();
+        target.face_mut(face).unwrap().faceuse = Some(fu);
+        let lu = target
+            .add_loopuse_record(Loopuse {
+                faceuse: Some(fu),
+                ..Loopuse::default()
+            })
+            .unwrap();
+        let cv = target.add_vertex(corner_pnt).unwrap();
+        let teu = target
+            .add_edgeuse_record(Edgeuse {
+                owner: EdgeuseOwner::Loopuse(Some(lu)),
+                ..Edgeuse::default()
+            })
+            .unwrap();
+        let tvu = target
+            .add_vertexuse_record(Vertexuse {
+                vertex: Some(cv),
+                owner: VertexuseOwner::Edgeuse(Some(teu)),
+                ..Vertexuse::default()
+            })
+            .unwrap();
+        target.edgeuse_mut(teu).unwrap().vertexuse = Some(tvu);
+        target.vertex_mut(cv).unwrap().vertexuses.push(tvu);
 
-            // the pseudo B-rep: one processed corner vertex at the corner point, the end of a
-            // rail on that face whose edge use's geometry has the solver
-            let mut fb = FilletBrep::new();
-            let g = {
-                let mut g = FilletGeom::new(&k, None, FilletGeomType::Default).unwrap();
-                g.solver = Some(FilletSolverId(0));
-                fb.add_geom(g)
+        // the pseudo B-rep: one processed corner vertex at the corner point, the end of a
+        // rail on that face whose edge use's geometry has the solver
+        let mut fb = FilletBrep::new();
+        let g = {
+            let mut g = FilletGeom::new(&k, None, FilletGeomType::Default).unwrap();
+            g.solver = Some(FilletSolverId(0));
+            fb.add_geom(g)
+        };
+        let b = fb.brep_mut();
+        let fv0 = b.add_vertex(corner_pnt).unwrap();
+        let far = b.add_vertex(Point3::new(5.0, 0.0, 0.0)).unwrap();
+        let rail = b.add_edge(fv0, far).unwrap();
+        let eu = b
+            .add_edgeuse_record(Edgeuse {
+                edge: Some(rail),
+                ..Edgeuse::default()
+            })
+            .unwrap();
+        let vu = b
+            .add_vertexuse_record(Vertexuse {
+                vertex: Some(fv0),
+                owner: VertexuseOwner::Edgeuse(Some(eu)),
+                ..Vertexuse::default()
+            })
+            .unwrap();
+        b.edgeuse_mut(eu).unwrap().vertexuse = Some(vu);
+        b.edge_mut(rail).unwrap().edgeuses.push(eu);
+        b.vertex_mut(fv0).unwrap().vertexuses.push(vu);
+        let mut fv = FilletVertex::new(&k, None);
+        fv.set_status(FilStatus::Processed);
+        fb.insert_fillet_vertex(fv0, fv);
+        fb.insert_fillet_vertex(far, FilletVertex::new(&k, None));
+        let mut fe = FilletEdge::with_corner(None);
+        fe.set_fillet_edge_type(FilletEdgeType::Rail);
+        fe.orig_face = Some(face);
+        fb.insert_fillet_edge(rail, fe);
+        fb.insert_fillet_edgeuse(
+            eu,
+            FilletEdgeuse {
+                fillet_geom: Some(g),
+            },
+        );
+        fb.insert_fillet_vertexuse(vu, FilletVertexuse::new());
+        let original_uv = Point2::new(4.0, 5.0);
+        *fb.fillet_vertexuse_mut(vu)
+            .unwrap()
+            .tsect_pnt_mut()
+            .uv_pos_mut(SrfIndex::First) = original_uv;
+
+        let solvers = [FilletSolver::new(1e-3, 1e-3, 0.01)];
+        let mut exec = FilletExecutiveData::default();
+        let mut c = FilletCorner::new(FilletCornerKind::NByTwo, Some(cv), None, None, 1e-3, 0.1);
+        c.vertices = vec![fv0];
+        let r = {
+            let mut env = CornerEnv {
+                k: &mut k,
+                target: &mut target,
+                pseudo: &mut fb,
+                exec: &mut exec,
+                corner: None,
+                solvers: &mut [],
+                fillet: None,
             };
-            let b = fb.brep_mut();
-            let fv0 = b.add_vertex(corner_pnt).unwrap();
-            let far = b.add_vertex(Point3::new(5.0, 0.0, 0.0)).unwrap();
-            let rail = b.add_edge(fv0, far).unwrap();
-            let eu = b
-                .add_edgeuse_record(Edgeuse {
-                    edge: Some(rail),
-                    ..Edgeuse::default()
-                })
-                .unwrap();
-            let vu = b
-                .add_vertexuse_record(Vertexuse {
-                    vertex: Some(fv0),
-                    owner: VertexuseOwner::Edgeuse(Some(eu)),
-                    ..Vertexuse::default()
-                })
-                .unwrap();
-            b.edgeuse_mut(eu).unwrap().vertexuse = Some(vu);
-            b.edge_mut(rail).unwrap().edgeuses.push(eu);
-            b.vertex_mut(fv0).unwrap().vertexuses.push(vu);
-            let mut fv = FilletVertex::new(&k, None);
-            fv.set_status(FilStatus::Processed);
-            fb.insert_fillet_vertex(fv0, fv);
-            fb.insert_fillet_vertex(far, FilletVertex::new(&k, None));
-            let mut fe = FilletEdge::with_corner(None);
-            fe.set_fillet_edge_type(FilletEdgeType::Rail);
-            fe.orig_face = Some(face);
-            fb.insert_fillet_edge(rail, fe);
-            fb.insert_fillet_edgeuse(
-                eu,
-                FilletEdgeuse {
-                    fillet_geom: Some(g),
-                },
-            );
-            fb.insert_fillet_vertexuse(vu, FilletVertexuse::new());
-            let original_uv = Point2::new(4.0, 5.0);
-            *fb.fillet_vertexuse_mut(vu)
-                .unwrap()
-                .tsect_pnt_mut()
-                .uv_pos_mut(SrfIndex::First) = original_uv;
-
-            let solvers = [FilletSolver::new(1e-3, 1e-3, 0.01)];
-            let mut exec = FilletExecutiveData::default();
-            let mut c =
-                FilletCorner::new(FilletCornerKind::NByTwo, Some(cv), None, None, 1e-3, 0.1);
-            c.vertices = vec![fv0];
-            let r = {
-                let mut env = CornerEnv {
-                    k: &mut k,
-                    target: &mut target,
-                    pseudo: &mut fb,
-                    exec: &mut exec,
-                    corner: None,
-                    solvers: &mut [],
-                    fillet: None,
-                };
-                c.check_and_fix_degeneracy(&mut env, &solvers)
-            };
-            // fork 66b02de: only a computed UV point refines the position, and the
-            // corner is still degenerate
-            assert!(vertexuse::compute_uv_point(&k, &mut target, tvu, true).is_err());
-            assert!(r.unwrap());
-            assert!(c.degenerate);
-            assert_eq!(c.vertices, vec![fv0]);
-            let tp = fb.fillet_vertexuse(vu).unwrap().tsect_pnt();
-            assert_eq!(
-                tp.uv_pos(SrfIndex::First),
-                if checked { original_uv } else { Point2::UNDEF }
-            );
-            assert_eq!(
-                fb.fillet_vertex(fv0).unwrap().fillet_vertex_type(),
-                FilletVertexType::OnVertex
-            );
-        }
+            c.check_and_fix_degeneracy(&mut env, &solvers)
+        };
+        // fork 66b02de: only a computed UV point refines the position, and the
+        // corner is still degenerate
+        assert!(vertexuse::compute_uv_point(&k, &mut target, tvu, true).is_err());
+        assert!(r.unwrap());
+        assert!(c.degenerate);
+        assert_eq!(c.vertices, vec![fv0]);
+        let tp = fb.fillet_vertexuse(vu).unwrap().tsect_pnt();
+        assert_eq!(tp.uv_pos(SrfIndex::First), original_uv);
+        assert_eq!(
+            fb.fillet_vertex(fv0).unwrap().fillet_vertex_type(),
+            FilletVertexType::OnVertex
+        );
     }
     use crate::error::SM_ERR;
 

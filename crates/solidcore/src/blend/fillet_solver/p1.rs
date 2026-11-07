@@ -3532,7 +3532,7 @@ mod tests {
 
     #[test]
     fn audit_483_edge_domain_is_no_trimmed_curve_after_a_failed_trim() {
-        let mut k = Kernel::default();
+        let k = Kernel::default();
         let mut b = Brep::new();
         let first = b.add_vertex(Vec3::ZERO).unwrap();
         let last = b.add_vertex(Vec3::X).unwrap();
@@ -3544,12 +3544,8 @@ mod tests {
         let mut failing = curve.copy(&k).unwrap();
         let mut trim_ivl = ivl;
         assert!(failing.trim(&k, &mut trim_ivl, TrimMode::Notify).is_err());
-        // upstream: the untrimmed copy is returned as the trimmed curve
-        assert!(check_edge_curve_domains(&k, &b, edge, false, false)
-            .unwrap()
-            .is_some());
-        // fork 66b02de: a copy that could not be trimmed is no trimmed curve
-        k.fixes.fillet_edge_curve_domain_statuses = true;
+        // fork 66b02de, and the default kernel: a copy that could not be trimmed is no
+        // trimmed curve (upstream returned the untrimmed copy as the trimmed curve)
         assert!(check_edge_curve_domains(&k, &b, edge, false, false)
             .unwrap()
             .is_none());

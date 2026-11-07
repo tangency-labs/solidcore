@@ -5227,98 +5227,93 @@ mod tests {
 
     #[test]
     fn audit_483_tangent_gaps_preserve_errors_and_no_solution() {
-        let mut k = Kernel::default();
+        let k = Kernel::default();
         let error = SolidError::sm_err("injected tangent-gap service");
-        for checked in [false, true] {
-            k.fixes.offset_tangent_gap_statuses = checked;
-            for fail_evaluation in [false, true] {
-                let mut calls = Vec::new();
-                let result = tangent_gap_samples(
-                    &k,
-                    &mut calls,
-                    2,
-                    1e-6,
-                    |_, calls, _| {
-                        calls.push("evaluate");
-                        if fail_evaluation {
-                            Err(error.clone())
-                        } else {
-                            Ok(Vec3::ZERO)
-                        }
-                    },
-                    |_, calls, _| {
-                        calls.push("closest");
+        for fail_evaluation in [false, true] {
+            let mut calls = Vec::new();
+            let result = tangent_gap_samples(
+                &k,
+                &mut calls,
+                2,
+                1e-6,
+                |_, calls, _| {
+                    calls.push("evaluate");
+                    if fail_evaluation {
                         Err(error.clone())
-                    },
-                );
-                if checked {
-                    // fork 4803d6d: a failed sample is skipped; ClosestPoint's status
-                    // stays dropped
-                    assert!(!result.unwrap());
-                    assert_eq!(
-                        calls,
-                        if fail_evaluation {
-                            vec!["evaluate"; 3]
-                        } else {
-                            ["evaluate", "closest"].repeat(3)
-                        }
-                    );
-                } else {
-                    assert!(!result.unwrap());
-                    assert_eq!(calls.len(), 6);
-                }
-            }
-            let mut samples = Vec::new();
-            assert!(!tangent_gap_samples(
-                &k,
-                &mut samples,
-                2,
-                1e-6,
-                |_, calls, t| {
-                    calls.push(t);
-                    Ok(Vec3::X * t)
-                },
-                |_, _, _| Ok(None)
-            )
-            .unwrap());
-            assert_eq!(samples, vec![0.0, 0.5, 1.0]);
-            assert!(tangent_gap_samples(
-                &k,
-                &mut (),
-                2,
-                1e-6,
-                |_, (), _| Ok(Vec3::X),
-                |_, (), _| Ok(Some(2e-6))
-            )
-            .unwrap());
-        }
-    }
-
-    /// fork 4803d6d (`SmOffsetGeometryCreation::HaveTangentGaps`): a sample that
-    /// cannot be evaluated shows no gap. Upstream measures the unset point instead, and
-    /// a closest point far from it reads as a gap.
-    #[test]
-    fn tangent_gaps_skip_a_sample_that_cannot_be_evaluated() {
-        for skip in [false, true] {
-            let mut k = Kernel::default();
-            k.fixes.offset_tangent_gap_statuses = skip;
-            let gap = tangent_gap_samples(
-                &k,
-                &mut (),
-                2,
-                1e-6,
-                |_, (), t| {
-                    if t == 0.5 {
-                        Err(SolidError::sm_err("injected evaluation failure"))
                     } else {
-                        Ok(Vec3::X * t)
+                        Ok(Vec3::ZERO)
                     }
                 },
-                |_, (), p| Ok(Some(if p.x == UNDEF_DOUBLE { 1.0 } else { 0.0 })),
-            )
-            .unwrap();
-            assert_eq!(gap, !skip);
+                |_, calls, _| {
+                    calls.push("closest");
+                    Err(error.clone())
+                },
+            );
+            // fork 4803d6d: a failed sample is skipped; ClosestPoint's status stays
+            // dropped
+            assert!(!result.unwrap());
+            assert_eq!(
+                calls,
+                if fail_evaluation {
+                    vec!["evaluate"; 3]
+                } else {
+                    ["evaluate", "closest"].repeat(3)
+                }
+            );
         }
+        let mut samples = Vec::new();
+        assert!(!tangent_gap_samples(
+            &k,
+            &mut samples,
+            2,
+            1e-6,
+            |_, calls, t| {
+                calls.push(t);
+                Ok(Vec3::X * t)
+            },
+            |_, _, _| Ok(None)
+        )
+        .unwrap());
+        assert_eq!(samples, vec![0.0, 0.5, 1.0]);
+        assert!(tangent_gap_samples(
+            &k,
+            &mut (),
+            2,
+            1e-6,
+            |_, (), _| Ok(Vec3::X),
+            |_, (), _| Ok(Some(2e-6))
+        )
+        .unwrap());
+    }
+
+    /// fork 4803d6d (`SmOffsetGeometryCreation::HaveTangentGaps`), and the default
+    /// kernel: a sample that cannot be evaluated shows no gap and is not measured.
+    /// Upstream measured the unset point instead, and a closest point far from it read
+    /// as a gap.
+    #[test]
+    fn tangent_gaps_skip_a_sample_that_cannot_be_evaluated() {
+        let k = Kernel::default();
+        let mut measured = Vec::new();
+        let gap = tangent_gap_samples(
+            &k,
+            &mut measured,
+            2,
+            1e-6,
+            |_, _, t| {
+                if t == 0.5 {
+                    Err(SolidError::sm_err("injected evaluation failure"))
+                } else {
+                    Ok(Vec3::X * t)
+                }
+            },
+            |_, measured, p| {
+                measured.push(p.x);
+                Ok(Some(if p.x == UNDEF_DOUBLE { 1.0 } else { 0.0 }))
+            },
+        )
+        .unwrap();
+        assert!(!gap);
+        assert_eq!(measured, vec![0.0, 1.0]);
     }
 
     /// A quadratic in the plane y = 0 over the plane z = 0, from x = -1 to 1 (t = 0 to 1):
