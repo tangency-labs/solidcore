@@ -220,6 +220,11 @@ fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
         .as_slice()
         .first()
         .ok_or_else(|| refused("projected maximum has no feasible candidate"))?;
+    if solution.solution_type != crate::geom::solution_array::SolutionType::SingleValue {
+        return Err(refused(
+            "projected maximum requires a single feasible point",
+        ));
+    }
     let reported = solution.start.solution_value;
     if !reported.is_finite()
         || !solver.tolerance_3d.is_finite()
@@ -232,7 +237,7 @@ fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
     }
     // Enclose the actual returned object's point, even while certifying another
     // face. Never borrow the face under comparison's evaluation uncertainty.
-    let mut upper = reported;
+    let upper;
     let candidate_face = solution
         .objects
         .iter()
@@ -247,11 +252,6 @@ fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
             candidate_net = face_net(k, objects, candidate_face)?;
             (&candidate_net, objects.face_uv_domain(candidate_face)?)
         };
-        if solution.solution_type != crate::geom::solution_array::SolutionType::SingleValue {
-            return Err(refused(
-                "projected maximum requires a single feasible point",
-            ));
-        }
         let (b, f) = objects
             .face_entity(candidate_face)
             .ok_or_else(|| refused("missing face boundary"))?;
@@ -275,11 +275,39 @@ fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
             ));
         }
         upper = value.hi;
+    } else if let Some(edge) = solution
+        .objects
+        .iter()
+        .flatten()
+        .copied()
+        .find(|object| object.kind() == crate::geom::solution_array::ObjectKind::Edge)
+    {
+        let t = solution.start.param(0)?;
+        let interval = objects.edge_interval(edge)?;
+        if !t.is_finite() || t < interval.min() || t > interval.max() {
+            return Err(refused(
+                "returned edge parameter is outside its native interval",
+            ));
+        }
+        let handle = objects
+            .edge_curve(edge)?
+            .ok_or_else(|| refused("returned edge has no curve definition"))?;
+        let value = curve_point_enclosure(objects.curve(handle)?, t, point, normal)?;
+        if !value.lo.is_finite()
+            || !value.hi.is_finite()
+            || reported < value.lo
+            || reported > value.hi
+        {
+            return Err(refused(
+                "returned edge value is outside its own point enclosure",
+            ));
+        }
+        upper = value.hi;
     } else if solution.num_variables == 0 {
         // A point/vertex answer has no parameter uncertainty: its stored native
         // vertex coordinates define the point. A query vertex can also be named;
         // use only a point whose metric actually encloses the reported scalar.
-        let mut found = false;
+        let mut vertex_upper = None;
         for object in solution.objects.iter().flatten() {
             if object.kind() != crate::geom::solution_array::ObjectKind::Vertex {
                 continue;
@@ -294,18 +322,75 @@ fn checked_candidate<O: crate::geom::solution_array::SolutionObject>(
                 && value.lo <= reported
                 && reported <= value.hi
             {
-                upper = value.hi;
-                found = true;
+                vertex_upper = Some(value.hi);
                 break;
             }
         }
-        if !found {
-            return Err(refused(
-                "returned vertex value is outside its own enclosure",
-            ));
-        }
+        upper = vertex_upper
+            .ok_or_else(|| refused("returned vertex value is outside its own enclosure"))?;
+    } else {
+        return Err(refused("returned object has no native point enclosure"));
     }
     Ok((net, domain, normal, upper))
+}
+
+/// Enclose an actual native curve point; analytic approximations are not definitions.
+fn curve_point_enclosure(
+    curve: &crate::curve::curve::Curve,
+    t: f64,
+    point: Vec3,
+    normal: Vec3,
+) -> Result<Ivl> {
+    use crate::blend::fillet_section::certificate::{curve_derivs_over, NurbsCurve};
+    use crate::curve::curve::CurveKind;
+    if let Some(value) =
+        crate::curve::curve::p1::affine_projected_point_enclosure(curve, t, point, normal)
+    {
+        return Ok(value);
+    }
+    let CurveKind::BSpline(spline) = curve.kind() else {
+        return Err(refused(
+            "returned edge has no certified native curve definition",
+        ));
+    };
+    let mut net = NurbsCurve::of(spline)?;
+    let raw = spline
+        .gw_nurb()
+        .ok_or_else(|| refused("missing native curve net"))?;
+    if raw.degree() != net.p || raw.cpts().len() != net.n || raw.knots() != net.u {
+        return Err(refused(
+            "native curve net does not match its point evaluator",
+        ));
+    }
+    // NurbsCurve::of validates the representation but forms homogeneous points
+    // through a rounded dehomogenize/rehomogenize round trip. Keep the original
+    // defining coordinates here so those operations cannot move the point.
+    net.pw.clear();
+    for c in raw.cpts() {
+        let w = if c.w == crate::nurbs::math::NOW {
+            1.0
+        } else {
+            c.w
+        };
+        let z = if c.z == crate::nurbs::math::NOZ {
+            0.0
+        } else {
+            c.z
+        };
+        if w <= 0.0 || ![c.x, c.y, z, w].iter().all(|x| x.is_finite()) {
+            return Err(refused(
+                "native curve needs finite coordinates and positive weights",
+            ));
+        }
+        net.pw.extend([c.x, c.y, z, w]);
+    }
+    // None selects exactly the evaluator's native point span at an interior knot,
+    // rather than hulling a different one-sided limit into arithmetic rounding.
+    let derivatives = curve_derivs_over(&net, Ivl::from(t), 0, None)?;
+    let position = *derivatives
+        .first()
+        .ok_or_else(|| refused("missing native curve point"))?;
+    Ok(norm_squared(projected(relative(position, point), V3::from_vec3(normal))).sqrt())
 }
 
 #[derive(Clone, Copy)]
@@ -617,6 +702,19 @@ pub(super) fn maximum_is_bounded(
     }
     let us = knot_cuts(&net.u, net.p, net.nu, domain.min.x, domain.max.x, 0)?;
     let vs = knot_cuts(&net.v, net.q, net.nv, domain.min.y, domain.max.y, 0)?;
+    // Closed span bounds include the left limit at an upper domain boundary.
+    // A full-multiplicity interior knot can instead have a different native
+    // right-valued endpoint. Until its singleton boundary piece is enumerated,
+    // refuse rather than omit that actual point from the whole-face proof.
+    let upper_jump = |knots: &[f64], degree: usize, count: usize, t: f64| {
+        knots.get(count).is_some_and(|end| t < *end)
+            && knots.iter().filter(|&&knot| knot == t).count() > degree
+    };
+    if upper_jump(&net.u, net.p, net.nu, domain.max.x)
+        || upper_jump(&net.v, net.q, net.nv, domain.max.y)
+    {
+        return Ok(false);
+    }
     let mut visited = 0;
     for &(ua, ub, ku) in &us {
         for &(va, vb, kv) in &vs {
@@ -693,6 +791,64 @@ mod tests {
             v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             pw,
         }
+    }
+
+    #[test]
+    fn upper_domain_jump_is_not_omitted_from_whole_face_proof() {
+        let mut pw = Vec::new();
+        for x in [0.0, 1.0, 100.0, 100.0] {
+            for _ in 0..2 {
+                pw.extend([x, 0.0, 0.0, 1.0]);
+            }
+        }
+        let net = Nurbs {
+            p: 1,
+            q: 1,
+            nu: 4,
+            nv: 2,
+            u: vec![0.0, 0.0, 0.5, 0.5, 1.0, 1.0],
+            v: vec![0.0, 0.0, 1.0, 1.0],
+            pw,
+        };
+        let normal = Vec3::new(0.0, 0.0, 1.0);
+        let endpoint = value_at(&net, Vec2::new(0.5, 0.5), Vec3::ZERO, normal).unwrap();
+        assert!(endpoint.lo > 2.0);
+        // The left patch's closed limit is only 1, but u=.5 itself is 100.
+        assert!(!maximum_is_bounded(
+            &Kernel::default(),
+            &net,
+            &Extent2d::from_bounds(0.0, 0.0, 0.5, 1.0),
+            Vec3::ZERO,
+            normal,
+            2.0
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn curved_native_edge_point_uses_only_its_default_knot_side() {
+        use crate::curve::curve::Curve;
+        use crate::nurbs::b_spline_curve::BSplineCurve;
+        use crate::nurbs::crv_basic::Curve as NativeCurve;
+        use crate::nurbs::math::CPoint;
+        let controls = [100.0, 100.0, 100.0, 0.0, 0.2, 1.0]
+            .map(|x| CPoint::new(x, 0.0, 0.0, 1.0))
+            .to_vec();
+        let curve = Curve::from(BSplineCurve::from_nurb(
+            NativeCurve::new(
+                controls,
+                2,
+                vec![0.0, 0.0, 0.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0],
+            )
+            .unwrap(),
+            3,
+            false,
+        ));
+        let normal = Vec3::new(0.0, 0.0, 1.0);
+        let point = curve_point_enclosure(&curve, 0.5, Vec3::ZERO, normal).unwrap();
+        assert!(point.lo <= 0.0 && point.hi < 1.0);
+        let end = curve_point_enclosure(&curve, 1.0, Vec3::ZERO, normal).unwrap();
+        assert!(end.lo <= 1.0 && end.hi >= 1.0 && end.hi < 2.0);
     }
 
     #[test]

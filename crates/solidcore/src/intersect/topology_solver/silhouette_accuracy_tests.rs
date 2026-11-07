@@ -746,6 +746,45 @@ fn check_zero_slack_plane_candidate(normal: Vec3) {
         )
         .is_err());
     }
+    // An edge incumbent must supply its own verified point metric. Merely
+    // trusting its reported value could "certify" this face against an invented
+    // larger answer on another object.
+    let edge = crate::topology::brep::p1::edges(&b, None).unwrap()[0];
+    let edge_object = CacheObject::Edge(edge);
+    let curve = objects
+        .curve(objects.edge_curve(edge_object).unwrap().unwrap())
+        .unwrap();
+    let t = objects.edge_interval(edge_object).unwrap().min();
+    let edge_point = curve.evaluate_point(&k, t).unwrap();
+    let mut incumbent = solver.base.clone();
+    let mut edge_answer = *solution;
+    edge_answer.objects.fill(None);
+    edge_answer.objects[0] = Some(edge_object);
+    edge_answer.num_objects = 1;
+    edge_answer.num_variables = 1;
+    edge_answer.start.parameters[0] = t;
+    edge_answer.start.solution_value = normal.cross(edge_point - query).cross(normal).length();
+    incumbent.solutions.set_at(0, &edge_answer).unwrap();
+    super::projected_bound::certify_candidate(
+        &k,
+        &objects,
+        CacheObject::Face(face),
+        query,
+        &incumbent,
+    )
+    .unwrap();
+    edge_answer.start.solution_value = 10.0 * expected;
+    incumbent.tolerance_3d = 100.0 * expected;
+    incumbent.solutions.set_at(0, &edge_answer).unwrap();
+    assert!(super::projected_bound::certify(
+        &k,
+        &objects,
+        CacheObject::Face(face),
+        query,
+        &incumbent,
+    )
+    .is_err());
+
     // Retention slack must not make a feasible but suboptimal point a maximum.
     // The center has projected distance |normal|^2, below sqrt(2.5)|normal|^2.
     let mut suboptimal = solver.base.clone();
