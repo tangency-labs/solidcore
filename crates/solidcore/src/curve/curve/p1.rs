@@ -1890,8 +1890,8 @@ impl AffineDefinition {
     }
 
     /// Lower-bound the full projected carrier in a frame centered at `t`.
-    /// For X = P(C(t)-Q) and a nonzero projected direction D, completing the
-    /// square gives min_s |X+sD|^2 = |X|^2 - (X.D)^2 / |D|^2. The carrier
+    /// For `X = P(C(t)-Q)` and a nonzero projected direction `D`, completing the
+    /// square gives `min_s |X+sD|^2 = |X|^2 - (X.D)^2 / |D|^2`. The carrier
     /// contains the requested span, so this is also its lower bound. Centering
     /// near the stationary parameter avoids the cancellation in a remote-anchor
     /// triple product; the candidate's own arithmetic enclosure is unchanged.
