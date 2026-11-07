@@ -1,0 +1,305 @@
+{
+ "issue": "https://github.com/tangency-labs/solidcraft/issues/3702",
+ "pr": "https://github.com/tangency-labs/solidcraft/pull/3702",
+ "test": "crates/kernel/src/ops.rs: shortcut_tests::a_board_in_the_cavity_of_a_rounded_case_is_clear_however_fine_the_meshes; crates/engine/src/cmd/interference_tests.rs: a_filleted_circular_rim_does_not_swallow_bodies_in_its_cavity",
+ "summary": "Interference reported a board lying wholly in the open cavity of a watch case as inside the case once the case's outer top rim (a full circle) was filleted: the case-board intersection kept the whole board. SolidCraft reported the issue and its fix in the same PR, so `issue` is that PR's conversation. The case is a r 25 cylinder from z 1.5 to 15.8 with its top rim rounded r 1.5 and an open r 21.5 cavity cut up to z 13.2 from below. The boards are thin, so SolidCraft meshed both bodies finely (the case in about 180 000 triangles), its sampled 'apart' shortcut gave up, and a shifted retry of the numerical intersection kept the whole board. Geometry is the PR tests': the kernel test's 0.2 mm board, and the engine test's 1 mm board and pad (the reported 750 mm3 and 35.95 mm3). Every board corner lies at r 19.85, inside the cavity.",
+ "cases": [
+  {
+   "name": "thin_board_in_cavity",
+   "note": "the kernel test: a 0.2 mm board; SolidCraft's failing retry returned the whole board (150 mm3)",
+   "steps": [
+    {
+     "op": "cylinder",
+     "id": "outer",
+     "origin": [
+      0,
+      0,
+      1.5
+     ],
+     "radius": 25,
+     "height": 14.3
+    },
+    {
+     "op": "fillet",
+     "id": "rounded",
+     "body": "outer",
+     "edges": [
+      [
+       25,
+       0,
+       15.8
+      ]
+     ],
+     "radius": 1.5
+    },
+    {
+     "op": "cylinder",
+     "id": "cavity",
+     "origin": [
+      0,
+      0,
+      1.5
+     ],
+     "radius": 21.5,
+     "height": 11.7
+    },
+    {
+     "op": "difference",
+     "id": "case",
+     "a": "rounded",
+     "b": "cavity"
+    },
+    {
+     "op": "box",
+     "id": "tool",
+     "origin": [
+      -12,
+      -15,
+      6.9
+     ],
+     "size": [
+      25,
+      30,
+      0.2
+     ]
+    },
+    {
+     "op": "intersection",
+     "id": "result",
+     "a": "case",
+     "b": "tool"
+    }
+   ],
+   "expect": {
+    "lumps": 0,
+    "volume": {
+     "value": 0,
+     "tol": 0.001,
+     "formula": "0: the bodies share no volume"
+    }
+   }
+  },
+  {
+   "name": "pcb_in_cavity",
+   "note": "the reported board (engine test): 25 x 30 x 1 centred at (0.5, 0, 7); reported as 750 mm3, its whole volume",
+   "steps": [
+    {
+     "op": "cylinder",
+     "id": "outer",
+     "origin": [
+      0,
+      0,
+      1.5
+     ],
+     "radius": 25,
+     "height": 14.3
+    },
+    {
+     "op": "fillet",
+     "id": "rounded",
+     "body": "outer",
+     "edges": [
+      [
+       25,
+       0,
+       15.8
+      ]
+     ],
+     "radius": 1.5
+    },
+    {
+     "op": "cylinder",
+     "id": "cavity",
+     "origin": [
+      0,
+      0,
+      1.5
+     ],
+     "radius": 21.5,
+     "height": 11.7
+    },
+    {
+     "op": "difference",
+     "id": "case",
+     "a": "rounded",
+     "b": "cavity"
+    },
+    {
+     "op": "box",
+     "id": "tool",
+     "origin": [
+      -12,
+      -15,
+      6.5
+     ],
+     "size": [
+      25,
+      30,
+      1
+     ]
+    },
+    {
+     "op": "intersection",
+     "id": "result",
+     "a": "case",
+     "b": "tool"
+    }
+   ],
+   "expect": {
+    "lumps": 0,
+    "volume": {
+     "value": 0,
+     "tol": 0.001,
+     "formula": "0: the bodies share no volume"
+    }
+   }
+  },
+  {
+   "name": "pad_below_case",
+   "note": "the reported sensor pad (engine test): r 2 from z -0.86 to 2, mostly below the case and the rest in the open cavity; reported as 35.95 mm3",
+   "steps": [
+    {
+     "op": "cylinder",
+     "id": "outer",
+     "origin": [
+      0,
+      0,
+      1.5
+     ],
+     "radius": 25,
+     "height": 14.3
+    },
+    {
+     "op": "fillet",
+     "id": "rounded",
+     "body": "outer",
+     "edges": [
+      [
+       25,
+       0,
+       15.8
+      ]
+     ],
+     "radius": 1.5
+    },
+    {
+     "op": "cylinder",
+     "id": "cavity",
+     "origin": [
+      0,
+      0,
+      1.5
+     ],
+     "radius": 21.5,
+     "height": 11.7
+    },
+    {
+     "op": "difference",
+     "id": "case",
+     "a": "rounded",
+     "b": "cavity"
+    },
+    {
+     "op": "cylinder",
+     "id": "tool",
+     "origin": [
+      -10,
+      0,
+      -0.86
+     ],
+     "radius": 2,
+     "height": 2.86
+    },
+    {
+     "op": "intersection",
+     "id": "result",
+     "a": "case",
+     "b": "tool"
+    }
+   ],
+   "expect": {
+    "lumps": 0,
+    "volume": {
+     "value": 0,
+     "tol": 0.001,
+     "formula": "0: the bodies share no volume"
+    }
+   }
+  },
+  {
+   "name": "control_board_through_wall",
+   "note": "control: a 0.2 mm board running out through the wall (x 20..30, |y| <= 1, z 6.9..7.1) keeps the part of it in the wall (21.5 < r < 25), below the round",
+   "steps": [
+    {
+     "op": "cylinder",
+     "id": "outer",
+     "origin": [
+      0,
+      0,
+      1.5
+     ],
+     "radius": 25,
+     "height": 14.3
+    },
+    {
+     "op": "fillet",
+     "id": "rounded",
+     "body": "outer",
+     "edges": [
+      [
+       25,
+       0,
+       15.8
+      ]
+     ],
+     "radius": 1.5
+    },
+    {
+     "op": "cylinder",
+     "id": "cavity",
+     "origin": [
+      0,
+      0,
+      1.5
+     ],
+     "radius": 21.5,
+     "height": 11.7
+    },
+    {
+     "op": "difference",
+     "id": "case",
+     "a": "rounded",
+     "b": "cavity"
+    },
+    {
+     "op": "box",
+     "id": "tool",
+     "origin": [
+      20,
+      -1,
+      6.9
+     ],
+     "size": [
+      10,
+      2,
+      0.2
+     ]
+    },
+    {
+     "op": "intersection",
+     "id": "result",
+     "a": "case",
+     "b": "tool"
+    }
+   ],
+   "expect": {
+    "lumps": 1,
+    "volume": {
+     "value": 1.400434475140071,
+     "tol": 0.001400434475140071,
+     "formula": "0.2 * (S(25) - S(21.5)), S(r) = sqrt(r^2 - 1) + r^2 * asin(1/r)"
+    }
+   }
+  }
+ ]
+}
