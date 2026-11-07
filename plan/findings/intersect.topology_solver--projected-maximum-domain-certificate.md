@@ -345,3 +345,10 @@ also preserve the distinction from `cf11091a9`: the old sphere-band golden had
 an approximately `3e-14` UV difference already absent from that raw baseline.
 Only the seven actual runner records are justified for migration; this evidence
 commit does not modify expectations or synthesize golden numeric records.
+
+The subsequent golden migration copies exactly those seven rows from an isolated
+capture of the actual `0a085981d` runner. All 2,560 other stored rows remain
+unchanged; eight existing excluded cases are not stored in the expected file.
+The complete case set still has 2,575 cases. Each migrated compressed block was
+checked against the frozen raw array above, and every non-static output field
+and record metadata field is unchanged. No exclusion or tolerance is added.
