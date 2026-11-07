@@ -4835,7 +4835,7 @@ mod tests {
         assert_eq!(
             dyadic_four_product_order(&[
                 ([1.0; 4], false),
-                ([1.0, 1.0, 1.0, 1.0_f64.next_up()], true)
+                ([1.0, 1.0, 1.0, next_parameter_up(1.0)], true)
             ]),
             Some(Less)
         );
@@ -4873,7 +4873,7 @@ mod tests {
         for scale in [2.0_f64.powi(-400), 1.0, 2.0_f64.powi(400)] {
             for (dx, dy, smooth) in [
                 (4.0, 8.0, true),
-                (4.0_f64.next_up(), 8.0, false),
+                (next_parameter_up(4.0), 8.0, false),
                 (4.0, 0.0, false),
             ] {
                 let controls = [
