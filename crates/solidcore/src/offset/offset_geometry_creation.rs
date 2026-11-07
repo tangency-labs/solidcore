@@ -119,10 +119,10 @@
 //!   (`CreateTrimmedPlaneFromRuled`'s reading of an arc, `MakeCurvesCompatible`, the
 //!   knots and extension of a UV curve) see the B-spline part.
 //! - **Code behind stubs** is ported as upstream runs it, unchecked statuses included:
-//!   `HaveTangentGaps` ignores `NormalizedEvaluate`'s and `ClosestPoint`'s statuses (a
-//!   sample whose evaluation fails is skipped, see below; a failed closest point counts
-//!   as `bSuccess == FALSE`), `TrimExtendedEdge` ignores the
-//!   `Evaluate` / `EvaluateNormal` of a solution the same way, and `ExtendTrimEdges` keeps
+//!   `HaveTangentGaps` ignores `ClosestPoint`'s status (a failed closest point counts as
+//!   `bSuccess == FALSE`; a sample it cannot evaluate is skipped, as the fork does, see
+//!   below), `TrimExtendedEdge` ignores the `Evaluate` / `EvaluateNormal` of a solution
+//!   the same way, and `ExtendTrimEdges` keeps
 //!   `pOtherUVCurve` as the edge use's or radial's own UV trim curve when there is no
 //!   other extended surface (`cpp:1452`, `1458`), passes it to `TrimExtendedEdge` and trims
 //!   it in place (`cpp:1694`). The unchecked `Copy` calls of `ExtendTrimEdges` and
