@@ -4,9 +4,10 @@
 //! Each round ends on its section 8 from the vertex, so the six section ends lie on the
 //! setback planes x = 52, y = 32 and z = 12, and the body is convex: its volume lies in the
 //! bounds the kernel case `ladder/07-fillets/013-corner-setback` derives in closed form.
-//! The corner's patch meets each round tangentially, and every edge lies within the
-//! kernel's 4e-5 of its faces.
-#![allow(clippy::unwrap_used, clippy::indexing_slicing)] // test helpers
+//! The corner's patch (its six faces in the setback cube) meets each round and each box face
+//! tangentially along every one of its edges, and every edge lies within the kernel's 4e-5 of
+//! its faces.
+#![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)] // test helpers
 
 use solidcore::blend::fillet_executive::session::FilletSession;
 use solidcore::mass::integrator::properties::brep_volume_default;
@@ -14,12 +15,12 @@ use solidcore::math::Point3;
 use solidcore::nurbs::knots::Side;
 use solidcore::primitive::api_primitives::create_box;
 use solidcore::query::api_queries::{
-    brep_bounding_box, brep_is_manifold_solid, surface_closest_point,
+    brep_bounding_box, brep_is_manifold_solid, face_bounding_box, surface_closest_point,
 };
-use solidcore::surface::surface::{Surface, SurfaceKind};
+use solidcore::surface::surface::Surface;
 use solidcore::topology::brep::p5::{stitch_and_orient, StitchAndOrientOptions};
 use solidcore::topology::face::p2 as face;
-use solidcore::topology::{edge, vertex, Brep};
+use solidcore::topology::{edge, vertex, Brep, FaceId};
 use solidcore::Kernel;
 
 const CORNER: [f64; 3] = [60.0, 40.0, 20.0];
@@ -108,25 +109,40 @@ fn the_set_back_box_is_convex_and_inside_its_bounds() {
     );
 }
 
+/// The corner patch's faces: those lying in the setback cube [52, 60] x [32, 40] x [12, 20]
+/// at the corner (a patch running past the setback leaves it, as the fold before #2933's
+/// part 1 did, and is not counted).
+fn patch_faces(k: &Kernel, b: &Brep) -> Vec<FaceId> {
+    let lo = [CORNER[0] - 8.0, CORNER[1] - 8.0, CORNER[2] - 8.0];
+    b.face_list()
+        .iter()
+        .copied()
+        .filter(|&f| {
+            let x = face_bounding_box(k, b, f, true).unwrap();
+            (0..3).all(|i| x.min_at(i) >= lo[i] - 1e-6 && x.max_at(i) <= CORNER[i] + 1e-6)
+        })
+        .collect()
+}
+
 /// The largest angle (degrees) between the normals of an edge's two faces, sampled along
-/// it, over the edges where a face is not a plane and the faces meet within 45 degrees (the
-/// rounds' and the patch's seams).
-fn max_seam_angle(k: &Kernel, b: &Brep) -> f64 {
+/// it, over every edge of a face in `patch` (the patch's inner seams, its seams with the
+/// rounds and its spring curves on the box's faces), whatever its angle: a fold there counts.
+fn max_seam_angle(k: &Kernel, b: &Brep, patch: &[FaceId]) -> f64 {
     let mut worst: f64 = 0.0;
     for e in b.edges().ids() {
         let faces = edge::faces(b, e, None).unwrap();
-        let [f1, f2] = faces[..] else { continue };
+        if !faces.iter().any(|f| patch.contains(f)) {
+            continue;
+        }
+        let [f1, f2] = faces[..] else {
+            panic!("patch edge {e:?} has {} faces", faces.len())
+        };
         let (s1, s2) = (
             face::surface(b, f1).unwrap().unwrap(),
             face::surface(b, f2).unwrap().unwrap(),
         );
-        if matches!(s1.kind(), SurfaceKind::Plane(_)) && matches!(s2.kind(), SurfaceKind::Plane(_))
-        {
-            continue;
-        }
         let c = edge::curve(b, e).unwrap().unwrap();
         let iv = edge::interval(b, e).unwrap();
-        let mut along: f64 = 0.0;
         for i in 0..=20 {
             let p = c
                 .evaluate_point(k, iv.min() + iv.length() * f64::from(i) / 20.0)
@@ -136,11 +152,7 @@ fn max_seam_angle(k: &Kernel, b: &Brep) -> f64 {
                 s.evaluate_normal(k, uv, Side::Left, Side::Left).unwrap()
             };
             let (n1, n2) = (normal(s1), normal(s2));
-            along = along.max(n1.cross(n2).length().atan2(n1.dot(n2).abs()).to_degrees());
-        }
-        // a round ending square on a box face far from the corner is no seam
-        if along < 45.0 {
-            worst = worst.max(along);
+            worst = worst.max(n1.cross(n2).length().atan2(n1.dot(n2).abs()).to_degrees());
         }
     }
     worst
@@ -151,7 +163,10 @@ fn the_patch_meets_the_rounds_tangentially_within_tolerance() {
     let (k, mut b) = build();
     b.refresh_cached_topology();
     assert!(solidcore::topology::integrity::check(&b).is_ok());
-    let seam = max_seam_angle(&k, &b);
+    // the fill's six patches, two per round, all inside the setback cube
+    let patch = patch_faces(&k, &b);
+    assert_eq!(patch.len(), 6, "{patch:?}");
+    let seam = max_seam_angle(&k, &b, &patch);
     assert!(seam < 0.01, "seam {seam} degrees");
     let tol = b
         .edges()
