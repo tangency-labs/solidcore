@@ -13,6 +13,12 @@
     "gen2187": "tangency-labs/solidcore#3060: reported projected maximum is suboptimal (0.09955759757712898 versus feasible 6.310837322899527); an endpoint/parameter update does not fix the curve-pair maximum",
     "gen2585": "tangency-labs/solidcore#3060: reported projected maximum is suboptimal (about 0.000128676797868 versus feasible 0.9962268759220879); an endpoint/parameter update does not fix the curve-pair maximum"
   },
+  "intersect.topology_solver_p2": {
+    "analytic_face_cyl_x_6_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 0.5, but an admissible opposite-endpoint pair attains sqrt(2.5)=1.5811388300841898; stacked PR #3077 repairs the pair construction",
+    "analytic_face_cyl_x_7_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 0.5, but an admissible opposite-endpoint pair attains sqrt(2.5)=1.5811388300841898; stacked PR #3077 repairs the pair construction",
+    "analytic_face_halfcyl_x_6_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 0.5, but an admissible opposite-endpoint pair attains sqrt(2.5)=1.5811388300841898; stacked PR #3077 repairs the pair construction",
+    "analytic_face_halfcyl_x_7_15": "tangency-labs/solidcore#3060: projected curve/face maximum reports 0.5, but an admissible opposite-endpoint pair attains sqrt(2.5)=1.5811388300841898; stacked PR #3077 repairs the pair construction"
+  },
   "offset.offset_executive_p2": {
     "fuzz00108": "tangency-labs/solidcore#3023: the edge's arc crosses its closed offset curve's seam, no interval gives it; the edge is left bad and status is success",
     "fuzz00117": "tangency-labs/solidcore#3023: the edge's arc crosses its closed offset curve's seam, no interval gives it; the edge is left bad and status is success",
