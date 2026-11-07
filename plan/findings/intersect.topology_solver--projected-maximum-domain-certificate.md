@@ -61,6 +61,8 @@ The two-face regression uses sphere bands of radii 0.5 and 0.6, centered at
 and query (0.000001,0,2). The exact maximum is 0.699999. Before this review fix,
 one face insertion order succeeds and the reverse returns an unproved-bound
 refusal at the first face. Both orders now return the maximum within 1e-8.
+![The same two projected bands before and after the traversal correction.](figures/projected-traversal-order-2967.png)
+
 A companion single-band query at (0.25,0,2) has coincident projected seam vertices
 but maximum 0.75, ensuring the vertex shortcut cannot skip the face.
 
