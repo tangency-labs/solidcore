@@ -80,13 +80,14 @@ pub(crate) fn expand_knots(knots: &[f64], mults: &[u32], expected: usize) -> Opt
     Some(out)
 }
 
-/// The point at `t` (de Boor), homogeneous when rational; `None` for knots that are not
-/// increasing or multiplicities out of range (the reader refuses them with
-/// [`check_knots`](crate::map::check_knots), a model built by hand may carry them).
+/// The point at `t` (de Boor), homogeneous when rational; `None` for a curve the reader
+/// refuses with [`check_bspline_curve`](crate::map::check_bspline_curve) (fewer than
+/// degree + 1 points, knots not increasing, multiplicities or weights out of range),
+/// which a model built by hand may carry.
 pub(crate) fn bspline_point(c: &BSplineCurve, t: f64) -> Option<P3> {
     let p = c.degree as usize;
     let n = c.points.len();
-    crate::map::check_knots(&c.knots, &c.mults, p).ok()?;
+    crate::map::check_bspline_curve(c).ok()?;
     let u = expand_knots(&c.knots, &c.mults, n.checked_add(p)?.checked_add(1)?)?;
     let lo = *u.get(p)?;
     let hi = *u.get(n)?;
