@@ -660,4 +660,42 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn supported_degree_boundary_is_explicit() {
+        for degree in [8, 9] {
+            let mut pw = Vec::new();
+            for i in 0..=degree {
+                for j in 0..=degree {
+                    pw.extend([i as f64 / degree as f64, j as f64 / degree as f64, 0.0, 1.0]);
+                }
+            }
+            let mut knots = vec![0.0; degree + 1];
+            knots.extend(vec![1.0; degree + 1]);
+            let net = Nurbs {
+                p: degree,
+                q: degree,
+                nu: degree + 1,
+                nv: degree + 1,
+                u: knots.clone(),
+                v: knots,
+                pw,
+            };
+            // Both valid nets lie inside [0,1]^2 by their convex hull, so 2 is
+            // a generous true bound. Degree9 refuses solely at the documented
+            // construction boundary, never by a geometric or retention test.
+            assert_eq!(
+                maximum_is_bounded(
+                    &Kernel::default(),
+                    &net,
+                    &unit_domain(),
+                    Vec3::ZERO,
+                    Vec3::Z,
+                    2.0
+                )
+                .unwrap(),
+                degree == 8
+            );
+        }
+    }
 }
