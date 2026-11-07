@@ -14,7 +14,7 @@
 //! - [`tangent_chain`]: the edges a blend of some edges runs on into tangentially, the kernel's.
 //!
 //! The kernel's session is driven as the C API's `round_edges` drove SMLib's executive:
-//! parameters, the set-back vertices, the turn, the corners (setbacks set, a chamfer's
+//! the turn, parameters, the set-back vertices, the corners (setbacks set, a chamfer's
 //! bevelled), the filleting, then `StitchAndOrient`. The geometry (sizes to offsets, the wedge,
 //! the law's curve and its corners, the room) is the kernel's; ops chooses, sequences and maps
 //! refusals.
@@ -101,8 +101,8 @@ pub enum Turn {
     #[default]
     Mitre,
     /// Each round ends on its section through the side edge, and the corner's face is that
-    /// section revolved about the side edge, a torus tangent to both rounds. For
-    /// [`Blend::Round`] only.
+    /// section revolved about the side edge, tangent to both rounds: between planes at a
+    /// straight side edge, a torus. For [`Blend::Round`] only.
     Swept,
 }
 
