@@ -2304,42 +2304,48 @@ mod tests {
     }
 
     /// Review finding 5: a 10 mm cube's vertical edge rounded r 2, the round given a
-    /// coaxial cylinder of another radius: the wider r 2.3 and r 2.05 refused as not sound
-    /// (the first new failure an edge's curve owner, #61); the narrower
-    /// r 1.8 no longer reaches the side planes it was tangent to (it ends 0.2 short of
-    /// them): the edges between them are apart (`LocalReach::apart`, adding nothing to the
-    /// reach), and the body built is refused as not sound.
+    /// coaxial cylinder of another radius. The narrower r 1.8 no longer reaches the side
+    /// planes it was tangent to (it ends 0.2 short of them): the edges between them are
+    /// apart (`LocalReach::apart`, adding nothing to the reach), and the body built is
+    /// refused as not sound.
     #[test]
-    fn a_round_given_a_coaxial_cylinder_is_refused_as_not_sound() {
+    fn a_round_given_a_narrower_coaxial_cylinder_is_refused_as_not_sound() {
         use crate::primitive::api_primitives as ap;
-        for radius in [2.3, 2.05, 1.8] {
+        let mut k = Kernel::default();
+        let (mut b, round) = box_rounded_r2(&mut k);
+        let s = Surface::from(
+            ap::create_cylinder_surface(&k, Point3::new(8.0, 8.0, -1.0), 1.8, 12.0).unwrap(),
+        );
+        let why = refused_unchanged_or_returned(&mut k, &mut b, &[round], vec![s]);
+        assert!(
+            matches!(why, Some(OffsetFailure::Unsound { .. })),
+            "{why:?}"
+        );
+    }
+
+    /// The same round given the wider coaxial cylinders r 2.3 and r 2.05: each crosses the
+    /// side planes it was tangent to `√(R² − 2²)` past their old edges, on the round's side,
+    /// where the tangent edges are met again: the cube with its corner cut by the circle,
+    /// `10 (96 + A)`, `A` the part of the corner square [8, 10]² inside it.
+    #[test]
+    fn tangent_edges_a_round_given_a_wider_coaxial_cylinder_has_its_closed_form_volume() {
+        use crate::primitive::api_primitives as ap;
+        for r in [2.3_f64, 2.05] {
             let mut k = Kernel::default();
             let (mut b, round) = box_rounded_r2(&mut k);
             let s = Surface::from(
-                ap::create_cylinder_surface(&k, Point3::new(8.0, 8.0, -1.0), radius, 12.0).unwrap(),
+                ap::create_cylinder_surface(&k, Point3::new(8.0, 8.0, -1.0), r, 12.0).unwrap(),
             );
             let why = refused_unchanged_or_returned(&mut k, &mut b, &[round], vec![s]);
-            if radius < 2.0 {
-                assert!(
-                    matches!(why, Some(OffsetFailure::Unsound { .. })),
-                    "{radius}: {why:?}"
-                );
-            } else {
-                // refused as not sound, the first new failure an edge's curve owner (#61);
-                // how many more lines the check gives depends on how the body was built
-                assert!(
-                    matches!(
-                        why,
-                        Some(OffsetFailure::Unsound {
-                            what: crate::error::offset::Unsoundness::Check {
-                                first: Some((_, 61)),
-                                ..
-                            }
-                        })
-                    ),
-                    "{radius}: {why:?}"
-                );
-            }
+            assert_eq!(why, None, "{r}");
+            let w = (r * r - 4.0).sqrt();
+            let inside = 2.0 * w + quarter_disc_area(r, 2.0) - quarter_disc_area(r, w);
+            let want = 10.0 * (96.0 + inside);
+            let (v, manifold) = volume_and_manifold(&k, &mut b);
+            assert!(
+                manifold && (v - want).abs() <= 1e-9 * want,
+                "{r}: {v} vs {want}"
+            );
         }
     }
 
@@ -2636,26 +2642,13 @@ mod tests {
         (b, why)
     }
 
-    /// Review finding 6: the round moved out. The side planes, tangent to the round, are
-    /// extended to meet it 1.005 past their old edges (`reach`'s tests), but the tangent
-    /// edge across from the moved face is extended and trimmed, not met again: it keeps
-    /// its old line, the merge closes the gap by growing tolerances, and the check fails
-    /// (issue draft "a moved face next to a tangent edge (a round) is refused as
-    /// unsound"): refused, the cube as it came in.
+    /// Review finding 6: the round moved out. The side planes, tangent to the round, stay,
+    /// and the r 5.1 cylinder crosses each `√(5.1² − 5²) ≈ 1.005` either side of its old
+    /// tangent edge (`reach`'s tests). The tangent edges are met again where it crosses
+    /// them on the round's side, the planes extended to it: the cube with its corner cut by
+    /// the r 5.1 circle, `20 (375 + A)`, `A` the part of the corner square [15, 20]² inside
+    /// the circle.
     #[test]
-    fn a_round_moved_out_is_refused_as_not_sound_at_its_tangent_edges() {
-        let mut k = Kernel::default();
-        let (_, why) = round_moved_out(&mut k);
-        assert_eq!(why, Some(unsound_check(7, 61)));
-    }
-
-    /// The closed form the round moved out should have, once the tangent edges are met
-    /// again (issue draft "a moved face next to a tangent edge (a round) is refused as
-    /// unsound"): the cube with its corner cut by the r 5.1 circle, `20 (375 + A)`, `A`
-    /// the part of the corner square [15, 20]² inside the circle.
-    #[test]
-    #[ignore = "a moved face next to a tangent edge (a round) is refused as unsound \
-                (notes: issue-draft-tangent-edges.md)"]
     fn tangent_edges_a_round_moved_out_has_its_closed_form_volume() {
         let mut k = Kernel::default();
         let (mut b, why) = round_moved_out(&mut k);
@@ -2668,22 +2661,11 @@ mod tests {
         assert!(manifold && (v - want).abs() <= 1e-9 * want, "{v} vs {want}");
     }
 
-    /// The side moved into its round: it meets the round 1 from its old tangent edge
-    /// (`reach`'s tests), and the same tangent edges leave the body unsound: refused, the
-    /// first new failure a vertex out of tolerance (test #59).
-    #[test]
-    fn a_side_moved_into_its_round_is_refused_as_not_sound_at_its_tangent_edges() {
-        let mut k = Kernel::default();
-        let (_, why) = side_moved_into_its_round(&mut k);
-        assert_eq!(why, Some(unsound_check(4, 59)));
-    }
-
-    /// The closed form the side moved into its round should have (issue draft "a moved
-    /// face next to a tangent edge (a round) is refused as unsound"):
+    /// The side moved into its round: it crosses the round 1 from its old tangent edge on
+    /// either side (`reach`'s tests), and the edge is met again where it crosses on the
+    /// round's side, the side extended to it and the round trimmed:
     /// `20 (19.9 · 20 − 4.9 · 5 + ∫₀^4.9 √(25 − u²) du)`.
     #[test]
-    #[ignore = "a moved face next to a tangent edge (a round) is refused as unsound \
-                (notes: issue-draft-tangent-edges.md)"]
     fn tangent_edges_a_side_moved_into_its_round_has_its_closed_form_volume() {
         let mut k = Kernel::default();
         let (mut b, why) = side_moved_into_its_round(&mut k);
