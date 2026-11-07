@@ -658,7 +658,6 @@ and does not establish regression attribution. The captured union-case replay
 passes. No deadline, tolerance, fixture or classification was changed to hide
 the timeout. Hosted CI separately requires repository-admin workflow approval.
 
-<<<<<<< HEAD
 ## Projected face review follow-up: retention slack and early exits
 
 The face certificate now distinguishes retention slack from arithmetic rounding.
@@ -691,7 +690,6 @@ kernel accuracy issue. Both analytic expectations remain unchanged.
 All 33 focused topology-solver tests pass for this review change. Full validation
 of the final parent/main merges remains a separate gate; earlier full-suite
 results above are not attributed to these later changes.
-=======
 ## Original seeded elbow cases
 
 The direct replay in `diagnostics/check_small_elbow_cases.rs` obtains `gen0092`
@@ -954,4 +952,3 @@ the final source hash is
 `cargo clippy -p solidcore --lib --tests -- -D warnings` passed on the final
 implementation and tests. The modified Rust files pass repository-edition
 formatting; `git diff --check` passes.
->>>>>>> bbefe309b
