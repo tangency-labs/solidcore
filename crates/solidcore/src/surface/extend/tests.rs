@@ -448,10 +448,6 @@ fn curvature_meets_every_distance_across_a_mirror_knot() {
         BoxSide::UMax,
     )
     .unwrap();
-    let net = match s.kind() {
-        SurfaceKind::BSpline(b) => b.gw_nurb().unwrap().clone(),
-        _ => panic!(),
-    };
     let mut last = 0.0;
     for i in 1..=60 {
         let e = 0.85 + 0.005 * f64::from(i);
@@ -459,7 +455,7 @@ fn curvature_meets_every_distance_across_a_mirror_knot() {
             break;
         };
         let out = Surface::from(BSplineSurface::from_gw_nurb(
-            &g.surface(&net, BoxSide::UMax).unwrap(),
+            &g.surface(BoxSide::UMax).unwrap(),
         ));
         let l = out
             .length_across_side(&k(), &dom(&s), BoxSide::UMax, 1e-8)
@@ -1041,10 +1037,11 @@ fn ruled_on_a_polynomial_row_is_the_elevated_tangent_line() {
 }
 
 #[test]
-fn ruled_with_end_weight_ratios_that_differ_is_c1_and_straight_up_to_its_reach() {
+fn ruled_with_end_weight_ratios_that_differ_is_c1_straight_and_reaches_any_distance() {
     // a rational row pair whose last two weights differ in ratio (1 and 2 on the two rows):
-    // one rho, the largest, keeps it C1 and every ruling straight; the row with the smaller
-    // ratio has growing weights, so the length across saturates
+    // within one rho's reach its form, the source's net kept; past it the ruled surface S + s
+    // S_u (#2878); straight at every v, C1 at the joint, the source the same surface and
+    // parameters either way
     let rows = [
         vec![[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]],
         vec![[0.5, 0.0, 0.0, 1.0], [1.0, 0.0, 2.0, 2.0]],
@@ -1058,43 +1055,212 @@ fn ruled_with_end_weight_ratios_that_differ_is_c1_and_straight_up_to_its_reach()
         &[0.0, 0.0, 1.0, 1.0],
         true,
     );
-    let e = s
-        .extended_by_distance(&k(), &dom(&s), BoxSide::UMax, Continuity::Ruled, 0.1)
-        .unwrap();
-    meets(&e, 0.1);
-    let SurfaceKind::BSpline(b) = e.surface.kind() else {
-        panic!()
-    };
-    let d = dom(&e.surface);
-    for v in [0.0, 0.3, 0.5, 0.9, 1.0] {
-        let c = extract_iso_crv(b.gw_nurb().unwrap(), v, Direction::U).unwrap();
-        // C1 at the joint
-        let l = c.derivs(1.0, Side::Left, 1).unwrap()[1];
-        let r = c.derivs(1.0, Side::Right, 1).unwrap()[1];
-        assert!(l.distance(r) < 1e-12 * l.length(), "{v}: {l:?} {r:?}");
-        // straight past it: every point on the line through the joint along S_u
-        let p0 = e.surface.evaluate_point(&k(), Vec2::new(1.0, v)).unwrap();
-        for i in 1..=8 {
-            let u = 1.0 + (d.max().x - 1.0) * f64::from(i) / 8.0;
-            let p = e.surface.evaluate_point(&k(), Vec2::new(u, v)).unwrap();
-            let off = (p - p0).cross(l).length() / l.length();
-            assert!(off < 1e-12, "{v} {u}: {p:?} off {off}");
+    for distance in [0.1, 10.0, 1e3] {
+        let e = s
+            .extended_by_distance(&k(), &dom(&s), BoxSide::UMax, Continuity::Ruled, distance)
+            .unwrap();
+        let a = e.across;
+        assert!(a.converged, "{a:?}");
+        let tol = (1e-9 * distance).max(a.truncation + a.rounding);
+        assert!(
+            a.enclosure.lower >= distance - tol && a.enclosure.upper <= distance + tol,
+            "{a:?} for {distance}"
+        );
+        assert!(e.source <= 1e-12, "{}", e.source);
+        if distance == 0.1 {
+            assert_eq!(e.source, 0.0);
+        } else if distance == 1e3 {
+            assert!(e.source > 0.0);
+        }
+        for u in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            for v in [0.0, 0.3, 0.5, 0.9, 1.0] {
+                let uv = Vec2::new(u, v);
+                let was = s.evaluate_point(&k(), uv).unwrap();
+                let now = e.surface.evaluate_point(&k(), uv).unwrap();
+                assert!(was.distance(now) <= e.source, "{u} {v}: {was:?} {now:?}");
+            }
+        }
+        let SurfaceKind::BSpline(b) = e.surface.kind() else {
+            panic!()
+        };
+        let d = dom(&e.surface);
+        for v in [0.0, 0.3, 0.5, 0.9, 1.0] {
+            let c = extract_iso_crv(b.gw_nurb().unwrap(), v, Direction::U).unwrap();
+            // C1 at the joint
+            let l = c.derivs(1.0, Side::Left, 1).unwrap()[1];
+            let r = c.derivs(1.0, Side::Right, 1).unwrap()[1];
+            assert!(l.distance(r) < 1e-12 * l.length(), "{v}: {l:?} {r:?}");
+            // straight past it: every point on the line through the joint along S_u
+            let p0 = e.surface.evaluate_point(&k(), Vec2::new(1.0, v)).unwrap();
+            for i in 1..=8 {
+                let u = 1.0 + (d.max().x - 1.0) * f64::from(i) / 8.0;
+                let p = e.surface.evaluate_point(&k(), Vec2::new(u, v)).unwrap();
+                let off = (p - p0).cross(l).length() / l.length();
+                assert!(off < 1e-12 * (1.0 + distance), "{v} {u}: {p:?} off {off}");
+            }
         }
     }
-    let named = match s.extended_by_distance(&k(), &dom(&s), BoxSide::UMax, Continuity::Ruled, 1e3)
-    {
-        Err(SolidError::ExtendRefused {
-            refusal: ExtendRefusal::NotExact,
-            distance: Some(x),
-            ..
-        }) => x,
-        other => panic!("{other:?}"),
+}
+
+/// A rational net of degree 2 both ways, of 3 spans in v (one knot double), whose weights are
+/// no product (`1 + 0.4 i j`): the end ratios differ at every side.
+fn ruled_product_net() -> Surface {
+    let rows: Vec<Vec<[f64; 4]>> = (0..3_u32)
+        .map(|i| {
+            (0..6_u32)
+                .map(|j| {
+                    let (x, y) = (f64::from(i), f64::from(j));
+                    let w = 1.0 + 0.4 * x * y;
+                    let z = if (i + j) % 2 == 0 { 0.5 } else { -0.25 };
+                    [x * w, y * w, z * w, w]
+                })
+                .collect()
+        })
+        .collect();
+    spline(
+        &rows,
+        2,
+        2,
+        &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        &[0.0, 0.0, 0.0, 0.25, 0.25, 0.6, 1.0, 1.0, 1.0],
+        true,
+    )
+}
+
+/// Ruled over rows whose end ratios differ, past every side and over interior knots across
+/// (one of them already double), past the rows' reach: the source is the same surface and
+/// parameters to the bound reported, and past the joint every row is straight along the side's
+/// tangent, C1.
+#[test]
+fn the_ruled_product_form_past_every_side_keeps_the_source_and_every_row_is_straight() {
+    let s = ruled_product_net();
+    let (nu, nv) = (5, 5);
+    for side in BoxSide::ALL {
+        let e = s
+            .extended_by_distance(&k(), &dom(&s), side, Continuity::Ruled, 400.0)
+            .unwrap();
+        assert!(
+            e.source > 0.0 && e.source <= 1e-11,
+            "{side:?}: {}",
+            e.source
+        );
+        for i in 0..=nu {
+            for j in 0..=nv {
+                let uv = Vec2::new(f64::from(i) / f64::from(nu), f64::from(j) / f64::from(nv));
+                let was = s.evaluate_point(&k(), uv).unwrap();
+                let now = e.surface.evaluate_point(&k(), uv).unwrap();
+                assert!(
+                    was.distance(now) <= e.source,
+                    "{side:?} {uv:?}: {}",
+                    was.distance(now)
+                );
+            }
+        }
+        let SurfaceKind::BSpline(b) = e.surface.kind() else {
+            panic!()
+        };
+        let net = b.gw_nurb().unwrap();
+        assert_eq!(if side.is_u() { net.q() } else { net.p() }, 4);
+        let d = dom(&e.surface);
+        let (joint, far) = if side.is_high() {
+            (1.0, if side.is_u() { d.max().x } else { d.max().y })
+        } else {
+            (0.0, if side.is_u() { d.min().x } else { d.min().y })
+        };
+        let uv = |along: f64, t: f64| {
+            if side.is_u() {
+                Vec2::new(along, t)
+            } else {
+                Vec2::new(t, along)
+            }
+        };
+        for t in [0.0, 0.25, 0.4, 0.6, 1.0] {
+            let dir = if side.is_u() {
+                Direction::U
+            } else {
+                Direction::V
+            };
+            let c = extract_iso_crv(net, t, dir).unwrap();
+            let l = c.derivs(joint, Side::Left, 1).unwrap()[1];
+            let r = c.derivs(joint, Side::Right, 1).unwrap()[1];
+            assert!(
+                l.distance(r) < 1e-9 * l.length(),
+                "{side:?} {t}: {l:?} {r:?}"
+            );
+            let p0 = e.surface.evaluate_point(&k(), uv(joint, t)).unwrap();
+            for i in 1..=8 {
+                let a = joint + (far - joint) * f64::from(i) / 8.0;
+                let p = e.surface.evaluate_point(&k(), uv(a, t)).unwrap();
+                let off = (p - p0).cross(l).length() / l.length();
+                assert!(off < 1e-9, "{side:?} {t} {a}: off {off}");
+            }
+        }
+    }
+}
+
+/// The form on the form: a second side doubles the degree again, the sum of the two bounds
+/// still holding the source.
+#[test]
+fn the_ruled_product_form_extends_past_a_second_side() {
+    let s = ruled_product_net();
+    let sides = s
+        .extended_sides(
+            &k(),
+            &[BoxSide::UMin, BoxSide::UMax],
+            Continuity::Ruled,
+            400.0,
+        )
+        .unwrap();
+    assert!(
+        // the second form's rounding is of the first's reach: held to the stop's rounding part
+        sides.source > 0.0 && sides.source <= 1e-6 * 400.0,
+        "{}",
+        sides.source
+    );
+    let SurfaceKind::BSpline(b) = sides.surface.kind() else {
+        panic!()
     };
-    assert!(named > 0.1 && named < 1e3, "{named}");
+    assert_eq!(b.gw_nurb().unwrap().q(), 8);
+    for (u, v) in [(0.0, 0.0), (0.5, 0.3), (0.25, 0.6), (1.0, 1.0)] {
+        let uv = Vec2::new(u, v);
+        let was = s.evaluate_point(&k(), uv).unwrap();
+        let now = sides.surface.evaluate_point(&k(), uv).unwrap();
+        assert!(was.distance(now) <= sides.source, "{uv:?}");
+    }
+}
+
+/// A degree across whose double has no B-spline form here keeps the rows' refusal, naming a
+/// distance that works.
+#[test]
+fn the_ruled_product_form_past_the_largest_degree_keeps_the_rows_refusal() {
+    let q = MAX_DEGREE / 2 + 1;
+    let rows: Vec<Vec<[f64; 4]>> = (0..2_u32)
+        .map(|i| {
+            (0..=q)
+                .map(|j| {
+                    #[allow(clippy::cast_precision_loss)]
+                    let y = j as f64;
+                    let x = f64::from(i);
+                    let w = 1.0 + 0.1 * x * y;
+                    [x * w, y * w, 0.0, w]
+                })
+                .collect()
+        })
+        .collect();
+    let v: Vec<f64> = std::iter::repeat_n(0.0, q + 1)
+        .chain(std::iter::repeat_n(1.0, q + 1))
+        .collect();
+    let s = spline(&rows, 1, q, &[0.0, 0.0, 1.0, 1.0], &v, true);
+    let d = 1e3;
+    let err = s
+        .extended_by_distance(&k(), &dom(&s), BoxSide::UMax, Continuity::Ruled, d)
+        .unwrap_err();
+    let named = not_exact_naming(err).unwrap();
+    assert!(named > 0.0 && named < d, "{named}");
     let e = s
         .extended_by_distance(&k(), &dom(&s), BoxSide::UMax, Continuity::Ruled, named)
         .unwrap();
-    meets(&e, named);
+    assert_eq!(e.source, 0.0);
 }
 
 /// A ball of radius 2 between the planes y = 0 (side -1) and z = 0 (side +1) along the
@@ -1485,5 +1651,301 @@ fn a_ball_patch_extends_its_own_net_on_its_sphere_up_to_its_caps() {
         )
         .unwrap());
         assert!((out.radius() - r).abs() == 0.0 && out.centre() == c);
+    }
+}
+
+/// A small plane far from the origin extended far, keeping its parameters: the end cap of a
+/// bar at (147..152, -25.5, 846..852), 5.83 mm square, turned 2 degrees about x by a draft,
+/// extended 547.405 past every side by the draft's local operation (its placement and net as
+/// SolidCraft's draft hands them over). Its net lies on the plane to its rounding, about 1e-13
+/// at this size, and the continuation carries that out about 190 times each way: the
+/// extended net is 6.4e-11 off the plane, where the rounding of the check alone is 8e-12. It
+/// is the plane's own net continued, on the plane within what the source's residual grows
+/// to, and is extended, not refused as not exact.
+#[test]
+fn a_small_tilted_plane_far_from_the_origin_extends_far_on_its_plane() {
+    use crate::surface::implicit::{lies_on, AnalyticSupport, Implicit};
+    let kk = k();
+    let origin = Vec3::new(152.33308696865228, -25.520154849846044, 852.1498844507267);
+    let x_axis = Vec3::new(0.0, 0.03489949670250011, -0.9993908270190959);
+    let y_axis = Vec3::new(-1.0, 1.9539925233402755e-14, 0.0);
+    let (lu, lv) = (5.830273937304582, 5.830273937304639);
+    let rows = [
+        vec![
+            [
+                152.33308696865228,
+                -25.520154849846044,
+                852.1498844507267,
+                1.0,
+            ],
+            [
+                146.50281303134764,
+                -25.52015484984593,
+                852.1498844507267,
+                1.0,
+            ],
+        ],
+        vec![
+            [
+                152.33308696865228,
+                -25.316681223796408,
+                846.323162158776,
+                1.0,
+            ],
+            [
+                146.50281303134764,
+                -25.316681223796287,
+                846.323162158776,
+                1.0,
+            ],
+        ],
+    ];
+    let SurfaceKind::BSpline(form) =
+        spline(&rows, 1, 1, &[0.0, 0.0, lu, lu], &[0.0, 0.0, lv, lv], false)
+            .kind()
+            .clone()
+    else {
+        unreachable!()
+    };
+    let p = Surface::from(Plane::from_stored(
+        Axis2Placement::from_stored(origin, x_axis, y_axis),
+        Vec2::new(1.0000000000000169, 1.0),
+        Extent2d::from_bounds(0.0, 0.0, lu, lv),
+        form.clone(),
+    ));
+    let on = AnalyticSupport::check(&kk, &p).unwrap().implicit();
+    let Implicit::Plane { origin, normal } = on else {
+        panic!("not a plane: {on:?}");
+    };
+    let d = 547.4052982921842;
+    let e = p
+        .extended_sides_keeping_parameters(&kk, &BoxSide::ALL, Continuity::Ruled, d)
+        .unwrap();
+    assert!(
+        e.sides
+            .iter()
+            .all(|x| matches!(x, SideExtension::Extended(_))),
+        "{:?}",
+        e.sides
+    );
+    let SurfaceKind::BSpline(grown) = e.surface.kind() else {
+        panic!("not a B-spline: {:?}", e.surface.kind());
+    };
+    // every control point on the plane to the rounding of building it from the plane's own
+    // origin and axes (the continued net was 6.4e-11 off it), and the plane's own point at
+    // its parameters: the extension is the plane over the larger box
+    let SurfaceKind::Plane(pl) = p.kind() else {
+        unreachable!()
+    };
+    let g = grown.gw_nurb().unwrap();
+    let (u, v) = (g.u_knots(), g.v_knots());
+    assert_eq!((u.len(), v.len()), (4, 4), "one bilinear span");
+    for (i, row) in g.cpts().iter().enumerate() {
+        for (j, c) in row.iter().enumerate() {
+            let x = Vec3::new(c.x, c.y, c.z);
+            let off = normal.dot(x - origin);
+            assert!(off.abs() <= 1e-12, "{c:?}: {off}");
+            let at = Point2::new(u[if i == 0 { 0 } else { 3 }], v[if j == 0 { 0 } else { 3 }]);
+            let own = pl.evaluate_point_fast(at);
+            assert!((x - own).length() <= 1e-9, "{c:?} vs {own:?}");
+        }
+    }
+    assert!(lies_on(grown, &on).unwrap());
+    // the check refuses a net 1e-9 off the plane at a far corner
+    let mut net = g.cpts();
+    let c = &mut net[0][0];
+    let moved = Vec3::new(c.x, c.y, c.z) + normal * 1e-9;
+    *c = CPoint::new(moved.x, moved.y, moved.z, NOW);
+    let off = Net::new(net, 1, 1, u.to_vec(), v.to_vec()).unwrap();
+    assert!(!lies_on(&BSplineSurface::from_gw_nurb(&off), &on).unwrap());
+    for a in e.sides {
+        let SideExtension::Extended(a) = a else {
+            unreachable!()
+        };
+        assert!((a.enclosure.mid() - d).abs() <= 1e-9 * d, "{a:?}");
+    }
+}
+
+/// Every control point of `s`'s net on the analytic `on`, certified (`lies_on`), and the
+/// net's points on a grid over its whole box within `tol` of it by the closed form `off`.
+fn on_its_analytic(
+    s: &BSplineSurface,
+    on: &crate::surface::implicit::Implicit,
+    off: impl Fn(Vec3) -> f64,
+    tol: f64,
+) {
+    use crate::surface::implicit::lies_on;
+    assert!(lies_on(s, on).unwrap());
+    let d = ball::knot_box(s).unwrap();
+    for i in 0..=8 {
+        for j in 0..=8 {
+            let uv = d.evaluate(f64::from(i) / 8.0, f64::from(j) / 8.0);
+            let x = s.evaluate_point(uv).unwrap();
+            assert!(off(x).abs() <= tol, "{uv:?}: {}", off(x));
+        }
+    }
+}
+
+/// A narrow strip of a cylinder far from the origin (5 degrees of radius 3, 2 high, at
+/// (800, -300, 900)) extended far along its rulings and round its axis up to its cap: its
+/// short spans carried 20 times their length past each end. Each new point is built on the
+/// cylinder from its axis and radius, so the result is on it to the rounding of one
+/// evaluation, and is extended, not refused as not exact.
+#[test]
+fn a_narrow_cylinder_far_from_the_origin_extends_far_on_its_cylinder() {
+    use crate::surface::implicit::{AnalyticSupport, Implicit};
+    let kk = k();
+    let o = Vec3::new(800.0, -300.0, 900.0);
+    let pl = Axis2Placement::new(o, Vec3::Z, Vec3::X);
+    let mut c = Cone::create_canonical(&kk, &pl, 3.0, 3.0, 2.0, false, false).unwrap();
+    c.adjust_step_uv_domain(&kk, &Extent2d::from_bounds(0.0, 0.0, 5.0, 2.0))
+        .unwrap();
+    let c = Surface::from(c);
+    let on = AnalyticSupport::check(&kk, &c).unwrap().implicit();
+    let Implicit::Cone { origin, axis, .. } = on else {
+        panic!("not a cone: {on:?}");
+    };
+    let e = c
+        .extended_sides(&kk, &BoxSide::ALL, Continuity::Natural, 40.0)
+        .unwrap();
+    let SurfaceKind::BSpline(grown) = e.surface.kind() else {
+        panic!("not a B-spline: {:?}", e.surface.kind());
+    };
+    let radial = |x: Vec3| {
+        let d = x - origin;
+        (d - axis * axis.dot(d)).length() - 3.0
+    };
+    on_its_analytic(grown, &on, radial, 1e-11);
+    // round the axis a quarter of the 355 degrees left open, along the whole 40
+    for (i, s) in e.sides.iter().enumerate() {
+        match (i < 2, s) {
+            (true, SideExtension::UpToLimit(a)) => {
+                let want = 3.0 * 0.25 * 355f64.to_radians();
+                assert!((a.enclosure.mid() - want).abs() <= 1e-9 * want, "{a:?}");
+            }
+            (false, SideExtension::Extended(a)) => {
+                assert!((a.enclosure.mid() - 40.0).abs() <= 1e-9 * 40.0, "{a:?}");
+            }
+            _ => panic!("{:?}", e.sides),
+        }
+    }
+}
+
+/// A small patch of a sphere far from the origin (4 by 4 degrees of radius 4, from 20 to 24
+/// degrees of latitude) extended 2 past every side: round its axis and along its meridians,
+/// each new row's arc built on the sphere from its centre and radius.
+#[test]
+fn a_small_sphere_patch_far_from_the_origin_extends_on_its_sphere() {
+    use crate::surface::implicit::{AnalyticSupport, Implicit};
+    use crate::surface::sphere::Sphere;
+    let kk = k();
+    let pl = Axis2Placement::new(Vec3::new(800.0, -300.0, 900.0), Vec3::Z, Vec3::X);
+    let mut sp = Sphere::create_canonical(&kk, &pl, 4.0).unwrap();
+    sp.adjust_step_uv_domain(&kk, &Extent2d::from_bounds(0.0, 20.0, 4.0, 24.0))
+        .unwrap();
+    let s = Surface::from(sp);
+    let on = AnalyticSupport::check(&kk, &s).unwrap().implicit();
+    let Implicit::Sphere { centre, radius } = on else {
+        panic!("not a sphere: {on:?}");
+    };
+    let e = s
+        .extended_sides(&kk, &BoxSide::ALL, Continuity::Natural, 2.0)
+        .unwrap();
+    let SurfaceKind::BSpline(grown) = e.surface.kind() else {
+        panic!("not a B-spline: {:?}", e.surface.kind());
+    };
+    on_its_analytic(grown, &on, |x| (x - centre).length() - radius, 1e-11);
+    for s in e.sides {
+        let SideExtension::Extended(a) = s else {
+            panic!("{:?}", e.sides);
+        };
+        assert!((a.enclosure.mid() - 2.0).abs() <= 1e-9 * 2.0, "{a:?}");
+    }
+}
+
+/// A quarter of a sphere up to its pole (half a turn round the axis, 0 to 90 degrees of
+/// latitude) extended round its axis: the pole's row is on the axis and has no angle of its
+/// own, and turns with the others, its middle weight from the same half angle.
+#[test]
+fn a_sphere_patch_up_to_its_pole_extends_round_its_axis_on_its_sphere() {
+    use crate::surface::implicit::{AnalyticSupport, Implicit};
+    use crate::surface::sphere::{Sphere, SphereOptions};
+    let kk = k();
+    let mut sp = Sphere::new(
+        &kk,
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::X,
+        Vec3::Y,
+        Extent2d::from_bounds(0.0, 0.0, 180.0, 90.0),
+        10.0,
+        SphereOptions::default(),
+    )
+    .unwrap();
+    sp.make_nurb(&kk).unwrap();
+    let s = Surface::from(sp);
+    let on = AnalyticSupport::check(&kk, &s).unwrap().implicit();
+    let Implicit::Sphere { centre, radius } = on else {
+        panic!("not a sphere: {on:?}");
+    };
+    let e = s
+        .extended_sides(
+            &kk,
+            &[BoxSide::UMin, BoxSide::UMax],
+            Continuity::Natural,
+            1.0,
+        )
+        .unwrap();
+    let SurfaceKind::BSpline(grown) = e.surface.kind() else {
+        panic!("not a B-spline: {:?}", e.surface.kind());
+    };
+    on_its_analytic(grown, &on, |x| (x - centre).length() - radius, 1e-11);
+}
+
+/// A small patch of a torus far from the origin (4 degrees round its axis by 6 of its tube,
+/// radii 6 and 2) extended 1.5 past every side: round its axis and along its tube.
+#[test]
+fn a_small_torus_patch_far_from_the_origin_extends_on_its_torus() {
+    use crate::surface::implicit::{AnalyticSupport, Implicit};
+    use crate::surface::torus::{Torus, TorusOptions};
+    let kk = k();
+    let pl = Axis2Placement::new(Vec3::new(800.0, -300.0, 900.0), Vec3::Z, Vec3::X);
+    let t = Torus::create_canonical(
+        &kk,
+        &pl,
+        6.0,
+        2.0,
+        TorusOptions::default(),
+        Some(&Extent2d::from_bounds(0.0, 30.0, 4.0, 36.0)),
+    )
+    .unwrap();
+    let s = Surface::from(t);
+    let on = AnalyticSupport::check(&kk, &s).unwrap().implicit();
+    let Implicit::Torus {
+        centre,
+        axis,
+        major,
+        minor,
+    } = on
+    else {
+        panic!("not a torus: {on:?}");
+    };
+    let e = s
+        .extended_sides(&kk, &BoxSide::ALL, Continuity::Natural, 1.5)
+        .unwrap();
+    let SurfaceKind::BSpline(grown) = e.surface.kind() else {
+        panic!("not a B-spline: {:?}", e.surface.kind());
+    };
+    let tube = |x: Vec3| {
+        let d = x - centre;
+        let h = axis.dot(d);
+        let r = (d - axis * h).length() - major;
+        r.hypot(h) - minor
+    };
+    on_its_analytic(grown, &on, tube, 1e-11);
+    for s in e.sides {
+        let SideExtension::Extended(a) = s else {
+            panic!("{:?}", e.sides);
+        };
+        assert!((a.enclosure.mid() - 1.5).abs() <= 1e-9 * 1.5, "{a:?}");
     }
 }

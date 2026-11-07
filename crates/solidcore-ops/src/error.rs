@@ -43,8 +43,8 @@ pub enum Error {
         /// The largest wall that works.
         largest: Option<f64>,
     },
-    /// The kernel cannot build this exactly yet (a variable radius whose law has a corner):
-    /// what it cannot.
+    /// The kernel cannot build this exactly yet (a variable radius that is zero inside its
+    /// edge): what it cannot.
     Unsupported(&'static str),
     /// A blend's edges meet at a vertex of a kind no blend corner handles yet.
     CornerUnsupported,
@@ -188,6 +188,17 @@ pub enum Error {
         /// The corner's vertex index.
         vertex: usize,
         /// The bound below which a setback fits.
+        largest: f64,
+    },
+    /// A chamfer's angle that runs out past the other face instead of meeting it (the
+    /// kernel's `BlendRefusal::ChamferAngleTooLarge`): no chamfer of the edge between its
+    /// faces has it. Radians.
+    ChamferAngleTooLarge {
+        /// The edge's index.
+        edge: usize,
+        /// The angle asked.
+        angle: f64,
+        /// The bound below which an angle meets the other face.
         largest: f64,
     },
 }
@@ -343,6 +354,14 @@ impl std::fmt::Display for Error {
             Error::SetbackTooLong { vertex, largest } => {
                 write!(f, "the setback at vertex {vertex} does not fit: below {largest} fits")
             }
+            Error::ChamferAngleTooLarge {
+                edge,
+                angle,
+                largest,
+            } => write!(
+                f,
+                "the chamfer angle {angle} rad of edge {edge} runs past the other face: below {largest} rad fits"
+            ),
         }
     }
 }

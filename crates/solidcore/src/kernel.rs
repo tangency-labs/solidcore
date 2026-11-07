@@ -446,10 +446,6 @@ pub struct UpstreamFixes {
     pub revolution_frame_from_profile_origin: bool,
     /// With extended convex edges, `piecewise_merge` relates the mated offsets of a manifold edge instead of intersecting them again (WR-344, #469; the fork's tangency-labs/smlib@9c21c9a (was 85bbfaf)), except an edge whose mate failed in `EdgeuseOffset`, which is intersected even where it is a tangent sector (#1795; the fork's tangency-labs/smlib@9d8ace9). A shell of a solid whose result is then no closed manifold solid is refused (`SM_ERR`) instead of returned: the merge no longer refuses some broken offsets, and the difference hands back a wall that bounds nothing (#1818; the fork's `ShellBrep` returns it, its C API refuses it as `SMLIB_ERR_NOT_SOLID`). Needs no other flag.
     pub offset_extended_edges_mated: bool,
-    /// The extended offset (`SmOffsetExecutive::GetCreateExtendedSurface`) extends a cone or cylinder as itself, along its rulings and around its axis with `SM_CT_CINFINITY` (around by no more than half the turn it leaves open on each side), where upstream extends every surface by a tangent extension (`SM_CT_G1R`) that leaves a cylinder at once; a face that reaches a hair into that extension is later fitted back into a cylinder off its radius (WR-532; the fork's tangency-labs/smlib@b283ea2).
-    pub offset_extends_cones_as_themselves: bool,
-    /// The extended offset (`SmOffsetExecutive::GetCreateExtendedSurface`) extends a ball patch (the blend corner's Ball) as itself, a ball patch on its sphere: its net carried on with `SM_CT_CINFINITY`, which stays on the sphere, around its pole by no more than a quarter of the turn its third side leaves open on each side and away from the pole by no more than half the arc left to the pole's antipode. Upstream extends every surface by a tangent extension (`SM_CT_G1R`), a plain B-spline off the sphere; a shell's face that reaches a hair into it (rounding in its trims) keeps that B-spline, so 7 of the 8 inner corners of a shelled rounded box lost their sphere (WR-728, #2484; the fork's b439d73 notes it).
-    pub offset_extends_ball_patches_as_themselves: bool,
     /// `SmOffsetSurface::SwapUV` negates the distance once for the extended surface and
     /// again for the base, so an owning offset that has a stored extension comes back
     /// with its distance unchanged and lies on the wrong side of its base; with this
@@ -809,15 +805,6 @@ pub struct UpstreamFixes {
     /// `plan/upstream-issues/WR-84--addendum-2026-11-01-propagate-step-off-failure.md`).
     /// Off by default for pinned C++ parity.
     pub edgeuse_convexity_propagates_step_off_failure: bool,
-    /// `SmPointSet3d::SetUpCentroid` sums every full 50-point block when the point count
-    /// is a positive multiple of 50 (`extras == 0`) instead of starting with a 0-point
-    /// block that drops the last 50 points (returning `(0, 0, 0)` for 50 points), and
-    /// marks `Cache::CENTROID` (`m_bCentroidSet = TRUE`) after computing it so repeated
-    /// centroid queries reuse the cached value and do not depend on whether `GetNormal`
-    /// ran first (WR-15, #2134; see
-    /// `plan/upstream-issues/WR-15--addendum-2026-10-31-centroid-multiples-of-50.md`).
-    /// Off by default for pinned C++ parity.
-    pub point_set_centroid_all_blocks: bool,
     /// `SmLocalSolve1d::SolveIt` clamps the Newton step `delta_t` to
     /// `0.08 * m_vInterval.GetLength() + SM_EFF_ZERO` (scaled by `0.99`) only when
     /// `m_bUseInterval` is `true`, instead of evaluating `m_vInterval.GetLength()` on the
@@ -1176,8 +1163,6 @@ pub struct UpstreamFixes {
     pub sheet_sweep_joins_profile_wires: bool,
     /// `FindPolygonGuess` keeps a suspicious control-net triangle guess as a candidate against the nearest control point's, and returns the nearer one on the surface, so a rational surface whose control points are farther apart than its neighbouring parts does not lose a good guess (WR-444, #1164).
     pub point_solve_keeps_triangle_guess: bool,
-    /// `SmFilletVertex::CalcSetBackVert` measures a corner setback from the vertex `GetStartVertex()` marks over the edge's own interval, not from `GetVertex()` over the curve's natural interval, so an edge whose primary edge use runs against its curve is not measured from its far end (WR-445, #1169).
-    pub fillet_setback_from_start_vertex: bool,
     /// `CreateSphereFromArcs` also makes the sphere through four arcs of one centre and radius that close a loop (a corner where four equal rounds meet, such as a pyramid's apex), where upstream's "only works for 3 now" refuses and the corner falls back to an approximating blend (WR-502; SolidCraft oracle case 37).
     pub fillet_corner_sphere_from_four_arcs: bool,
     /// `SmFilletCorner::MakeAnalyticCornerSurface`'s `SER` / `NER` exits return their failing status as an `SmBoolean`, which `SmFilletCorner::CreateCornerPatch` reads as `TRUE` (an analytic surface was made, though none was added) and so skips the Coons patch. With this fix those exits read as `FALSE` and the caller builds the patch. Only the exits that return an upstream status (`SM_ERR` 1001 / `SM_ERR_NULL_POINTER` 1006) change; the port's `Unported`, `InvalidInput` and `PortInvariant` still propagate (WR-254, `plan/upstream-issues/WR-254--smfilletcorner-makeanalyticcornersurface-reports-its-ser-ner--dup2.md`; off by default for pinned C++ parity).
@@ -1198,8 +1183,6 @@ pub struct UpstreamFixes {
     pub fillet_trace_from_tangent_point_toward_next: bool,
     /// `SmBSplineSurface::CopyAndAddAnalytics` keeps an exact copy where the recognised analytic surface does not give the same points at the same parameters (7 x 7 grid), so a face split by `MakeEdgeInFaceWithVU` keeps trims that still lie on its edges (WR-450, #387; the fork's tangency-labs/smlib@7af1987 (was 276b509)).
     pub analytic_copy_keeps_parameterization: bool,
-    /// `SmFilletSolver::ComputePointValues`' bigger-step retry of the forward finite-difference step solves with the bigger step (`dBigStep`), not with the small `dStep` again (WR-456, #1181).
-    pub fillet_point_bigger_step_retry: bool,
     /// `SmFilletSolver::ComputePointValues` sets a tangent point's curve tangent from the forward finite-difference step alone (along the trace, the previous point's tangent), and from the backward step only when the forward one finds nothing, not from their central difference: the intersection curve ends or branches at a tangent point, and where the offset surfaces touch only to within the model's accuracy (a sketch's 1e-10 residues) the backward step lands on the near-tangent crossing beyond it, 18 degrees off the curve, so every step after the point failed the angle test and the trace crept on in steps down to 8e-10 (repeated rail control points, an internal pole) (WR-595; the fork's tangency-labs/smlib@f8fd83e). Use with `fillet_trace_from_tangent_point_toward_next`, as the fork has both: alone, the forward step from a trace's tangent first point runs along the edge's end tangent, and `Fillet/nurb_cone.smb` edge 8 at r 0.5, which upstream builds, fails.
     pub fillet_tangent_point_one_sided_step: bool,
     /// `SmFace::ComputePreciseProperties` scales the volume and moment error bounds by the body size (ten times the root of the estimated area, or the origin's distance when larger), not 1.0.1's tenth of it, so the integration converges at tight accuracies instead of returning `SM_ERR` (WR-472; the SolidCraft fork's tangency-labs/smlib@073d4740).
@@ -1272,6 +1255,7 @@ pub struct UpstreamFixes {
     pub fillet_mitre_gap_patch: bool,
     /// Each fan of faces at a vertex where the body touches itself is a corner of its own: `SmFilletExecutive::SetFilletParameters` splits each filleted edge's vertex whose edge uses form several fans sharing no edge (two cubes sharing a corner; the up and down halves of squares drawn edge to edge, touching at the origin) into one vertex per fan at its point (`SmBrep::SplitVertexByFans`, `crate::topology::brep::vertex_fans`), `DoFilleting` joins the target's vertices still at a split point after the blends, whether they built or not (`SmBrep::JoinVertexFans`), and `SmFilletCorner::Create` builds no two-edge corner where an edge not blended there is a knife edge (its faces tangent and folded back on each other, `SmFilletSolver::IsKnifeEdge`). Upstream `SmFilletCorner::Create` walked one fan's faces, found the blended edges of both fans and built an Nx2 corner of edges sharing no face, failing with status 1001 ("unable to make topology") (WR-665; the fork's tangency-labs/smlib@4ecfbab and @e418750).
     pub fillet_corner_per_vertex_fan: bool,
+    /// No longer read: `TrimExtendedEdge` always does this, so the field goes when SolidCraft's set drops it.
     /// `TrimExtendedEdge` takes, on a closed curve, the arc that runs where its base edge does, not always the interval between its two trim points: a hemisphere's rim, two arcs of one circle, no longer becomes one arc twice (WR-463, #403; the fork's tangency-labs/smlib@34eaa6b (was fa7ff4a)).
     pub offset_closed_curve_trim_arc: bool,
     /// `TrimExtendedEdge` never takes an open edge's first trim point again as its second, by point as well as by parameter: on the closed curve a rim half of a sphere cap lifts onto (the whole offset circle), the first point's twin across the curve's seam (another parameter, the same point, often the far end of the coincident range the other rim half's offset gives) is refused, so the half no longer gets the whole circle (or nothing) and its offset loop no gap. Thickening the cap above z = 5 of a sphere whose rim is two half circles placed against its seam (the sphere cut by a turned box) failed with `SM_ERR_OFFSET_EDGE_VANISHES` (1043) under `offset_closes_loop_gaps`, and gave a non-manifold body without it (WR-673, #2174; the fork's tangency-labs/smlib@7ee0876, for #1502).
@@ -1316,8 +1300,6 @@ pub struct UpstreamFixes {
     pub ssi_low_angle_start_on_probation: bool,
     /// `SmSurfaceIntersector` traces an open tangent curve once: `AddStartPoint` keeps one start point per cluster of tangent boundary start points (`IsSameTangentCluster`), a finished trace removes the clusters at its ends (`DoIntersection`), `TraceCurve` runs its "already traced" test on a first step that snapped onto another start point, and a near-tangent trace stops at the free end of a curve already found instead of running over it (WR-76, #392; the SolidCraft fork's tangency-labs/smlib@920da20 (was 0ce09f2)).
     pub ssi_trace_tangent_curves_once: bool,
-    /// `SmSurfaceIntersector::DoIntersection` and `FindInteriorCurves` trace a curve back the other way only when the trace produced points: `TraceCurve` returns an empty curve when its start point already lies on a found curve, and upstream then reverses the empty list and fails the whole intersection with `SM_ERR_NULL_POINTER` (WR-80; the fork's tangency-labs/smlib@0dbe681).
-    pub ssi_no_reverse_of_empty_trace: bool,
     /// `SmAdvSurfaceIntersector::ComputeSingularityPoint` starts a curve at a singularity from the first singular direction that points into both domains, whose angle is the search's `dAngleMin`, before the later inside directions are searched for the one closest to the previous direction. Upstream leaves the output at `aSingDirections[0]`, so where the first inside direction is the nearest (or the only one) the curve starts along a direction that need not point into either domain (WR-512, #1522; the fork's tangency-labs/smlib#52).
     pub ssi_singular_start_inside_direction: bool,
     /// `SmSurfaceIntersector::IsPointOnStartPoint` compares the squared distance of each
