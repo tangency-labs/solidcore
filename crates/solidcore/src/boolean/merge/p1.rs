@@ -854,6 +854,60 @@ pub(crate) fn boolean_post_process_with_notifications(
     Ok(())
 }
 
+/// Not upstream (#3090): places each of `vertices` whose gap to one of its faces is past the
+/// B-rep's intersection tolerance at the corner its faces define
+/// ([`calc_corner_from_faces`](crate::topology::vertex::corner::calc_corner_from_faces): the
+/// midpoint of two parallel faces that part, else the faces' surface intersection).
+/// `SmVertex::AssertValid` requires every vertex/face gap under that tolerance whatever the
+/// vertex's own, and a vertex the imprint kept where a vertex of an operand stood (its ball
+/// holds the other operand's point) lies on one face and a sliver off the other, as the
+/// two tangent fillets of operands a hair apart part by dx^2 / 4. Only a vertex whose
+/// tolerance is past the intersection tolerance can hold such a gap, and a corner further
+/// than that tolerance is left alone: the vertex keeps its ball.
+///
+/// # Errors
+/// Those of the vertex/face gap and corner calculations, and of `SmVertex::SetPoint`.
+pub(crate) fn place_vertices_on_face_corners(
+    k: &mut Kernel,
+    brep: &mut Brep,
+    vertices: &[VertexId],
+    notifications: &mut edge::NotifyEnv<'_>,
+) -> Result<()> {
+    use crate::topology::vertex::corner;
+    let xsect_tol = corner::xsect_tol_3d_of_brep(k, brep);
+    for &v in vertices {
+        if brep.vertex(v).is_err() {
+            continue;
+        }
+        let tolerance = vertex::tolerance(brep, v)?;
+        if tolerance <= xsect_tol || corner::is_within_xsect_tol_3d_of_faces(k, brep, v, false)?.0 {
+            continue;
+        }
+        let at = corner::calc_corner_from_faces(k, brep, v)?;
+        if !at.found_point || at.max_gap_3d > tolerance {
+            continue;
+        }
+        let this = (notifications.key_of)(EntityRef::Vertex(v));
+        vertex::set_point(
+            brep,
+            v,
+            at.best_point,
+            notifications.records,
+            notifications.attributes,
+            notifications.context.as_deref_mut(),
+            this,
+            &|vu| (notifications.key_of)(EntityRef::Vertexuse(vu)),
+        )?;
+        // the gaps cached on the vertex's uses are of its old place
+        for vu in vertex::vertexuses(brep, v)? {
+            let r = brep.vertexuse_mut(vu)?;
+            r.vertex_face_gap.reset();
+            r.vertex_edge_gap.reset();
+        }
+    }
+    Ok(())
+}
+
 /// One result region and the identities used by its propagation notification.
 #[derive(Debug, Clone, Copy)]
 pub struct RegionPropagation {

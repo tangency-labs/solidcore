@@ -71,14 +71,15 @@ fn extruded(dx: f64) -> Body {
 fn issue_3012_cut_of_filleted_boxes_a_sliver_apart() {
     // the fillets of both bodies are cones, not surfaces of extrusion
     session::set_fixes(["linear_sweep_arc_is_cylinder", "classify_edge_interval"]).unwrap();
-    for dx in [1e-4, 1e-3] {
+    for dx in [1e-4, 1e-3, 1e-2] {
         for reversed in [false, true] {
             let (a, b) = (rounded_box(), extruded(dx));
             let (x, y) = if reversed { (b, a) } else { (a, b) };
             let r = boolean(x, y, BooleanOp::Subtract)
                 .unwrap_or_else(|e| panic!("dx {dx} reversed {reversed}: {e}"))
                 .unwrap();
-            assert!(r.check(CheckLevel::All).unwrap().is_valid(), "dx {dx}");
+            let report = r.check(CheckLevel::All).unwrap();
+            assert!(report.is_valid(), "dx {dx} reversed {reversed}: {report}");
             assert_eq!(r.solid_count().unwrap(), 1, "dx {dx} reversed {reversed}");
             // Every face of the sliver: the two flat sides (26 x 10 each) and the four fillets
             // (a quarter turn of R2 by 10 each), plus the thin ends. A fillet face the sector
