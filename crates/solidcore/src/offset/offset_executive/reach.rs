@@ -46,6 +46,8 @@ use crate::surface::surface::Surface;
 use crate::topology::edgeuse::{p1 as eu, p3 as eu3};
 use crate::topology::{edge, loopuse, Brep, EdgeuseId, FaceId, FaceuseId};
 
+mod net;
+
 const OP: &str = "offset::offset_executive::reach::extension_reach";
 const LOCAL_OP: &str = "offset::offset_executive::reach::local_extension_reach";
 
@@ -268,21 +270,25 @@ fn corner_of(a: Tangent, b: Tangent, c: Tangent, tangent_sine: f64) -> Option<Ve
     Some((bc * ha + c.normal.cross(a.normal) * hb + a.normal.cross(b.normal) * hc) * (1.0 / det))
 }
 
-/// An exact class a local operation's reach is bounded on: a plane, or a cone (a cylinder
-/// for `tan_angle = 0`) or a sphere, as [`Implicit`] holds them.
-#[derive(Debug, Clone, Copy)]
+/// A class a local operation's reach is bounded on: a plane, or a cone (a cylinder for
+/// `tan_angle = 0`) or a sphere, as [`Implicit`] holds them, or a bare B-spline net
+/// ([`net::Net`]).
+#[derive(Debug, Clone)]
 enum Exact {
     Plane(Tangent),
     Quadric(Implicit),
+    Net(std::rc::Rc<net::Net>),
 }
 
-/// `surface`'s exact class: its analytic label (a plane, cylinder, cone or sphere) with its
-/// NURBS form proved on that label's implicit equation ([`implicit::lies_on`], the owner's
-/// rule for an exact class at bound 0); `None` for any other kind, a torus (its sections
-/// are quartics), or a form not proved on its label.
+/// `surface`'s class: its analytic label (a plane, cylinder, cone or sphere) with its NURBS
+/// form proved on that label's implicit equation ([`implicit::lies_on`], the owner's rule
+/// for an exact class at bound 0); a B-spline surface or extrusion with no label and no
+/// definition is a bare net ([`net::Net::of`]), a plane stored as a NURBS among them.
+/// `None` for any other kind, a torus (its sections are quartics), or a form not proved on
+/// its label.
 fn exact_class(k: &Kernel, surface: &Surface) -> Result<Option<Exact>> {
     let Some(support) = AnalyticSupport::of(surface) else {
-        return Ok(None);
+        return Ok(net::Net::of(k, surface)?.map(|n| Exact::Net(std::rc::Rc::new(n))));
     };
     if matches!(support, AnalyticSupport::Torus { .. }) {
         return Ok(None);
@@ -306,11 +312,13 @@ fn exact_class(k: &Kernel, surface: &Surface) -> Result<Option<Exact>> {
 }
 
 /// A certified upper bound on the distance from `x` to the surface of class `c` at a point
-/// (a moved surface's move at a vertex).
-fn point_distance(x: Vec3, c: &Exact) -> f64 {
+/// (a moved surface's move at a vertex); `None` for a net, whose move is bounded by the
+/// meetings on it.
+fn point_distance(x: Vec3, c: &Exact) -> Option<f64> {
     match c {
-        Exact::Plane(t) => plane_distance(x, *t),
-        Exact::Quadric(q) => round_up(quadric_gap(q, Dv::constant(x)).hi),
+        Exact::Plane(t) => Some(plane_distance(x, *t)),
+        Exact::Quadric(q) => Some(round_up(quadric_gap(q, Dv::constant(x)).hi)),
+        Exact::Net(_) => None,
     }
 }
 
@@ -1122,6 +1130,56 @@ fn plane_quadric_piece(
     }
 }
 
+/// The certified upper bound of the reach over a piece where a plane `(o, ν)` and a bare
+/// net meet in the edge's normal sections ([`local_extension_reach`]): the plane's trace
+/// `x0 + τ u` there, its foot and direction by their mean-value forms over the piece, meets
+/// the net (or its extension) at a `τ` proved for every section of the piece
+/// ([`net::line_meets`]), `√(|x0 − p|² + τ²)` from the edge point; the same at the middle,
+/// from its own box, is the value that steers the halving. `guess` carries Newton's last
+/// root from piece to piece.
+fn plane_net_piece(
+    over: (Dv, Dv),
+    mid: (Dv, Dv),
+    dt: Ivl,
+    plane: Tangent,
+    net: &net::Net,
+    guess: &std::cell::Cell<Option<[f64; 3]>>,
+) -> PieceBound {
+    let (Some(line), Some(mline)) = (
+        plane_trace(over.0, over.1, plane.point, plane.raw),
+        plane_trace(mid.0, mid.1, plane.point, plane.raw),
+    ) else {
+        return PieceBound::Unknown;
+    };
+    let centred = |a: Dv, m: Dv| {
+        [
+            mean_value(a.x, m.x, dt),
+            mean_value(a.y, m.y, dt),
+            mean_value(a.z, m.z, dt),
+        ]
+    };
+    let numbers = |a: Dv| Vec3::new(a.x.v.mid(), a.y.v.mid(), a.z.v.mid());
+    let at_middle = (numbers(mline.x0), numbers(mline.u));
+    let values = |a: Dv| [a.x.v, a.y.v, a.z.v];
+    let reach =
+        |foot2: Ivl, tau: Ivl| round_up(sqrt(round_up(foot2.hi.max(0.0) + tau.mag() * tau.mag())));
+    let piece = (centred(line.x0, mline.x0), centred(line.u, mline.u));
+    let Ok(Some(tau)) = net::line_meets(net, piece, at_middle, guess) else {
+        return PieceBound::Unknown;
+    };
+    let upper = reach(mean_value(line.foot2, mline.foot2, dt), tau);
+    // a meeting at the middle, from its own box: a value the reach there is at most
+    let lower = match net::line_meets(net, (values(mline.x0), values(mline.u)), at_middle, guess) {
+        Ok(Some(tau)) => sqrt(mline.foot2.v.lo.max(0.0) + tau.mig() * tau.mig()),
+        _ => 0.0,
+    };
+    if upper.is_finite() {
+        PieceBound::Value { upper, lower }
+    } else {
+        PieceBound::Unknown
+    }
+}
+
 /// The reach at one edge point (a piece's middle, whose `line` and `q` are point
 /// enclosures): the distance of the meeting nearest the point, from the plan decided there
 /// ([`plan_of`]), the low end of its enclosure: a value the reach takes, so at most its
@@ -1464,11 +1522,12 @@ fn corner_with_quadric(
 ///
 /// Each is a certified upper bound, found on exact geometry, on control points or in
 /// rounded interval arithmetic, never at samples. Where a surface beside an edge moves, the
-/// edge's two new surfaces must be of exact classes ([`exact_class`]), one of them a plane.
-/// The new edge crosses the edge's normal section at each point `p` (the plane through `p`
-/// across the edge's tangent: of the outward binormal and the face normal) where the traces
-/// of the two new surfaces there meet, the meeting nearest `p`; the reach is the largest
-/// distance from `p` of those meetings.
+/// edge's two new surfaces must be of the classes [`exact_class`] names, one of them a
+/// plane. The new edge crosses the edge's normal section at each point `p` (the plane
+/// through `p` across the edge's tangent: of the outward binormal and the face normal) where
+/// the traces of the two new surfaces there meet, the meeting nearest `p`; the reach is the
+/// largest distance from `p` of those meetings (a meeting farther than the nearest bounds
+/// it too).
 ///
 /// Two planes: how they meet is decided once for the edge from the planes ([`PlanePair`]):
 ///
@@ -1505,10 +1564,22 @@ fn corner_with_quadric(
 /// ([`corner_with_quadric`]); where they meet in no one point, the edges' meetings stand. A
 /// surface at the vertex moved adds its distance from the vertex to the move.
 ///
+/// A plane and a bare B-spline net ([`net::Net`]: a B-spline surface or extrusion with no
+/// label and no definition): the plane's trace `x0 + τ u` meets the net, or the
+/// extension the executive builds past its sides, at a `(u, v, τ)` proved by Krawczyk's
+/// operator for every section of a piece of the edge's parameters ([`plane_net_piece`],
+/// [`net::line_meets`]); the meeting is `√(|x0 − p|² + τ²)` from `p`, `|τ|` its arc length
+/// along the plane's trace, and the pieces are halved as above. A moved net's move is at
+/// most the reach of an edge beside it, whose meetings lie on it. At a vertex, two planes'
+/// line meets a net ([`corner_with_net`]), and a plane meets a quadric and a net, or two
+/// nets ([`net::plane_quadric_and_net_meet`], [`net::plane_and_nets_meet`]), each at a
+/// point proved the same way.
+///
 /// Anything else beside an edge or at a vertex where something moves (two curved
-/// quadrics, a torus, a B-spline or blend, a plane not proved on its label, an edge curve
-/// with no NURBS form) has no certified bound here, nor a piece left undecided past the
-/// caps: [`OffsetFailure::ReachUncertified`].
+/// quadrics, a quadric or net beside a net, a torus, a blend or sweep, a plane not proved on
+/// its label, an edge curve with no NURBS form), a meeting with a net that is not proved,
+/// and a piece left undecided past the caps, has no certified bound here:
+/// [`OffsetFailure::ReachUncertified`].
 ///
 /// # Errors
 ///
@@ -1537,7 +1608,7 @@ pub fn local_extension_reach(
     let mut class_of = |b: &Brep, face: Option<FaceId>| -> Result<Exact> {
         let face = face.ok_or_else(uncertified)?;
         if let Some((_, c)) = classes.iter().find(|(f, _)| *f == face) {
-            return c.ok_or_else(uncertified);
+            return c.clone().ok_or_else(uncertified);
         }
         let given = moved
             .iter()
@@ -1551,7 +1622,7 @@ pub fn local_extension_reach(
                 None => None,
             },
         };
-        classes.push((face, c));
+        classes.push((face, c.clone()));
         c.ok_or_else(uncertified)
     };
     let own_moved = is_moved(own_face);
@@ -1598,29 +1669,41 @@ pub fn local_extension_reach(
                 |f: &dyn Fn((Dv, Dv), (Dv, Dv), Ivl) -> PieceBound| -> Result<(f64, bool)> {
                     edge_interval_maximum(b, e, f, tolerance)?.ok_or_else(uncertified)
                 };
-            let shift_of = |c: Exact| -> Result<f64> {
+            // a moved net's move is bounded by the meetings on it, below
+            let shift_of = |c: &Exact| -> Result<Option<f64>> {
                 match c {
-                    Exact::Plane(t) => hull(&|x| plane_distance(x, t)),
+                    Exact::Plane(t) => hull(&|x| plane_distance(x, *t)).map(Some),
                     Exact::Quadric(q) => {
                         let piece = |over: (Dv, Dv), mid: (Dv, Dv), dt: Ivl| {
-                            quadric_distance_piece(over.0, mid.0, dt, &q)
+                            quadric_distance_piece(over.0, mid.0, dt, q)
                         };
-                        Ok(pieces(&piece)?.0)
+                        Ok(Some(pieces(&piece)?.0))
                     }
+                    Exact::Net(_) => Ok(None),
                 }
             };
+            let mut net_moved = false;
             if own_moved {
-                found.shift = found.shift.max(shift_of(own)?);
+                match shift_of(&own)? {
+                    Some(shift) => found.shift = found.shift.max(shift),
+                    None => net_moved = true,
+                }
             }
             if radial.is_none() {
+                if net_moved {
+                    return Err(uncertified());
+                }
                 continue;
             }
             let other = class_of(b, other_face)?;
             if other_moved {
-                found.shift = found.shift.max(shift_of(other)?);
+                match shift_of(&other)? {
+                    Some(shift) => found.shift = found.shift.max(shift),
+                    None => net_moved = true,
+                }
             }
-            let (reach, apart) = match (own, other) {
-                (Exact::Plane(a), Exact::Plane(c)) => {
+            let (reach, apart) = match (&own, &other) {
+                (&Exact::Plane(a), &Exact::Plane(c)) => {
                     match plane_pair(a, c, tangent_sine, tolerance) {
                         PlanePair::Line => (
                             hull(&|x| line_distance(x, a, c, tangent_sine, tolerance))?,
@@ -1630,19 +1713,32 @@ pub fn local_extension_reach(
                         PlanePair::Apart => (0.0, true),
                     }
                 }
-                (Exact::Plane(plane), Exact::Quadric(q))
-                | (Exact::Quadric(q), Exact::Plane(plane)) => {
+                (&Exact::Plane(plane), Exact::Quadric(q))
+                | (Exact::Quadric(q), &Exact::Plane(plane)) => {
                     let piece = |over: (Dv, Dv), mid: (Dv, Dv), dt: Ivl| {
-                        plane_quadric_piece(over, mid, dt, plane, &q, tolerance)
+                        plane_quadric_piece(over, mid, dt, plane, q, tolerance)
                     };
                     pieces(&piece)?
                 }
-                (Exact::Quadric(_), Exact::Quadric(_)) => return Err(uncertified()),
+                (&Exact::Plane(plane), Exact::Net(n)) | (Exact::Net(n), &Exact::Plane(plane)) => {
+                    let guess = std::cell::Cell::new(None);
+                    let piece = |over: (Dv, Dv), mid: (Dv, Dv), dt: Ivl| {
+                        plane_net_piece(over, mid, dt, plane, n, &guess)
+                    };
+                    pieces(&piece)?
+                }
+                (Exact::Quadric(_) | Exact::Net(_), Exact::Quadric(_) | Exact::Net(_)) => {
+                    return Err(uncertified())
+                }
             };
             if apart && !found.apart.contains(&e) {
                 found.apart.push(e);
             }
             found.reach = found.reach.max(reach);
+            // each meeting lies on the moved net: no farther from the edge point than it
+            if net_moved {
+                found.shift = found.shift.max(reach);
+            }
         }
     }
     Ok(met.then_some(found))
@@ -1658,10 +1754,11 @@ struct Corner {
 }
 
 /// The reach and the move at a vertex of the face ([`local_extension_reach`]): where a face
-/// there moves, every face there must be of an exact class (`class_of`), and the meetings
-/// of the face's surface with every two others (three planes, or two planes and a
-/// quadric; any more quadrics are `refuse`d), and each moved surface's distance from the
-/// vertex, are taken into `found`.
+/// there moves, every face there must be of a class (`class_of`), and the meetings of the
+/// face's surface with every two others (three planes; two planes and a quadric or a net; a
+/// plane, a quadric and a net; a plane and two nets; anything else, or a meeting with a net
+/// not proved, is `refuse`d), and each moved surface's distance from the vertex (a moved
+/// net's: the farthest meeting found on it there), are taken into `found`.
 fn corner(
     b: &Brep,
     at: &Corner,
@@ -1678,34 +1775,51 @@ fn corner(
     let p = crate::topology::vertex::point(b, at.vertex)?;
     let a = class_of(b, at.own)?;
     let mut others = Vec::new();
+    // a moved net's move at the vertex is bounded by the meetings on it, below
+    let mut moved_nets = Vec::new();
+    if is_moved(at.own) && matches!(a, Exact::Net(_)) {
+        moved_nets.push(None);
+    }
     for &f in &around {
         let c = class_of(b, Some(f))?;
         if is_moved(Some(f)) {
-            found.shift = found.shift.max(point_distance(p, &c));
+            match point_distance(p, &c) {
+                Some(shift) => found.shift = found.shift.max(shift),
+                None => moved_nets.push(Some(f)),
+            }
         }
-        others.push(c);
+        others.push((f, c));
     }
-    for (i, &c) in others.iter().enumerate() {
-        for &d in others.iter().skip(i + 1) {
-            let three = [a, c, d];
+    // the largest meeting on each moved net, `None` until one is found
+    let mut on_nets: Vec<Option<f64>> = vec![None; moved_nets.len()];
+    for (i, (fc, c)) in others.iter().enumerate() {
+        for (fd, d) in others.iter().skip(i + 1) {
+            let three = [&a, c, d];
             let planes: Vec<Tangent> = three
                 .iter()
                 .filter_map(|x| match x {
                     Exact::Plane(t) => Some(*t),
-                    Exact::Quadric(_) => None,
+                    _ => None,
                 })
                 .collect();
             let quadrics: Vec<Implicit> = three
                 .iter()
                 .filter_map(|x| match x {
                     Exact::Quadric(q) => Some(*q),
-                    Exact::Plane(_) => None,
+                    _ => None,
                 })
                 .collect();
-            let reach = match (planes.as_slice(), quadrics.as_slice()) {
-                (&[x, y, z], []) => corner_of(x, y, z, at.tangent_sine)
+            let nets: Vec<&net::Net> = three
+                .iter()
+                .filter_map(|x| match x {
+                    Exact::Net(n) => Some(&**n),
+                    _ => None,
+                })
+                .collect();
+            let reach = match (planes.as_slice(), quadrics.as_slice(), nets.as_slice()) {
+                (&[x, y, z], [], []) => corner_of(x, y, z, at.tangent_sine)
                     .map(|meeting| corner_distance(p, meeting, [x, y, z])),
-                (&[x, y], [q]) => {
+                (&[x, y], [q], []) => {
                     let meeting = corner_with_quadric(p, x, y, q, at.tangent_sine, at.tolerance);
                     match meeting {
                         CornerMeeting::Within(reach) => Some(reach),
@@ -1713,14 +1827,76 @@ fn corner(
                         CornerMeeting::Uncertified => return Err(refuse()),
                     }
                 }
+                (&[x, y], [], [n]) => match corner_with_net(p, x, y, n, at.tangent_sine)? {
+                    CornerMeeting::Within(reach) => Some(reach),
+                    CornerMeeting::Nowhere => None,
+                    CornerMeeting::Uncertified => return Err(refuse()),
+                },
+                (&[x], [q], [n]) => {
+                    let meeting = net::plane_quadric_and_net_meet(n, q, x.point, x.raw, p)?;
+                    Some(meeting.ok_or_else(refuse)?)
+                }
+                (&[x], [], [m, n]) => {
+                    let meeting = net::plane_and_nets_meet(m, n, x.point, x.raw, p)?;
+                    Some(meeting.ok_or_else(refuse)?)
+                }
                 _ => return Err(refuse()),
             };
             if let Some(reach) = reach {
                 found.reach = found.reach.max(reach);
+                for (on, which) in on_nets.iter_mut().zip(&moved_nets) {
+                    // the own face is in every triple
+                    if which.is_none_or(|w| w == *fc || w == *fd) {
+                        *on = Some(on.map_or(reach, |r: f64| r.max(reach)));
+                    }
+                }
             }
         }
     }
+    // a moved net at the vertex with no meeting found on it has no bounded move there
+    for on in on_nets {
+        found.shift = found.shift.max(on.ok_or_else(refuse)?);
+    }
     Ok(())
+}
+
+/// How the line where the planes `a` and `b` meet passes the net `n` at a corner, from the
+/// vertex `p`: within a certified distance of it at a meeting proved on the net
+/// ([`net::line_meets`]), nowhere near (the planes parallel), or not proved
+/// ([`CornerMeeting`]).
+///
+/// # Errors
+///
+/// A cancel.
+fn corner_with_net(
+    p: Vec3,
+    a: Tangent,
+    b: Tangent,
+    n: &net::Net,
+    tangent_sine: f64,
+) -> Result<CornerMeeting> {
+    let Some(line) = planes_line(p, a, b, tangent_sine) else {
+        return Ok(CornerMeeting::Nowhere);
+    };
+    let values = |d: Dv| [d.x.v, d.y.v, d.z.v];
+    let numbers = |d: Dv| Vec3::new(d.x.v.mid(), d.y.v.mid(), d.z.v.mid());
+    let guess = std::cell::Cell::new(None);
+    let at = (numbers(line.x0), numbers(line.u));
+    Ok(
+        match net::line_meets(n, (values(line.x0), values(line.u)), at, &guess)? {
+            Some(tau) => {
+                let reach = round_up(sqrt(round_up(
+                    line.foot2.v.hi.max(0.0) + tau.mag() * tau.mag(),
+                )));
+                if reach.is_finite() {
+                    CornerMeeting::Within(reach)
+                } else {
+                    CornerMeeting::Uncertified
+                }
+            }
+            None => CornerMeeting::Uncertified,
+        },
+    )
 }
 
 /// What [`local_extension_reach`] finds for a face: certified upper bounds on how far its
@@ -2399,27 +2575,90 @@ mod tests {
         }
     }
 
-    /// The round kept as its bare B-spline net (no exact class) beside the side moved in:
-    /// refused as uncertified.
-    #[test]
-    fn a_neighbour_of_no_exact_class_is_uncertified() {
-        let mut k = Kernel::default();
-        let (b, round, side, _) = rounded_cube(&mut k);
-        let net = Surface::from(
+    /// The round's exact rational form with no analytic label: its bare net.
+    fn bare_net(k: &Kernel, b: &Brep, round: FaceId) -> Surface {
+        Surface::from(
             crate::blend::fillet_section::station::as_b_spline(
-                &k,
+                k,
                 b.face(round).unwrap().surface.as_ref().unwrap(),
             )
             .unwrap()
             .unwrap()
             .into_owned(),
-        );
-        let moved_side = Surface::from(crate::surface::plane::Plane::from_normal(
-            Point3::new(19.9, 0.0, 0.0),
-            Vec3::X,
-        ));
+        )
+    }
+
+    /// The round kept as its bare net beside the side moved in by 0.1: as on its cylinder
+    /// (`a_plane_moved_into_a_round_is_reached_where_it_meets_it`), the side's trace meets
+    /// the net `√(2 r δ) = 1` from the old tangent edge's points, the bottom as far at its
+    /// corner there (the bottom's and the moved side's line meets the net), and each moved
+    /// 0.1. A plane beside a net, bounded on the net.
+    #[test]
+    fn a_round_kept_as_its_net_is_reached_where_the_moved_side_meets_it() {
+        let mut k = Kernel::default();
+        let (b, round, side, bottom) = rounded_cube(&mut k);
+        let net = bare_net(&k, &b, round);
+        let into = plane_at_x(19.9);
+        let moved = [(side, &into)];
+        let kept = [(round, &net)];
+        for f in [side, round, bottom] {
+            let found = local_extension_reach(&k, &b, faceuse_of(&b, f), &moved, &kept, 1e-3)
+                .unwrap()
+                .unwrap();
+            assert!(bounds(&b, found.reach, 1.0), "{f:?}: {found:?}");
+            assert!(bounds(&b, found.shift, 0.1), "{f:?}: {found:?}");
+            assert!(found.apart.is_empty(), "{f:?}: {found:?}");
+        }
+    }
+
+    /// Along the tangent edge itself, each normal section's meeting of the side moved in by
+    /// 0.1 with the round's bare net is `√0.99` along the side's trace from the foot `0.1`
+    /// off the edge point: `√(0.1² + 0.99) = 1` from every point of the edge, which is the
+    /// edge's bound ([`plane_net_piece`] over its pieces, without the corners).
+    #[test]
+    fn a_tangent_edge_is_bounded_on_the_net_by_the_foot_and_the_arc() {
+        let mut k = Kernel::default();
+        let (b, round, side, _) = rounded_cube(&mut k);
+        let net = bare_net(&k, &b, round);
+        let Some(Exact::Net(net)) = exact_class(&k, &net).unwrap() else {
+            panic!("a bare net");
+        };
+        let tangent = crate::topology::face::p4::edges(&b, side, None, false, None)
+            .unwrap()
+            .into_iter()
+            .find(|&e| {
+                edge::edgeuses(&b, e, None, None)
+                    .unwrap()
+                    .into_iter()
+                    .any(|u| eu::face(&b, u).unwrap() == Some(round))
+            })
+            .unwrap();
+        let into = Tangent {
+            point: Vec3::new(19.9, 0.0, 0.0),
+            normal: Vec3::X,
+            raw: Vec3::X,
+        };
+        let guess = std::cell::Cell::new(None);
+        let piece = |over: (Dv, Dv), mid: (Dv, Dv), dt: Ivl| {
+            plane_net_piece(over, mid, dt, into, &net, &guess)
+        };
+        let (reach, apart) = edge_interval_maximum(&b, tangent, &piece, b.tolerance())
+            .unwrap()
+            .unwrap();
+        assert!(bounds(&b, reach, 1.0) && !apart, "{reach}");
+    }
+
+    /// The same net beside the side moved out by 0.1, off the round: the side's trace passes
+    /// the net and meets it nowhere near, which no box proves (on the cylinder the plan
+    /// decides it apart, `a_plane_moved_off_a_round_is_apart`): refused as uncertified.
+    #[test]
+    fn a_plane_moved_off_a_round_kept_as_its_net_is_uncertified() {
+        let mut k = Kernel::default();
+        let (b, round, side, _) = rounded_cube(&mut k);
+        let net = bare_net(&k, &b, round);
+        let off = plane_at_x(20.1);
         assert_eq!(
-            refusal(&k, &b, side, &[(side, &moved_side)], &[(round, &net)]),
+            refusal(&k, &b, side, &[(side, &off)], &[(round, &net)]),
             Some(OffsetFailure::ReachUncertified { face: side })
         );
     }
