@@ -177,8 +177,8 @@ pub struct Extended {
     /// continued polynomial, the mirror, the C2 row): a certified bound on the 3D distance,
     /// from the rounding of making its net. 0 for an analytic widened, its label exact.
     pub extension: f64,
-    /// (b) The length across the side, at its middle, from the side to the result's end: its
-    /// certified enclosure and the enclosure's parts.
+    /// (b) The length across the side, at the middle of the face's side, from the side to the
+    /// result's end: its certified enclosure and the enclosure's parts.
     pub across: Across,
     /// The face box `dom` on the result's parameters (an analytic widened may reparametrise).
     pub dom: Extent2d,
@@ -248,6 +248,22 @@ impl Surface {
         how: Continuity,
         distance: f64,
     ) -> Result<Extended> {
+        self.extended_beside(k, dom, side, how, distance, dom)
+    }
+
+    /// [`Surface::extended_by_distance`] past side `side` of `dom` with its length across
+    /// measured at the middle of `face`'s side ([`beside`]): `face` the face box on the
+    /// surface's parameters, which `dom` holds, as [`Surface::extended_sides`] has it once
+    /// earlier sides have grown `dom` past the face.
+    fn extended_beside(
+        &self,
+        k: &Kernel,
+        dom: &Extent2d,
+        side: BoxSide,
+        how: Continuity,
+        distance: f64,
+        face: &Extent2d,
+    ) -> Result<Extended> {
         if !(distance.is_finite() && distance > 0.0) {
             return Err(SolidError::invalid_input(
                 OP,
@@ -255,10 +271,10 @@ impl Surface {
             ));
         }
         if let SurfaceKind::OffsetSurface(o) = self.kind() {
-            return offset_extended(k, o, dom, side, how, distance);
+            return offset_extended(k, o, dom, side, how, distance, face);
         }
         if let SurfaceKind::ProceduralBlend(pb) = self.kind() {
-            return blend::blend_extended(k, pb, dom, side, distance);
+            return blend::blend_extended(k, pb, dom, side, distance, face);
         }
         let analytic = AnalyticSupport::of(self).is_some();
         let form = crate::blend::fillet_section::station::as_b_spline(k, self)?.ok_or(
@@ -271,7 +287,7 @@ impl Surface {
         let degree = if side.is_u() { net.p() } else { net.q() };
         if analytic && (how == Continuity::Natural || degree == 1) {
             // proved once, by the continuation
-            return widened(k, self, dom, side, distance);
+            return widened(k, self, dom, side, distance, face);
         }
         if analytic {
             AnalyticSupport::check(k, self)?;
@@ -310,8 +326,9 @@ impl Surface {
             )))
         };
         // a length past the measure's leaf budget is no measurement, as a leaf not converged
+        let at = beside(dom, face, side);
         let across =
-            |m: &Option<Surface>| match m.as_ref().map(|s| s.length_across_side(k, dom, side, REL))
+            |m: &Option<Surface>| match m.as_ref().map(|s| s.length_across_side(k, &at, side, REL))
             {
                 None | Some(Err(SolidError::NotConverged { .. })) => Ok(None),
                 Some(Ok(a)) => Ok(Some(a)),
@@ -396,10 +413,11 @@ fn offset_extended(
     side: BoxSide,
     how: Continuity,
     distance: f64,
+    face: &Extent2d,
 ) -> Result<Extended> {
     let base = o
         .base_surface()
-        .extended_by_distance(k, dom, side, how, distance)?;
+        .extended_beside(k, dom, side, how, distance, face)?;
     let surface = Surface::from(OffsetSurface::new(
         k,
         o.offset_distance(),
@@ -411,20 +429,29 @@ fn offset_extended(
 }
 
 /// Natural on an analytic: the same surface widened, its face box on its own parameters and
-/// the across length measured there.
+/// the across length measured there, at the middle of `face`'s side.
 fn widened(
     k: &Kernel,
     s: &Surface,
     dom: &Extent2d,
     side: BoxSide,
     distance: f64,
+    face: &Extent2d,
 ) -> Result<Extended> {
     let grown = s.continued(k, dom, side, distance)?;
     let map = |uv: Point2| -> Result<Point2> {
         grown.convert_uv_from_step_to_nurbs(k, s.convert_uv_from_nurbs_to_step(k, uv)?)
     };
-    let (a, b) = (map(dom.min())?, map(dom.max())?);
-    let on = Extent2d::from_bounds(a.x.min(b.x), a.y.min(b.y), a.x.max(b.x), a.y.max(b.y));
+    let mapped = |e: &Extent2d| -> Result<Extent2d> {
+        let (a, b) = (map(e.min())?, map(e.max())?);
+        Ok(Extent2d::from_bounds(
+            a.x.min(b.x),
+            a.y.min(b.y),
+            a.x.max(b.x),
+            a.y.max(b.y),
+        ))
+    };
+    let on = mapped(dom)?;
     // the side each side of the face maps to: the one of the same direction nearer its middle
     let mut sides = BoxSide::ALL;
     for (to, from) in sides.iter_mut().zip(BoxSide::ALL) {
@@ -447,7 +474,7 @@ fn widened(
         .and_then(|i| sides.get(i))
         .copied()
         .ok_or_else(op_err)?;
-    let across = grown.length_across_side(k, &on, to, REL)?;
+    let across = grown.length_across_side(k, &beside(&on, &mapped(face)?, to), to, REL)?;
     // the widened's length across is the distance, by its closed form: checked as any
     // extension's is
     if !matches!(says(Some(&across), 0.0, distance), Says::Met) {
@@ -461,6 +488,17 @@ fn widened(
         dom: on,
         sides,
     })
+}
+
+/// The box side `side`'s length across is measured on: `dom` across the side (so its side is
+/// the one extended), `face` along it, so the length is taken at the middle of the face's
+/// side however far earlier extensions have grown `dom` along it.
+fn beside(dom: &Extent2d, face: &Extent2d, side: BoxSide) -> Extent2d {
+    if side.is_u() {
+        Extent2d::from_bounds(dom.min().x, face.min().y, dom.max().x, face.max().y)
+    } else {
+        Extent2d::from_bounds(face.min().x, dom.min().y, face.max().x, dom.max().y)
+    }
 }
 
 /// Whether the across length `b` of an extension whose construction bound is `extension` is

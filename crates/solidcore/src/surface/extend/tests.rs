@@ -2002,3 +2002,50 @@ fn a_label_its_form_does_not_prove_extends_as_the_form() {
     );
     assert!((a - b).length() < 1e-12, "{a:?} {b:?}");
 }
+
+/// A side extended after another reaches its distance at the face, not out on the box the
+/// earlier side grew: a bilinear patch on `[1, 3] x [2, 3.5]` whose v legs turn along u, UMin
+/// extended first (its UMax left, as the offset's gen0445 leaves it), then both v sides. Every
+/// iso line of a polynomial bilinear patch and of its Ruled extension is straight, so a side's
+/// reach at the middle of the face's side is the chord from the source's side to the result's
+/// end at that parameter, measured here without the length across.
+#[test]
+fn a_side_extended_after_another_reaches_its_distance_at_the_face() {
+    let kk = k();
+    let s = spline(
+        &[
+            vec![[0.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0]],
+            vec![[1.0, 0.0, 0.0, 1.0], [1.0, 0.2, 0.5, 1.0]],
+        ],
+        1,
+        1,
+        &[1.0, 1.0, 3.0, 3.0],
+        &[2.0, 2.0, 3.5, 3.5],
+        false,
+    );
+    let face = s.natural_uv_domain_with_nurb(&kk).unwrap();
+    let d = 50.0;
+    let asked = [BoxSide::UMin, BoxSide::VMin, BoxSide::VMax];
+    let e = s
+        .extended_sides_keeping_parameters(&kk, &asked, Continuity::Ruled, d)
+        .unwrap();
+    let grown = e.surface.natural_uv_domain_with_nurb(&kk).unwrap();
+    for side in asked {
+        let at = BoxSide::ALL.iter().position(|&x| x == side).unwrap();
+        assert!(
+            matches!(e.sides[at], SideExtension::Extended(_)),
+            "{side:?}: {:?}",
+            e.sides
+        );
+        let middle = side.point(&face, 0.5);
+        let end = if side.is_u() {
+            Vec2::new(side.at(&grown), middle.y)
+        } else {
+            Vec2::new(middle.x, side.at(&grown))
+        };
+        let reach = (e.surface.evaluate_point(&kk, end).unwrap()
+            - e.surface.evaluate_point(&kk, middle).unwrap())
+        .length();
+        assert!((reach - d).abs() <= 1e-6 * d, "{side:?} reaches {reach} of {d}");
+    }
+}
