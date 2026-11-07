@@ -9021,8 +9021,7 @@ mod swap_definition_tests {
         let mut sphere = Sphere::create_canonical(&k, &frame, 2.0).unwrap();
         collapse_onto_axis(sphere.base.base_mut());
         let mut torus =
-            Torus::create_canonical(&k, &frame, 4.0, 1.5, TorusOptions::default(), None)
-                .unwrap();
+            Torus::create_canonical(&k, &frame, 4.0, 1.5, TorusOptions::default(), None).unwrap();
         collapse_onto_axis(torus.base.base_mut());
         for (what, mut s) in [
             ("cone", Surface::from(cone)),
@@ -9035,7 +9034,10 @@ mod swap_definition_tests {
                 events += 1;
                 Ok(())
             });
-            assert!(r.is_err(), "{what}: the converter accepts the collapsed net");
+            assert!(
+                r.is_err(),
+                "{what}: the converter accepts the collapsed net"
+            );
             assert_eq!(events, 0, "{what}: notified a swap that failed");
             assert_eq!(format!("{s:?}"), before, "{what}: changed by a failed swap");
         }
