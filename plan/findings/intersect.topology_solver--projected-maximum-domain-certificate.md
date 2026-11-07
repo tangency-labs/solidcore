@@ -86,3 +86,69 @@ the measured scalar. The drawing is explanatory evidence, not the certificate.
 The original scalar is recorded in issue #2967; the new scalar is from the
 regression output. The plotting source is
 `diagnostics/projected_maximum_comparison_2967.py`.
+
+## Golden audit
+
+The three affected units were run into a separate candidate directory before
+changing expected records. `curve.curve_p1` has no changed records. There are
+12 changed box-pruning records in `intersect.topology_solver_p1`, and 25 changed
+plus one restored record in `intersect.topology_solver_p2`. No case broke.
+Only these audited records are updated; other issue-linked exclusions remain.
+
+The restored `analytic_face_sphere_band_5_15` is removed from `known_failing.json`.
+Its old scalar `0.8605419808705617` becomes `0.8605551275463991`, with the analytic
+reference `0.8605551275463990`. For `analytic_face_torus_x_5_15`, the scalar changes
+from `1.5652926944322216` to `1.5652946437965907`; the latter is the closed-form
+capsule distance `sqrt(0.2^2 + 1.3^2) + 0.25`. The UV changes from
+`(0.5, 0.9735618580045653)` to `(0.5, 0.9737927804326563)`. Both new records have
+success status and one solution; the tests independently check the surface
+value, UV feasibility and whole-domain bound.
+
+The box cases were independently reconstructed with 80-digit decimal arithmetic
+from the binary64 inputs. Project each corner of the box difference by the
+double-cross map, enclose each component, then bound its norm and compare with
+`sqrt(best) +/- tolerance`. All changed decisions agree. A zero normal gives
+zero distance everywhere, so it cannot improve an incumbent maximum of 2;
+tiny normals retain their squared scale.
+
+| Case | Changed output indices: old -> new |
+|---|---|
+| `gen0197` | 6: 1 -> 0 |
+| `gen0551` | 2: 0 -> 1; 3: 1 -> 0 |
+| `gen1019` | 3: 1 -> 0 |
+| `gen1335` | 7: 1 -> 0 |
+| `gen1343` | 3: 1 -> 0 |
+| `gen1363` | 0: 0 -> 1; 9: 1 -> 0 |
+| `gen2213` | 0, 2, 6: 1 -> 0 |
+| `gen2643` | 1, 3: 1 -> 0 |
+| `zerovec_may_tiny_14` | 1: 0 -> 1 |
+| `zerovec_may_tiny_15` | 1, 2: 1 -> 0 |
+| `zerovec_may_zero0_15` | 0, 1, 2: 1 -> 0 |
+| `zerovec_may_zero_15` | 0, 1, 2: 1 -> 0 |
+
+The other 24 changed records are `subdivided_{entry}_14_1_{sizes}_{tol}_{mode}`,
+with each row below covering modes `1` and `3`. The old tree pruning omitted
+answers within tolerance. An independent exhaustive enumeration of the fixture
+vertices (and the bounded line's endpoints and closest parameter for entry 1)
+reproduces the complete new answer sets. Every returned scalar matches its
+projected Euclidean distance, and every returned line parameter is in `[0,1]`.
+The query normal is Z. No tolerance or acceptance floor was changed.
+
+| Entry | Vertex counts | Tolerance | Old -> new solution count, each mode |
+|---|---|---:|---:|
+| 0: point/vertices | 12, 11 | 2 | 3 -> 11 |
+| 0 | 12, 11 | 50 | 3 -> 12 |
+| 0 | 40, 30 | 2 | 6 -> 36 |
+| 0 | 40, 30 | 50 | 6 -> 40 |
+| 1: line/vertices | 12, 11 | 2 | 12 -> 21 |
+| 1 | 12, 11 | 50 | 12 -> 26 |
+| 1 | 40, 30 | 2 | 40 -> 72 |
+| 1 | 40, 30 | 50 | 40 -> 88 |
+| 2: vertices/vertices | 12, 11 | 2 | 12 -> 80 |
+| 2 | 12, 11 | 50 | 12 -> 132 |
+| 2 | 40, 30 | 2 | 60 -> 584 |
+| 2 | 40, 30 | 50 | 60 -> 1200 |
+
+The minimum distances are unchanged: point/vertices `0.7615773105863908` (12
+vertices) or `0.4242640687119285` (40); line/vertices `0.5`; vertices/vertices
+`0.13975424859373686`. The changed digests reflect the restored answer sets.
