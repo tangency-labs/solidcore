@@ -317,7 +317,9 @@ fn local_operation_on(
 /// - an edge on a closed-form curve, or a vertex all of whose edges are, holds a tolerance
 ///   above its certified bound ([`validation::tolerance_beyond_bound`]): what the input's
 ///   own data lets it hold (its largest tolerance, the enclosed gaps of its edges' ends to
-///   their vertices and of the vertices its tolerances join), the faces' certified
+///   their vertices and of the vertices its tolerances join), the intersection tolerance of
+///   the body's zone with itself (stored on the edges the kernel intersects; weaker than
+///   invariant 9, follow-up tangency-labs/solidcore#3226), the faces' certified
 ///   deviation, and the enclosed gap of the result's own edge ends, added with rounding
 ///   counted, and the growth the final stitch reported for gaps within that
 ///   (`docs/validity-and-tolerances.md` sections 5.2 and 8). An edge on a traced curve has
@@ -372,7 +374,7 @@ fn refuse_unsound(
         Unsoundness::GeometryUnchecked
     } else if let Some(lost) = validation::lost_manifold(found.manifold, || Ok(input.manifold))? {
         lost
-    } else if let Some(grown) = validation::tolerance_beyond_bound(b, input, gaps)? {
+    } else if let Some(grown) = validation::tolerance_beyond_bound(k, b, input, gaps)? {
         // (certified: delta + eps of docs/validity-and-tolerances.md section 8, on the
         // entities whose curves are closed forms; a traced curve's edge has no proved delta,
         // tangency-labs/solidcore#3211, and is judged by the check above alone)

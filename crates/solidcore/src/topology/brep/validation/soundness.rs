@@ -282,7 +282,9 @@ fn edge_bound(b: &Brep, e: crate::topology::EdgeId, cap: f64) -> Result<Option<f
 /// tangency-labs/solidcore#3211.
 ///
 /// `input` is the standing of the body the operation edited: its
-/// [`Standing::tolerance_cap`] is what an entity the operation kept may hold. `gaps` are the
+/// [`Standing::tolerance_cap`] is what an entity the operation kept may hold, and the
+/// intersection tolerance of the body's zone with itself is what an edge the kernel
+/// intersected may hold (the kernel stores it, not the proved deviation). `gaps` are the
 /// gaps the operation's stitch closed ([`ClosedGap`], each bound enclosed with its
 /// rounding): a closure of a gap the cap already covers (`gap <= cap`) needs no growth, and
 /// what it applied is the rounding of computing the tolerance, which the bound allows,
@@ -294,11 +296,18 @@ fn edge_bound(b: &Brep, e: crate::topology::EdgeId, cap: f64) -> Result<Option<f
 ///
 /// Those of the topology reads.
 pub fn tolerance_beyond_bound(
+    k: &Kernel,
     b: &Brep,
     input: &Standing,
     gaps: &[ClosedGap],
 ) -> Result<Option<ToleranceBeyondBound>> {
-    let base = input.tolerance_cap.max(b.tolerance());
+    // The kernel stores the intersection tolerance of the two zones on every edge it
+    // intersects (`docs/validity-and-tolerances.md` section 5.1, `docs/ssi.md` section 6.2),
+    // not the proved deviation delta + eps: an edge may hold it, so the bound is not below it.
+    // This is weaker than invariant 9 (follow-up tangency-labs/solidcore#3226: closed-form
+    // constructions store delta + eps).
+    let zones = crate::geom::tol::xsect_tol_3d_from_zones(k, b.tolerance(), b.tolerance());
+    let base = input.tolerance_cap.max(b.tolerance()).max(zones);
     let mut allowance = Ivl::from(0.0);
     for gap in gaps.iter().filter(|g| g.gap <= base) {
         allowance = allowance + Ivl::from(gap.growth);
