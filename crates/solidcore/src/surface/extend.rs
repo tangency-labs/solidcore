@@ -19,7 +19,9 @@
 //!   surface is C1 across the side, so the surface is (where `w > 0`). A row whose end has no
 //!   tangent (its last leg is no longer than its rounding: a pole) is mirrored through its end
 //!   point, `2 P_n - C(b - s)`, which is C1 on the homogeneous row too. An extension longer than
-//!   the surface's parameter range mirrors in steps, each step the last.
+//!   the surface's parameter range mirrors in steps, each step the last. The mirror is made in
+//!   each row's local frame (translated by its end point), so its rounding bound is that of the
+//!   rows' own extent, not of the part's distance from the origin.
 //! - **Curvature:** the Tangent construction with the extension's second row solved from the C2
 //!   condition on the homogeneous rows (linear, in closed form): the homogeneous surface is C2
 //!   across the side, so the surface is curvature continuous.
@@ -64,7 +66,11 @@
 //! position) so that the length across the side at its middle
 //! ([`Surface::length_across_side`]) is the distance: until the length's certified enclosure
 //! lies within `max(1e-9 d, its truncation and rounding parts)` of `d`, as the measure reports
-//! them, with the truncation (series cutoff) part at most `1e-9 d` and the rounding part at
+//! them (no resolution term: the stop is exact). A stored net that cannot place its length
+//! that near `d` (one ulp of its points moves the length by more, [`Across::resolution`], as
+//! at a part far from the origin) is refused as not exact, naming the longest length it does
+//! reach, which a caller may ask for. The truncation (series cutoff) part is
+//! at most `1e-9 d` and the rounding part at
 //! most `1e-6 d` (owner); the extension's own rounding bound ([`Extended::extension`]) is a
 //! rounding part too, held to `1e-6 d`. An extension whose length at `d` cannot be measured
 //! so (a leaf that did not converge, a rounding part past `1e-6 d`, an extension bound past
@@ -86,8 +92,10 @@ use std::cell::Cell;
 
 use crate::error::{Result, SolidError};
 use crate::geom::extent2d::Extent2d;
+use crate::geom::tol::scaled_zero2;
 use crate::geom::vector2d::Point2;
 use crate::kernel::Kernel;
+use crate::math::EFF_ZERO_PARAM;
 use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::bezier::product_matrix;
 use crate::nurbs::crv_basic::Curve;
@@ -120,6 +128,9 @@ const SOLVE_TRIES: usize = 200;
 const BACK_OFFS: usize = 30;
 /// Halvings that find the longest extension with positive weights.
 const BISECTIONS: usize = 60;
+
+/// Growth steps of [`Local::least_step`] (each closes the rounding shortfall; two do).
+const LEAST_STEP_TRIES: usize = 8;
 /// A budget on one Tangent or Curvature extension's mirror steps: a limit on its size, not on
 /// any convergence. The step count follows from the ask: about `log2(e / range) + 1` for
 /// Tangent (each step mirrors the whole piece, doubling it), `ceil(e / h)` for Curvature (one
@@ -224,6 +235,12 @@ impl Surface {
     /// rounding part at most `1e-6 distance`. A B-spline extension is past the side of the
     /// surface's B-spline form, which `dom`'s side must be (the face its whole box there).
     ///
+    /// `None` where the distance is below the side's resolution ([`below_resolution`]): the
+    /// shortest extension the side's knot can carry is proved past it, so no extension is
+    /// made and the surface is used as it is. The same rule holds for an analytic widened on
+    /// its own parameters (Natural, or straight across the side) where the face box ends at
+    /// its form's end.
+    ///
     /// # Errors
     ///
     /// - `InvalidInput`: a distance not finite and positive; a side not the form's end; a
@@ -247,7 +264,23 @@ impl Surface {
         side: BoxSide,
         how: Continuity,
         distance: f64,
-    ) -> Result<Extended> {
+    ) -> Result<Option<Extended>> {
+        self.extended_by_distance_at(k, dom, dom, side, how, distance)
+    }
+
+    /// [`Surface::extended_by_distance`] with the length across measured at the middle of
+    /// `at`'s side (the same side coordinate as `dom`'s) rather than `dom`'s: where earlier
+    /// sides grew the box, `at` is the face's own extent along the side, so the distance is
+    /// met at the face, not where the surface has grown ([`Surface::extended_sides`]).
+    pub(super) fn extended_by_distance_at(
+        &self,
+        k: &Kernel,
+        dom: &Extent2d,
+        at: &Extent2d,
+        side: BoxSide,
+        how: Continuity,
+        distance: f64,
+    ) -> Result<Option<Extended>> {
         if !(distance.is_finite() && distance > 0.0) {
             return Err(SolidError::invalid_input(
                 OP,
@@ -255,10 +288,10 @@ impl Surface {
             ));
         }
         if let SurfaceKind::OffsetSurface(o) = self.kind() {
-            return offset_extended(k, o, dom, side, how, distance);
+            return offset_extended(k, o, dom, at, side, how, distance);
         }
         if let SurfaceKind::ProceduralBlend(pb) = self.kind() {
-            return blend::blend_extended(k, pb, dom, side, distance);
+            return blend::blend_extended(k, pb, dom, at, side, distance);
         }
         let analytic = AnalyticSupport::of(self).is_some();
         let form = crate::blend::fillet_section::station::as_b_spline(k, self)?.ok_or(
@@ -269,27 +302,9 @@ impl Surface {
         )?;
         let net = form.gw_nurb().ok_or_else(|| SolidError::sm_err(OP))?;
         let degree = if side.is_u() { net.p() } else { net.q() };
-        if analytic && (how == Continuity::Natural || degree == 1) {
-            // proved once, by the continuation
-            return widened(k, self, dom, side, distance);
-        }
-        if analytic {
-            AnalyticSupport::check(k, self)?;
-        }
-        let source = Local::of(net, side)?;
+        let local = Local::of(net, side);
         let fixed = side.at(dom);
-        let end = if side.is_high() {
-            source.end()?
-        } else {
-            -source.end()?
-        };
-        if fixed != end {
-            return Err(SolidError::invalid_input(
-                OP,
-                "the side is not the end of the surface's B-spline form",
-            ));
-        }
-        let made = |product: bool, e: f64| -> Result<Option<Made>> {
+        let made = |source: &Local, product: bool, e: f64| -> Result<Option<Made>> {
             let grown = if product {
                 Some(source.ruled_product(e)?).filter(Local::is_positive)
             } else {
@@ -310,14 +325,52 @@ impl Surface {
             )))
         };
         // a length past the measure's leaf budget is no measurement, as a leaf not converged
-        let across =
-            |m: &Option<Surface>| match m.as_ref().map(|s| s.length_across_side(k, dom, side, REL))
-            {
-                None | Some(Err(SolidError::NotConverged { .. })) => Ok(None),
-                Some(Ok(a)) => Ok(Some(a)),
-                Some(Err(e)) => Err(e),
-            };
-        let solved = match solve(&|e| made(false, e), &across, &source, distance) {
+        let across = |m: &Option<Surface>| match m
+            .as_ref()
+            .map(|s| s.length_across_side(k, at, side, REL))
+        {
+            None | Some(Err(SolidError::NotConverged { .. })) => Ok(None),
+            Some(Ok(a)) => Ok(Some(a)),
+            Some(Err(e)) => Err(e),
+        };
+        if analytic && (how == Continuity::Natural || degree == 1) {
+            // the one rule on every path: a distance the side's least step is proved past
+            // is below its resolution, the side left as it is (where the face box ends at
+            // the form's end, the step its knot can carry; inside the form the widening
+            // moves the box alone and has no such step). Where the form gives no local
+            // view of the side (not clamped there), there is no such step to test, and the
+            // widening needs none.
+            if let Ok(source) = &local {
+                let end = if side.is_high() {
+                    source.end()?
+                } else {
+                    -source.end()?
+                };
+                if fixed == end
+                    && below_least_step(&|e| made(source, false, e), &across, source, distance)?
+                {
+                    return Ok(None);
+                }
+            }
+            // proved once, by the continuation
+            return widened(k, self, dom, side, distance).map(Some);
+        }
+        let source = local?;
+        let end = if side.is_high() {
+            source.end()?
+        } else {
+            -source.end()?
+        };
+        if analytic {
+            AnalyticSupport::check(k, self)?;
+        }
+        if fixed != end {
+            return Err(SolidError::invalid_input(
+                OP,
+                "the side is not the end of the surface's B-spline form",
+            ));
+        }
+        let solved = match solve(&|e| made(&source, false, e), &across, &source, distance) {
             // past the rows' reach: the ruled surface itself (#2878), or the refusal naming
             // the longer of the two forms' distances
             Err(SolidError::ExtendRefused {
@@ -325,7 +378,7 @@ impl Surface {
                 distance: named,
                 ..
             }) if how == Continuity::Ruled && source.has_product_form() => {
-                match solve(&|e| made(true, e), &across, &source, distance) {
+                match solve(&|e| made(&source, true, e), &across, &source, distance) {
                     Err(SolidError::ExtendRefused {
                         refusal: ExtendRefusal::NotExact,
                         distance: reached,
@@ -339,7 +392,9 @@ impl Surface {
             }
             other => other,
         };
-        let ((surface, extension), enclosure) = solved?;
+        let Some(((surface, extension), enclosure)) = solved? else {
+            return Ok(None);
+        };
         let surface = surface.ok_or_else(op_err)?;
         // a bound that is not finite certifies nothing of the extension (its net's rounding
         // ran away, as near a vanishing weight): not exact (the solve met none such)
@@ -366,7 +421,7 @@ impl Surface {
                 "the extension moved the source's net",
             ));
         }
-        Ok(Extended {
+        Ok(Some(Extended {
             surface,
             source: if regraded {
                 source.product_source_bound()?
@@ -377,7 +432,7 @@ impl Surface {
             across: enclosure,
             dom: *dom,
             sides: BoxSide::ALL,
-        })
+        }))
     }
 }
 
@@ -393,13 +448,17 @@ fn offset_extended(
     k: &Kernel,
     o: &OffsetSurface,
     dom: &Extent2d,
+    at: &Extent2d,
     side: BoxSide,
     how: Continuity,
     distance: f64,
-) -> Result<Extended> {
-    let base = o
+) -> Result<Option<Extended>> {
+    let Some(base) = o
         .base_surface()
-        .extended_by_distance(k, dom, side, how, distance)?;
+        .extended_by_distance_at(k, dom, at, side, how, distance)?
+    else {
+        return Ok(None);
+    };
     let surface = Surface::from(OffsetSurface::new(
         k,
         o.offset_distance(),
@@ -407,7 +466,7 @@ fn offset_extended(
         true,
         SS_UNKNOWN,
     )?);
-    Ok(Extended { surface, ..base })
+    Ok(Some(Extended { surface, ..base }))
 }
 
 /// Natural on an analytic: the same surface widened, its face box on its own parameters and
@@ -488,6 +547,15 @@ enum Says {
     Unproved,
 }
 
+/// How near `d` an across length `b` counts as at `d`: the stop, or the enclosure's own
+/// truncation and rounding parts where wider. Nothing else widens it: a stored net whose
+/// length cannot come within it of `d` (its points' ulp moves the length by more, as at a part
+/// far from the origin) does not meet `d`, and the solve refuses naming the length it does
+/// reach ([`ExtendRefusal::NotExact`]).
+pub(super) fn stop_allowance(b: &Across, d: f64) -> f64 {
+    (STOP * d).max(b.truncation + b.rounding)
+}
+
 /// What the across length `b` (none: no measurement) of an extension whose bound is
 /// `extension` proves of the distance `d`.
 fn says(b: Option<&Across>, extension: f64, d: f64) -> Says {
@@ -498,7 +566,7 @@ fn says(b: Option<&Across>, extension: f64, d: f64) -> Says {
         return Says::Unproved;
     }
     let (lower, upper) = (b.enclosure.lower, b.enclosure.upper);
-    let tol = (STOP * d).max(b.truncation + b.rounding);
+    let tol = stop_allowance(b, d);
     if exact(b, extension, d) && lower >= d - tol && upper <= d + tol {
         Says::Met
     } else if upper < d {
@@ -518,6 +586,33 @@ fn workable(b: Option<&Across>, extension: f64) -> Option<f64> {
     (l > 0.0 && matches!(says(Some(b), extension, l), Says::Met)).then_some(l)
 }
 
+/// The one rule every exact path applies at a side's least step (owner, 2026-11-05): the side
+/// extended by [`Local::least_step`], the shortest extension its knot can carry (the kernel's
+/// parameter resolution, about `1.2e-8` of the parameter), measures `at_least` across with
+/// construction bound `extension`. A distance `d` that extension is proved past is below the
+/// resolution: no extension can be built for it, and the honest answer is none, the side left
+/// unchanged ([`SideExtension::Unchanged`]). A distance it does not prove past is extended
+/// as asked (at that step when it meets it).
+///
+/// [`SideExtension::Unchanged`]: sides::SideExtension::Unchanged
+pub(super) fn below_resolution(at_least: Option<&Across>, extension: f64, d: f64) -> bool {
+    matches!(says(at_least, extension, d), Says::Past(_))
+}
+
+/// Whether the side's least step ([`Local::least_step`]), made and measured, is proved
+/// past `d` ([`below_resolution`]).
+fn below_least_step(
+    made: &dyn Fn(f64) -> Result<Option<Made>>,
+    across: &dyn Fn(&Option<Surface>) -> Result<Option<Across>>,
+    source: &Local,
+    d: f64,
+) -> Result<bool> {
+    Ok(match made(source.least_step()?)? {
+        Some(s) => below_resolution(across(&s.0)?.as_ref(), s.1, d),
+        None => false,
+    })
+}
+
 fn not_exact(distance: Option<f64>) -> SolidError {
     SolidError::ExtendRefused {
         operation: OP,
@@ -533,12 +628,22 @@ fn not_exact(distance: Option<f64>) -> SolidError {
 /// is not measured to the stop ([`Says::Unproved`]) bounds the bracket too, when a shorter
 /// ask measured to the stop reaches `d`; otherwise the extension is refused as not exact,
 /// naming the longest such ask's distance.
+///
+/// No ask is below the shortest extension the side's knot can carry
+/// ([`Local::least_step`], for every continuity's new end knot): every halving and
+/// scaling stops there. A `d` that step is proved past is below the side's resolution
+/// ([`below_resolution`]): `None`, no extension. At that step a length not proved short of
+/// `d` otherwise meets it, with its own measured enclosure and bound.
 fn solve(
     made: &dyn Fn(f64) -> Result<Option<Made>>,
     across: &dyn Fn(&Option<Surface>) -> Result<Option<Across>>,
     source: &Local,
     d: f64,
-) -> Result<(Made, Across)> {
+) -> Result<Option<(Made, Across)>> {
+    if below_least_step(made, across, source, d)? {
+        return Ok(None);
+    }
+    let least = source.least_step()?;
     // the first ask: the parameter range times d over the source's length across it
     let range = source.range()?;
     let whole = made(range)?;
@@ -546,7 +651,7 @@ fn solve(
         Some(s) => {
             let l = across(&s.0)?.map_or(0.0, |b| b.enclosure.mid());
             if l > 0.0 && l.is_finite() {
-                range * d / l
+                (range * d / l).max(least)
             } else {
                 range
             }
@@ -560,7 +665,7 @@ fn solve(
         let (mut lo, mut hi) = (0.0_f64, e);
         let mut found: Option<(f64, f64, f64)> = None;
         for _ in 0..BISECTIONS {
-            let m = 0.5 * (lo + hi);
+            let m = (0.5 * (lo + hi)).max(least);
             if !(m > lo && m < hi) {
                 break;
             }
@@ -592,7 +697,8 @@ fn solve(
             0.5 * (good.get() + bad.get())
         } else {
             e
-        };
+        }
+        .max(least);
         if let Some(s) = made(e)? {
             good.set(good.get().max(e));
             let b = across(&s.0)?;
@@ -602,7 +708,7 @@ fn solve(
         // the longest positive ask, by halving between it and the last good one
         let (mut lo, mut hi) = (good.get(), e);
         for _ in 0..BISECTIONS {
-            let m = 0.5 * (lo + hi);
+            let m = (0.5 * (lo + hi)).max(least);
             if !(m > lo && m < hi) {
                 break;
             }
@@ -636,7 +742,7 @@ fn solve(
         let mut reaching: Option<Asked> = None;
         let mut back = 0.5;
         for _ in 0..BACK_OFFS {
-            let ask = lo * (1.0 - back);
+            let ask = (lo * (1.0 - back)).max(least);
             if let Some(s) = made(ask)? {
                 let b = across(&s.0)?;
                 if let Some(l) = workable(b.as_ref(), s.1) {
@@ -645,7 +751,11 @@ fn solve(
                         .as_ref()
                         .and_then(|r| r.2.as_ref())
                         .is_none_or(|r| l < r.enclosure.lower);
-                    if l >= d && tighter {
+                    // reaching d: past it, or meeting it to the stop (a back-off from a
+                    // longest positive ask a few ulps off the one a distance was named
+                    // from measures that distance to the stop, not always past it)
+                    let meets = matches!(says(b.as_ref(), s.1, d), Says::Met);
+                    if (l >= d || meets) && tighter {
                         reaching = Some((ask, s, b));
                     }
                 }
@@ -695,6 +805,9 @@ fn solve(
         ask = made_ask;
         let f = match says(b.as_ref(), s.1, d) {
             Says::Met => return finish(s, b),
+            Says::Past(_) | Says::Unproved if ask <= least && reaches(b.as_ref(), s.1, d) => {
+                return finish(s, b)
+            }
             Says::Short(f) => {
                 short = Some((ask, f));
                 if let Some(l) = workable(b.as_ref(), s.1) {
@@ -746,6 +859,10 @@ fn solve(
         });
     };
     let mut moved = Moved::Neither;
+    // the bracket closed on two neighbouring asks, one short of d and one past it, none
+    // meeting it: the net's lengths jump over d (its points' ulp moves the length by more
+    // than the stop)
+    let mut closed = false;
     for _ in 0..SOLVE_TRIES {
         let x = hi - fhi * (hi - lo) / (fhi - flo);
         let x = if x > lo.min(hi) && x < lo.max(hi) {
@@ -754,6 +871,7 @@ fn solve(
             0.5 * (lo + hi)
         };
         if !(x > lo.min(hi) && x < lo.max(hi)) {
+            closed = true;
             break;
         }
         let Some((x, s, b)) = try_ask(x)? else {
@@ -761,7 +879,13 @@ fn solve(
         };
         let (x, f) = match says(b.as_ref(), s.1, d) {
             Says::Met => return finish(s, b),
-            Says::Short(f) | Says::Past(f) => (x, f),
+            Says::Short(f) => {
+                if let Some(l) = workable(b.as_ref(), s.1) {
+                    reach = Some(reach.map_or(l, |r| r.max(l)));
+                }
+                (x, f)
+            }
+            Says::Past(f) => (x, f),
             Says::Unproved => unproved(x)?,
         };
         if f < 0.0 {
@@ -778,16 +902,30 @@ fn solve(
             moved = Moved::Hi;
         }
     }
+    if closed {
+        return Err(not_exact(reach));
+    }
     Err(SolidError::NotConverged {
         operation: OP,
         iterations: u32::try_from(SOLVE_TRIES).unwrap_or(u32::MAX),
     })
 }
 
+/// Whether the across length `b` of an extension whose bound is `extension` is measured
+/// (every leaf converged, the bound finite) and proved to reach `d`: its enclosure's lower
+/// end at `d` within its [`stop_allowance`]. At the side's least step a length
+/// that reaches `d` is the shortest the side carries; one whose enclosure merely holds `d`
+/// may be short of it, and is not accepted there.
+fn reaches(b: Option<&Across>, extension: f64, d: f64) -> bool {
+    b.is_some_and(|b| {
+        b.converged && extension.is_finite() && b.enclosure.lower >= d - stop_allowance(b, d)
+    })
+}
+
 /// A met ask's extension and its length (met implies a length).
-fn finish(s: Made, b: Option<Across>) -> Result<(Made, Across)> {
+fn finish(s: Made, b: Option<Across>) -> Result<Option<(Made, Across)>> {
     let b = b.ok_or_else(op_err)?;
-    Ok((s, b))
+    Ok(Some((s, b)))
 }
 
 /// An ask made: the ask, its extension and its across length (none: not measured).
@@ -840,6 +978,11 @@ struct Local {
     /// A bound on how far each extension point's homogeneous coordinates are from the exact
     /// construction's (0 for the source's own points, which are kept bit for bit).
     err: f64,
+    /// A bound on how far each extension point's weight is from the exact construction's:
+    /// 0 on a polynomial net (its weights are 1 in the construction and stored as none, so
+    /// the surface's are exactly 1 whatever the rows' fourth coordinate rounded to); on a
+    /// rational one [`Self::err`] where a construction does not bound the weights alone.
+    err_w: f64,
     /// The degree across the rows (the other direction's): `q + 1` consecutive rows make a
     /// point of the surface.
     q: usize,
@@ -886,6 +1029,7 @@ impl Local {
             p,
             rational,
             err: 0.0,
+            err_w: 0.0,
             q,
             frame: None,
             across: across.to_vec(),
@@ -928,6 +1072,81 @@ impl Local {
 
     fn range(&self) -> Result<f64> {
         Ok(self.end()? - self.start()?)
+    }
+
+    /// The shortest extension the side's end knot `b` can carry (its last span `[c, b]`).
+    /// Every continuity's new end knot is `b + e` (the mirror's `2b - (b - e)` too; a mirror
+    /// step snapped onto a knot, [`Self::reflection`], ends at `2b - x`, within the merge scale
+    /// of that), and it must survive the knot fixup every B-spline surface's knots go through
+    /// ([`BSplineSurface::from_gw_nurb`], [`fixup_knot_vector`] at [`EFF_ZERO_PARAM`]): a
+    /// knot nearer its neighbour than the ends' scaled zero is merged onto it (the new span
+    /// gone, the end knot repeated past `p + 1`), and a span shorter than `EFF_ZERO_PARAM`
+    /// is spread, moving the joint knot `b` (the source's net no longer kept). The span as
+    /// the fixup computes it, `fl(b + e) - b`, is at least both. `e` is also at least
+    /// `(b - c) EPSILON`, so Natural's de Casteljau parameter `1 + e / (b - c)` is past 1.
+    /// A solver asks nothing shorter. A target this step is proved past is below the side's
+    /// resolution: no extension ([`below_resolution`]).
+    ///
+    /// [`fixup_knot_vector`]: crate::nurbs::nurbs_crv::fixup_knot_vector
+    pub(super) fn least_step(&self) -> Result<f64> {
+        let a = self.start()?;
+        let b = self.end()?;
+        let c = self.before_end(0)?;
+        if !(a.is_finite() && b.is_finite() && b > c) {
+            return Err(op_err());
+        }
+        let mut e = EFF_ZERO_PARAM.max((b - c) * f64::EPSILON);
+        for _ in 0..LEAST_STEP_TRIES {
+            let end = b + e;
+            let span = end - b;
+            // the fixup's own tests, on the knots as they will be (the ends' scaled zero
+            // is even in sign, so a low side's negated knots give the same)
+            let need = merge_scale(a, end);
+            if span >= need && 1.0 + e / (b - c) > 1.0 {
+                return Ok(e);
+            }
+            // short by rounding (or by the end's own scaled zero): grow by the shortfall,
+            // and at least by the rounding of `b + e`
+            e += (need - span).max(end.abs() * f64::EPSILON);
+        }
+        Err(op_err())
+    }
+
+    /// The point a mirror step of `e` reflects the end at, and whether it was moved: `b - e`,
+    /// not before the start, and moved onto a knot of the piece when it lies within the knot
+    /// fixup's merge scale ([`merge_scale`], at the new end `2 b - refl`) of one without being
+    /// on it. "On the knot" is exact float equality, by intent: it is the exact reflection, and
+    /// any other value is a different point.
+    ///
+    /// A reflection beside a knot would make a span of that scale between the knot's image and
+    /// the new end, which the fixup merges (the end knot repeated past `p + 1` copies, #3093),
+    /// so such an ask never built a valid net; on the knot the mirror adds no knot and no such
+    /// span. The window is the fixup's own merge scale: a step whose reflection lies beyond it
+    /// of every knot is bit for bit what it was, and one within it changes the reflection by
+    /// less than it (in parameter), the new end `2 b - x` with it. A length solved on the
+    /// parameter then has a plateau at a snapped ask (every ask in the window gives the one
+    /// extension): a target length inside it is unreachable, and the solve ends in its own
+    /// [`ExtendRefusal::NotExact`] naming a length that works. The extension of `e` stays a
+    /// prefix of that of a longer `e'`, and Curvature's last-span step, `b - (b - c)` off `c`
+    /// by an ulp, lands on `c`.
+    fn reflection(&self, e: f64) -> Result<(f64, bool)> {
+        let a = self.start()?;
+        let b = self.end()?;
+        let refl = (b - e).max(a);
+        let need = merge_scale(a, 2.0 * b - refl);
+        // the knots are sorted: the nearest below `refl` and the first at or past it
+        let at = self.knots.partition_point(|&x| x < refl);
+        if self.knots.get(at) == Some(&refl) {
+            return Ok((refl, false));
+        }
+        let below = at.checked_sub(1).and_then(|i| self.knots.get(i)).copied();
+        let above = self.knots.get(at).copied().filter(|&x| x < b);
+        let near = [below, above]
+            .into_iter()
+            .flatten()
+            .filter(|&x| (x - refl).abs() < need)
+            .min_by(|&x, &y| (x - refl).abs().total_cmp(&(y - refl).abs()));
+        Ok(near.map_or((refl, false), |x| (x, true)))
     }
 
     /// The knot `back` places before the end's `p + 1` copies (`u_n` for 0).
@@ -1017,12 +1236,20 @@ impl Local {
         // each inserted point a convex combination of two, `p - mult` times over: the
         // points' rounding, gamma_(3 (p - mult)) of the largest coordinate, on top of theirs
         let err = self.err + gamma(3 * (self.p - mult)) * self.size();
+        // the weights the same way, of the largest weight: a weight's combination is made of
+        // weights alone
+        let err_w = if self.rational {
+            self.err_w + gamma(3 * (self.p - mult)) * self.weight_size()
+        } else {
+            0.0
+        };
         Ok(Self {
             rows,
             knots: net.u_knots().to_vec(),
             p: self.p,
             rational: self.rational,
             err,
+            err_w,
             q: self.q,
             frame: None,
             across: self.across.clone(),
@@ -1032,6 +1259,17 @@ impl Local {
     /// Whether every coordinate is finite.
     fn is_finite(&self) -> bool {
         self.rows.iter().flatten().flatten().all(|x| x.is_finite())
+    }
+
+    /// The largest weight (0 on a polynomial net).
+    fn weight_size(&self) -> f64 {
+        if !self.rational {
+            return 0.0;
+        }
+        self.rows
+            .iter()
+            .flatten()
+            .fold(0.0_f64, |m, x| m.max(x[3].abs()))
     }
 
     /// The largest homogeneous coordinate.
@@ -1044,13 +1282,15 @@ impl Local {
     }
 
     /// A bound on the 3D distance of the surface of these rows from the exact construction's,
-    /// from the homogeneous bound [`Self::err`]: `S = sum N H / sum N w`, so a change of at
-    /// most `err` in each coordinate moves it at most `err (sqrt 3 + |S|) / w_min`.
+    /// from the homogeneous bounds [`Self::err`] and [`Self::err_w`]: `S = sum N H / sum N
+    /// w`, so a change of at most `err` in each point coordinate and `err_w` in each weight
+    /// moves it at most `(sqrt 3 err + |S| err_w) / w_min` (a polynomial net's weights are
+    /// exactly 1: `sqrt 3 err`, whatever the part's position).
     fn bound(&self) -> f64 {
         if let Some(b) = self.frame {
             return b;
         }
-        if self.err == 0.0 {
+        if self.err == 0.0 && self.err_w == 0.0 {
             return 0.0;
         }
         let (mut wmin, mut pmax) = (f64::INFINITY, 0.0_f64);
@@ -1059,8 +1299,9 @@ impl Local {
             wmin = wmin.min(w);
             pmax = pmax.max((x[0].abs() + x[1].abs() + x[2].abs()) / w.abs());
         }
+        let err_w = if self.rational { self.err_w } else { 0.0 };
         // the rounding of this bound itself, a few ulps
-        self.err * (2.0 + pmax) / wmin * (1.0 + gamma(8))
+        (2.0 * self.err + pmax * err_w) / wmin * (1.0 + gamma(8))
     }
 
     /// The rounding of the Ruled product form ([`Self::ruled_product`]), relative to the
@@ -1133,34 +1374,19 @@ impl Local {
                 "the extension is not positive",
             ));
         }
+        // a new end knot the knot fixup merges onto the side's or spreads (a span of no
+        // length, or the joint moved), whatever the continuity
+        if e < self.least_step()? {
+            return Err(SolidError::invalid_input(
+                OP,
+                "the extension is shorter than the side's knot can carry",
+            ));
+        }
         let grown = match how {
             Continuity::Natural => self.natural(e)?,
             Continuity::Ruled => self.ruled(e)?,
             Continuity::Tangent | Continuity::Curvature => {
-                let mut cur = self.clone();
-                let mut left = e;
-                let mut steps = 0;
-                while left > 0.0 {
-                    steps += 1;
-                    if steps > MAX_STEPS {
-                        return Err(SolidError::Unsupported {
-                            operation: OP,
-                            reason: "the extension needs more mirror steps than its budget",
-                        });
-                    }
-                    // Curvature mirrors at most the last Bezier span a step, so its C2 point is
-                    // that span's end and the extension is continuous in e; Tangent mirrors
-                    // the whole piece (a prefix family in e either way)
-                    let most = if how == Continuity::Curvature {
-                        cur.end()? - cur.before_end(0)?
-                    } else {
-                        cur.range()?
-                    };
-                    let step = left.min(most);
-                    cur = cur.mirrored(step, how == Continuity::Curvature)?;
-                    left -= step;
-                }
-                cur
+                self.mirrored_by(how == Continuity::Curvature, e)?
             }
         };
         Ok(Some(grown).filter(Self::is_positive))
@@ -1185,10 +1411,129 @@ impl Local {
             p: self.p,
             rational: self.rational,
             err: self.err,
+            err_w: self.err_w,
             q: self.q,
             frame: None,
             across: self.across.clone(),
         })
+    }
+
+    /// Each row's origin: its end point (any point would do: it is exact by choice), for a
+    /// construction made in a local frame ([`Self::natural`], [`Self::mirrored_by`]).
+    fn row_origins(&self) -> Result<Vec<[f64; 3]>> {
+        self.rows
+            .iter()
+            .map(|r| {
+                let x = r.last().ok_or_else(op_err)?;
+                let w = if self.rational { x[3] } else { 1.0 };
+                if !(w.is_finite() && w > 0.0) {
+                    return Err(SolidError::invalid_input(
+                        OP,
+                        "a weight that is not positive",
+                    ));
+                }
+                Ok([x[0] / w, x[1] / w, x[2] / w])
+            })
+            .collect()
+    }
+
+    /// Tangent (`curvature` false) or Curvature past the side by `e`: mirror steps, each
+    /// mirroring at most the last piece, made in the rows' local frame, as [`Self::natural`]'s. Each
+    /// row is translated by its own origin ([`Self::row_origins`], `H' = H - w O_j`, weights
+    /// unchanged), so the mirror's rounding, its gain and the C2 row's are relative to the
+    /// rows' local size, not to the part's distance from the origin; the translations round
+    /// once each, the way back not amplified. The source's rows are kept as they are, and the
+    /// 3D bound ([`Self::bound`]) is that of the local construction ([`Self::frame`]), as
+    /// [`Self::natural`]'s.
+    fn mirrored_by(&self, curvature: bool, e: f64) -> Result<Self> {
+        let origins = self.row_origins()?;
+        let mut local = self.clone();
+        let mut moved = 0.0_f64;
+        for (r, o) in local.rows.iter_mut().zip(&origins) {
+            for x in r.iter_mut() {
+                let w = x[3];
+                for (v, &oc) in x.iter_mut().zip(o) {
+                    // the difference rounds by one ulp of its result; the product `w O` too,
+                    // unless the weight is exactly 1 (a polynomial net)
+                    *v -= w * oc;
+                    let product = if self.rational { (w * oc).abs() } else { 0.0 };
+                    moved = moved.max(v.abs() + product);
+                }
+            }
+        }
+        local.err = self.err + gamma(2) * moved;
+        let mut cur = local;
+        let mut left = e;
+        let mut steps = 0;
+        while left > 0.0 {
+            steps += 1;
+            if steps > MAX_STEPS {
+                return Err(SolidError::Unsupported {
+                    operation: OP,
+                    reason: "the extension needs more mirror steps than its budget",
+                });
+            }
+            // Curvature mirrors at most the last Bezier span a step, so its C2 point is
+            // that span's end and the extension is continuous in e; Tangent mirrors
+            // the whole piece (a prefix family in e either way)
+            let most = if curvature {
+                cur.end()? - cur.before_end(0)?
+            } else {
+                cur.range()?
+            };
+            let least = cur.least_step()?;
+            let b = cur.end()?;
+            let wanted = left.min(most);
+            // a reflection beside a knot is put on it (`reflection`): the step is
+            // then the distance to that knot
+            let (mut refl, snapped) = cur.reflection(wanted)?;
+            let mut step = if snapped { b - refl } else { wanted };
+            // what is left of the ask must be nothing or at least a least step: a
+            // shorter remainder would be a sliver span the knot fixup merges or
+            // spreads (the joint moved, the net not kept). The ask is split in two
+            // instead, the remainder two least steps (a snap moves a reflection by
+            // less than the merge scale, at most a least step, so it stays one;
+            // halves would mirror back onto the joint just left, the same
+            // coincidence), or refused naming the length reached so far: never a
+            // short surface
+            let sliver = |step: f64| left - step > 0.0 && left - step < least;
+            if sliver(step) {
+                let (r, _) = cur.reflection(left - 2.0 * least)?;
+                let first = b - r;
+                if left < 3.0 * least || first < least || sliver(first) {
+                    return Err(not_exact(Some(e - left + step)));
+                }
+                (refl, step) = (r, first);
+            }
+            cur = cur.mirrored(refl, curvature)?;
+            left -= step;
+        }
+        // the extension's points back in the part's frame, after the source's rows as they are
+        let (mut wmin, mut pmax, mut back) = (f64::INFINITY, 0.0_f64, 0.0_f64);
+        for x in cur.rows.iter().flatten() {
+            let w = if self.rational { x[3] } else { 1.0 };
+            wmin = wmin.min(w);
+            pmax = pmax.max((x[0].abs() + x[1].abs() + x[2].abs()) / w.abs());
+        }
+        let mut rows = Vec::new();
+        for ((src, grown), o) in self.rows.iter().zip(&cur.rows).zip(&origins) {
+            let mut row = src.clone();
+            for x in grown.get(src.len()..).ok_or_else(op_err)? {
+                let mut x = *x;
+                let w = x[3];
+                for (v, &oc) in x.iter_mut().zip(o) {
+                    back = back.max(v.abs() + (w * oc).abs());
+                    *v += w * oc;
+                }
+                row.push(x);
+            }
+            rows.push(row);
+        }
+        let diam = origin_diameter(&origins, self.q);
+        let mut out = cur;
+        out.rows = rows;
+        out.frame = Some(frame_bound(out.err, out.err_w, pmax + diam, back, wmin));
+        Ok(out)
     }
 
     /// Natural: the last span's Bezier points (from a copy with its start knot at multiplicity
@@ -1208,22 +1553,7 @@ impl Local {
         let b = self.end()?;
         let c = self.before_end(0)?;
         let p = self.p;
-        // each row's origin: its end point (any point would do: it is exact by choice)
-        let origins: Vec<[f64; 3]> = self
-            .rows
-            .iter()
-            .map(|r| {
-                let x = r.last().ok_or_else(op_err)?;
-                let w = if self.rational { x[3] } else { 1.0 };
-                if !(w.is_finite() && w > 0.0) {
-                    return Err(SolidError::invalid_input(
-                        OP,
-                        "a weight that is not positive",
-                    ));
-                }
-                Ok([x[0] / w, x[1] / w, x[2] / w])
-            })
-            .collect::<Result<_>>()?;
+        let origins = self.row_origins()?;
         // the rows translated: one product and one difference a coordinate
         let mut local = self.clone();
         let mut moved = 0.0_f64;
@@ -1269,6 +1599,13 @@ impl Local {
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         let amp = a.powi(p as i32);
         let err_local = amp * (span.err + gamma(3 * p + 3) * span.size());
+        // the weights' own: not translated, combined of weights alone (none on a polynomial
+        // net, its weights stored as exactly 1)
+        let err_local_w = if self.rational {
+            amp * (span.err_w + gamma(3 * p + 3) * span.weight_size())
+        } else {
+            0.0
+        };
         // the local frame's extent: its points' largest l1 size over their weight, the
         // smallest weight (the source's rows and the new ones), and the new rows translated
         // back, each coordinate one product and one sum
@@ -1299,26 +1636,17 @@ impl Local {
                     .collect()
             })
             .collect();
-        // rows of different origins mix at a point: the q + 1 rows of a span across, so the
-        // largest l1 distance between two origins within q + 1 consecutive rows
-        let mut diam = 0.0_f64;
-        for (i, oi) in origins.iter().enumerate() {
-            for oj in origins.iter().skip(i + 1).take(self.q) {
-                let dist = (oi[0] - oj[0]).abs() + (oi[1] - oj[1]).abs() + (oi[2] - oj[2]).abs();
-                diam = diam.max(dist);
-            }
-        }
+        let diam = origin_diameter(&origins, self.q);
         let knots = vec![b + e; p + 1];
         let mut out = self.joined(ext, &knots)?;
         out.err = err_local;
+        out.err_w = err_local_w;
         // `S = sum N (H' + w O_j) / sum N w`: an error of at most `err_local` in each local
-        // coordinate and weight moves it at most `err_local (sqrt 3 + |S - O_j| ...)`, with
-        // `|S - O_j| <= pmax + diam` for every row j at the point; the way back's rounding
-        // `gamma_2 back` in each coordinate moves it at most `sqrt 3` of that over the weight
-        out.frame = Some(
-            (err_local * (2.0 + pmax + diam) * (1.0 + gamma(4)) + 2.0 * gamma(2) * back) / wmin
-                * (1.0 + gamma(8)),
-        );
+        // point coordinate and `err_local_w` in each weight moves it at most `sqrt 3
+        // err_local + |S - O_j| err_local_w`, with `|S - O_j| <= pmax + diam` for every row j
+        // at the point; the way back's rounding `gamma_2 back` in each coordinate moves it at
+        // most `sqrt 3` of that over the weight
+        out.frame = Some(frame_bound(err_local, err_local_w, pmax + diam, back, wmin));
         Ok(out)
     }
 
@@ -1349,7 +1677,7 @@ impl Local {
         } else {
             1.0
         };
-        let (mut err, mut ext) = (0.0_f64, Vec::new());
+        let (mut err, mut err_w, mut ext) = (0.0_f64, 0.0_f64, Vec::new());
         for (pn, pn1) in ends {
             let leg = lin(rho, pn, -1.0, pn1);
             let q: Vec<H> = (1..=p)
@@ -1363,11 +1691,19 @@ impl Local {
             // (a product and a sum), gamma_6 of the terms' magnitudes
             let m = |x: H| x.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
             err = err.max(gamma(6) * (m(pn) + c * pf * (rho.abs() * m(pn) + m(pn1))));
+            // the weight coordinate the same way, of the weights alone
+            err_w = err_w
+                .max(gamma(6) * (pn[3].abs() + c * pf * (rho.abs() * pn[3].abs() + pn1[3].abs())));
             ext.push(q);
         }
         let knots = vec![b + e; p + 1];
         let mut out = self.joined(ext, &knots)?;
         out.err = self.err.max(err);
+        out.err_w = if self.rational {
+            self.err_w.max(err_w)
+        } else {
+            0.0
+        };
         Ok(out)
     }
 
@@ -1460,24 +1796,26 @@ impl Local {
             p,
             rational: true,
             err: 0.0,
+            err_w: 0.0,
             q: 2 * q,
             frame: None,
             across: product_knots(&self.across, &joints, q)?,
         };
         let mut out = form.joined(ext, &vec![b + e; p + 1])?;
         out.err = self.err * wmax + a * m * (1.0 + 4.0 * pf * e / h);
+        // the bound holds every homogeneous coordinate, the weights' included
+        out.err_w = out.err;
         Ok(out)
     }
 
-    /// One mirror step by `e <= range`: the piece over `[b - e, b]` (from a copy with `b - e`
-    /// at multiplicity `p`) mapped by each row's `L` and reversed; for Curvature its second
-    /// row then from the C2 condition.
-    fn mirrored(&self, e: f64, curvature: bool) -> Result<Self> {
+    /// One mirror step reflecting the end at `refl` (from [`Self::reflection`], `a <= refl <
+    /// b`): the piece over `[refl, b]` (from a copy with `refl` at multiplicity `p`) mapped by
+    /// each row's `L` and reversed; for Curvature its second row then from the C2 condition.
+    /// The new end knot is `2 b - refl`.
+    fn mirrored(&self, refl: f64, curvature: bool) -> Result<Self> {
         let b = self.end()?;
         let a = self.start()?;
         let p = self.p;
-        let refl = b - e;
-        let refl = if refl < a { a } else { refl };
         let piece_src = if refl > a {
             self.with_knot(refl)?
         } else {
@@ -1553,8 +1891,34 @@ impl Local {
         }
         let mut out = self.joined(ext, &knots)?;
         out.err = self.err.max(err);
+        // the mirror's map mixes the weight into the points: its weights bounded by `err`
+        out.err_w = if self.rational { out.err } else { 0.0 };
         Ok(out)
     }
+}
+
+/// Rows of different origins mix at a point: the q + 1 rows of a span across, so the largest l1
+/// distance between two origins within q + 1 consecutive rows.
+fn origin_diameter(origins: &[[f64; 3]], q: usize) -> f64 {
+    let mut diam = 0.0_f64;
+    for (i, oi) in origins.iter().enumerate() {
+        for oj in origins.iter().skip(i + 1).take(q) {
+            let dist = (oi[0] - oj[0]).abs() + (oi[1] - oj[1]).abs() + (oi[2] - oj[2]).abs();
+            diam = diam.max(dist);
+        }
+    }
+    diam
+}
+
+/// The 3D bound of a construction made in a local frame: `S = sum N (H' + w O_j) / sum N w`, an
+/// error of at most `err` in each local point coordinate and `err_w` in each weight moves it at
+/// most `sqrt 3 err + |S - O_j| err_w`, with `|S - O_j| <= reach` (the local points' largest l1
+/// size over their weight, and the origins' diameter) for every row `j` at the point; the way
+/// back's rounding `gamma_2 back` in each coordinate moves it at most `sqrt 3` of that; all over
+/// the least weight `wmin`.
+fn frame_bound(err: f64, err_w: f64, reach: f64, back: f64, wmin: f64) -> f64 {
+    ((2.0 * err + reach * err_w) * (1.0 + gamma(4)) + 2.0 * gamma(2) * back) / wmin
+        * (1.0 + gamma(8))
 }
 
 /// The map of the mirror at a row's end `pn` with the point `pn1` before it: the linear map of
@@ -1606,6 +1970,13 @@ fn mirror(pn: H, pn1: H) -> (impl Fn(H) -> H, f64, f64) {
         }
     };
     (map, amp, round)
+}
+
+/// The scale below which the knot fixup merges two knots of a vector from `a` to `end` (or
+/// spreads a span): the ends' scaled zero, at least `EFF_ZERO_PARAM`
+/// ([`fixup_knot_vector`](crate::nurbs::nurbs_crv::fixup_knot_vector)).
+fn merge_scale(a: f64, end: f64) -> f64 {
+    EFF_ZERO_PARAM.max(scaled_zero2(&a, &end))
 }
 
 /// The row's `w_(n-1) / w_n`.

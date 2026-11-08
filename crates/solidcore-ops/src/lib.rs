@@ -26,6 +26,7 @@
 //! its input copies it first ([`Body::copy`]).
 #![forbid(unsafe_code)]
 #![deny(clippy::disallowed_methods)]
+#![cfg_attr(not(test), deny(clippy::float_arithmetic))]
 
 pub mod blend;
 pub mod body;
@@ -48,7 +49,7 @@ pub mod untrim;
 pub use blend::{
     band_room, blend, blend_ordered, chamfer_sides, chamfer_sides_ordered, edge_faces_along,
     edge_faces_along_ordered, fillet_variable, fillet_variable_ordered, tangent_chain, BandRoom,
-    Blend, Blended, ChamferSecond, Corners, EndRoom, Hole, HoleEdge, Room, SetBack,
+    Blend, Blended, ChamferSecond, Corners, EndRoom, Hole, HoleEdge, Room, SetBack, Turn,
 };
 pub use body::{make_box, make_cone, make_cylinder, make_sphere, make_torus, Body};
 pub use boolean::BooleanOp;

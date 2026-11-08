@@ -53,7 +53,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 use solidcore_ops::blend::{
     blend_ordered, chamfer_sides_ordered, edge_faces_along_ordered, fillet_variable_ordered, Blend,
-    ChamferSecond, Corners, SetBack,
+    ChamferSecond, Corners, SetBack, Turn,
 };
 use solidcore_ops::boolean::{boolean, union_all, BooleanOp};
 use solidcore_ops::extend::{extend_sheet, Continuation};
@@ -935,16 +935,18 @@ fn call_with_copy(
                 &each,
                 &setbacks,
                 Corners::Filled,
+                Turn::Mitre,
             )
             .map(|_| ());
             in_place(Slot { order: None, ..s }, r)
         }
         "blend_dropping" => {
-            if p.get("turn").is_some() {
-                return Err(Stop::Unsupported(
-                    "blend_dropping with a corner turn: the ops blend takes none".to_owned(),
-                ));
-            }
+            // a trace older than SolidCraft's turn names none: its rounds turned mitred
+            let turn = match p.get("turn").map(Value::as_str) {
+                None | Some(Some("mitre")) => Turn::Mitre,
+                Some(Some("swept")) => Turn::Swept,
+                Some(_) => return Err(bad("turn")),
+            };
             let kind = match p["kind"].as_str() {
                 Some("round") => Blend::Round,
                 Some("curvature") => Blend::Curvature,
@@ -984,8 +986,17 @@ fn call_with_copy(
                     );
                 }
             }
-            let r = blend_ordered(&s.body, &order, kind, &unique, &each, &[], Corners::Filled)
-                .map(|_| ());
+            let r = blend_ordered(
+                &s.body,
+                &order,
+                kind,
+                &unique,
+                &each,
+                &[],
+                Corners::Filled,
+                turn,
+            )
+            .map(|_| ());
             in_place(Slot { order: None, ..s }, r)
         }
         "merge_faces" => {
@@ -1286,7 +1297,7 @@ fn record_order_lookup_distinguishes_unsupported_from_failed_preparation() {
 
 #[test]
 fn chamfer_dispatch_preserves_order_direction_sizes_and_operand() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     for (direction, second, x, z) in [
         (1.0, serde_json::json!({"distance": 3.0}), 15.0, 17.0),
         (-1.0, serde_json::json!({"distance": 3.0}), 17.0, 15.0),
@@ -1370,7 +1381,7 @@ fn chamfer_dispatch_preserves_order_direction_sizes_and_operand() {
 
 #[test]
 fn blend_replay_keeps_the_record_edge_after_reordering_and_aliasing() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let body = Arc::new(solidcore_ops::make_box([0.0; 3], [20.0; 3]).unwrap());
     let (before, original) = body.to_record().unwrap();
     let selected = before
@@ -1428,7 +1439,7 @@ fn blend_replay_keeps_the_record_edge_after_reordering_and_aliasing() {
 
 #[test]
 fn repeated_blend_picks_keep_first_size_and_source() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let record = solidcore_ops::make_box([0.0; 3], [20.0; 3])
         .unwrap()
         .to_record()
@@ -1460,7 +1471,7 @@ fn repeated_blend_picks_keep_first_size_and_source() {
 
 #[test]
 fn repeated_blend_picks_do_not_hide_invalid_later_sizes() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let record = solidcore_ops::make_box([0.0; 3], [20.0; 3])
         .unwrap()
         .to_record()
@@ -1479,8 +1490,62 @@ fn repeated_blend_picks_do_not_hide_invalid_later_sizes() {
     }
 }
 
+/// A traced turn is read as the operation takes it: absent (a trace older than the turn) or
+/// "mitre" the mitre, "swept" the swept turn, which SolidCraft refuses for a chamfer before the
+/// kernel; any other value is bad replay data, never a refusal.
+#[test]
+fn blend_replay_reads_the_traced_turn() {
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let body = Arc::new(solidcore_ops::make_box([0.0; 3], [20.0; 3]).unwrap());
+    let (record, order) = body.to_record().unwrap();
+    let edge = record
+        .edges
+        .iter()
+        .position(|e| {
+            e.vertices.iter().all(|&i| {
+                let p = record.vertices[i as usize].point;
+                p[1] == 0.0 && p[2] == 20.0
+            })
+        })
+        .unwrap();
+    let input = Slot {
+        body,
+        order: Some(order),
+    };
+    let step = |kind: &str, turn: Option<Value>| {
+        let mut params = serde_json::json!({
+            "kind": kind, "sizes": [2.0], "edges": {"kind": "edge", "picked": [{"index": edge}]}
+        });
+        if let Some(turn) = turn {
+            params["turn"] = turn;
+        }
+        serde_json::json!({"op": "blend_dropping", "params": params})
+    };
+    // one edge's round turns nowhere: each reading builds the same round
+    let expected = 8000.0 - 80.0 * (1.0 - std::f64::consts::FRAC_PI_4);
+    for turn in [None, Some("mitre"), Some("swept")] {
+        let made = call(&step("round", turn.map(Value::from)), &mut [input.clone()])
+            .unwrap()
+            .unwrap();
+        let v = made.body.volume(1e-9).unwrap();
+        assert!((v - expected).abs() / expected < 1e-9, "{turn:?}: {v}");
+    }
+    let chamfer = call(&step("chamfer", Some("swept".into())), &mut [input.clone()]).unwrap();
+    assert_eq!(
+        chamfer.err(),
+        Some(solidcore_ops::Error::Argument.to_string())
+    );
+    for bad in [Value::from("round"), Value::Null, Value::from(1)] {
+        assert!(
+            matches!(call(&step("round", Some(bad.clone())), &mut [input.clone()]),
+                Err(Stop::Fail(why)) if why.contains("turn")),
+            "{bad}"
+        );
+    }
+}
+
 fn handled_refusal_case() -> Value {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     serde_json::json!({
         "bodies": {},
         "calls": [
@@ -1588,7 +1653,7 @@ fn a_terminal_refusal_cannot_hide_later_invalid_markers() {
 /// per pair of faces (its Touching rule), 21 edges where the kernel's list has 20.
 #[test]
 fn a_body_touching_itself_along_a_line_is_counted_as_its_record() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let entry = corpus().join("ladder/02-booleans/018-hole-tangent-to-side-face.json");
     let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
     assert_eq!(e["outcome"]["raw_counts"]["edges"], 21);
@@ -1596,7 +1661,7 @@ fn a_body_touching_itself_along_a_line_is_counted_as_its_record() {
 }
 
 fn check_discarded_edit(record: Record, op: &str, params: &Value, made: &Value, retained: Value) {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let mut records = serde_json::Map::new();
     records.insert("input".to_owned(), serde_json::to_value(record).unwrap());
     let mut e = serde_json::json!({
@@ -1620,7 +1685,7 @@ fn check_discarded_edit(record: Record, op: &str, params: &Value, made: &Value, 
 
 #[test]
 fn a_discarded_shell_preserves_the_retained_box() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let record = solidcore_ops::make_box([0.0; 3], [30.0, 20.0, 10.0])
         .unwrap()
         .to_record()
@@ -1637,7 +1702,7 @@ fn a_discarded_shell_preserves_the_retained_box() {
 
 #[test]
 fn a_discarded_face_offset_preserves_the_retained_box() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let record = solidcore_ops::make_box([0.0; 3], [30.0, 20.0, 10.0])
         .unwrap()
         .to_record()
@@ -1659,7 +1724,7 @@ fn a_discarded_face_offset_preserves_the_retained_box() {
 
 #[test]
 fn a_copied_edit_preserves_the_supplied_face_pick_order() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let body = Arc::new(solidcore_ops::make_box([0.0; 3], [30.0, 20.0, 10.0]).unwrap());
     let (record, mut order) = body.to_record().unwrap();
     let top = record
@@ -1706,7 +1771,7 @@ fn a_copied_edit_preserves_the_supplied_face_pick_order() {
 }
 
 fn untrim_input(name: &str) -> (PathBuf, Value, Slot) {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let entry = corpus().join(format!("surfaces/{name}.json"));
     let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
     let name = e["bodies"].as_object().unwrap().keys().next().unwrap();
@@ -1832,7 +1897,7 @@ fn untrim_point_holes_do_not_hide_missing_required_parameters() {
 /// result; the runner must replay it rather than skip its operation as unported.
 #[test]
 fn filled_setback_replays_the_captured_corner() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let entry = corpus().join("ladder/07-fillets/013-corner-setback.json");
     let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
     assert_eq!(e["rig"]["status"], "pass");
@@ -1867,7 +1932,7 @@ fn filled_setback_input() -> (Value, Slot) {
 
 #[test]
 fn filled_setback_maps_edges_and_vertices_independently_and_keeps_the_operand() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let (step, input) = filled_setback_input();
     let (before, _) = input.body.to_record().unwrap();
     let original = input.order.as_ref().unwrap();
@@ -1925,7 +1990,7 @@ fn filled_setback_maps_edges_and_vertices_independently_and_keeps_the_operand() 
 
 #[test]
 fn filled_setback_ordered_api_rejects_foreign_entities_without_editing() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let (_, input) = filled_setback_input();
     let before = input.body.to_record().unwrap().0;
     let original = input.order.as_ref().unwrap();
@@ -1950,6 +2015,7 @@ fn filled_setback_ordered_api_rejects_foreign_entities_without_editing() {
                 distance: 8.0,
             }],
             Corners::Filled,
+            Turn::Mitre,
         );
         assert!(
             matches!(r, Err(solidcore_ops::Error::Argument)),
@@ -1961,7 +2027,7 @@ fn filled_setback_ordered_api_rejects_foreign_entities_without_editing() {
 
 #[test]
 fn filled_setback_duplicate_picks_keep_first_values_without_hiding_refusals() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let (step, input) = filled_setback_input();
     let expected = call(&step, &mut [input.clone()])
         .unwrap()
@@ -2023,7 +2089,7 @@ fn filled_setback_duplicate_picks_keep_first_values_without_hiding_refusals() {
 /// kernel construction instead of skipping the variable-radius request.
 #[test]
 fn variable_fillet_replays_all_five_captured_laws() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let names = [
         "fillets/cov-fillet-variable-box-edge-1-to-5-on-its-cone",
         "ladder/07-fillets/005-variable-r5-to-r1",
@@ -2059,7 +2125,7 @@ fn variable_fillet_step(edge: usize, start: [f64; 3]) -> Value {
 
 #[test]
 fn variable_fillet_replay_maps_the_copy_and_keeps_the_operand() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let body = Arc::new(solidcore_ops::make_box([0.0; 3], [20.0; 3]).unwrap());
     let (before, original) = body.to_record().unwrap();
     let edge = before
@@ -2108,7 +2174,7 @@ fn variable_fillet_replay_maps_the_copy_and_keeps_the_operand() {
 
 #[test]
 fn variable_fillet_metadata_cannot_be_accepted_as_the_laws_refusal() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let body = Arc::new(solidcore_ops::make_box([0.0; 3], [20.0; 3]).unwrap());
     let (before, order) = body.to_record().unwrap();
     let input = Slot {
@@ -2160,7 +2226,7 @@ fn variable_fillet_metadata_cannot_be_accepted_as_the_laws_refusal() {
 }
 
 fn sweep_replay_fixture(name: &str, op: &str) -> (PathBuf, Value, Value) {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let entry = corpus().join(format!("{name}.json"));
     let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
     let step = e["calls"]
@@ -2315,7 +2381,7 @@ fn sweep_replay_screw_step() -> Value {
 /// the axial lift: area 16 times centroid radius (22 + radial offset) times total angle.
 #[test]
 fn sweep_replay_screw_keeps_axis_pitch_turns_origin_and_radial_law() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     for (sign, pitch, turns, offset) in [
         (1.0, 8.0, 1.0, 0.0),
         (-1.0, 8.0, 0.5, 0.0),
@@ -2415,7 +2481,7 @@ fn station_sweep_step() -> Value {
 
 #[test]
 fn station_sweep_replays_all_five_captured_cases() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let names = [
         "surfaces/cov-sweep-circle-scaled-half-is-a-frustum",
         "sweeps/771-sweep-end-scale-cone-frustum",
@@ -2443,7 +2509,7 @@ fn station_sweep_replays_all_five_captured_cases() {
 #[test]
 #[allow(clippy::disallowed_methods)] // Independent closed-form oracle.
 fn station_sweep_forwards_scale_translation_and_end_caps() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let volume = 3500.0 * std::f64::consts::PI / 3.0;
     let wall = 15.0 * std::f64::consts::PI * 425.0_f64.sqrt();
     for capped in [true, false] {
@@ -2471,7 +2537,7 @@ fn station_sweep_forwards_scale_translation_and_end_caps() {
 
 #[test]
 fn station_sweep_keeps_affine_axis_images_in_order() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let mut step = station_sweep_step();
     let corners = [[0, 0, 0], [2, 0, 0], [2, 3, 0], [0, 3, 0]];
     step["params"]["profile"] = Value::Array(
@@ -2542,7 +2608,7 @@ fn station_sweep_metadata_is_distinct_from_operation_refusal() {
 }
 
 fn loft_step(name: &str) -> (PathBuf, Value, Value) {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let entry = corpus().join(format!("ladder/04-spline-profiles/{name}.json"));
     let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
     let step = e["calls"]
@@ -2624,7 +2690,7 @@ fn loft_parameters_are_required_and_refused_degrees_are_not_defaulted() {
 
 #[test]
 fn union_all_replays_an_odd_operand_list_without_consuming_inputs() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let mut inputs: Vec<Slot> = (0..3)
         .map(|x| Slot {
             body: Arc::new(solidcore_ops::make_box([f64::from(x), 0.0, 0.0], [2.0; 3]).unwrap()),
@@ -2651,7 +2717,7 @@ fn union_all_replays_captured_cases() {
     let fixes: Vec<String> =
         serde_json::from_str(&std::fs::read_to_string(corpus().join("fixes.json")).unwrap())
             .unwrap();
-    session::set_fixes(fixes.iter().map(String::as_str)).unwrap();
+    session::set_thread_fixes(fixes.iter().map(String::as_str)).unwrap();
     let mut files = Vec::new();
     entries(&corpus(), &mut files);
     files.sort();
@@ -2680,6 +2746,32 @@ fn union_all_replays_captured_cases() {
         checked > 0,
         "the union-all capture corpus must remain covered"
     );
+}
+
+/// The four turn cases replay their traced `turn`: the boss's base rounds and the pocket's
+/// floor rounds turn at the sharp upright edges mitred (the default) or swept, and the swept
+/// turn at the pocket's sharp concave corners is refused where the rig's was. Graded as the
+/// rig grades them (the volume to `expected.tolerance`, the records' counts), with its fixes.
+#[test]
+#[ignore = "replays corpus cases with the rig's fixes; run with the kernel rig (--ignored)"]
+fn turn_cases_replay_their_traced_turn() {
+    let fixes: Vec<String> =
+        serde_json::from_str(&std::fs::read_to_string(corpus().join("fixes.json")).unwrap())
+            .unwrap();
+    session::set_thread_fixes(fixes.iter().map(String::as_str)).unwrap();
+    let listed = known_failing();
+    for (case, refused) in [
+        ("cov-fillet-turn-mitre-boss-base-r1", false),
+        ("cov-fillet-turn-swept-boss-base-r1", false),
+        ("cov-fillet-turn-mitre-pocket-floor-corners-r1", false),
+        ("cov-fillet-turn-swept-pocket-sharp-corner-refused-r1", true),
+    ] {
+        let entry = corpus().join(format!("fillets/{case}.json"));
+        let graded = grade(&entry, &listed, Duration::from_secs(180));
+        assert_eq!(graded.kind, Kind::Pass, "{case}: {}", graded.note);
+        // a built case is graded on its volume; a refused one has none
+        assert_eq!(graded.deviation.is_none(), refused, "{case}");
+    }
 }
 
 #[test]
@@ -2745,7 +2837,7 @@ fn a_pre_edit_copy_failure_cannot_count_as_the_edits_refusal() {
 
 #[test]
 fn an_invalid_copy_order_cannot_count_as_an_expected_refusal() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let body = Arc::new(solidcore_ops::make_box([0.0; 3], [1.0; 3]).unwrap());
     let (_, mut order) = body.to_record().unwrap();
     order
@@ -2796,7 +2888,7 @@ fn an_invalid_copy_order_cannot_count_as_an_expected_refusal() {
 
 #[test]
 fn a_missing_adjacent_face_cannot_count_as_a_chamfer_refusal() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let body = Arc::new(solidcore_ops::make_box([0.0; 3], [20.0; 3]).unwrap());
     let (_, mut order) = body.to_record().unwrap();
     let pair = edge_faces_along_ordered(&body, &order, 0, [0.0, 0.0, 1.0]).unwrap();
@@ -2856,7 +2948,7 @@ fn a_discarded_thicken_preserves_the_retained_sheet() {
 /// and neither the solid nor the tool record may change.
 #[test]
 fn split_sheet_keeps_distinct_parts_in_normal_order_and_preserves_inputs() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     for reversed in [false, true] {
         let mut k = solidcore::Kernel::default();
         let (a, b) = if reversed { (11.0, -1.0) } else { (-1.0, 11.0) };
@@ -2931,7 +3023,7 @@ fn split_sheet_keeps_distinct_parts_in_normal_order_and_preserves_inputs() {
 /// The recorded spline sheet cuts the cup into two parts and remains as the third body.
 #[test]
 fn split_sheet_replays_the_cup_and_retains_the_tool() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let entry = corpus().join("booleans/3830-split-cup-by-extended-spline-surface.json");
     let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
     assert_eq!(e["result"].as_array().unwrap().len(), 3);
@@ -2940,7 +3032,7 @@ fn split_sheet_replays_the_cup_and_retains_the_tool() {
 
 /// The corpus's stitch of two 10 x 10 sheets that share the edge x = 10, and its operand.
 fn two_squares() -> (PathBuf, Value, Slot) {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let entry = corpus().join("surfaces/cov-stitch-two-squares-along-a-shared-edge.json");
     let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
     let record: Record = serde_json::from_value(records(&entry, &e)["b1"].clone()).unwrap();
@@ -2986,7 +3078,7 @@ fn a_stitch_refusal_is_the_operations_and_a_missing_tolerance_is_not() {
 
 /// The captured two-face draft, with its operand's original record order.
 fn draft_case() -> (PathBuf, Value, Value, Slot) {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let entry = corpus().join("booleans/cov-draft-two-adjacent-faces-meet-at-a-corner.json");
     let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
     let recs = records(&entry, &e);
@@ -3156,7 +3248,10 @@ fn grade(entry: &Path, listed: &BTreeMap<String, Listed>, timeout: Duration) -> 
     let (tx, rx) = mpsc::channel();
     let path = entry.to_path_buf();
     let started = Instant::now();
+    // the case runs on its own thread, with the fixes of the test that grades it
+    let fixes = session::fixes();
     std::thread::spawn(move || {
+        session::set_thread_fixes(fixes).unwrap();
         let r = std::panic::catch_unwind(|| run_case(&path, &e));
         let _ = tx.send(r);
     });
@@ -3219,7 +3314,7 @@ fn grade(entry: &Path, listed: &BTreeMap<String, Listed>, timeout: Duration) -> 
 /// the top; the original body record and its volume/area are unchanged.
 #[test]
 fn split_faces_forwards_the_tool_and_record_face_order() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let body = Arc::new(solidcore_ops::make_box([0.0; 3], [10.0, 20.0, 30.0]).unwrap());
     let (before, original_order) = body.to_record().unwrap();
     let top = before
@@ -3270,7 +3365,7 @@ fn split_faces_forwards_the_tool_and_record_face_order() {
 /// Distinct physical faces and finite tool domains change the observed cut, not just picks.
 #[test]
 fn split_faces_distinguishes_faces_and_finite_tool_extents() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let body = Arc::new(solidcore_ops::make_box([0.0; 3], [10.0, 20.0, 30.0]).unwrap());
     let (before, order) = body.to_record().unwrap();
     for (face_axis, face_position, cut_axis, cut_position, origin, xaxis, yaxis, domain) in [
@@ -3395,7 +3490,7 @@ fn split_faces_cylinder_parameters_keep_their_record_units() {
 
 /// Replays one captured face split through the same loading and grading path as the corpus.
 fn replay_face_split_case(name: &str) {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let entry = corpus().join(format!("booleans/{name}.json"));
     let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
     assert!(run_case(&entry, &e).unwrap().is_some());
@@ -3416,7 +3511,7 @@ fn split_faces_replays_another_bodys_face() {
 /// A plane's normal orders two unequal parts; both names must bind distinct bodies.
 #[test]
 fn split_body_keeps_distinct_parts_and_preserves_input() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let body = Arc::new(solidcore_ops::make_box([0.0; 3], [10.0; 3]).unwrap());
     let (before, order) = body.to_record().unwrap();
     for reversed in [false, true] {
@@ -3471,7 +3566,7 @@ fn split_body_keeps_distinct_parts_and_preserves_input() {
 /// Keeping the new split edge prevents merging only that seam, even after record reordering.
 #[test]
 fn merge_faces_keeps_record_edges_and_preserves_input() {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let body = Arc::new(solidcore_ops::make_box([0.0; 3], [10.0, 20.0, 30.0]).unwrap());
     let (record, order) = body.to_record().unwrap();
     let top = record
@@ -3611,7 +3706,7 @@ fn split_body_replays_own_extended_face() {
 
 /// The captured quarter-cylinder sheet and its original record order.
 fn extension_sheet_fixture() -> (PathBuf, Value, Slot) {
-    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let entry = corpus().join("surfaces/cov-extend-quarter-cylinder-along-its-axis.json");
     let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
     let record: Record = serde_json::from_value(records(&entry, &e)["b2"].clone()).unwrap();
@@ -3769,7 +3864,7 @@ fn kernel_cases() {
     let fixes: Vec<String> =
         serde_json::from_str(&std::fs::read_to_string(corpus().join("fixes.json")).unwrap())
             .unwrap();
-    session::set_fixes(fixes.iter().map(String::as_str)).unwrap();
+    session::set_thread_fixes(fixes.iter().map(String::as_str)).unwrap();
     let listed = known_failing();
     let areas: Option<Vec<String>> = std::env::var("KERNEL_CASES_AREA").ok().map(|a| {
         a.split(',')
