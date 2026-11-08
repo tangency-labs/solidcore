@@ -2752,4 +2752,43 @@ mod tests {
             "{why:?}"
         );
     }
+
+    /// The gate holds a closed-form edge (a line) and its vertices to the docs' bound
+    /// (`docs/validity-and-tolerances.md` section 8: delta + eps, here 0, raised to the body's
+    /// tolerance, or the input's own tolerance for an edge it kept): a cube's edge whose
+    /// tolerance is grown twenty times past the body's is refused as not sound,
+    /// whatever its check says, and the cube as it came is returned.
+    #[test]
+    fn a_line_edge_grown_past_its_bound_is_refused() {
+        let mut k = Kernel::default();
+        let input_body = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 2.0, 2.0, 2.0).unwrap();
+        let input =
+            validation::standing(&mut k, &mut input_body.clone_standing_for_self().unwrap())
+                .unwrap();
+        let mut grown = input_body.clone_standing_for_self().unwrap();
+        let edge = bp1::edges(&grown, None).unwrap()[0];
+        let grown_to = 20.0 * grown.tolerance();
+        // (written to the records: `edge::set_tolerance` also moves the body's own)
+        grown.edge_mut(edge).unwrap().tolerance = grown_to;
+        for v in crate::topology::edge::vertices(&grown, edge, None)
+            .unwrap()
+            .into_iter()
+            .flatten()
+        {
+            grown.vertex_mut(v).unwrap().tolerance = grown_to;
+        }
+        let gate = refuse_unsound(&mut k, &grown, &input);
+        let why = gate
+            .err()
+            .and_then(|e| match e.failure().map(|f| &f.reason) {
+                Some(crate::error::Reason::Offset(why)) => Some(*why),
+                _ => None,
+            });
+        assert!(
+            matches!(why, Some(OffsetFailure::Unsound { .. })),
+            "{why:?}"
+        );
+        // the untouched cube passes
+        refuse_unsound(&mut k, &input_body, &input).unwrap();
+    }
 }
