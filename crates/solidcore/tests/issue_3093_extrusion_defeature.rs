@@ -150,3 +150,44 @@ fn the_extrusion_defeatures_to_the_same_solid_at_any_reach() {
         assert!((w - v).abs() <= 1e-9 * v, "reach {d}: {w} against {v}");
     }
 }
+
+/// Upstream's `my_test_multi_rebuilds` (case 2): the three features by their loop edges, each
+/// rebuilt with planar caps. One feature's cap cannot be built. Upstream leaves its hole open
+/// for the caller to put back with `RestoreFeatures`; here `do_defeature` puts it back itself
+/// and names it, and the other two come off: the closed body upstream's restore makes.
+#[test]
+fn a_feature_whose_cap_cannot_be_built_is_kept_and_named() {
+    let mut k = Kernel::default();
+    let Some(mut b) = extrusion(&mut k) else {
+        return;
+    };
+    let faces = bp1::faces(&b, None).unwrap();
+    let edges = bp1::edges(&b, None).unwrap();
+    let kept = {
+        let mut ex = FeatureExecutive::new(&mut k, &mut b).unwrap();
+        for (face, loop_edges) in [
+            (10, &[8, 25][..]),
+            (9, &[4, 5, 6, 7, 17, 19, 21, 23]),
+            (4, &[2, 12, 13, 14]),
+        ] {
+            let es: Vec<_> = loop_edges.iter().map(|&i| edges[i]).collect();
+            ex.add_feature_with_edges(
+                &mut k,
+                faces[face],
+                &es,
+                RebuildBrepType::PlanarCap,
+                RebuildBrepType::PlanarCap,
+            )
+            .unwrap()
+            .unwrap();
+        }
+        ex.do_defeature(&mut k).unwrap()
+    };
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert!(kept[0].open_loop.is_some());
+    let s = validation::soundness(&mut k, &mut b).unwrap();
+    assert!(s.manifold);
+    assert!(s.check.lines().is_empty(), "{:?}", s.check);
+    let v = s.volume.unwrap();
+    assert!((v - 757.499_499_825_162).abs() <= 1e-9 * v, "{v}");
+}
