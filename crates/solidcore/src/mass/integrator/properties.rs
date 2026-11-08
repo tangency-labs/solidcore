@@ -208,6 +208,7 @@ pub fn curve_properties(
             scale: Some(&scale),
             quadrature: true,
             rounding: None,
+            rate: None,
         },
         |t, _, dy| {
             eval.evaluate(k, t, &mut scratch)?;
@@ -451,6 +452,7 @@ pub fn boundary_properties(
                             scale: Some(&scale),
                             quadrature: true,
                             rounding: None,
+                            rate: None,
                         },
                         |t, _, dy| {
                             eval_calls += 1;
@@ -1121,6 +1123,16 @@ pub struct EstimatedMassProperties {
     pub inertia: Vec3,
     /// Raw positive products (yz, zx, xy) about the same point.
     pub products: Vec3,
+}
+
+impl EstimatedMassProperties {
+    /// The inertia tensor about the point the moments are taken about (row-major): the axial
+    /// inertias on the diagonal, the negated products off it.
+    #[must_use]
+    pub fn inertia_tensor(&self) -> [[f64; 3]; 3] {
+        let (i, p) = (self.inertia, self.products);
+        [[i.x, -p.z, -p.y], [-p.z, i.y, -p.x], [-p.y, -p.x, i.z]]
+    }
 }
 
 /// Mass properties as `request` asks (one implementation:

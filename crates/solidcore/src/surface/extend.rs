@@ -19,7 +19,9 @@
 //!   surface is C1 across the side, so the surface is (where `w > 0`). A row whose end has no
 //!   tangent (its last leg is no longer than its rounding: a pole) is mirrored through its end
 //!   point, `2 P_n - C(b - s)`, which is C1 on the homogeneous row too. An extension longer than
-//!   the surface's parameter range mirrors in steps, each step the last.
+//!   the surface's parameter range mirrors in steps, each step the last. The mirror is made in
+//!   each row's local frame (translated by its end point), so its rounding bound is that of the
+//!   rows' own extent, not of the part's distance from the origin.
 //! - **Curvature:** the Tangent construction with the extension's second row solved from the C2
 //!   condition on the homogeneous rows (linear, in closed form): the homogeneous surface is C2
 //!   across the side, so the surface is curvature continuous.
@@ -63,12 +65,11 @@
 //! **The distance.** The extension parameter is solved (bracketed, then Illinois false
 //! position) so that the length across the side at its middle
 //! ([`Surface::length_across_side`]) is the distance: until the length's certified enclosure
-//! lies within `max(1e-9 d, its truncation and rounding parts and the stored net's
-//! resolution)` of `d`, as the measure reports them (the resolution: how far one ulp of the
-//! stored points' coordinates moves the length, [`Across::resolution`]; no net of floats is
-//! nearer to `d` than that, about `2.7e-14` at a part 230 from the origin: a stop allowance,
-//! since stopping a length solve tighter than one ulp of the stored net can move the length
-//! is not resolvable; the certificate is unchanged), with the truncation (series cutoff) part
+//! lies within `max(1e-9 d, its truncation and rounding parts)` of `d`, as the measure reports
+//! them (no resolution term: the stop is exact). A stored net that cannot place its length
+//! that near `d` (one ulp of its points moves the length by more, [`Across::resolution`], as
+//! at a part far from the origin) is refused as not exact, naming the longest length it does
+//! reach, which a caller may ask for. The truncation (series cutoff) part is
 //! at most `1e-9 d` and the rounding part at
 //! most `1e-6 d` (owner); the extension's own rounding bound ([`Extended::extension`]) is a
 //! rounding part too, held to `1e-6 d`. An extension whose length at `d` cannot be measured
@@ -562,13 +563,13 @@ enum Says {
     Unproved,
 }
 
-/// How near `d` an across length `b` counts as at `d`: the stop, or the enclosure's parts and
-/// the stored net's own resolution of the length (no net of floats is nearer to a length than
-/// that, [`Across::resolution`]) where wider. Stopping tighter than one ulp of the net can move
-/// the length is not resolvable; the certificate (the enclosure, `exact`, the 1e-6 d rounding
-/// criterion) is unchanged.
-fn stop_allowance(b: &Across, d: f64) -> f64 {
-    (STOP * d).max(b.truncation + b.rounding + b.resolution)
+/// How near `d` an across length `b` counts as at `d`: the stop, or the enclosure's own
+/// truncation and rounding parts where wider. Nothing else widens it: a stored net whose
+/// length cannot come within it of `d` (its points' ulp moves the length by more, as at a part
+/// far from the origin) does not meet `d`, and the solve refuses naming the length it does
+/// reach ([`ExtendRefusal::NotExact`]).
+pub(super) fn stop_allowance(b: &Across, d: f64) -> f64 {
+    (STOP * d).max(b.truncation + b.rounding)
 }
 
 /// What the across length `b` (none: no measurement) of an extension whose bound is
@@ -896,6 +897,10 @@ fn solve(
         });
     };
     let mut moved = Moved::Neither;
+    // the bracket closed on two neighbouring asks, one short of d and one past it, none
+    // meeting it: the net's lengths jump over d (its points' ulp moves the length by more
+    // than the stop)
+    let mut closed = false;
     for _ in 0..SOLVE_TRIES {
         let x = hi - fhi * (hi - lo) / (fhi - flo);
         let x = if x > lo.min(hi) && x < lo.max(hi) {
@@ -904,6 +909,7 @@ fn solve(
             0.5 * (lo + hi)
         };
         if !(x > lo.min(hi) && x < lo.max(hi)) {
+            closed = true;
             break;
         }
         let Some((x, s, b)) = try_ask(x)? else {
@@ -911,7 +917,13 @@ fn solve(
         };
         let (x, f) = match says(b.as_ref(), s.1, d) {
             Says::Met => return finish(s, b),
-            Says::Short(f) | Says::Past(f) => (x, f),
+            Says::Short(f) => {
+                if let Some(l) = workable(b.as_ref(), s.1) {
+                    reach = Some(reach.map_or(l, |r| r.max(l)));
+                }
+                (x, f)
+            }
+            Says::Past(f) => (x, f),
             Says::Unproved => unproved(x)?,
         };
         if f < 0.0 {
@@ -927,6 +939,9 @@ fn solve(
             }
             moved = Moved::Hi;
         }
+    }
+    if closed {
+        return Err(not_exact(reach));
     }
     Err(SolidError::NotConverged {
         operation: OP,
@@ -1098,8 +1113,9 @@ impl Local {
     }
 
     /// The shortest extension the side's end knot `b` can carry (its last span `[c, b]`).
-    /// Every continuity's new end knot is `b + e` (the mirror's `2b - (b - e)` too), and it
-    /// must survive the knot fixup every B-spline surface's knots go through
+    /// Every continuity's new end knot is `b + e` (the mirror's `2b - (b - e)` too; a mirror
+    /// step snapped onto a knot, [`Self::reflection`], ends at `2b - x`, within the merge scale
+    /// of that), and it must survive the knot fixup every B-spline surface's knots go through
     /// ([`BSplineSurface::from_gw_nurb`], [`fixup_knot_vector`] at [`EFF_ZERO_PARAM`]): a
     /// knot nearer its neighbour than the ends' scaled zero is merged onto it (the new span
     /// gone, the end knot repeated past `p + 1`), and a span shorter than `EFF_ZERO_PARAM`
@@ -1123,7 +1139,7 @@ impl Local {
             let span = end - b;
             // the fixup's own tests, on the knots as they will be (the ends' scaled zero
             // is even in sign, so a low side's negated knots give the same)
-            let need = EFF_ZERO_PARAM.max(scaled_zero2(&a, &end));
+            let need = merge_scale(a, end);
             if span >= need && 1.0 + e / (b - c) > 1.0 {
                 return Ok(e);
             }
@@ -1132,6 +1148,43 @@ impl Local {
             e += (need - span).max(end.abs() * f64::EPSILON);
         }
         Err(op_err())
+    }
+
+    /// The point a mirror step of `e` reflects the end at, and whether it was moved: `b - e`,
+    /// not before the start, and moved onto a knot of the piece when it lies within the knot
+    /// fixup's merge scale ([`merge_scale`], at the new end `2 b - refl`) of one without being
+    /// on it. "On the knot" is exact float equality, by intent: it is the exact reflection, and
+    /// any other value is a different point.
+    ///
+    /// A reflection beside a knot would make a span of that scale between the knot's image and
+    /// the new end, which the fixup merges (the end knot repeated past `p + 1` copies, #3093),
+    /// so such an ask never built a valid net; on the knot the mirror adds no knot and no such
+    /// span. The window is the fixup's own merge scale: a step whose reflection lies beyond it
+    /// of every knot is bit for bit what it was, and one within it changes the reflection by
+    /// less than it (in parameter), the new end `2 b - x` with it. A length solved on the
+    /// parameter then has a plateau at a snapped ask (every ask in the window gives the one
+    /// extension): a target length inside it is unreachable, and the solve ends in its own
+    /// [`ExtendRefusal::NotExact`] naming a length that works. The extension of `e` stays a
+    /// prefix of that of a longer `e'`, and Curvature's last-span step, `b - (b - c)` off `c`
+    /// by an ulp, lands on `c`.
+    fn reflection(&self, e: f64) -> Result<(f64, bool)> {
+        let a = self.start()?;
+        let b = self.end()?;
+        let refl = (b - e).max(a);
+        let need = merge_scale(a, 2.0 * b - refl);
+        // the knots are sorted: the nearest below `refl` and the first at or past it
+        let at = self.knots.partition_point(|&x| x < refl);
+        if self.knots.get(at) == Some(&refl) {
+            return Ok((refl, false));
+        }
+        let below = at.checked_sub(1).and_then(|i| self.knots.get(i)).copied();
+        let above = self.knots.get(at).copied().filter(|&x| x < b);
+        let near = [below, above]
+            .into_iter()
+            .flatten()
+            .filter(|&x| (x - refl).abs() < need)
+            .min_by(|&x, &y| (x - refl).abs().total_cmp(&(y - refl).abs()));
+        Ok(near.map_or((refl, false), |x| (x, true)))
     }
 
     /// The knot `back` places before the end's `p + 1` copies (`u_n` for 0).
@@ -1371,40 +1424,7 @@ impl Local {
             Continuity::Natural => self.natural(e)?,
             Continuity::Ruled => self.ruled(e)?,
             Continuity::Tangent | Continuity::Curvature => {
-                let mut cur = self.clone();
-                let mut left = e;
-                let mut steps = 0;
-                while left > 0.0 {
-                    steps += 1;
-                    if steps > MAX_STEPS {
-                        return Err(SolidError::Unsupported {
-                            operation: OP,
-                            reason: "the extension needs more mirror steps than its budget",
-                        });
-                    }
-                    // Curvature mirrors at most the last Bezier span a step, so its C2 point is
-                    // that span's end and the extension is continuous in e; Tangent mirrors
-                    // the whole piece (a prefix family in e either way)
-                    let most = if how == Continuity::Curvature {
-                        cur.end()? - cur.before_end(0)?
-                    } else {
-                        cur.range()?
-                    };
-                    // a remainder shorter than the side's knot can carry would be a sliver
-                    // span the knot fixup merges or spreads (the joint moved, the net not
-                    // kept): what is left is split in two instead, where both halves can be
-                    // at least that long (a step shorter than it mirrors a span the net
-                    // already has)
-                    let least = cur.least_step()?;
-                    let mut step = left.min(most);
-                    let rest = left - step;
-                    if rest > 0.0 && rest < least && left >= 2.0 * least {
-                        step = 0.5 * left;
-                    }
-                    cur = cur.mirrored(step, how == Continuity::Curvature)?;
-                    left -= step;
-                }
-                cur
+                self.mirrored_by(how == Continuity::Curvature, e)?
             }
         };
         Ok(Some(grown).filter(Self::is_positive))
@@ -1434,6 +1454,74 @@ impl Local {
             frame: None,
             across: self.across.clone(),
         })
+    }
+
+    /// Tangent (`curvature` false) or Curvature past the side by `e`: mirror steps, each
+    /// mirroring at most the last piece, made in the rows' local frame ([`LocalFrame`]), as
+    /// [`Self::natural`]'s. Each row is translated by its own end point, so the mirror's
+    /// rounding, its gain and the C2 row's are relative to the rows' local size, not to the
+    /// part's distance from the origin. The source's rows are kept as they are, and the 3D
+    /// bound ([`Self::bound`]) is that of the local construction ([`LocalFrame::finish`]).
+    fn mirrored_by(&self, curvature: bool, e: f64) -> Result<Self> {
+        let frame = LocalFrame::of(self)?;
+        let mut cur = frame.local.clone();
+        let mut left = e;
+        let mut steps = 0;
+        while left > 0.0 {
+            steps += 1;
+            if steps > MAX_STEPS {
+                return Err(SolidError::Unsupported {
+                    operation: OP,
+                    reason: "the extension needs more mirror steps than its budget",
+                });
+            }
+            // Curvature mirrors at most the last Bezier span a step, so its C2 point is
+            // that span's end and the extension is continuous in e; Tangent mirrors
+            // the whole piece (a prefix family in e either way)
+            let most = if curvature {
+                cur.end()? - cur.before_end(0)?
+            } else {
+                cur.range()?
+            };
+            let least = cur.least_step()?;
+            let b = cur.end()?;
+            let wanted = left.min(most);
+            // a reflection beside a knot is put on it (`reflection`): the step is
+            // then the distance to that knot
+            let (mut refl, snapped) = cur.reflection(wanted)?;
+            let mut step = if snapped { b - refl } else { wanted };
+            // what is left of the ask must be nothing or at least a least step: a
+            // shorter remainder would be a sliver span the knot fixup merges or
+            // spreads (the joint moved, the net not kept). The ask is split in two
+            // instead, the remainder two least steps (a snap moves a reflection by
+            // less than the merge scale, at most a least step, so it stays one;
+            // halves would mirror back onto the joint just left, the same
+            // coincidence), or refused naming the length reached so far: never a
+            // short surface
+            let sliver = |step: f64| left - step > 0.0 && left - step < least;
+            if sliver(step) {
+                let (r, _) = cur.reflection(left - 2.0 * least)?;
+                let first = b - r;
+                if left < 3.0 * least || first < least || sliver(first) {
+                    return Err(not_exact(Some(e - left + step)));
+                }
+                (refl, step) = (r, first);
+            }
+            cur = cur.mirrored(refl, curvature)?;
+            left -= step;
+        }
+        // the extension's points (after the source's rows as they are) and knots (after the
+        // source's joint), still in the local frame
+        let ext_local = cur
+            .rows
+            .iter()
+            .zip(&self.rows)
+            .map(|(grown, src)| Ok(grown.get(src.len()..).ok_or_else(op_err)?.to_vec()))
+            .collect::<Result<Vec<Vec<H>>>>()?;
+        let keep = self.knots.len().checked_sub(1).ok_or_else(op_err)?;
+        let knots = cur.knots.get(keep..).ok_or_else(op_err)?;
+        let err_w = cur.err_w.max(frame.err_w_in);
+        frame.finish(self, ext_local, knots, cur.err, err_w)
     }
 
     /// Natural: the last span's Bezier points (from a copy with its start knot at multiplicity
@@ -1719,15 +1807,14 @@ impl Local {
         Ok(out)
     }
 
-    /// One mirror step by `e <= range`: the piece over `[b - e, b]` (from a copy with `b - e`
-    /// at multiplicity `p`) mapped by each row's `L` and reversed; for Curvature its second
-    /// row then from the C2 condition.
-    fn mirrored(&self, e: f64, curvature: bool) -> Result<Self> {
+    /// One mirror step reflecting the end at `refl` (from [`Self::reflection`], `a <= refl <
+    /// b`): the piece over `[refl, b]` (from a copy with `refl` at multiplicity `p`) mapped by
+    /// each row's `L` and reversed; for Curvature its second row then from the C2 condition.
+    /// The new end knot is `2 b - refl`.
+    fn mirrored(&self, refl: f64, curvature: bool) -> Result<Self> {
         let b = self.end()?;
         let a = self.start()?;
         let p = self.p;
-        let refl = b - e;
-        let refl = if refl < a { a } else { refl };
         let piece_src = if refl > a {
             self.with_knot(refl)?
         } else {
@@ -1858,6 +1945,13 @@ fn mirror(pn: H, pn1: H) -> (impl Fn(H) -> H, f64, f64) {
         }
     };
     (map, amp, round)
+}
+
+/// The scale below which the knot fixup merges two knots of a vector from `a` to `end` (or
+/// spreads a span): the ends' scaled zero, at least `EFF_ZERO_PARAM`
+/// ([`fixup_knot_vector`](crate::nurbs::nurbs_crv::fixup_knot_vector)).
+fn merge_scale(a: f64, end: f64) -> f64 {
+    EFF_ZERO_PARAM.max(scaled_zero2(&a, &end))
 }
 
 /// The row's `w_(n-1) / w_n`.
