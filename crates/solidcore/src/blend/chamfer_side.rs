@@ -132,7 +132,9 @@ impl PartialOrd for Piece {
 
 impl Ord for Piece {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.hi.total_cmp(&other.hi).then(other.a.total_cmp(&self.a))
+        self.hi
+            .total_cmp(&other.hi)
+            .then(other.a.total_cmp(&self.a))
     }
 }
 
