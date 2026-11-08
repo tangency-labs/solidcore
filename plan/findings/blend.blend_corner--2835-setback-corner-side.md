@@ -28,8 +28,11 @@ setback vertex in. Asked 7.5 (bored) and 9 to 9.85 (plain) build, `check_brep` L
 X: 6 + sqrt 15 = 9.873 along the chord from V, short of the chord's 12. With the side alone,
 asked 9.9 to 11.9 reached the fill and failed later trimming the rails ("Unable to Trim Rail
 Curve"), naming nothing. Each rail's far vertex (processed, not the corner's own) is now set
-square onto its edge and measured from V; a setback that with its ease reaches the least of
-those is refused as `SetbackTooLong`, naming it less the ease.
+square onto its edge and measured from V. The bound is open (a setback at the cut leaves
+the round no length past its end section), so the reach is the least cut less the fit margin,
+a thousand of the edge's tolerances: 9.863 here. A setback that with its ease passes it is
+refused as `SetbackTooLong`, naming it less the ease; asked that size, the plain prism builds.
+The bored one is refused there by the bore, not by the rails.
 
 | asked, bored R 6.9 | before | after |
 |---|---|---|
@@ -44,6 +47,7 @@ Both pictures: `solidcore-diag FILE.smb --binary --view -135,-30`.
 
 **Not covered.** The room `set_backs` gives each edge is still its length less the far end's
 claim: the topology does not know the far corners' cuts yet, so an asked setback at or past 12
-here names 12, one between 9.873 and 12 names 9.873. A grown setback (beside a curved face, not
+here names 12, one between 9.863 and 12 names 9.863. A far vertex placed after the corner's
+fill is not measured. A grown setback (beside a curved face, not
 certified at the one asked) that passes the rails is a trial not placed, so the growth refuses
 naming none. No case has a far cut on an arc's rail, where the edge's arc length matters.
