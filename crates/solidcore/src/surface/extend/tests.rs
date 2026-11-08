@@ -2241,8 +2241,10 @@ fn a_distance_past_the_least_step_extends_a_cylinder() {
                 continue;
             };
             extended += 1;
+            // analytic_extended_sides solves length to MEET = 1e-12; local-frame rounding
+            // need not pad upper past a step that stopped just below d within MEET
             assert!(
-                a.enclosure.upper >= d && a.enclosure.lower <= d * (1.0 + 1e-6),
+                a.enclosure.upper >= d * (1.0 - 1e-12) && a.enclosure.lower <= d * (1.0 + 1e-6),
                 "{d:e} {a:?}"
             );
         }
@@ -2839,4 +2841,368 @@ fn sides_extended_in_turn_each_meet_the_distance_at_the_face() {
         let reach = at(0.5, v_end).distance(at(0.5, v_face));
         assert!((reach - d).abs() <= 1e-9 * d, "{v_face}: {reach}");
     }
+}
+
+/// Issue #3000: huge extension of one side of a bilinear sheet must not make opposite side
+/// read as collapsed, and a four-side ruled extension of 5e8 certifies exact and lies on the
+/// exact bilinear sheet `f(u, v) = (u, v, u (0.0625 + 0.125 v))`.
+#[test]
+fn extend_bilinear_sheet_huge_all_sides_meet_stop() {
+    let kk = k();
+    let d = 5e8_f64;
+    let exact = |u: f64, v: f64| Vec3::new(u, v, u * (0.0625 + 0.125 * v));
+    let s = spline(
+        &[
+            vec![[0.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0]],
+            vec![[1.0, 0.0, 0.0625, 1.0], [1.0, 1.0, 0.1875, 1.0]],
+        ],
+        1,
+        1,
+        &[0.0, 0.0, 1.0, 1.0],
+        &[0.0, 0.0, 1.0, 1.0],
+        true,
+    );
+    let one = s
+        .extended_by_distance(&kk, &dom(&s), BoxSide::UMax, Continuity::Ruled, d)
+        .unwrap()
+        .unwrap();
+    assert_eq!(one.source, 0.0);
+    assert!(
+        one.extension > 0.0 && one.extension <= 2e-6,
+        "single-side extension bound: {}",
+        one.extension
+    );
+
+    let all = s
+        .extended_sides_keeping_parameters(&kk, &BoxSide::ALL, Continuity::Ruled, d)
+        .unwrap();
+    assert_eq!(all.source, 0.0);
+    // After UMin/UMax reach +-5e8, VMin/VMax carry corner z = +-0.125 * d^2 ~ +-3.12e16
+    // (ulp = 4.0); LocalFrame certifies that within exact()'s 1e-6 * d = 500 rounding cap.
+    assert!(
+        all.extension > 0.0 && all.extension <= 1e-6 * d,
+        "extension bound: {}",
+        all.extension
+    );
+    for (side, done) in BoxSide::ALL.iter().zip(all.sides) {
+        let SideExtension::Extended(a) = done else {
+            panic!("{side:?}: expected Extended, got {done:?}");
+        };
+        assert!(a.converged, "{side:?}: {a:?}");
+        assert!(a.truncation <= 1e-9 * d, "{side:?}: truncation {a:?}");
+        assert!(a.rounding <= 1e-6 * d, "{side:?}: rounding {a:?}");
+        let tol = (1e-9 * d).max(a.truncation + a.rounding + a.resolution);
+        assert!(
+            a.enclosure.lower >= d - tol && a.enclosure.upper <= d + tol,
+            "{side:?}: {a:?}"
+        );
+    }
+    // Over the source `[0, 1]^2` box, `all.surface` matches the source and closed form.
+    for i in 0..=4 {
+        for j in 0..=4 {
+            let (u, v) = (f64::from(i) / 4.0, f64::from(j) / 4.0);
+            let got = all.surface.evaluate_point(&kk, Vec2::new(u, v)).unwrap();
+            let src = s.evaluate_point(&kk, Vec2::new(u, v)).unwrap();
+            assert!(got.distance(src) <= 1e-15, "{u} {v}: {got:?} vs {src:?}");
+            assert!(got.distance(exact(u, v)) <= 1e-15, "{u} {v}: {got:?}");
+        }
+    }
+    // Along each side's middle iso-curve (`v = 0.5` on UMin/UMax, `u = 0.5` at the face's
+    // middle on VMin/VMax) the chord equals `d` to within `1e-9 * d`, and every outer
+    // midpoint and +-3.12e16 saddle corner lies within `all.extension` of `exact(u, v)`.
+    let grown = dom(&all.surface);
+    let (u_lo, u_hi) = (grown.min().x, grown.max().x);
+    let (v_lo, v_hi) = (grown.min().y, grown.max().y);
+    for (side, start_uv, end_uv) in [
+        (BoxSide::UMin, Vec2::new(0.0, 0.5), Vec2::new(u_lo, 0.5)),
+        (BoxSide::UMax, Vec2::new(1.0, 0.5), Vec2::new(u_hi, 0.5)),
+        (BoxSide::VMin, Vec2::new(0.5, 0.0), Vec2::new(0.5, v_lo)),
+        (BoxSide::VMax, Vec2::new(0.5, 1.0), Vec2::new(0.5, v_hi)),
+    ] {
+        let p_start = all.surface.evaluate_point(&kk, start_uv).unwrap();
+        let p_end = all.surface.evaluate_point(&kk, end_uv).unwrap();
+        assert!(
+            p_end.distance(exact(end_uv.x, end_uv.y)) <= all.extension,
+            "{side:?}: {p_end:?}"
+        );
+        let chord = p_end.distance(p_start);
+        assert!(
+            (chord - d).abs() <= 1e-9 * d,
+            "{side:?}: chord {chord} vs {d}"
+        );
+    }
+    for (u, v) in [(u_lo, v_lo), (u_lo, v_hi), (u_hi, v_lo), (u_hi, v_hi)] {
+        let got = all.surface.evaluate_point(&kk, Vec2::new(u, v)).unwrap();
+        let want = exact(u, v);
+        assert!(
+            got.distance(want) <= all.extension,
+            "corner ({u}, {v}): {got:?} vs {want:?} (bound {})",
+            all.extension
+        );
+    }
+}
+
+/// Review 4a/4c: `Local::ruled` bounds weight rounding both when `rho == 1.0` with one row of
+/// constant weights (`pn[3] == pn1[3]`) alongside a row of growing weights (`pn1[3] < pn[3]`),
+/// when `rho > 1.0` grows a `pn[3] == pn1[3]` row's weight, and when a prior rational step
+/// leaves `self.err > 0`, `self.err_w > 0` in the input points and weights.
+#[test]
+fn ruled_differing_row_weights_and_prior_step_weight_error_stay_within_bound() {
+    let kk = k();
+    // Part 1: Row 0 has `w = (2, 2)` (`ratio = 1`), Row 1 has `w = (1, 2)` (`ratio = 0.5`),
+    // so `rho = 1.0`: Row 0 keeps `w = 2` bit for bit while Row 1 grows `w = 2 + t`, `err_w > 0`.
+    let s_mixed = spline(
+        &[
+            vec![[0.0, 0.0, 0.0, 2.0], [0.0, 1.0, 0.0, 1.0]],
+            vec![[2.0, 0.0, 0.5, 2.0], [2.0, 2.0, 0.5, 2.0]],
+        ],
+        1,
+        1,
+        &[0.0, 0.0, 1.0, 1.0],
+        &[0.0, 0.0, 1.0, 1.0],
+        true,
+    );
+    let SurfaceKind::BSpline(bs_mixed) = s_mixed.kind() else {
+        panic!();
+    };
+    let loc_mixed = Local::of(bs_mixed.gw_nurb().unwrap(), BoxSide::UMax).unwrap();
+    let g_mixed = loc_mixed.ruled(2.0).unwrap();
+    assert_eq!(
+        g_mixed.rows[0][2][3], 2.0,
+        "constant-weight row keeps exact w"
+    );
+    assert!(
+        (g_mixed.rows[1][2][3] - 4.0).abs() <= 1e-14,
+        "varying row grows w"
+    );
+    assert!(g_mixed.bound() > 0.0 && g_mixed.bound() < 1e-12);
+    let ext_mixed = s_mixed
+        .extended_by_distance(&kk, &dom(&s_mixed), BoxSide::UMax, Continuity::Ruled, 0.5)
+        .unwrap()
+        .unwrap();
+    meets(&ext_mixed, 0.5);
+
+    // Part 2: Row 0 has `w = (1, 1)` (`pn[3] == pn1[3]`), Row 1 has `w = (2, 1)` (`rho = 2 > 1`),
+    // so Row 0 must NOT clamp `pt[3] = pn[3]`: its weight grows as `1 + t * (2 - 1) = 1 + t`.
+    let s_rho2 = spline(
+        &[
+            vec![[0.0, 0.0, 0.0, 1.0], [0.0, 2.0, 0.0, 2.0]],
+            vec![[1.0, 0.0, 0.0, 1.0], [1.0, 1.0, 0.0, 1.0]],
+        ],
+        1,
+        1,
+        &[0.0, 0.0, 1.0, 1.0],
+        &[0.0, 0.0, 1.0, 1.0],
+        true,
+    );
+    let SurfaceKind::BSpline(bs_rho2) = s_rho2.kind() else {
+        panic!();
+    };
+    let g_rho2 = Local::of(bs_rho2.gw_nurb().unwrap(), BoxSide::UMax)
+        .unwrap()
+        .ruled(1.5)
+        .unwrap();
+    assert!((g_rho2.rows[0][2][3] - 2.5).abs() <= 1e-14);
+    assert_eq!(g_rho2.rows[1][2][3], 1.0);
+    assert!(g_rho2.bound() > 0.0 && g_rho2.bound() < 1e-12);
+
+    // Part 3: Prior rational step (`step1 = natural`, `step1.err > 0`, `step1.err_w > 0`) far
+    // from the origin followed by `ruled`: input weight error `step1.err_w` is propagated into
+    // `step2.bound()`, and perturbing `step1`'s coords/weights by `(step1.err, step1.err_w)`
+    // stays inside `step2.bound()`.
+    let s_far = spline(
+        &[
+            vec![[500.0, -300.0, 200.0, 1.0], [500.0, -299.0, 200.0, 1.0]],
+            vec![
+                [501.0 * 1.5, -300.0 * 1.5, 200.5 * 1.5, 1.5],
+                [501.0 * 1.2, -299.0 * 1.2, 200.5 * 1.2, 1.2],
+            ],
+            vec![
+                [502.0 * 1.5, -300.0 * 1.5, 201.0 * 1.5, 1.5],
+                [502.0 * 1.2, -299.0 * 1.2, 201.0 * 1.2, 1.2],
+            ],
+        ],
+        2,
+        1,
+        &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        &[0.0, 0.0, 1.0, 1.0],
+        true,
+    );
+    let SurfaceKind::BSpline(bs_far) = s_far.kind() else {
+        panic!();
+    };
+    let step1 = Local::of(bs_far.gw_nurb().unwrap(), BoxSide::UMax)
+        .unwrap()
+        .natural(0.5)
+        .unwrap();
+    assert!(step1.err > 0.0 && step1.err_w > 0.0);
+    let step2 = step1.ruled(3.0).unwrap();
+    let bound = step2.bound();
+    assert!(bound.is_finite() && bound > 0.0, "bound: {bound}");
+    // Perturb `step1`'s coordinates by `step1.err` and weights by `step1.err_w` to simulate
+    // exact vs rounded prior step, run `ruled(3.0)` again, and check the 3D surface shift on
+    // `[1.5, 4.5]`.
+    let mut perturbed = step1.clone();
+    perturbed.err = 0.0;
+    perturbed.err_w = 0.0;
+    for (j, r) in perturbed.rows.iter_mut().enumerate() {
+        let sign = if j == 0 { 1.0 } else { -1.0 };
+        for h in r.iter_mut() {
+            h[0] += sign * step1.err;
+            h[3] -= sign * step1.err_w;
+        }
+    }
+    let step2_pert = perturbed.ruled(3.0).unwrap();
+    let s_a = Surface::from(BSplineSurface::from_gw_nurb(
+        &step2.surface(BoxSide::UMax).unwrap(),
+    ));
+    let s_b = Surface::from(BSplineSurface::from_gw_nurb(
+        &step2_pert.surface(BoxSide::UMax).unwrap(),
+    ));
+    for iu in 0..=4 {
+        for iv in 0..=4 {
+            let u = 1.5 + 3.0 * f64::from(iu) / 4.0;
+            let v = f64::from(iv) / 4.0;
+            let da = s_a.evaluate_point(&kk, Vec2::new(u, v)).unwrap();
+            let db = s_b.evaluate_point(&kk, Vec2::new(u, v)).unwrap();
+            assert!(
+                da.distance(db) <= bound,
+                "{u} {v}: shift {} exceeds bound {bound}",
+                da.distance(db)
+            );
+        }
+    }
+}
+
+/// Review 1: an extension ask so large that `BSplineSurface::from_gw_nurb`'s
+/// `fixup_knot_vector` (`EFF_ZERO * (1 + |b + e|)`) would merge a source knot span must refuse
+/// with `ExtendRefusal::NotExact` naming a workable distance, never `PortInvariant`.
+#[test]
+fn huge_extension_past_knot_fixup_ceiling_refuses_not_exact_naming_workable_size() {
+    let kk = k();
+    // Interior knot at `0.01`: `smin = 0.01`, so `fixup_knot_vector` merges `[0.0, 0.01]` past
+    // `b + e ~ 0.01 / EFF_ZERO = 1e10`.
+    let s = spline(
+        &[
+            vec![[0.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0]],
+            vec![[0.01, 0.0, 0.0, 1.0], [0.01, 1.0, 0.0, 1.0]],
+            vec![[1.0, 0.0, 0.0, 1.0], [1.0, 1.0, 0.0, 1.0]],
+        ],
+        1,
+        1,
+        &[0.0, 0.0, 0.01, 1.0, 1.0],
+        &[0.0, 0.0, 1.0, 1.0],
+        false,
+    );
+    let d0 = dom(&s);
+    for ask in [1e14, 1e30] {
+        let err = s
+            .extended_by_distance(&kk, &d0, BoxSide::UMax, Continuity::Ruled, ask)
+            .unwrap_err();
+        let named = not_exact_naming(err).unwrap_or_else(|| panic!("no size named for {ask}"));
+        assert!(named > 1e9 && named < 1.1e10, "{ask}: named {named}");
+        let ok = s
+            .extended_by_distance(&kk, &d0, BoxSide::UMax, Continuity::Ruled, named)
+            .unwrap()
+            .unwrap();
+        meets(&ok, named);
+        let SurfaceKind::BSpline(src_bs) = s.kind() else {
+            panic!();
+        };
+        let SurfaceKind::BSpline(out_bs) = ok.surface.kind() else {
+            panic!();
+        };
+        assert!(keeps(
+            src_bs.gw_nurb().unwrap(),
+            out_bs.gw_nurb().unwrap(),
+            BoxSide::UMax
+        )
+        .unwrap());
+    }
+
+    // Opposite end already grown (`#3000` scenario): extend `UMin` by `5e9` first, then ask
+    // `UMax` for `1e14`; `longest_workable` brackets directly on `keeps_along_knots` (no
+    // single-end `knot_cap`), refuses `NotExact(Some(named))`, and asking `named` builds and
+    // meets `named`.
+    let umin_grown = s
+        .extended_by_distance(&kk, &d0, BoxSide::UMin, Continuity::Ruled, 5e9)
+        .unwrap()
+        .unwrap();
+    let dg = dom(&umin_grown.surface);
+    let err = umin_grown
+        .surface
+        .extended_by_distance(&kk, &dg, BoxSide::UMax, Continuity::Ruled, 1e14)
+        .unwrap_err();
+    let named = not_exact_naming(err).expect("no workable size named after opposite-end growth");
+    assert!(named > 1e9 && named < 1.1e10, "opposite-end named {named}");
+    let ok = umin_grown
+        .surface
+        .extended_by_distance(&kk, &dg, BoxSide::UMax, Continuity::Ruled, named)
+        .unwrap()
+        .unwrap();
+    meets(&ok, named);
+
+    // Whole-row `LocalFrame::of`: every point in `frame.local` is translated (including the
+    // `-5e9` opposite-end point), while `UMax` extended by `1.0` keeps local-tail rounding.
+    let SurfaceKind::BSpline(grown_bs) = umin_grown.surface.kind() else {
+        panic!();
+    };
+    let loc = Local::of(grown_bs.gw_nurb().unwrap(), BoxSide::UMax).unwrap();
+    let frame = LocalFrame::of(&loc).unwrap();
+    for r in &frame.local.rows {
+        assert_eq!(r.last().unwrap()[0], 0.0);
+        assert!(
+            (r[0][0] - (-5e9 - 1.0)).abs() <= 1e-3,
+            "first column must be translated into LocalFrame: {}",
+            r[0][0]
+        );
+    }
+    for how in [Continuity::Ruled, Continuity::Natural] {
+        let small = umin_grown
+            .surface
+            .extended_by_distance(&kk, &dg, BoxSide::UMax, how, 1.0)
+            .unwrap()
+            .unwrap();
+        meets(&small, 1.0);
+        assert!(small.extension < 1e-12, "{how:?}: {}", small.extension);
+    }
+}
+
+/// When the along-direction knots are kept bit for bit, any mutation of the source's across
+/// knots or control points must still surface as `SolidError::PortInvariant` ("the extension
+/// moved the source's net"), never be masked as an unproved `NotExact` refusal.
+#[test]
+fn non_along_source_net_change_raises_port_invariant_not_unproved() {
+    let kk = k();
+    let cpts: Vec<Vec<CPoint>> = [
+        vec![[0.0, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 1.0, 0.0]],
+        vec![[1.0, 0.0, 0.0], [1.0, 0.5, 0.0], [1.0, 1.0, 0.0]],
+    ]
+    .iter()
+    .map(|r| {
+        r.iter()
+            .map(|&[x, y, z]| CPoint::new(x, y, z, NOW))
+            .collect()
+    })
+    .collect();
+    // Borrowed NURB preserves an un-fixed-up interior V knot `1e-13 < EFF_ZERO_PARAM`; on
+    // extending `UMax`, `keeps_along_knots` is `true` while `BSplineSurface::from_gw_nurb`
+    // alters V's knots so `keeps` is `false`.
+    let raw = Net::new(
+        cpts,
+        1,
+        1,
+        vec![0.0, 0.0, 1.0, 1.0],
+        vec![0.0, 0.0, 1e-13, 1.0, 1.0],
+    )
+    .unwrap();
+    let s = Surface::from(BSplineSurface::from_nurb(raw, true));
+    let d0 = dom(&s);
+    let err = s
+        .extended_by_distance(&kk, &d0, BoxSide::UMax, Continuity::Ruled, 1.0)
+        .unwrap_err();
+    assert!(
+        matches!(err, SolidError::PortInvariant { .. }),
+        "expected PortInvariant, got {err:?}"
+    );
 }

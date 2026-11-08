@@ -171,7 +171,8 @@ fn joint_column(along: &[f64], dp: usize, from: f64, to: f64) -> Option<usize> {
 /// (`[i along u][j along v]`), as [`Rounding::local`] reads them: the iso's extraction at
 /// `fixed` is column by column (each across row's points combined at `fixed` alone), so
 /// across only the rows whose basis function's support holds `fixed`; along, those whose
-/// support meets `[from, to]` (closed: a support ending at an end is kept). Past a joint
+/// support meets `[from, to]` (open overlap: an exterior span ending at `from` or starting at
+/// `to` is excluded, [`support_meets`]). Past a joint
 /// ([`joint_column`], `s`) only the columns on `to`'s side of it, `s` itself included: the
 /// Bezier decomposition starts the segment at a knot of multiplicity `p` or more from the
 /// points `s .. s + p` as they are (no insertion there, `r = p - mult <= 0`), and the segment
@@ -203,7 +204,7 @@ impl Window {
         Self {
             along_u,
             along: support_meets(along, dp, a, b),
-            held: support_meets(held, dq, fixed, fixed),
+            held: held_rows(held, dq, fixed),
             joint: joint_column(along, dp, from, to),
             up: to > from,
         }
@@ -442,17 +443,35 @@ fn knot_window(kv: &[f64], a: f64, b: f64, margin: usize) -> (f64, f64) {
 
 /// The largest knot magnitude and the least denominator of the iso's extraction at `t` of a
 /// direction of degree `q` (full knot vector `kv`), as `extract_iso_crv` forms them: `t` in
-/// its span `(u_s, u_(s+1)]` (`Side::Left`, of multiplicity `m`), each coefficient
-/// `(t - u_(a+j)) / (u_(s+j+1) - u_(a+j))` with `a + j <= s - m` and `s + j + 1 >= s + 1`.
-/// So the knots read are `u_(s-q+1) .. u_(s+q)` and every denominator spans `t`'s own span:
-/// it is at least `u_(s+1) - u_s`, whatever shorter spans lie in the window (an extension's
-/// sliver at the net's end is no denominator of an extraction in the middle). A `t` with no
-/// span left of it is the net's start, extracted as its row (no coefficient: `INFINITY`).
+/// its span `[u_s, u_(s+1))` (`Side::Left`, of multiplicity `m`), each coefficient
+/// `(t - u_(a+j)) / (u_(s+j+1) - u_(a+j))` with `i in 1..=q - m`, `a = s - q + i`,
+/// `j in 0..=q - i - m`, so `a + j <= s - m` and `s + j + 1 >= s + 1`. When `t` is at or
+/// outside the domain ends `u_q .. u_(len - 1 - q)` or has multiplicity `m >= q` (every
+/// extension joint knot), `extract_iso_crv` copies the row directly with no coefficient
+/// (`INFINITY`). Otherwise the knots read are `u_(s-q+1) .. u_(s+q-m)` and every denominator
+/// spans `t`'s own span `u_(s+1) - u_s > 0`, whatever shorter or wider spans lie outside.
 fn extraction_window(kv: &[f64], t: f64, q: usize) -> (f64, f64) {
-    let Some(s) = kv.iter().rposition(|&x| x < t) else {
+    let hi_end = kv.len().saturating_sub(1).saturating_sub(q);
+    match (kv.get(q), kv.get(hi_end)) {
+        (Some(&lo_dom), Some(&hi_dom)) if t > lo_dom && t < hi_dom => {}
+        _ => return (t.abs(), f64::INFINITY),
+    }
+    let Some(s) = kv.iter().rposition(|&x| x <= t) else {
         return (t.abs(), f64::INFINITY);
     };
-    let (lo, hi) = (s.saturating_add(1).saturating_sub(q), s.saturating_add(q));
+    let m = kv
+        .iter()
+        .take(s.saturating_add(1))
+        .rev()
+        .take_while(|&&x| x == t)
+        .count();
+    if m >= q {
+        return (t.abs(), f64::INFINITY);
+    }
+    let (lo, hi) = (
+        s.saturating_add(1).saturating_sub(q),
+        s.saturating_add(q - m),
+    );
     let mut kmax = t.abs();
     for (i, &x) in kv.iter().enumerate() {
         if i >= lo && i <= hi {
@@ -461,7 +480,6 @@ fn extraction_window(kv: &[f64], t: f64, q: usize) -> (f64, f64) {
     }
     let span = match (kv.get(s), kv.get(s.saturating_add(1))) {
         (Some(&a), Some(&b)) if b > a => b - a,
-        // `t` past the last knot: the net's end, extracted as its row
         _ => f64::INFINITY,
     };
     (kmax, span)
@@ -506,11 +524,51 @@ fn decomposed_window(kv: &[f64], a: f64, b: f64, p: usize) -> (f64, f64) {
     (kmax, smin)
 }
 
+/// The control rows of degree `q` on the knots `kv` that `extract_iso_crv` reads at `t`:
+/// row `0` at or below `u_q`, the last row at or above `u_(len - 1 - q)`, and rows
+/// `(s - q) ..= (s - min(m, q))` at interior span `[u_s, u_(s+1))` of multiplicity `m`
+/// (a single row `s - q` at any knot of multiplicity `m >= q`, such as an extension joint).
+fn held_rows(kv: &[f64], q: usize, t: f64) -> std::ops::RangeInclusive<usize> {
+    let count = kv.len().saturating_sub(q + 1);
+    let last_row = count.saturating_sub(1);
+    let hi_end = kv.len().saturating_sub(1).saturating_sub(q);
+    match (kv.get(q), kv.get(hi_end)) {
+        (Some(&lo_dom), _) if t <= lo_dom => return 0..=0,
+        (_, Some(&hi_dom)) if t >= hi_dom => return last_row..=last_row,
+        (Some(_), Some(_)) => {}
+        _ => return 0..=last_row,
+    }
+    let Some(s) = kv.iter().rposition(|&x| x <= t) else {
+        return 0..=0;
+    };
+    let m = kv
+        .iter()
+        .take(s.saturating_add(1))
+        .rev()
+        .take_while(|&&x| x == t)
+        .count()
+        .min(q);
+    let lo = s.saturating_sub(q).min(last_row);
+    let hi = s.saturating_sub(m).min(last_row);
+    lo..=hi
+}
+
 /// The control indices of degree `deg` on the knots `k` whose basis function's support
-/// `[k_i, k_(i + deg + 1)]` meets `[lo, hi]` (closed: a support ending at `lo` is kept).
+/// `[k_i, k_(i + deg + 1)]` is nonzero on `[lo, hi]` (open overlap `k_i < hi && k_(i+deg+1) > lo`
+/// when `lo < hi`, so an adjacent exterior span whose support ends at `lo` or starts at `hi`
+/// is excluded). At a knot of multiplicity `deg + 1` (a clamped domain end, or a `C^-1` break
+/// `k[r..=r+deg] = t`), `create_bez_segments` performs `deg - mult <= 0` insertions: at
+/// `t = lo`, `i < r` has `k_(i + deg + 1) = lo` (excluded) while `i = r` has `k_r = lo < hi`
+/// and `k_(r + deg + 1) > lo` on a positive span (included, with `N_(r, deg)(lo^+) = 1`);
+/// symmetrically at `t = hi`, `i = r - 1` has `k_(r - 1) < hi` and `k_(r + deg) = hi > lo`
+/// (included, with `N_(r - 1, deg)(hi^-) = 1`) while `i >= r` has `k_i >= hi` (excluded).
 fn support_meets(k: &[f64], deg: usize, lo: f64, hi: f64) -> std::ops::RangeInclusive<usize> {
     let count = k.len().saturating_sub(deg + 1);
-    let meets = |i: usize| matches!((k.get(i), k.get(i + deg + 1)), (Some(&a), Some(&b)) if a <= hi && b >= lo);
+    let meets = |i: usize| match (k.get(i), k.get(i + deg + 1)) {
+        (Some(&a), Some(&b)) if lo < hi => a < hi && b > lo,
+        (Some(&a), Some(&b)) => a <= hi && b >= lo,
+        _ => false,
+    };
     let first = (0..count).find(|&i| meets(i));
     let last = (0..count).rev().find(|&i| meets(i));
     match (first, last) {
@@ -521,13 +579,13 @@ fn support_meets(k: &[f64], deg: usize, lo: f64, hi: f64) -> std::ops::RangeIncl
 }
 
 impl Rounding {
-    /// [`Rounding::of`] for the pieces of the iso at `fixed` (constant v for `along_u`)
-    /// over `[from, to]` alone: the knots read are only those near them. Knot insertion and
+    /// The rounding for the pieces of the iso at `fixed` (constant v for `along_u`) over
+    /// `[from, to]` alone: the knots read are only those near them. Knot insertion and
     /// the Bezier decomposition are local: a segment's points are combinations whose
     /// coefficients take the knots from its start's segment's start to `p` past its end
     /// (`(t - u_i) / (u_(i+p) - u_i)`, i from the segment's start index), and the iso's
     /// extraction at `fixed` the knots within `q` of it. A span far from the pieces (a sliver
-    /// at the net's other end) does not touch them.
+    /// or huge extension at the net's other end) does not touch them.
     fn local(
         form: &BSplineSurface,
         window: &Window,
@@ -553,35 +611,9 @@ impl Rounding {
         Self::with_ratio_in(nurb, ratio, op, &|i, j| window.keeps(i, j))
     }
 
-    fn of(form: &BSplineSurface, extra: &[f64], op: &'static str) -> Result<Self> {
-        let nurb = form.gw_nurb().ok_or_else(|| SolidError::sm_err(op))?;
-        let (mut kmax, mut smin) = (0.0_f64, f64::INFINITY);
-        for kv in [nurb.u_knots(), nurb.v_knots()] {
-            for (&a, &b) in kv.iter().zip(kv.iter().skip(1)) {
-                kmax = kmax.max(a.abs()).max(b.abs());
-                if b > a {
-                    smin = smin.min(b - a);
-                }
-            }
-        }
-        for &x in extra {
-            kmax = kmax.max(x.abs());
-        }
-        Self::with_ratio(nurb, kmax / smin, op)
-    }
-
     /// The rounding of a net whose coefficients' knots and parameters are at most `ratio`
-    /// times the least span they divide by (`K / S`).
-    fn with_ratio(
-        nurb: &crate::nurbs::srf_basic::Surface,
-        ratio: f64,
-        op: &'static str,
-    ) -> Result<Self> {
-        Self::with_ratio_in(nurb, ratio, op, &|_, _| true)
-    }
-
-    /// [`Rounding::with_ratio`] over the control points `keep` names (`[i along u][j along
-    /// v]`): the pieces' points are combinations of those alone.
+    /// times the least span they divide by (`K / S`), over the control points `keep` names
+    /// (`[i along u][j along v]`): the pieces' points are combinations of those alone.
     fn with_ratio_in(
         nurb: &crate::nurbs::srf_basic::Surface,
         ratio: f64,
@@ -885,7 +917,11 @@ impl Surface {
         };
         let mid = 0.5 * (from + to);
         let fixed = side.at(dom);
-        let rounding = Rounding::of(&form, &[fixed, from, to], OP_DIAMETER)?;
+        let nurb = form
+            .gw_nurb()
+            .ok_or_else(|| SolidError::sm_err(OP_DIAMETER))?;
+        let window = Window::of(nurb, !side.is_u(), fixed, from, to);
+        let rounding = Rounding::local(&form, &window, fixed, from, to, OP_DIAMETER)?;
         let mut pieces = Vec::new();
         let mut levels = 0;
         for (a, b) in [(from, mid), (mid, to)] {
@@ -1442,5 +1478,46 @@ mod tests {
                 "w {w}: {a:?} {b:?}"
             );
         }
+    }
+
+    /// Issue #3000: Boehm extraction at `t` of degree `q` (`extract_iso_crv`, `Side::Left`
+    /// `[u_s, u_(s+1))`) copies the joint row directly with zero divisions at an extension
+    /// joint `m == q`, and forms coefficients from `u_(s-q+1) .. u_(s+q-m)` inside `[0, 1)`.
+    /// When an adjacent exterior extension span `[-1e16, 0]` has a huge knot and control row,
+    /// neither `-1e16` nor the exterior row enters `extraction_window`, `Window`, or
+    /// `side_diameter`.
+    #[test]
+    fn extraction_window_excludes_adjacent_exterior_knot_and_keeps_side_uncollapsed() {
+        let kv = [-1e16, -1e16, 0.0, 1.0, 1.0];
+        // Joint knot `t = 0.0` (`m = 1 == q`): zero divisions (`INFINITY`), only joint row 1.
+        assert_eq!(extraction_window(&kv, 0.0, 1), (0.0, f64::INFINITY));
+        assert_eq!(held_rows(&kv, 1, 0.0), 1..=1);
+        // Interior `t = 0.5` (`m = 0 < q`): reads `kv[2..=3] = [0.0, 1.0]`, rows `1..=2`.
+        assert_eq!(extraction_window(&kv, 0.5, 1), (1.0, 1.0));
+        assert_eq!(held_rows(&kv, 1, 0.5), 1..=2);
+
+        // End-to-end on `side_diameter` at `u = 0.0` of face box `[0, 1] x [0, 1]`, with an
+        // exterior extension span `[-1e16, 0]` whose outer row sits at `1e16`:
+        let rows = vec![
+            vec![
+                CPoint::new(-1e16, 0.0, 0.0, NOW),
+                CPoint::new(-1e16, 1e16, 0.0, NOW),
+            ],
+            vec![
+                CPoint::new(0.0, 0.0, 0.0, NOW),
+                CPoint::new(0.0, 1.0, 0.0, NOW),
+            ],
+            vec![
+                CPoint::new(1.0, 0.0, 0.0, NOW),
+                CPoint::new(1.0, 1.0, 0.0, NOW),
+            ],
+        ];
+        let net = Net::new(rows, 1, 1, kv.to_vec(), vec![0.0, 0.0, 1.0, 1.0]).unwrap();
+        let surf = Surface::from(BSplineSurface::from_gw_nurb(&net));
+        let face_dom = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        let b = surf.side_diameter(&k(), &face_dom, BoxSide::UMin).unwrap();
+        holds(b, 1.0);
+        assert!(b.lower > 1.0 - 1e-11, "side falsely collapsed: {b:?}");
+        assert!(b.upper < 1.0 + 1e-11, "rounding blew up: {b:?}");
     }
 }
