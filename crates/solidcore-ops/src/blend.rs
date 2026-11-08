@@ -436,7 +436,7 @@ fn sized_on(
     clippy::float_arithmetic,
     reason = "a sample parameter ops chooses, not a geometric quantity (docs/layers.md)"
 )]
-fn middle(lo: f64, hi: f64) -> f64 {
+pub(crate) fn middle(lo: f64, hi: f64) -> f64 {
     0.5 * (lo + hi)
 }
 
@@ -1757,3 +1757,6 @@ fn fillet_variable_impl(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod overflow_contract_tests;
