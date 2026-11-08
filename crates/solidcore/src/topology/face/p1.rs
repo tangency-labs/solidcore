@@ -30,7 +30,9 @@
 //! - **Shrink keeps exact trims and ends on knots (the fork's, not upstream).**
 //!   `shrink_geometry` keeps the face's trim curves where its surface's trim keeps the
 //!   surface's parameterization (WR-700, the fork's tangency-labs/smlib@6f811b8), and
-//!   takes a bound within 64 ulp of a B-spline knot as that knot (WR-702, @d80ea93).
+//!   takes a bound within 64 ulp of the knot vector's magnitude of a B-spline knot as that
+//!   knot (WR-702, @d80ea93; the fork scales by the knot's own magnitude, which misses a
+//!   knot at 0).
 //!   Upstream removes every trim curve and projects the edges again, and keeps a
 //!   sliver span past a knot.
 //! - **Object model.** A face is a record in the [`Brep`]'s arenas; the methods are free
@@ -1702,10 +1704,14 @@ fn shrink_geometry_notifying(
     }
 
     // Not upstream (WR-702, the fork's tangency-labs/smlib@d80ea93): a bound within
-    // rounding of one of the surface's knots (64 ulp of the knot's magnitude) is that
-    // knot. A computed end parameter lands a rounding step either side of the knot it
+    // rounding of one of the surface's knots is that knot. A computed end parameter (a
+    // trim curve's end control point, from knot insertion and evaluation on the surface's
+    // parameters) lands a few roundings of those parameters either side of the knot it
     // stands for, and TrimWithDomain would space a bound just past a knot off it by its
-    // snapping tolerance and keep a sliver span past the knot.
+    // snapping tolerance and keep a sliver span past the knot. The rounding is of the
+    // parameters' magnitude, the knot vector's largest |knot|, not the knot's own (a knot
+    // at 0 has none); 64 ulp of it is far above a few roundings and far below any span a
+    // surface means (a span that short is the sliver).
     let surface = fp2::surface(b, f)?.ok_or_else(|| null("face without surface"))?;
     if surface.is_kind_of(B_SPLINE_SURFACE_TYPE)? {
         for dir in [SurfParamType::U, SurfParamType::V] {
@@ -1715,8 +1721,9 @@ fn shrink_geometry_notifying(
             } else {
                 (&mut min.y, &mut max.y)
             };
+            let scale = knots.iter().fold(0.0_f64, |m, k| m.max(k.abs()));
+            let round = 64.0 * f64::EPSILON * scale;
             for &knot in &knots {
-                let round = 64.0 * f64::EPSILON * knot.abs();
                 if (*lo - knot).abs() <= round {
                     *lo = knot;
                 }
