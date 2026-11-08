@@ -1336,7 +1336,7 @@ fn d_prism_asked_past_the_rails_names_the_setback_that_fits() {
         assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
         assert!(!r.ok, "{}: built", case.name);
         let named = match r.refusal {
-            Some(BlendRefusal::SetbackTooLong { vertex, largest }) => {
+            Some(BlendRefusal::SetbackTooLong { vertex, largest, .. }) => {
                 assert_eq!(vertex, v, "{}", case.name);
                 assert!(
                     (largest - want).abs() <= 1e-9,
