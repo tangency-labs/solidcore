@@ -2815,16 +2815,16 @@ impl<'target> FilletSession<'target> {
 
     /// The chamfer's first distance (its setback along its first face) at which a chamfer
     /// refused as too large builds: the fit `fit` ([`Self::fit_size`], or a refusal's) read
-    /// through the chamfer's
-    /// definition on its edge ([`FilletSolver::chamfer`]). At the edge's wedge the offsets
-    /// are linear in the sizes, `r_1 = (d_2 - d_1 cos a) / sin a`,
+    /// through the chamfer's definition on its edge ([`FilletSolver::chamfer`]). At the
+    /// edge's wedge the offsets are linear in the sizes, `r_1 = (d_2 - d_1 cos a) / sin a`,
     /// `r_2 = (d_1 - d_2 cos a) / sin a` ([`ChamferDefinition`]), so the chamfer whose offsets
     /// are `lambda` times the asked ones is the asked chamfer scaled by `lambda`
-    /// ([`ChamferDefinition::scaled`]), exactly: a fit of a radius (`FitKind::Radius`, an
-    /// equal chamfer's one offset) is `lambda = fit / r_1`, a fit of a scale on two unequal
-    /// offsets (`FitKind::Scale`) is `lambda` itself. `None` for a fit on no
-    /// edge or a chord, or an edge whose solver keeps no chamfer, or a radius fit of a
-    /// chamfer whose two offsets differ (the fit is then a scale).
+    /// ([`ChamferDefinition::scaled`]): exact in the maps, the distance named to the rounding
+    /// of the fit and of the offset and distance conversions. A fit of a radius
+    /// (`FitKind::Radius`, an equal chamfer's one offset) is `lambda = fit / r_1`; a fit of a
+    /// scale on two unequal offsets (`FitKind::Scale`) is `lambda` itself. `None` for a fit on
+    /// no edge or a chord, an edge whose solver keeps no chamfer, or a radius fit of a chamfer
+    /// whose two offsets differ (the fit is then a scale).
     ///
     /// [`FilletSolver::chamfer`]: crate::blend::fillet_solver::p1::FilletSolver::chamfer
     /// [`ChamferDefinition`]: crate::surface::procedural_blend::chamfer::ChamferDefinition

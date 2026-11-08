@@ -25,7 +25,7 @@
     clippy::indexing_slicing
 )] // test helpers
 use solidcore::blend::blend_corner::BlendCornerEvent;
-use solidcore::blend::blend_refusal::BlendRefusal;
+use solidcore::blend::blend_refusal::{BlendRefusal, SetbackTooLongWhy};
 use solidcore::blend::fillet_executive::session::FilletSession;
 use solidcore::blend::fillet_solver::p1::FilletSurfaceGeneratorType;
 use solidcore::boolean::api_brep::{boolean_difference, boolean_union};
@@ -1337,9 +1337,12 @@ fn d_prism_asked_past_the_rails_names_the_setback_that_fits() {
         assert!(!r.ok, "{}: built", case.name);
         let named = match r.refusal {
             Some(BlendRefusal::SetbackTooLong {
-                vertex, largest, ..
+                vertex,
+                largest,
+                why,
             }) => {
                 assert_eq!(vertex, v, "{}", case.name);
+                assert_eq!(why, SetbackTooLongWhy::PastRails, "{}", case.name);
                 assert!(
                     (largest - want).abs() <= 1e-9,
                     "{}: {largest} against {want}",

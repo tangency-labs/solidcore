@@ -78,7 +78,7 @@ pub enum BlendRefusal {
     SetbackTooLong {
         /// The corner's vertex.
         vertex: VertexId,
-        /// The bound below which a setback fits.
+        /// The size the refusing test names ([`SetbackTooLongWhy`] says which and how).
         largest: f64,
         /// Which test refused it.
         why: SetbackTooLongWhy,
@@ -101,14 +101,17 @@ pub enum BlendRefusal {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SetbackTooLongWhy {
-    /// It reaches the far end of an edge at its corner, or the far end's own setback there:
-    /// `setback + far >= length` (the far end's setback 0 where it has none). Every set-back
-    /// corner, before the blends are traced; `largest` is the least of `length - far`.
+    /// With its ease it leaves an edge at its corner no length past the far end's claim (that
+    /// end's fill's setback and ease, or the setback set on its corner; 0 where it has none):
+    /// an open bound. Every set-back corner, before the blends are traced; `largest` is the
+    /// least of `length - ease - far` less the fit margin, a thousand of the edge's
+    /// tolerances, and a setback above it is refused.
     Overlap,
     /// At a Setback corner, with its ease it does not lie below an edge's room by the
-    /// tolerance: `setback + ease >= length - claim - tol`, the far end's claim its setback
-    /// and ease, or half the edge where every edge there is blended. `largest` is the least
-    /// of `room - ease`.
+    /// tolerance: `setback + ease >= length - claim - tol`, the far end's claim its fill's
+    /// setback and ease (0 where the far end has no fill: a far N x N corner's set setback is
+    /// claimed by [`SetbackTooLongWhy::Overlap`] only). `largest` is the least of
+    /// `room - ease`.
     Room,
     /// At a Setback corner, with its ease it reaches along an edge as far as a far corner
     /// cuts one of the edge's round's rails, less the fit margin. `largest` is that reach

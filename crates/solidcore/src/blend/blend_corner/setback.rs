@@ -274,23 +274,37 @@ fn asked_at(corners: &[FilletCorner], fills: &[SetBackFill], vertex: VertexId) -
         .map_or(0.0, |c| c.set_back_dist.max(0.0))
 }
 
+/// The ease asked at `vertex` with its fill ([`set_back_fill_of`]); `0` for none (a corner's
+/// set setback has none).
+fn ease_at(fills: &[SetBackFill], vertex: VertexId) -> f64 {
+    set_back_fill_of(fills, vertex).map_or(0.0, |f| f.ease.max(0.0))
+}
+
 /// Not the fork's (#3145): the setbacks asked at the made `corners` (their fills or their
-/// set setbacks, [`asked_at`]) that overlap on an edge: a setback that, with the far end's
-/// own (0 where it has none), reaches the edge's length, `setback + far >= length`, refused
+/// set setbacks, [`asked_at`]) that overlap on an edge, refused
 /// ([`SetbackTooLongWhy::Overlap`]) before the blends are traced, at every set-back corner,
-/// the Setback's and the N x N ones alike. No such setback builds: the corner's patch would
-/// run past the edge's other end. `largest` is the least of `length - far` over the corner's
-/// edges. The Setback's finer test ([`SetbackTooLongWhy::Room`], with the ease and the room's
-/// claims and tolerance) stays where it builds. The length is the edge curve's over its
-/// interval ([`Curve::length`], asked as the Setback's room asks it): exact for a line (its
-/// own length) and for a polyline span (the sum of its chords), otherwise the adaptive
-/// quadrature's value, accepted on its step-error estimates against a relative tolerance,
-/// not a bound. Where the length is only that estimate, a setback within the estimate's error
-/// of the length may be decided either way: the check relies on [`Curve::length`]'s estimate
-/// off lines and polylines (#3184). The first refused corner, with its vertex.
+/// the Setback's and the N x N ones alike. On each edge at the corner the setback, its ease
+/// and the far end's claim (its fill's setback and ease, or the setback set on its corner; 0
+/// where it has none) must leave the edge some length: a setback at `length - ease - far`
+/// would leave the edge's round none, so that bound is open, and the refusal names the least
+/// of it over the corner's edges less the fit margin, a thousand of the edge's tolerances
+/// (docs/generic-blend.md section 3.5). A setback above the named `largest` is refused, one at
+/// it passes this check. This check is necessary, not sufficient: the corner's later tests
+/// (the Setback's room, [`SetbackTooLongWhy::Room`]: its claim is never more than the far
+/// claim here, so where the fit margin is at least its tolerance, the corner's, it refuses
+/// nothing this passes; and where a far corner cuts a rail, [`SetbackTooLongWhy::PastRails`])
+/// still run.
+///
+/// The length is the edge curve's over its interval ([`Curve::length`], asked as the
+/// Setback's room asks it, to a thousandth of the corner's tolerance): exact for a line and
+/// for a polyline span, otherwise the adaptive quadrature's estimate on its step-error
+/// estimates, not a bound (#3184). The margin is a million times that asked accuracy, so the
+/// estimate's error does not decide whether a setback within the margin of the bound passes.
+/// An edge at the corner with no curve is refused (a null pointer), never skipped. The first
+/// refused corner, with its vertex.
 ///
 /// # Errors
-/// Those of the topology queries and the lengths.
+/// Those of the topology queries and the lengths; `NullPointer` for an edge with no curve.
 pub fn overlapping_setbacks(
     k: &Kernel,
     b: &Brep,
@@ -305,26 +319,25 @@ pub fn overlapping_setbacks(
         if !d.is_finite() || d <= 0.0 {
             continue;
         }
+        let ease = ease_at(fills, vtx);
         let mut largest = BIG_DOUBLE;
-        let mut over = false;
         for e in vertex::edges(b, vtx, None)? {
-            let Some(curve) = edge::evaluation_curve(b, e)? else {
-                continue;
-            };
+            let curve = edge::evaluation_curve(b, e)?
+                .ok_or_else(|| SolidError::null_pointer(OP_TOPOLOGY))?;
             // (asked as the Setback's room asks it, `set_backs`)
             let length = curve.length(k, &edge::interval(b, e)?, 1.0e-3 * corner.approx_tol_3d)?;
-            let far = edge::other_vertex(b, e, Some(vtx))?
-                .filter(|&f| f != vtx)
-                .map_or(0.0, |f| asked_at(corners, fills, f));
-            largest = smin(largest, length - far);
-            if d + far >= length {
-                over = true;
-            }
+            let far = match edge::other_vertex(b, e, Some(vtx))?.filter(|&f| f != vtx) {
+                Some(f) => asked_at(corners, fills, f) + ease_at(fills, f),
+                None => 0.0,
+            };
+            // the fit margin: a thousand of the edge's tolerances (the bound is open)
+            let margin = 1000.0 * edge::tolerance(b, e)?;
+            largest = smin(largest, length - ease - far - margin);
         }
-        if over {
+        if d > largest {
             let refusal = SetbackRefusal::no_room(
                 format!(
-                    "Fillet Error: a setback of {} reaches past an edge at its corner, or the far end's setback on it: a setback below {} fits",
+                    "Fillet Error: a setback of {} reaches past an edge at its corner, or the far end's claim on it: a setback of at most {} fits",
                     fmt_g(d),
                     fmt_g(largest)
                 ),
