@@ -5,6 +5,9 @@
 //! `v = -2.2e-16`. With `Kernel::fixes.face_swap_uv_transposes_trims` (WR-729) the trims
 //! are transposed exactly. The scan ([`support::pcurve_domain_scan`]) walks every face's
 //! loops; the cases are the operations whose out-of-domain ends were all made there.
+//! The filleted box bottom is surveyed, not asserted: one of its round's trims ends an ulp
+//! past `u = 1` from the fillet's own trim
+//! (`plan/findings/blend.fillet_executive--box-bottom-round-trim-ends-an-ulp-past-its-domain.md`).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -127,7 +130,7 @@ const CASES: &[Case] = &[
 /// Cases with another producer left: the old chamfer's faces (`fillet_edges` with
 /// cross-section 0) end an ulp past `v = 1` with the fix too, and so does one trim of the
 /// box bottom's rounds (cross-section 1) at `u = 1`, which the face shrink keeps since it
-/// keeps trims on a trim that keeps the surface's map (WR-700; it removed and projected
+/// keeps a trim that keeps the surface's map (WR-700; it removed and projected
 /// them again before; recorded in
 /// `plan/findings/blend.fillet_executive--box-bottom-round-trim-ends-an-ulp-past-its-domain.md`).
 /// That code is being replaced by the generic blend (AGENTS.md §4b), so they are surveyed,
