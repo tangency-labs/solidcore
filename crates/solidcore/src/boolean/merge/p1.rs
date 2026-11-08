@@ -869,7 +869,8 @@ pub(crate) fn boolean_post_process_with_notifications(
 ///   asks vertex/edge and vertex/face gaps of at most half the vertex's tolerance. The move
 ///   is measured here, `best_point.distance(old)`: `calc_corner_from_faces`'s `max_gap_3d` is
 ///   that distance in all its branches but the parallel faces', where it is the residual.
-/// - leaves a gap of `xsect_tol` or more to any of its faces (measured with the vertex put
+/// - leaves a gap of `xsect_tol` or more to any of its faces, or of more than half the vertex's
+///   tolerance to the end of any incident edge curve (both measured with the vertex put
 ///   at the corner for the measurement only): a partial move would stay invalid.
 ///
 /// # Errors
@@ -893,11 +894,28 @@ fn face_corner_to_move_to(
         return Ok(None);
     }
     brep.vertex_mut(v)?.point = at.best_point;
-    let within = corner::is_within_xsect_tol_3d_of_faces(k, brep, v, true);
+    let cured = corner_cures_gaps(k, brep, v, tolerance / 2.0);
     brep.vertex_mut(v)?.point = old;
-    let within = within.map(|(within, ..)| within);
+    let cured = cured?;
     reset_vertex_face_gaps(brep, v)?;
-    Ok(within?.then_some(at.best_point))
+    Ok(cured.then_some(at.best_point))
+}
+
+/// With `v` at the point under test: every vertex/face gap is under the intersection tolerance
+/// and every vertex/edge gap (its edge curves end where they did) at most `max_edge_gap`.
+fn corner_cures_gaps(k: &Kernel, brep: &mut Brep, v: VertexId, max_edge_gap: f64) -> Result<bool> {
+    use crate::topology::vertexuse;
+    if !vertex::corner::is_within_xsect_tol_3d_of_faces(k, brep, v, true)?.0 {
+        return Ok(false);
+    }
+    for vu in vertex::vertexuses(brep, v)? {
+        if let Some(gap) = vertexuse::vertex_edge_gap(k, brep, vu, true)? {
+            if gap.gap_3d.is_nan() || gap.gap_3d > max_edge_gap {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 /// The gaps cached on the uses of `v` are of a point it no longer has.
