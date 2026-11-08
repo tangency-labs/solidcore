@@ -103,9 +103,11 @@ main writes 0.9999999999763531, 1.0000000000521443 and the like from the refit, 
 1.0. Each of the 19 files, written by main and by the head, reads back with
 `solidcore-diag` to the same body: face and edge counts, surface kinds, edge lengths and
 tolerances bit for bit equal.
+The 19 cases: write_bytes0030, write_bytes0045, write_bytes0049, write_bytes0084, write_bytes0090, write_bytes0107, write_bytes0135, write_bytes0138, write_bytes0146, write_bytes0152, write_bytes0159, write_bytes0171, write_bytes0173, write_bytes0175, write_bytes0186, write_bytes0194, write_bytes0198, write_bytes_box_far_ascii, write_bytes_box_far_binary.
 
 ## `primitive.api_trim_ops` and `query.face_p4`
 
-The two api_trim_ops cases reorder the same values (gen0073, gen0112). The four face_p4
+The two api_trim_ops cases reorder the same values (gen0073, gen0112); the 11 other lines a
+full bless rewrites there pass main's golden and keep main's line. The four face_p4
 cases build a natural face on a swapped cylinder that failed with 1001 on main
 (`query.face_p4--natural-face-on-a-swapped-cylinder`).
