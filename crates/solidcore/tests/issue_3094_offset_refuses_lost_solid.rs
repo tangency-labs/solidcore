@@ -5,6 +5,10 @@
 //! (the goldens case `issue1795_plate_api_shell_2_top_offset_solid_unmerged`) came back
 //! with 16 faces, 40 edges and 29 vertices: Euler characteristic 5, no closed surface.
 //!
+//! The same through `offset_brep`: a 30 x 20 x 10 box with two edges chamfered 2 (edges 0 and
+//! 9, as WR-657's tests) offset inward by 4 (merged results, extended convex edges, default
+//! fixes) came back as a body that is no manifold solid.
+//!
 //! A shell of a manifold solid is a manifold solid or a refusal: the ops contract
 //! (`finish`, docs/validity-and-tolerances.md section 4) at the kernel's entry point.
 #![allow(
@@ -17,13 +21,17 @@
 #[path = "support/offset_fixture.rs"]
 mod offset_fixture;
 
-use offset_fixture::{api_shell, planar_faces_at};
+use offset_fixture::{api_shell, offset_full, planar_faces_at, shell, volume};
+use solidcore::blend::fillet_executive::api::fillet_edges;
 use solidcore::error::offset::{OffsetFailure, Unsoundness};
 use solidcore::error::Reason;
 use solidcore::geom::attribute::AttributeStore;
+use solidcore::math::Point3;
 use solidcore::offset::offset_executive::p2::{OffsetOptions, ShellOptions};
+use solidcore::primitive::api_primitives::create_box;
 use solidcore::query::api_queries::brep_is_manifold_solid;
 use solidcore::topology::api_files::read_brep_from_file;
+use solidcore::topology::brep::p1 as bp1;
 use solidcore::topology::brep::p10::TopologyEnv;
 use solidcore::topology::brep::validation::{check_brep, CheckLevel};
 use solidcore::topology::topology::NotifyRecords;
@@ -84,11 +92,13 @@ fn a_shell_that_is_no_solid_is_refused() {
             return;
         }
     };
+    // a body reported as built must be a solid: on the base it is not
     let manifold = brep_is_manifold_solid(&body).unwrap();
     let lines = check_brep(&mut k, &mut body, CheckLevel::Level2)
         .unwrap()
         .lines();
-    panic!(
+    assert!(
+        manifold && lines.is_empty(),
         "reported as built: {} faces, {} edges, {} vertices, manifold solid {manifold}, \
          check_brep level 2 {} lines, the first {:?}",
         body.face_list().len(),
@@ -97,4 +107,61 @@ fn a_shell_that_is_no_solid_is_refused() {
         lines.len(),
         lines.first()
     );
+}
+
+/// The control: a valid offset and a valid shell of a manifold solid still succeed through
+/// the gate, with the closed-form volumes (a 10 cube out by 1 is a 12 cube; in by 1 and
+/// open at the top it is the 1000 less the 8 x 8 x 9 cavity).
+#[test]
+fn valid_offsets_and_shells_of_a_solid_still_succeed() {
+    let mut k = Kernel::default();
+    let mut cube = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 10.0, 10.0, 10.0).unwrap();
+    let mut out = offset_full(&mut k, &mut cube, 1.0).unwrap();
+    assert!(brep_is_manifold_solid(&out).unwrap());
+    let v = volume(&k, &mut out).unwrap();
+    assert!((v - 1728.0).abs() <= 1e-6 * 1728.0, "offset volume {v}");
+
+    let cube = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 10.0, 10.0, 10.0).unwrap();
+    let open = planar_faces_at(&k, &cube, 2, 10.0);
+    assert_eq!(open.len(), 1, "the top face");
+    let mut shelled = shell(&mut k, cube, -1.0, &open).unwrap();
+    assert!(brep_is_manifold_solid(&shelled).unwrap());
+    let v = volume(&k, &mut shelled).unwrap();
+    assert!((v - 424.0).abs() <= 1e-6 * 424.0, "shell volume {v}");
+}
+
+/// The 30 x 20 x 10 box with edges 0 and 9 chamfered 2.
+fn chamfered_box(k: &mut Kernel) -> Brep {
+    let mut b = create_box(k, Point3::new(0.0, 0.0, 0.0), 30.0, 20.0, 10.0).unwrap();
+    let all = bp1::edges(&b, None).unwrap();
+    fillet_edges(k, &mut b, &[all[0], all[9]], 2.0, 0, 1, 1.0).unwrap();
+    b
+}
+
+#[test]
+fn an_offset_that_is_no_solid_is_refused() {
+    let mut k = Kernel::default();
+    let mut part = chamfered_box(&mut k);
+    assert!(
+        brep_is_manifold_solid(&part).unwrap(),
+        "the input is a solid"
+    );
+    match offset_full(&mut k, &mut part, -4.0) {
+        Err(error) => {
+            let SolidError::Failed(failure) = &error else {
+                panic!("not a refusal: {error}");
+            };
+            assert_eq!(
+                failure.reason,
+                Reason::Offset(OffsetFailure::Unsound {
+                    what: Unsoundness::NotManifoldSolid
+                })
+            );
+        }
+        Ok(body) => assert!(
+            brep_is_manifold_solid(&body).unwrap(),
+            "reported as built: {} faces, no manifold solid",
+            body.face_list().len()
+        ),
+    }
 }
