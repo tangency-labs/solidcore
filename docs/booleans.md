@@ -99,6 +99,12 @@ vertex used by one common edge (`close_intersection_loop`) and, with more than o
 closes the gaps (`fix_gaps`); it repeats at most ten times. The classify and select steps also repeat
 (at most ten times) when a coincidence repair changes the topology (§5).
 
+After the cleanup of step 5, `place_vertices_on_face_corners` (`merge/p1.rs`) moves a vertex that lies
+more than the intersection tolerance off one of its faces to the corner its faces define, only within
+half its tolerance and only when the corner leaves every face gap under the intersection tolerance
+(measured at the corner before the move); otherwise the vertex stays. It runs after the cleanup because
+the faces and edges the vertex keeps are final there.
+
 Ops never computes a geometric quantity here: `boolean` takes the operands, calls
 `api_brep::boolean`, and `finish` asks the kernel whether the result is a solid
 (`is_outward_touching_solids`, `solidcore/src/topology/brep.rs`). Which `UpstreamFixes` run is the
@@ -198,7 +204,7 @@ sampled: a 6 × 6 grid of points dropped onto the other for whole surfaces, and 
 boundary curve of one meeting one of the other where the surfaces agree to second order, or the
 middle of one dropping onto the other. A sampled check is not a proof; deciding coincidence from the
 definitions (two quadrics by their coefficients, a definition against its own copy by identity, a
-B-spline pair from the composed implicit field as `ssi/src/coincide.rs` does) is open work.
+B-spline pair from the composed implicit field as `ssi/src/coincide.rs` does) is open work. Only the merge gate decides from definitions: `faces_coincide` (`merge/p1.rs`) decides cone (a cylinder is a cone of semi-angle 0), sphere and torus pairs by `Surface::same_analytic_surface`. Two planes, two different kinds (tangent, they can stay within the tolerance over a patch) and any pair with an offset, B-spline, extrusion or revolution keep the sector's answer.
 
 **Near-coincident strips.** Two planar faces crossing at a small angle θ meet in a line fixed only
 to tol / sin θ. Where one face has an edge lying on the other, parallel to and covering the crossing,
