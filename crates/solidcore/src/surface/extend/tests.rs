@@ -2842,8 +2842,8 @@ fn sides_extended_in_turn_each_meet_the_distance_at_the_face() {
 }
 
 /// A side extended after another reaches its distance at the face, not out on the box the
-/// earlier side grew: a bilinear patch on `[1, 3] x [2, 3.5]` whose v legs turn along u, UMin
-/// extended first (its UMax not asked, as the offset's gen0445 leaves it), then both v sides, in
+/// earlier side grew: a bilinear patch on `[1, 3] x [2, 3.5]` whose v legs turn along u, `UMin`
+/// extended first (its `UMax` not asked, as the offset's gen0445 leaves it), then both v sides, in
 /// [`BoxSide::ALL`]'s order. Every iso line of a polynomial bilinear patch and of its Ruled
 /// extension is straight, so a side's reach at the middle of the face's side is the chord from
 /// the source's side (the result is the source there, its parameters kept) to the result's end
@@ -2871,7 +2871,11 @@ fn a_side_extended_after_another_reaches_its_distance_at_the_face() {
         .unwrap();
     let grown = e.surface.natural_uv_domain_with_nurb(&kk).unwrap();
     // UMax left where the face ends
-    assert!(matches!(e.sides[1], SideExtension::NotAsked), "{:?}", e.sides);
+    assert!(
+        matches!(e.sides[1], SideExtension::NotAsked),
+        "{:?}",
+        e.sides
+    );
     assert_eq!(grown.max().x, face.max().x);
     for side in asked {
         let at = BoxSide::ALL.iter().position(|&x| x == side).unwrap();
@@ -2889,6 +2893,9 @@ fn a_side_extended_after_another_reaches_its_distance_at_the_face() {
         let on_face = e.surface.evaluate_point(&kk, middle).unwrap();
         assert!(on_face.distance(s.evaluate_point(&kk, middle).unwrap()) <= 1e-12);
         let reach = (e.surface.evaluate_point(&kk, end).unwrap() - on_face).length();
-        assert!((reach - d).abs() <= 1e-6 * d, "{side:?} reaches {reach} of {d}");
+        assert!(
+            (reach - d).abs() <= 1e-6 * d,
+            "{side:?} reaches {reach} of {d}"
+        );
     }
 }
