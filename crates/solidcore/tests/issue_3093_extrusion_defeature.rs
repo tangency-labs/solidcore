@@ -191,3 +191,83 @@ fn a_feature_whose_cap_cannot_be_built_is_kept_and_named() {
     let v = s.volume.unwrap();
     assert!((v - 757.499_499_825_162).abs() <= 1e-9 * v, "{v}");
 }
+
+/// The body's counts and volume, to compare a base with its state before a call.
+fn state(k: &mut Kernel, b: &mut Brep) -> ([usize; 3], f64) {
+    let counts = [
+        bp1::faces(b, None).unwrap().len(),
+        bp1::edges(b, None).unwrap().len(),
+        bp1::vertices(b, None).unwrap().len(),
+    ];
+    let v = validation::soundness(k, b).unwrap().volume.unwrap();
+    (counts, v)
+}
+
+/// The executive with the three features of `my_test_multi_rebuilds` (case 2) added.
+fn three_features<'b>(k: &mut Kernel, b: &'b mut Brep) -> FeatureExecutive<'b> {
+    let faces = bp1::faces(b, None).unwrap();
+    let edges = bp1::edges(b, None).unwrap();
+    let mut ex = FeatureExecutive::new(k, b).unwrap();
+    for (face, loop_edges) in [
+        (10, &[8, 25][..]),
+        (9, &[4, 5, 6, 7, 17, 19, 21, 23]),
+        (4, &[2, 12, 13, 14]),
+    ] {
+        let es: Vec<_> = loop_edges.iter().map(|&i| edges[i]).collect();
+        ex.add_feature_with_edges(
+            k,
+            faces[face],
+            &es,
+            RebuildBrepType::PlanarCap,
+            RebuildBrepType::PlanarCap,
+        )
+        .unwrap()
+        .unwrap();
+    }
+    ex
+}
+
+/// (#3179 review, CodeRabbit) A feature that cannot be partitioned (`defeature_ready` false)
+/// is not counted as taken off, though `build_patches` marks it rebuilt before refusing it:
+/// it is kept, it has nothing to put back, so the call is refused and the base is as it was.
+#[test]
+fn a_feature_that_cannot_be_partitioned_refuses_the_call_and_leaves_the_base() {
+    let mut k = Kernel::default();
+    let Some(mut b) = extrusion(&mut k) else {
+        return;
+    };
+    let before = state(&mut k, &mut b);
+    let r = {
+        let mut ex = three_features(&mut k, &mut b);
+        ex.features_mut()[1].defeature_ready = false;
+        ex.do_defeature(&mut k)
+    };
+    assert!(
+        matches!(r, Err(solidcore::SolidError::Upstream { .. })),
+        "{r:?}"
+    );
+    assert_eq!(state(&mut k, &mut b), before);
+}
+
+/// (#3179 review) A cancelled call puts the base back as it was, as a refusal does.
+#[test]
+fn a_cancelled_defeature_leaves_the_base() {
+    let mut k = Kernel::default();
+    let Some(mut b) = extrusion(&mut k) else {
+        return;
+    };
+    let before = state(&mut k, &mut b);
+    let token = solidcore::kernel::CancelToken::new();
+    let r = {
+        let mut ex = three_features(&mut k, &mut b);
+        token.cancel();
+        k.set_cancel_token(token.clone());
+        ex.do_defeature(&mut k)
+    };
+    k.cancel = None;
+    assert!(
+        matches!(r, Err(solidcore::SolidError::Cancelled { .. })),
+        "{r:?}"
+    );
+    assert_eq!(state(&mut k, &mut b), before);
+}

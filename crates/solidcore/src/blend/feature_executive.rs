@@ -598,22 +598,49 @@ impl<'a> FeatureExecutive<'a> {
     /// `DoDefeature`: partitions each feature, builds its patches and applies them
     /// (their statuses ignored); the base B-rep is edited in place.
     ///
-    /// Not upstream (WR-656): a feature whose base patch could not be built is not taken
-    /// off. Upstream leaves its hole open, with success, for the caller to put back with
-    /// `RestoreFeatures`; here it is put back at once (`RestoreFeature`), so no base is
-    /// handed back open. The features kept are returned, each naming the base loop edge of
-    /// its open hole, and the executive drops them, as `RestoreFeatures` does. When no
-    /// feature comes off, the call is refused with `SM_ERR` at the first kept feature's
-    /// loop edge, the base B-rep put back as it was (a [`Brep::snapshot`] taken first) and
-    /// the executive's features dropped; a refusal leaves the base untouched.
+    /// Not upstream (WR-656): a feature that was not partitioned, or whose base patch could
+    /// not be built, is not taken off. Upstream leaves its hole open, with success, for the
+    /// caller to put back with `RestoreFeatures`; here it is put back at once
+    /// (`RestoreFeature`), so no base is handed back open. The features kept are returned,
+    /// each naming the base loop edge of its open hole, and the executive drops them, as
+    /// `RestoreFeatures` does. When no feature comes off, the call is refused with `SM_ERR`
+    /// at the first kept feature's loop edge; a feature that cannot be put back (one whose
+    /// partition failed part way has nothing to restore) refuses the call too. Every exit
+    /// that is not a success, these refusals, an unported callee and a cancellation, puts the
+    /// base B-rep back as it was (a [`Brep::snapshot`] taken first, on every call: a copy of
+    /// the base is the price of that guarantee) and drops the executive's features, so a
+    /// failed call leaves the base untouched.
+    ///
+    /// After a partial success the kept features are gone from [`Self::features`], so the
+    /// indices [`KeptFeature::feature`] names (those when the call began) no longer index it.
     ///
     /// # Errors
     ///
-    /// [`SolidError::Unported`] from a callee; dangling ids; `SM_ERR` at a loop edge of
-    /// the base when no feature comes off and one was kept, or when a kept feature cannot
-    /// be put back (the base put back as it was).
+    /// [`SolidError::Unported`] from a callee and [`SolidError::Cancelled`]; dangling ids;
+    /// `SM_ERR` at a loop edge of the base when no feature comes off and one was kept, or
+    /// when a kept feature cannot be put back. The base is put back as it was in each case.
     pub fn do_defeature(&mut self, k: &mut Kernel) -> Result<Vec<KeptFeature>> {
         let saved = self.base.snapshot()?;
+        match self.take_off(k) {
+            Ok(kept) => Ok(kept),
+            Err(e) => {
+                self.put_back(saved);
+                Err(e)
+            }
+        }
+    }
+
+    /// The base put back as `saved` and the executive's features, patches and marks dropped
+    /// ([`Self::do_defeature`]'s failed exits).
+    fn put_back(&mut self, saved: crate::topology::Snapshot) {
+        self.base.restore(saved);
+        self.features.clear();
+        self.patches.clear();
+        self.marks = Marks::default();
+    }
+
+    /// [`Self::do_defeature`]'s work on the base, which the caller puts back on any error.
+    fn take_off(&mut self, k: &mut Kernel) -> Result<Vec<KeptFeature>> {
         let mut kept: Vec<KeptFeature> = Vec::new();
         let mut off = 0;
         for i in 0..self.features.len() {
@@ -622,7 +649,9 @@ impl<'a> FeatureExecutive<'a> {
             };
             keep_unported(partition_feature(k, self.base, feature))?;
             keep_unported(build_patches(k, self.base, feature, &mut self.patches))?;
-            if feature.base_rebuilt {
+            // `build_patches` marks the feature rebuilt before it refuses an unpartitioned
+            // one, so both are read
+            if feature.is_partitioned && feature.base_rebuilt {
                 keep_unported(apply_patches(k, self.base, feature, &mut self.patches))?;
                 off += 1;
             } else {
@@ -637,31 +666,25 @@ impl<'a> FeatureExecutive<'a> {
         if kept.is_empty() {
             return Ok(kept);
         }
-        let first_open = kept.first().and_then(|f| f.open_loop);
-        let refuse = |this: &mut Self, saved| {
-            this.base.restore(saved);
-            this.features.clear();
-            this.patches.clear();
-            this.marks = Marks::default();
-            Err(SolidError::Upstream {
-                code: SM_ERR,
-                operation: OP,
-                entity: first_open.map(EntityRef::Edge),
-            })
+        let refusal = SolidError::Upstream {
+            code: SM_ERR,
+            operation: OP,
+            entity: kept.first().and_then(|f| f.open_loop).map(EntityRef::Edge),
         };
         if off == 0 {
-            return refuse(self, saved);
+            return Err(refusal);
         }
+        // in descending order, so each kept index is still its feature's when it is removed
         for f in kept.iter().rev() {
             let Some(feature) = self.features.get_mut(f.feature) else {
-                return refuse(self, saved);
+                return Err(refusal);
             };
             match restore_feature(k, self.base, feature) {
                 Ok(()) => {
                     self.features.remove(f.feature);
                 }
                 Err(e) if e.is_unported_or_cancelled() => return Err(e),
-                Err(_) => return refuse(self, saved),
+                Err(_) => return Err(refusal),
             }
         }
         Ok(kept)
