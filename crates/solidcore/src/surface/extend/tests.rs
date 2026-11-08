@@ -3582,3 +3582,31 @@ fn a_distance_the_stored_net_cannot_resolve_is_refused_naming_the_reachable_leng
         .expect("extended");
     meets(&e, named);
 }
+
+/// A mirror step of a rational net whose weights already carry an error (a prior step's) keeps
+/// that weight error in its own: the mirror's `err` bounds the weights only through the
+/// translated points, which for a net near the origin (`|O_j| < 1`) is smaller than the input
+/// weight error.
+#[test]
+fn a_mirror_keeps_the_source_weight_error() {
+    let s = spline(
+        &[
+            vec![[0.0, 0.0, 0.0, 1.0], [0.1, 0.0, 0.0, 1.0]],
+            vec![[0.0, 0.1, 0.0, 1.0], [0.1, 0.1, 0.0, 1.0]],
+        ],
+        1,
+        1,
+        &[0.0, 0.0, 1.0, 1.0],
+        &[0.0, 0.0, 1.0, 1.0],
+        true,
+    );
+    let SurfaceKind::BSpline(bs) = s.kind() else {
+        panic!();
+    };
+    let mut src = Local::of(bs.gw_nurb().unwrap(), BoxSide::UMax).unwrap();
+    src.err_w = 1e-3;
+    for curvature in [false, true] {
+        let out = src.mirrored_by(curvature, 0.5).unwrap();
+        assert!(out.err_w >= 1e-3, "{curvature}: {:e}", out.err_w);
+    }
+}
