@@ -81,21 +81,29 @@ fn issue_3012_cut_of_filleted_boxes_a_sliver_apart() {
             let report = r.check(CheckLevel::All).unwrap();
             assert!(report.is_valid(), "dx {dx} reversed {reversed}: {report}");
             assert_eq!(r.solid_count().unwrap(), 1, "dx {dx} reversed {reversed}");
-            // Every face of the sliver: the two flat sides (26 x 10 each) and the four fillets
-            // (a quarter turn of R2 by 10 each), plus the thin ends. A fillet face the sector
-            // skipped and a neighbouring edge put in the wrong region would add or drop 31.4.
-            let faces = 2.0 * 26.0 * 10.0 + 4.0 * FRAC_PI_2 * 2.0 * 10.0;
-            let area = r.area(1e-8).unwrap();
-            assert!(
-                (area - faces).abs() < 100.0 * dx,
-                "dx {dx} reversed {reversed}: area {area} vs {faces}"
-            );
-            // the sliver's volume dx * 300, less the taper at its ends: 1e-3 of it at most
-            let expected = dx * 300.0;
+            // The sliver is dx thick over the 30 of the outline's height, so its volume is
+            // dx * 30 * 10. At each end the fillets of the two bodies cross dx / 2 from their
+            // tangent point and the sliver is cut off there: a triangle of base dx and length
+            // dx / 2 per end, 2 ends x 10 high, so at most 10 dx^2 is missing (measured 5 dx^2:
+            // 4.8e-8 at 1e-4, 5.0e-6 at 1e-3). 1e-8 is the tolerance the volume is asked for.
+            let h = 10.0;
+            let expected = dx * 30.0 * h;
             let v = volume(&r);
             assert!(
-                (v - expected).abs() < 1e-3 * expected,
+                (expected - v) > -1e-8 && (expected - v) < 10.0 * dx * dx + 1e-8,
                 "dx {dx} reversed {reversed}: {v} vs {expected}"
+            );
+            // Every face of the sliver: the two flat sides (26 x 10 each), the four fillets (a
+            // quarter turn of R2 by 10 each) and the two caps (the sliver's section, V / 10
+            // each). A fillet face the sector skipped and a neighbouring edge put in the wrong
+            // region would add or drop 31.4. Each of the four fillet pieces ends where the two
+            // fillets cross, dx / 2 of arc short, over 10: 20 dx at most. 1e-7 is the area
+            // routine's slack (measured 4e-8).
+            let faces = 2.0 * 26.0 * 10.0 + 4.0 * FRAC_PI_2 * 2.0 * 10.0 + 2.0 * v / h;
+            let area = r.area(1e-8).unwrap();
+            assert!(
+                area < faces + 1e-7 && area > faces - 20.0 * dx - 1e-7,
+                "dx {dx} reversed {reversed}: area {area} vs {faces}"
             );
         }
     }

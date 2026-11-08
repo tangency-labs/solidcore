@@ -306,7 +306,6 @@ fn solidcraft_flags(k: &mut Kernel) {
     k.fixes.linear_sweep_arc_to_cylinder_zero = true;
     k.fixes.local_operation_box_holds_new_surfaces = true;
     k.fixes.local_operation_closes_walls_to_nothing = true;
-    k.fixes.local_operation_offset_status = true;
     k.fixes.local_operation_refuses_loose_tangent_edges = true;
     k.fixes.local_operation_step_walls = true;
     k.fixes.loop_orientation_floor_from_loop_box = true;
@@ -355,7 +354,6 @@ fn solidcraft_flags(k: &mut Kernel) {
     k.fixes.shell_inner_shell_of_statuses = true;
     k.fixes.simple_coincidence_crossing_is_point = true;
     k.fixes.slice_coincident_faces_sheet_side = true;
-    k.fixes.sphere_small_circle_not_touching = true;
     k.fixes.ssi_low_angle_start_on_probation = true;
     k.fixes.ssi_pole_point_keeps_its_tangent = true;
     k.fixes.ssi_singular_start_inside_direction = true;
