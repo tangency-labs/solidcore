@@ -1,10 +1,11 @@
 //! #2928: `Cone::adjust_step_uv_domain` (`AdjustSTEPUVDomain`) on a whole-turn u window whose
 //! ends sit a rounding error outside ±180° (the NIST `ctc_02` AP203 face #1152: u
-//! −180.0000000000005 … 179.99999999999955°). The window is inside [−360°, 360°], but the
-//! sweep circle was built a turn too high ([≈180°, ≈540°]) and `create_circle_segment`
-//! refused it. A whole-turn window is accepted wherever its ends fall, and the NURB built
+//! −180.0000000000005 … 179.99999999999955°). The window spans 360.00000000000006°, and
+//! the NURB's sweep circles were asked for that span, which `create_circle_segment`
+//! refused past 360°. A whole-turn window is accepted wherever its ends fall, and the NURB built
 //! for it lies on the cone: across the window, the NURB point at each STEP parameter's
-//! NURB parameter is the cone's own (analytic) point there.
+//! NURB parameter (the stored NURB itself, evaluated there) is the cone's own (analytic)
+//! point.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -14,8 +15,10 @@
 use solidcore::geom::{axis2_placement::Axis2Placement, extent2d::Extent2d, vector2d::Point2};
 use solidcore::{kernel::Kernel, math::Vec3, surface::cone::Cone};
 
+/// The window's height span (the file's v range).
 const V_MAX: f64 = 39.31893628625494;
 
+/// The issue's cone placement (face #1152's `CONICAL_SURFACE`).
 fn frame() -> Axis2Placement {
     Axis2Placement::new(
         Vec3::new(-2.4980018054066e-13, 820.0, -140.0),
@@ -24,6 +27,7 @@ fn frame() -> Axis2Placement {
     )
 }
 
+/// Every whole-turn window builds, and its NURB lies on the cone across the window.
 #[test]
 fn a_whole_turn_window_a_rounding_error_past_180_is_accepted() {
     let k = Kernel::default();
@@ -52,7 +56,7 @@ fn a_whole_turn_window_a_rounding_error_past_180_is_accepted() {
                     let step_uv = Point2::new(u, v);
                     let on_cone = cone.evaluate_step_point(step_uv).unwrap();
                     let nurb_uv = cone.convert_uv_from_step_to_nurbs(&k, step_uv).unwrap();
-                    let on_nurb = cone.evaluate_point(&k, nurb_uv).unwrap();
+                    let on_nurb = cone.rev().base().evaluate_point(nurb_uv).unwrap();
                     let gap = (on_nurb - on_cone).length();
                     assert!(
                         gap <= 1e-9 * 1000.0,
