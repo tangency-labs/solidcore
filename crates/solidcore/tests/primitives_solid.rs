@@ -72,18 +72,20 @@ fn precise_sphere_properties_scale_and_translate() {
     }
 }
 
-/// SMLib 1.0.1's default (WR-472): `SmFace::ComputePreciseProperties` holds the volume
-/// and moments of a sphere of radius 3 below roundoff at 1e-10, and the integration fails
-/// with `SM_ERR`. The opt-in `precise_properties_body_length_scale` measures it.
+/// A sphere of radius 3 at accuracy 1e-10 (WR-472). SMLib 1.0.1's `SmFace::ComputePreciseProperties`
+/// holds the volume and moments to an error scale floored at the absolute `1e-12` and fails with
+/// `SM_ERR`. The integrator now controls each component relative to its own size, so the default
+/// converges as well as the opt-in `precise_properties_body_length_scale`, and the volume is the
+/// closed form `4/3 pi r^3` within the accuracy asked.
 #[test]
-fn default_sphere_precise_properties_fail_at_tight_accuracy() {
+fn default_sphere_precise_properties_meet_tight_accuracy() {
     use solidcore::geom::attribute::{AttributeStore, ObjectKey};
     use solidcore::mass::integrator::properties::{
         brep_properties, MassPropertyBehavior, PropertyAttributes,
     };
     use solidcore::primitive::api_primitives::create_sphere;
     use solidcore::query::brep::{calculate_bounding_box, BoundingBoxOptions};
-    use solidcore::{math::Vec3, Kernel, SolidError};
+    use solidcore::{math::Vec3, Kernel};
 
     let store = AttributeStore::default();
     let key_of = |_| ObjectKey(0);
@@ -91,6 +93,8 @@ fn default_sphere_precise_properties_fail_at_tight_accuracy() {
         store: &store,
         key_of: &key_of,
     };
+    let accuracy = 1e-10;
+    let want = 4.0 / 3.0 * std::f64::consts::PI * 27.0;
     for fixed in [false, true] {
         let mut k = Kernel::default();
         k.fixes.precise_properties_body_length_scale = fixed;
@@ -98,30 +102,20 @@ fn default_sphere_precise_properties_fail_at_tight_accuracy() {
         let mid = calculate_bounding_box(&k, &b, BoundingBoxOptions::default())
             .unwrap()
             .mid();
-        let result = brep_properties(
+        let properties = brep_properties(
             &k,
             &mut b,
-            1e-10,
+            accuracy,
             mid,
             MassPropertyBehavior::default(),
             &attributes,
+        )
+        .unwrap_or_else(|e| panic!("body length scale {fixed}: {e:?}"));
+        assert!(
+            (properties.volume - want).abs() <= accuracy * want,
+            "body length scale {fixed}: {} vs {want}",
+            properties.volume
         );
-        if fixed {
-            assert!(result.is_ok(), "{result:?}");
-        } else {
-            assert!(
-                matches!(
-                    result,
-                    // the step control failing: upstream's SM_ERR, named by its cause
-                    Err(SolidError::Upstream {
-                        operation: "mass::integrator::step_control",
-                        code: solidcore::error::SM_ERR,
-                        ..
-                    })
-                ),
-                "{result:?}"
-            );
-        }
     }
 }
 

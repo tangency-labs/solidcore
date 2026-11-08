@@ -1557,11 +1557,11 @@ mod tests {
         assert!((area - want).abs() <= 1e-6 * want, "{area} vs {want}");
     }
 
-    /// The volume of `wr471_whole_sphere`, 4/3 pi 5^3. WR-472's existing body-length error
-    /// scale converges on the face at 1e-8 and 1e-10. Without it the default integrator
-    /// converges at 1e-8 since #2890 (523.5987756272146, 5.5e-11 relative; upstream's
-    /// `SM_ERR` before) and still fails at 1e-10 (its step control: upstream's `SM_ERR`,
-    /// named by its cause). This is separate from WR-471's placement of the sphere's poles.
+    /// The volume of `wr471_whole_sphere`, 4/3 pi 5^3, within the accuracy asked at 1e-8 and
+    /// 1e-10, with and without WR-472's body-length error scale. (Upstream's absolute `1e-12`
+    /// floor on the integrator's error scale refused 1e-10 with `SM_ERR`; the integrator now
+    /// controls the integral relative to its own size.) This is separate from WR-471's
+    /// placement of the sphere's poles.
     #[test]
     fn wr471_whole_sphere_volume() {
         use crate::geom::attribute::{AttributeStore, ObjectKey};
@@ -1577,26 +1577,12 @@ mod tests {
                 let (mut k, mut b) = wr471_whole_sphere();
                 k.fixes.precise_properties_body_length_scale = scaled;
                 let result = brep_volume(&k, &mut b, accuracy, &attributes);
-                if scaled || accuracy >= 1e-8 {
-                    let volume = result.unwrap();
-                    let want = 4.0 / 3.0 * std::f64::consts::PI * 125.0;
-                    assert!(
-                        (volume - want).abs() <= accuracy * want,
-                        "accuracy={accuracy}: {volume} vs {want}"
-                    );
-                } else {
-                    assert!(
-                        matches!(
-                            result,
-                            Err(SolidError::Upstream {
-                                operation: crate::mass::integrator::OP_STEP_CONTROL,
-                                code: crate::error::SM_ERR,
-                                ..
-                            })
-                        ),
-                        "accuracy={accuracy}: {result:?}"
-                    );
-                }
+                let volume = result.unwrap();
+                let want = 4.0 / 3.0 * std::f64::consts::PI * 125.0;
+                assert!(
+                    (volume - want).abs() <= accuracy * want,
+                    "accuracy={accuracy} scaled={scaled}: {volume} vs {want}"
+                );
             }
         }
     }
