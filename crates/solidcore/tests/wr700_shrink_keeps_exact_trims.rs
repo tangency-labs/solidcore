@@ -85,6 +85,8 @@ struct Shrunk {
     off: f64,
     /// The trimmed surface's spans along u.
     spans_u: usize,
+    /// The shrunk face's domain along u.
+    face_u: (f64, f64),
 }
 
 fn shrunk_face_trims(k: &mut Kernel, srf: Surface, d: &Extent2d) -> Shrunk {
@@ -191,6 +193,10 @@ fn shrunk_face_trims(k: &mut Kernel, srf: Surface, d: &Extent2d) -> Shrunk {
         removed: 0,
         off: 0.0,
         spans_u: surface.knots(SurfParamType::U, None).unwrap().0.len() - 1,
+        face_u: {
+            let d = b.face(face).unwrap().uv_domain;
+            (d.min().x, d.max().x)
+        },
     };
     for (i, &eu) in eus.iter().enumerate() {
         let r = b.edgeuse(eu).unwrap();
@@ -219,6 +225,11 @@ fn shrunk_face_trims(k: &mut Kernel, srf: Surface, d: &Extent2d) -> Shrunk {
 
 /// A bicubic B-spline of two spans each way, a hill (the fork's `shrink_bspline_patch`).
 fn bspline_patch() -> Surface {
+    bspline_patch_on([0.0, 0.5, 1.0])
+}
+
+/// [`bspline_patch`] with its knots each way at `unique`.
+fn bspline_patch_on(unique: [f64; 3]) -> Surface {
     let mut net = Vec::new();
     for i in 0..5 {
         for j in 0..5 {
@@ -231,7 +242,6 @@ fn bspline_patch() -> Surface {
         }
     }
     let mult = [4, 1, 4];
-    let unique = [0.0, 0.5, 1.0];
     Surface::from(
         BSplineSurface::create_canonical(&CanonicalSurfaceData {
             u_degree: 3,
@@ -329,4 +339,17 @@ fn bound_a_rounding_step_past_a_knot_ends_on_the_knot() {
     let on = shrunk_face_trims(&mut k, bspline_patch(), &d);
     assert_eq!((on.kept, on.removed, on.spans_u), (8, 0, 1));
     assert!(on.off <= 1e-12, "off {}", on.off);
+}
+
+#[test]
+fn bound_a_rounding_step_past_a_knot_at_zero_ends_on_the_knot() {
+    // the same hill with its knots at -0.5, 0 and 0.5, and the bound in u a rounding step
+    // past its middle knot at 0 (1e-17: the scale of an end computed from parameters about
+    // the knot range, not of the knot's own magnitude, which is 0): the bound is 0 and the
+    // patch has the one span [-0.3, 0] along u
+    let d = Extent2d::from_points(Point2::new(-0.3, -0.2), Point2::new(1e-17, 0.4));
+    let mut k = Kernel::default();
+    let on = shrunk_face_trims(&mut k, bspline_patch_on([-0.5, 0.0, 0.5]), &d);
+    assert_eq!((on.kept, on.removed, on.spans_u), (8, 0, 1));
+    assert_eq!(on.face_u, (-0.3, 0.0));
 }

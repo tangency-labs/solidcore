@@ -3547,3 +3547,80 @@ mod tests {
         assert!(create_oriented_trim_boundary(&k, &mut b, f, true, true, None, &key_of).is_err());
     }
 }
+
+#[cfg(test)]
+mod swap_refused_tests {
+    use super::*;
+    use crate::math::Point3;
+    use crate::nurbs::b_spline_surface::p1::CanonicalSurfaceData;
+    use crate::primitive::api_primitives::create_cylinder;
+    use crate::surface::surface::SurfaceKind;
+
+    /// WR-701 through the face's `SwapUV` (the step `StitchAndOrient` and the cavity swap of
+    /// `topology::brep::p6` run on each face they turn): a cylinder face whose net lies on
+    /// the axis (every sweep iso circle degenerate, so the polar converter cannot be made on
+    /// the transposed net) is refused with the converter's error, and the face is as it was:
+    /// its surface's definition and net, its domain, its face use and every trim. Upstream
+    /// ignored the rebuild's status and swapped a surface whose definition it could not make.
+    #[test]
+    fn a_face_whose_surface_refuses_the_swap_is_left_as_it_was() {
+        let mut k = Kernel::default();
+        let mut b = create_cylinder(&mut k, Point3::ZERO, 1.0, 2.0).unwrap();
+        let face = b
+            .faces()
+            .ids()
+            .find(|&f| {
+                b.face(f)
+                    .unwrap()
+                    .surface
+                    .as_ref()
+                    .is_some_and(|s| matches!(s.kind(), SurfaceKind::Cone(_)))
+            })
+            .unwrap();
+        let Some(SurfaceKind::Cone(cone)) = b
+            .face_mut(face)
+            .unwrap()
+            .surface
+            .as_mut()
+            .map(Surface::kind_mut)
+        else {
+            panic!("a cylinder face");
+        };
+        let net = cone.base_mut();
+        let c = net.canonical().unwrap();
+        let points: Vec<Point3> = c
+            .control_points
+            .iter()
+            .map(|p| Point3::new(0.0, 0.0, p.z))
+            .collect();
+        net.set_canonical(&CanonicalSurfaceData {
+            u_degree: c.u_degree,
+            v_degree: c.v_degree,
+            control_points: &points,
+            form: c.form,
+            u_multiplicities: &c.u_multiplicities,
+            v_multiplicities: &c.v_multiplicities,
+            u_knots: &c.u_knots,
+            v_knots: &c.v_knots,
+            knot_type: c.knot_type,
+            weights: Some(&c.weights),
+            uv_domain: None,
+        })
+        .unwrap();
+        // the face's record, its surface's kind and every edge use's trim, as they are
+        let state = |b: &Brep| {
+            let f = b.face(face).unwrap();
+            let kind = f.surface.as_ref().map(|s| format!("{:?}", s.kind()));
+            let trims: Vec<String> = b
+                .edgeuses()
+                .ids()
+                .map(|eu| format!("{:?}", eu1::uv_trim_curve(b, eu).unwrap().0))
+                .collect();
+            (f.uv_domain, f.faceuse, kind, trims)
+        };
+        let before = state(&b);
+        let e = swap_uv(&k, &mut b, face).unwrap_err();
+        assert!(matches!(e, SolidError::Upstream { .. }), "{e:?}");
+        assert!(state(&b) == before, "the refused swap changed the face");
+    }
+}
