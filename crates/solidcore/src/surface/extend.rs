@@ -1363,8 +1363,27 @@ impl Local {
                     if rest > 0.0 && rest < least && left >= 2.0 * least {
                         step = 0.5 * left;
                     }
+                    // a reflection point closer above a knot of the piece than the knot
+                    // fixup merges or spreads at the new end would mirror that knot onto
+                    // the end as a sliver span (its multiplicity past `p + 1`, #3093): the
+                    // mirror reflects at the knot itself, the step that much shorter
+                    let b = cur.end()?;
+                    let refl = b - step;
+                    let need = EFF_ZERO_PARAM.max(scaled_zero2(&cur.start()?, &(2.0 * b - refl)));
+                    if let Some(&x) = cur
+                        .knots
+                        .iter()
+                        .find(|&&x| x > refl && x < b && x - refl < need)
+                    {
+                        step = b - x;
+                    }
                     cur = cur.mirrored(step, how == Continuity::Curvature)?;
                     left -= step;
+                    // what is left after such a step is shorter than the new end's knot can
+                    // carry: below the side's resolution, no further extension
+                    if left > 0.0 && left < cur.least_step()? {
+                        break;
+                    }
                 }
                 cur
             }
