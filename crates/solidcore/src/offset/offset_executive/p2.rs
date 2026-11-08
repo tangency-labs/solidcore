@@ -82,11 +82,11 @@ use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::query::api_queries::{brep_is_manifold_solid, BrepRef};
 
 use crate::topology::brep::p1 as bp1;
-use crate::topology::brep::validation::lost_manifold;
 use crate::topology::brep::p3 as bp3;
 use crate::topology::brep::p4::{shrink_geometry, stitch_faces_with_context};
 use crate::topology::brep::p7::{make_face_with_curves_with_kernel_context, FaceCurvesInput};
 use crate::topology::brep::p9::CurveIdentity;
+use crate::topology::brep::validation::lost_manifold;
 use crate::topology::proto_topology::p1::CopyBrepMap;
 
 #[cfg(test)]
