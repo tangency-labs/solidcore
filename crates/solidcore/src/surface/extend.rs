@@ -1060,8 +1060,9 @@ impl Local {
     }
 
     /// The shortest extension the side's end knot `b` can carry (its last span `[c, b]`).
-    /// Every continuity's new end knot is `b + e` (the mirror's `2b - (b - e)` too), and it
-    /// must survive the knot fixup every B-spline surface's knots go through
+    /// Every continuity's new end knot is `b + e` (the mirror's `2b - (b - e)` too; a mirror
+    /// step snapped onto a knot, [`Self::reflection`], ends at `2b - x`, within the merge scale
+    /// of that), and it must survive the knot fixup every B-spline surface's knots go through
     /// ([`BSplineSurface::from_gw_nurb`], [`fixup_knot_vector`] at [`EFF_ZERO_PARAM`]): a
     /// knot nearer its neighbour than the ends' scaled zero is merged onto it (the new span
     /// gone, the end knot repeated past `p + 1`), and a span shorter than `EFF_ZERO_PARAM`
@@ -1096,30 +1097,41 @@ impl Local {
         Err(op_err())
     }
 
-    /// The point a mirror step of `e` reflects the end at: `b - e`, not before the start, and
-    /// moved onto a knot of the piece when it lies within the knot fixup's merge scale
-    /// ([`merge_scale`], at the new end `2 b - refl`) of one without being on it. A reflection
-    /// beside a knot would make a span of that scale between the knot's image and the new end,
-    /// which the fixup merges, leaving the end knot past `p + 1` copies (#3093); on the knot
-    /// the mirror adds no knot and no such span. "On the knot" is exact float equality, by
-    /// intent: it is the exact reflection, and any other value is a different point. The step
-    /// is then `b - refl`: the ask moved by less than the merge scale, which is below the
-    /// side's resolution ([`Self::least_step`]). The extension of `e` stays a prefix of that
-    /// of a longer `e'`, and Curvature's last-span step, `b - (b - c)` off `c` by an ulp,
-    /// lands on `c`. Also whether the point was moved.
+    /// The point a mirror step of `e` reflects the end at, and whether it was moved: `b - e`,
+    /// not before the start, and moved onto a knot of the piece when it lies within the knot
+    /// fixup's merge scale ([`merge_scale`], at the new end `2 b - refl`) of one without being
+    /// on it. "On the knot" is exact float equality, by intent: it is the exact reflection, and
+    /// any other value is a different point.
+    ///
+    /// A reflection beside a knot would make a span of that scale between the knot's image and
+    /// the new end, which the fixup merges (the end knot repeated past `p + 1` copies, #3093),
+    /// so such an ask never built a valid net; on the knot the mirror adds no knot and no such
+    /// span. The window is the fixup's own merge scale: a step whose reflection lies beyond it
+    /// of every knot is bit for bit what it was, and one within it changes the reflection by
+    /// less than it (in parameter), the new end `2 b - x` with it. A length solved on the
+    /// parameter then has a plateau at a snapped ask (every ask in the window gives the one
+    /// extension): a target length inside it is unreachable, and the solve ends in its own
+    /// [`ExtendRefusal::NotExact`] naming a length that works. The extension of `e` stays a
+    /// prefix of that of a longer `e'`, and Curvature's last-span step, `b - (b - c)` off `c`
+    /// by an ulp, lands on `c`.
     fn reflection(&self, e: f64) -> Result<(f64, bool)> {
         let a = self.start()?;
         let b = self.end()?;
         let refl = (b - e).max(a);
         let need = merge_scale(a, 2.0 * b - refl);
-        let mut best: Option<(f64, f64)> = None;
-        for &x in &self.knots {
-            let off = (x - refl).abs();
-            if x < b && x != refl && off < need && best.is_none_or(|(_, o)| off < o) {
-                best = Some((x, off));
-            }
+        // the knots are sorted: the nearest below `refl` and the first at or past it
+        let at = self.knots.partition_point(|&x| x < refl);
+        if self.knots.get(at) == Some(&refl) {
+            return Ok((refl, false));
         }
-        Ok(best.map_or((refl, false), |(x, _)| (x, true)))
+        let below = at.checked_sub(1).and_then(|i| self.knots.get(i)).copied();
+        let above = self.knots.get(at).copied().filter(|&x| x < b);
+        let near = [below, above]
+            .into_iter()
+            .flatten()
+            .filter(|&x| (x - refl).abs() < need)
+            .min_by(|&x, &y| (x - refl).abs().total_cmp(&(y - refl).abs()));
+        Ok(near.map_or((refl, false), |x| (x, true)))
     }
 
     /// The knot `back` places before the end's `p + 1` copies (`u_n` for 0).
@@ -1385,22 +1397,30 @@ impl Local {
                     // already has)
                     let least = cur.least_step()?;
                     let b = cur.end()?;
-                    let mut step = left.min(most);
+                    let wanted = left.min(most);
                     // a reflection beside a knot is put on it (`reflection`): the step is
-                    // then the distance to that knot, and what is left of the ask, below the
-                    // side's least step, is below its resolution
-                    let (refl, snapped) = cur.reflection(step)?;
-                    if snapped {
-                        step = b - refl;
-                    } else if left - step > 0.0 && left - step < least && left >= 2.0 * least {
-                        step = 0.5 * left;
-                        step = b - cur.reflection(step)?.0;
+                    // then the distance to that knot
+                    let (mut refl, snapped) = cur.reflection(wanted)?;
+                    let mut step = if snapped { b - refl } else { wanted };
+                    // what is left of the ask must be nothing or at least a least step: a
+                    // shorter remainder would be a sliver span the knot fixup merges or
+                    // spreads (the joint moved, the net not kept). The ask is split in two
+                    // instead, the remainder two least steps (a snap moves a reflection by
+                    // less than the merge scale, at most a least step, so it stays one;
+                    // halves would mirror back onto the joint just left, the same
+                    // coincidence), or refused naming the length reached so far: never a
+                    // short surface
+                    let sliver = |step: f64| left - step > 0.0 && left - step < least;
+                    if sliver(step) {
+                        let (r, _) = cur.reflection(left - 2.0 * least)?;
+                        let first = b - r;
+                        if left < 3.0 * least || first < least || sliver(first) {
+                            return Err(not_exact(Some(e - left + step)));
+                        }
+                        (refl, step) = (r, first);
                     }
-                    cur = cur.mirrored(step, how == Continuity::Curvature)?;
+                    cur = cur.mirrored(refl, how == Continuity::Curvature)?;
                     left -= step;
-                    if left < least {
-                        break;
-                    }
                 }
                 cur
             }
@@ -1734,14 +1754,14 @@ impl Local {
         Ok(out)
     }
 
-    /// One mirror step by `e <= range`: the piece over `[b - e, b]` (from a copy with `b - e`
-    /// at multiplicity `p`) mapped by each row's `L` and reversed; for Curvature its second
-    /// row then from the C2 condition.
-    fn mirrored(&self, e: f64, curvature: bool) -> Result<Self> {
+    /// One mirror step reflecting the end at `refl` (from [`Self::reflection`], `a <= refl <
+    /// b`): the piece over `[refl, b]` (from a copy with `refl` at multiplicity `p`) mapped by
+    /// each row's `L` and reversed; for Curvature its second row then from the C2 condition.
+    /// The new end knot is `2 b - refl`.
+    fn mirrored(&self, refl: f64, curvature: bool) -> Result<Self> {
         let b = self.end()?;
         let a = self.start()?;
         let p = self.p;
-        let (refl, _) = self.reflection(e)?;
         let piece_src = if refl > a {
             self.with_knot(refl)?
         } else {
