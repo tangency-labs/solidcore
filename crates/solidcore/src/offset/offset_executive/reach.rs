@@ -233,9 +233,25 @@ pub fn extension_reach(
     Ok(met.then_some(reach))
 }
 
+/// What the extension of a surface's sides proves of the distance it reaches at every station
+/// of a side ([`shortest_across`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum Reach {
+    /// The least length across, bounded from below.
+    Shortest(f64),
+    /// A B-spline's side whose two rows differ in weights or in points (the ruled extension
+    /// of rows whose end weight ratios differ: a bounded reach, or the product form of
+    /// another degree, `surface::extend` module docs): the length across is measured at the
+    /// side's middle only, and no bound of it at the other stations is known (#3079).
+    Unmeasured,
+    /// Nothing to bound: no B-spline, or a bound that is not positive.
+    Open,
+}
+
 /// A lower bound of the distance from each extended side of `base`'s B-spline to the same
-/// side of `extended`, over the side's stations on `base`'s box: `None` where `base` is no
-/// B-spline or the offset of one, a side's two rows differ in weights, or the bound is not positive. Each row is a
+/// side of `extended`, over the side's stations on `base`'s box: [`Reach::Open`] where `base` is no
+/// B-spline or the offset of one or the bound is not positive, [`Reach::Unmeasured`] where a
+/// side's two rows differ in weights or in points. Each row is a
 /// curve in the same parameter and basis, with the same weights, so the difference at a
 /// station is a convex combination of the differences of their control points, and its length
 /// is at least the least of those along their mean direction. Past the box's corners the
@@ -249,7 +265,7 @@ pub(super) fn shortest_across(
     k: &Kernel,
     base: &Surface,
     extended: &ExtendedSides,
-) -> Result<Option<f64>> {
+) -> Result<Reach> {
     // an offset surface is the offset of its base extended: the rows are its base's
     let (near_surface, far_surface) = match (base.kind(), extended.surface.kind()) {
         (SurfaceKind::OffsetSurface(a), SurfaceKind::OffsetSurface(b)) => {
@@ -260,7 +276,7 @@ pub(super) fn shortest_across(
     let (SurfaceKind::BSpline(_), SurfaceKind::BSpline(net)) =
         (near_surface.kind(), far_surface.kind())
     else {
-        return Ok(None);
+        return Ok(Reach::Open);
     };
     let from = near_surface.natural_uv_domain_with_nurb(k)?;
     let to = far_surface.natural_uv_domain_with_nurb(k)?;
@@ -297,20 +313,24 @@ pub(super) fn shortest_across(
         };
         let (near, far) = (row(side.at(&from))?, row(side.at(&to))?);
         if near.control_points.len() != far.control_points.len() || near.weights != far.weights {
-            return Ok(None);
+            return Ok(Reach::Unmeasured);
         }
         let mut mean = Vec3::ZERO;
         for (a, b) in near.control_points.iter().zip(&far.control_points) {
             mean += *b - *a;
         }
         let Ok(direction) = mean.unitize() else {
-            return Ok(None);
+            return Ok(Reach::Open);
         };
         for (a, b) in near.control_points.iter().zip(&far.control_points) {
             shortest = shortest.min((*b - *a).dot(direction));
         }
     }
-    Ok((shortest.is_finite() && shortest > 0.0).then_some(shortest))
+    Ok(if shortest.is_finite() && shortest > 0.0 {
+        Reach::Shortest(shortest)
+    } else {
+        Reach::Open
+    })
 }
 
 /// A plane: a point on it and its unit normal, and the normal as its label gives it (the
@@ -2258,7 +2278,9 @@ mod tests {
             .unwrap();
         // the rows are 33 at the side's middle, where the extension meets its distance, and
         // 20 at the floor, so the v sides reach 11.24 * 20 / 33 at the floor's end
-        let shortest = shortest_across(&k, &base, &made).unwrap().unwrap();
+        let Reach::Shortest(shortest) = shortest_across(&k, &base, &made).unwrap() else {
+            panic!("the rows are in one basis and weight");
+        };
         assert!((shortest - 11.24 * 20.0 / 33.0).abs() <= 1e-6, "{shortest}");
     }
 

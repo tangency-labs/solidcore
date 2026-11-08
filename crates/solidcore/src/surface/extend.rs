@@ -629,6 +629,13 @@ fn below_least_step(
     })
 }
 
+/// The refusal of an extension whose reach at every station of a side is not certified: only
+/// the length across at the side's middle is measured ([`ExtendRefusal::NotExact`], no
+/// distance named).
+pub(crate) fn reach_not_certified() -> SolidError {
+    not_exact(None)
+}
+
 fn not_exact(distance: Option<f64>) -> SolidError {
     SolidError::ExtendRefused {
         operation: OP,

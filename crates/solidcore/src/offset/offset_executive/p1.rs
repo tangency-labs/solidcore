@@ -859,16 +859,24 @@ impl OffsetExecutive {
                     // it is asked again, scaled by the shortest length across (Ruled: the
                     // lengths at a station grow together).
                     let mut made = extend(margin)?;
-                    if let Some(shortest) = super::reach::shortest_across(kernel, base, &made)? {
-                        if shortest < margin * (1.0 - 1.0e-9) {
-                            // a surface that cannot go that far keeps what it has: the extension
-                            // above is what its faces have always had
+                    match super::reach::shortest_across(kernel, base, &made)? {
+                        super::reach::Reach::Shortest(shortest)
+                            if shortest < margin * (1.0 - 1.0e-9) =>
+                        {
+                            // a surface that cannot go that far keeps what it has: the
+                            // extension above is what its faces have always had
                             match extend(margin * margin / shortest) {
                                 Ok(grown) => made = grown,
                                 Err(SolidError::ExtendRefused { .. }) => {}
                                 Err(e) => return Err(e),
                             }
                         }
+                        // the margin is needed at every station and only the middle is
+                        // measured: refused, as a distance not exact, never built short
+                        super::reach::Reach::Unmeasured => {
+                            return Err(crate::surface::extend::reach_not_certified());
+                        }
+                        _ => {}
                     }
                     made.surface
                 };
@@ -4004,6 +4012,62 @@ mod tests {
             sync(&mut executive, Some(EdgeuseId::from_index(80)), None),
             Err(SolidError::NotFound { .. })
         ));
+    }
+
+    /// A rational sheet whose rows have differing end weight ratios is extended by the margin
+    /// at the side's middle only: the reach at the other stations is not bounded, so the
+    /// extension is refused as not exact (never built short of the margin); the same sheet with
+    /// one ratio for every row is extended.
+    #[test]
+    fn a_margin_whose_reach_is_not_certified_is_refused() {
+        use crate::math::Point3;
+        use crate::nurbs::b_spline_curve::KnotType;
+        use crate::nurbs::b_spline_surface::{
+            BSplineSurface, BSplineSurfaceForm, CanonicalSurfaceData,
+        };
+        let kernel = Kernel::default();
+        let sheet = |weights: &[f64]| {
+            Surface::from(
+                BSplineSurface::create_canonical(&CanonicalSurfaceData {
+                    u_degree: 1,
+                    v_degree: 1,
+                    control_points: &[
+                        Point3::new(0.0, 0.0, 0.0),
+                        Point3::new(0.0, 1.0, 0.0),
+                        Point3::new(1.0, 0.0, 0.0),
+                        Point3::new(1.0, 1.0, 0.5),
+                    ],
+                    form: BSplineSurfaceForm::Unspecified,
+                    u_multiplicities: &[2, 2],
+                    v_multiplicities: &[2, 2],
+                    u_knots: &[0.0, 1.0],
+                    v_knots: &[0.0, 1.0],
+                    knot_type: KnotType::Unspecified,
+                    weights: Some(weights),
+                    uv_domain: None,
+                })
+                .unwrap(),
+            )
+        };
+        let mut executive = executive();
+        // one end weight ratio for every row
+        executive
+            .get_create_extended_surface(&kernel, 51, &sheet(&[2.0, 2.0, 2.0, 2.0]), 0.25)
+            .unwrap();
+        // the rows' ratios differ: 1 and 1/2
+        let err = executive
+            .get_create_extended_surface(&kernel, 52, &sheet(&[1.0, 1.0, 1.0, 2.0]), 0.25)
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                SolidError::ExtendRefused {
+                    refusal: crate::surface::extend::ExtendRefusal::NotExact,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
     }
 
     #[test]
