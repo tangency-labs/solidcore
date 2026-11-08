@@ -1090,7 +1090,20 @@ impl OffsetExecutive {
                 one_pass.making_manifold_solid = true;
                 one_pass.do_stitching(kernel, &mut result, None, None, MinGapRequest::default())?;
             } else {
-                crate::error::ignore_status(stitch::stitch_into_solid(kernel, &mut result))?;
+                // (not upstream) the gaps it closes are recorded for the local
+                // operation's gate; an edge it cannot enclose is refused, not stitched
+                // without its bound
+                let mut closed = Vec::new();
+                match stitch::stitch_into_solid_recording(
+                    kernel,
+                    &mut result,
+                    None,
+                    Some(&mut closed),
+                ) {
+                    Err(error @ SolidError::Unsupported { .. }) => return Err(error),
+                    status => crate::error::ignore_status(status)?,
+                }
+                self.closed_gaps.extend(closed);
             }
             // Opt-in (WR-667; tangency-labs/smlib@37af643): an inset keeps the regions
             // that are cavity, not every finite region (upstream's TODO here: "we will

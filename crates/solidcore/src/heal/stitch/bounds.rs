@@ -30,7 +30,7 @@ fn invalid(reason: &'static str) -> SolidError {
 fn unsupported() -> SolidError {
     SolidError::Unsupported {
         operation: OP,
-        reason: "stitch gap enclosure is implemented for lines and positive-weight B-splines only",
+        reason: "stitch gap enclosure is implemented for lines, ellipses and positive-weight B-splines only",
     }
 }
 
@@ -88,7 +88,7 @@ fn difference(a: Box3, b: Box3) -> Box3 {
 }
 
 /// Upper bound on the exact Euclidean distance between the stored points.
-pub(super) fn points(a: Point3, b: Point3) -> Result<f64> {
+pub(crate) fn points(a: Point3, b: Point3) -> Result<f64> {
     norm(difference(point_box(a)?, point_box(b)?))
 }
 
@@ -289,12 +289,19 @@ fn curve_box(curve: &Curve, range: Ivl) -> Result<Box3> {
             b.gw_nurb().ok_or_else(|| invalid("missing spline data"))?,
             range,
         ),
+        // an ellipse or circle is evaluated through its NURB (`Curve::evaluate_point`)
+        CurveKind::Ellipse(e) => spline_box(
+            e.base()
+                .gw_nurb()
+                .ok_or_else(|| invalid("missing spline data"))?,
+            range,
+        ),
         _ => Err(unsupported()),
     }
 }
 
 /// An upper bound for point-to-curve distance using an exact point of the curve.
-pub(super) fn point_at_curve(point: Point3, curve: &Curve, parameter: f64) -> Result<f64> {
+pub(crate) fn point_at_curve(point: Point3, curve: &Curve, parameter: f64) -> Result<f64> {
     norm(difference(
         point_box(point)?,
         curve_box(curve, checked_range([parameter, parameter])?)?,

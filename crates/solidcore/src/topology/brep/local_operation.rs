@@ -270,6 +270,7 @@ fn local_operation_on(
     // whose status is then `SM_ERR`) the offset's error is the operation's, with its own
     // status and reason, as the reach's and the final gate's refusals are
     let offset = executive.do_extended_offset(k, Some(&mut *b), notifications);
+    let gaps = executive.closed_gaps().to_vec();
     drop(executive);
     let new_brep = offset.and_then(|mut new_brep| {
         // the offset B-rep's objects carry what the offset gave them
@@ -298,7 +299,7 @@ fn local_operation_on(
     // (not upstream: the port's cached topology fields, true again for the caller)
     b.refresh_cached_topology();
     moved?;
-    refuse_unsound(k, b, &input)
+    refuse_unsound(k, b, &input, &gaps)
 }
 
 /// (not upstream) The local operation's final gate: the body it built is refused when it
@@ -312,7 +313,16 @@ fn local_operation_on(
 ///   skipped then), even where the input's pointer check failed alike;
 /// - the input was a manifold solid and the body is not;
 /// - the body is a manifold solid whose volume is not positive (the input's volume is
-///   not measured).
+///   not measured);
+/// - an edge on a closed-form curve, or a vertex all of whose edges are, holds a tolerance
+///   above its certified bound ([`validation::tolerance_beyond_bound`]): what the input's
+///   own data lets it hold (its largest tolerance, the enclosed gaps of its edges' ends to
+///   their vertices and of the vertices its tolerances join), the faces' certified
+///   deviation, and the enclosed gap of the result's own edge ends, added with rounding
+///   counted, and the growth the final stitch reported for gaps within that
+///   (`docs/validity-and-tolerances.md` sections 5.2 and 8). An edge on a traced curve has
+///   no proved deviation (tangency-labs/solidcore#3211), and the growth of the intersector's
+///   imprint and the merge's copy is not reported: neither is judged here.
 ///
 /// The owners the check tests the geometry against are the identities the body's naming
 /// scheme names its entities by ([`validation::standing`]), as `move_faces` sets them.
@@ -334,7 +344,12 @@ fn local_operation_on(
 ///
 /// [`OffsetFailure::Unsound`] naming what the body fails; those of the copy and the
 /// measurement.
-fn refuse_unsound(k: &mut Kernel, b: &Brep, input: &validation::Standing) -> Result<()> {
+fn refuse_unsound(
+    k: &mut Kernel,
+    b: &Brep,
+    input: &validation::Standing,
+    gaps: &[crate::heal::stitch::p2::ClosedGap],
+) -> Result<()> {
     use crate::error::offset::Unsoundness;
     let mut copy = b.clone_standing_for_self()?;
     let found = validation::standing(k, &mut copy)?;
@@ -357,6 +372,15 @@ fn refuse_unsound(k: &mut Kernel, b: &Brep, input: &validation::Standing) -> Res
         Unsoundness::GeometryUnchecked
     } else if input.manifold && !found.manifold {
         Unsoundness::NotManifoldSolid
+    } else if let Some(grown) = validation::tolerance_beyond_bound(b, input, gaps)? {
+        // (certified: delta + eps of docs/validity-and-tolerances.md section 8, on the
+        // entities whose curves are closed forms; a traced curve's edge has no proved delta,
+        // tangency-labs/solidcore#3211, and is judged by the check above alone)
+        Unsoundness::ToleranceBeyondBound {
+            entity: grown.entity,
+            tolerance: grown.tolerance,
+            bound: grown.bound,
+        }
     } else if found.manifold
         && validation::volume(k, &mut copy)?.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)
     {
@@ -2101,7 +2125,7 @@ mod tests {
             "{:?}",
             input.check.lines()
         );
-        let e = refuse_unsound(&mut k, &b, &input).unwrap_err();
+        let e = refuse_unsound(&mut k, &b, &input, &[]).unwrap_err();
         assert!(
             matches!(
                 e.failure().map(|f| &f.reason),
@@ -2777,7 +2801,7 @@ mod tests {
         {
             grown.vertex_mut(v).unwrap().tolerance = grown_to;
         }
-        let gate = refuse_unsound(&mut k, &grown, &input);
+        let gate = refuse_unsound(&mut k, &grown, &input, &[]);
         let why = gate
             .err()
             .and_then(|e| match e.failure().map(|f| &f.reason) {
@@ -2785,10 +2809,15 @@ mod tests {
                 _ => None,
             });
         assert!(
-            matches!(why, Some(OffsetFailure::Unsound { .. })),
+            matches!(
+                why,
+                Some(OffsetFailure::Unsound {
+                    what: crate::error::offset::Unsoundness::ToleranceBeyondBound { .. }
+                })
+            ),
             "{why:?}"
         );
         // the untouched cube passes
-        refuse_unsound(&mut k, &input_body, &input).unwrap();
+        refuse_unsound(&mut k, &input_body, &input, &[]).unwrap();
     }
 }

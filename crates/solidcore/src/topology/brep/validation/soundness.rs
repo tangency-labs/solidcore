@@ -8,10 +8,13 @@
 
 use std::collections::BTreeMap;
 
+use crate::blend::fillet_section::interval::Ivl;
 use crate::error::{EntityRef, Result};
 use crate::geom::attribute::ObjectKey;
 use crate::geom::object::ObjectRef;
+use crate::heal::stitch::p2::ClosedGap;
 use crate::kernel::Kernel;
+use crate::surface::surface_cache::p3::definition_bound;
 use crate::topology::Brep;
 
 use super::assert_valid::{check_brep_with_keys, BrepCheck, CheckLevel};
@@ -50,6 +53,13 @@ pub struct Standing {
     pub check: BrepCheck,
     /// Whether the body is a manifold solid ([`crate::topology::brep::is_manifold_solid`]).
     pub manifold: bool,
+    /// What the body's data lets an entity hold: the largest tolerance it holds (its own,
+    /// an edge's or a vertex's) and the enclosed gap of the vertices its tolerances join.
+    /// An edge or vertex of a local operation's result that the operation kept is held to
+    /// the input's tolerance of it; after the merge the kept ones are not told apart from
+    /// the rebuilt, so every closed-form entity is held to this one
+    /// ([`tolerance_beyond_bound`]).
+    pub tolerance_cap: f64,
 }
 
 /// Measures `b`: [`check_brep_with_keys`] at [`CheckLevel::Level2`], each geometry's owner
@@ -126,7 +136,207 @@ pub fn standing(k: &mut Kernel, b: &mut Brep) -> Result<Standing> {
         |e: EntityRef| crate::topology::owner_identity_of(naming, recorded.get(&e).copied(), e);
     let check = check_brep_with_keys(k, b, CheckLevel::Level2, &keys)?;
     let manifold = crate::topology::brep::p2::is_manifold_solid(b)?;
-    Ok(Standing { check, manifold })
+    let tolerance_cap = input_cap(b)?;
+    Ok(Standing {
+        check,
+        manifold,
+        tolerance_cap,
+    })
+}
+
+/// What the body's own data lets an entity hold: the largest of the body's tolerance and
+/// its edges' and vertices', the enclosed gaps between its edges' ends and their vertices
+/// ([`edge_end_gap`]), and the enclosed gap of the vertices its own tolerances already join.
+///
+/// Two vertices closer than the sum of their tolerances are one point by the body's own
+/// certificate (`docs/validity-and-tolerances.md` section 5.1, invariant 6); merging them
+/// grows the survivor's tolerance to cover that gap, which is the imported-data case of
+/// section 8 (growth to an enclosed gap, the data's own), not a deviation of the
+/// operation's construction. The gap is bounded above with its rounding
+/// ([`crate::heal::stitch::bounds::points`]), the sum of the tolerances rounded up, and a
+/// pair is joined when the bound is at most the sum. Vertices are swept along x so only
+/// pairs within the largest sum are compared.
+fn input_cap(b: &Brep) -> Result<f64> {
+    let mut largest = b.tolerance();
+    for (id, _) in b.edges().iter() {
+        largest = largest.max(crate::topology::edge::tolerance(b, id)?);
+        largest = largest.max(edge_end_gap(b, id)?.unwrap_or(0.0));
+    }
+    let mut vertices = Vec::new();
+    let mut widest = 0.0_f64;
+    for (id, v) in b.vertices().iter() {
+        let tolerance = crate::topology::vertex::tolerance(b, id)?;
+        largest = largest.max(tolerance);
+        widest = widest.max(tolerance);
+        vertices.push((v.point, tolerance));
+    }
+    vertices.sort_by(|a, c| a.0.x.total_cmp(&c.0.x));
+    let reach = (Ivl::from(widest) + Ivl::from(widest)).hi;
+    let mut joined = 0.0_f64;
+    for (i, &(p, tp)) in vertices.iter().enumerate() {
+        for &(q, tq) in vertices.iter().skip(i + 1) {
+            if q.x - p.x > reach {
+                break;
+            }
+            let gap = crate::heal::stitch::bounds::points(p, q)?;
+            if gap <= (Ivl::from(tp) + Ivl::from(tq)).hi {
+                joined = joined.max(gap);
+            }
+        }
+    }
+    Ok(largest.max(joined))
+}
+
+/// The enclosed gap between the ends of edge `e`'s curve and its vertices: the larger of
+/// the distances at its two ends, the vertices taken to the ends they are nearer (an upper
+/// bound with its rounding, [`crate::heal::stitch::bounds::point_at_curve`]). The gap is a
+/// fact of the geometry the body holds, whatever the tolerances say
+/// (`docs/validity-and-tolerances.md` invariant 6: an edge's ends are within the sum of its
+/// and the vertex's tolerance): a tolerance raised to cover it is raised to a proved gap,
+/// section 8's enclosed-gap case. `None` for an edge without a curve or a vertex, and for a
+/// curve kind without an enclosure (only lines, ellipses and B-splines have one): its gap
+/// is not certified, and never replaced by a sampled one.
+///
+/// # Errors
+///
+/// Those of the topology reads and the enclosure other than an unsupported curve kind.
+fn edge_end_gap(b: &Brep, e: crate::topology::EdgeId) -> Result<Option<f64>> {
+    use crate::heal::stitch::bounds::point_at_curve;
+    let Some(curve) = b.edge(e)?.curve.as_ref() else {
+        return Ok(None);
+    };
+    let (Some(start), Some(end)) = (
+        crate::topology::edge::start_vertex(b, e)?,
+        crate::topology::edge::end_vertex(b, e)?,
+    ) else {
+        return Ok(None);
+    };
+    let interval = crate::topology::edge::interval(b, e)?;
+    let (low, high) = (interval.min(), interval.max());
+    let (a, z) = (b.vertex(start)?.point, b.vertex(end)?.point);
+    let gaps = (|| {
+        let straight = point_at_curve(a, curve, low)?.max(point_at_curve(z, curve, high)?);
+        let swapped = point_at_curve(z, curve, low)?.max(point_at_curve(a, curve, high)?);
+        Ok(straight.min(swapped))
+    })();
+    match gaps {
+        Ok(gap) => Ok(Some(gap)),
+        Err(crate::SolidError::Unsupported { .. }) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// What [`tolerance_beyond_bound`] found: an edge or a vertex whose tolerance is above the
+/// bound its certificate allows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ToleranceBeyondBound {
+    /// The edge or vertex.
+    pub entity: EntityRef,
+    /// Its tolerance.
+    pub tolerance: f64,
+    /// The bound.
+    pub bound: f64,
+}
+
+/// The bound on the tolerance of edge `e`, `Some` only where a certificate gives one.
+///
+/// A constructed edge's deviation is delta + max `eps_i` (`docs/validity-and-tolerances.md`
+/// sections 5.2 and 8), its tolerance that bound raised to the body's. Here delta is 0
+/// where the stored curve is a closed form (`Curve::is_analytic`: a line, a circle or
+/// ellipse, a parabola, a hyperbola, which are the intersection itself), and `eps_i` is
+/// the certified bound of each face's definition ([`definition_bound`], 0 for a surface
+/// that is its net). The bound is the largest of those, `cap` (the body's tolerance, or
+/// the input's for an edge the operation kept) with the enclosed gap of the curve's ends to
+/// its vertices ([`edge_end_gap`]) added, rounded up: a gap is covered by the sum of the
+/// tolerances it lies between (`docs/validity-and-tolerances.md` section 5.2, Edge test 13
+/// and invariant 6), so an entity may hold the body's tolerance and the gap, and no more. A traced curve (a B-spline from a
+/// surface-surface intersection) has no proved delta (`docs/ssi.md` sections 6.1 and 9,
+/// tangency-labs/solidcore#3211): `None`, the edge is not claimed certified.
+fn edge_bound(b: &Brep, e: crate::topology::EdgeId, cap: f64) -> Result<Option<f64>> {
+    let Some(curve) = b.edge(e)?.curve.as_ref() else {
+        return Ok(None);
+    };
+    if !curve.is_analytic() {
+        return Ok(None);
+    }
+    // its ends' enclosed gap to its vertices (a closed-form kind without an enclosure is
+    // not certified)
+    let Some(ends) = edge_end_gap(b, e)? else {
+        return Ok(None);
+    };
+    let mut bound = (Ivl::from(cap) + Ivl::from(ends)).hi;
+    for f in crate::topology::edge::faces(b, e, None)? {
+        let Some(surface) = crate::topology::face::p2::surface(b, f)? else {
+            return Ok(None);
+        };
+        bound = bound.max(definition_bound(surface));
+    }
+    Ok(Some(bound))
+}
+
+/// The first edge or vertex of `b` (in arena order) whose tolerance is above the bound a
+/// certificate gives it, if any: an edge on a closed-form curve is bounded by
+/// [`edge_bound`], a vertex all of whose edges are by the largest of theirs. Entities
+/// whose bound is not certified (an edge on a traced curve, and the vertices it ends at)
+/// are not judged here: that part of the decision waits for
+/// tangency-labs/solidcore#3211.
+///
+/// `input` is the standing of the body the operation edited: its
+/// [`Standing::tolerance_cap`] is what an entity the operation kept may hold. `gaps` are the
+/// gaps the operation's stitch closed ([`ClosedGap`], each bound enclosed with its
+/// rounding): a closure of a gap the cap already covers (`gap <= cap`) needs no growth, and
+/// what it applied is the rounding of computing the tolerance, which the bound allows,
+/// summed upward. A closure of a larger gap allows nothing: the growth it applied is beyond
+/// the bound, and the entity that carries it is found here. Stitches inside the merge are
+/// not reported, and their growth is held to the cap alone.
+///
+/// # Errors
+///
+/// Those of the topology reads.
+pub fn tolerance_beyond_bound(
+    b: &Brep,
+    input: &Standing,
+    gaps: &[ClosedGap],
+) -> Result<Option<ToleranceBeyondBound>> {
+    let base = input.tolerance_cap.max(b.tolerance());
+    let mut allowance = Ivl::from(0.0);
+    for gap in gaps.iter().filter(|g| g.gap <= base) {
+        allowance = allowance + Ivl::from(gap.growth);
+    }
+    let cap = (Ivl::from(base) + allowance).hi;
+    for (id, _) in b.edges().iter() {
+        if let Some(bound) = edge_bound(b, id, cap)? {
+            let tolerance = crate::topology::edge::tolerance(b, id)?;
+            if tolerance > bound {
+                return Ok(Some(ToleranceBeyondBound {
+                    entity: EntityRef::Edge(id),
+                    tolerance,
+                    bound,
+                }));
+            }
+        }
+    }
+    for (id, _) in b.vertices().iter() {
+        let mut bound: Option<f64> = None;
+        let mut certified = true;
+        for e in crate::topology::vertex::edges(b, id, None)? {
+            match edge_bound(b, e, cap)? {
+                Some(edge) => bound = Some(bound.map_or(edge, |b: f64| b.max(edge))),
+                None => certified = false,
+            }
+        }
+        if let (true, Some(bound)) = (certified, bound) {
+            let tolerance = crate::topology::vertex::tolerance(b, id)?;
+            if tolerance > bound {
+                return Ok(Some(ToleranceBeyondBound {
+                    entity: EntityRef::Vertex(id),
+                    tolerance,
+                    bound,
+                }));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// The volume of the manifold solid `b`, integrated at [`VOLUME_ACCURACY`].

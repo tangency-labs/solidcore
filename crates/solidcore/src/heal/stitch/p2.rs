@@ -1741,7 +1741,24 @@ pub fn stitch_into_solid(k: &mut Kernel, b: &mut Brep) -> Result<AdvancedStitch>
 pub(crate) fn stitch_into_solid_with(
     k: &mut Kernel,
     b: &mut Brep,
+    edits: Option<&mut dyn super::p1::StitchEditContext>,
+) -> Result<AdvancedStitch> {
+    stitch_into_solid_recording(k, b, edits, None)
+}
+
+/// [`stitch_into_solid_with`] that, given `gaps`, also appends each gap its passes closed
+/// with the tolerance growth the closure applied ([`ClosedGap`], solidcore#2975). The
+/// curves a closure compares must have an enclosure (lines, ellipses, B-splines); another
+/// kind fails the stitch with [`SolidError::Unsupported`], never a sampled bound.
+///
+/// # Errors
+///
+/// Those of [`stitch_into_solid`] and the enclosures of the closures.
+pub(crate) fn stitch_into_solid_recording(
+    k: &mut Kernel,
+    b: &mut Brep,
     mut edits: Option<&mut dyn super::p1::StitchEditContext>,
+    mut gaps: Option<&mut Vec<ClosedGap>>,
 ) -> Result<AdvancedStitch> {
     let mut out = AdvancedStitch {
         produces_a_solid: false,
@@ -1772,7 +1789,14 @@ pub(crate) fn stitch_into_solid_with(
         stitch.edits = edits
             .as_mut()
             .map(|e| &mut **e as &mut dyn super::p1::StitchEditContext);
-        let r = stitch.do_stitching(k, b, None, None, MinGapRequest::default())?;
+        if gaps.is_some() {
+            stitch.report_gaps = Some(Vec::new());
+        }
+        let r = stitch.do_stitching(k, b, None, None, MinGapRequest::default());
+        if let Some(all) = gaps.as_mut() {
+            all.extend(stitch.take_gaps());
+        }
+        let r = r?;
         if r.max_vertex_gap > out.max_vertex_gap {
             out.max_vertex_gap = r.max_vertex_gap;
         }

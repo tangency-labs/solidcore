@@ -153,7 +153,7 @@ pub enum OffsetFailure {
 }
 
 /// What a local operation's built body fails ([`OffsetFailure::Unsound`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum Unsoundness {
     /// The check at `SM_LEVEL_2` reports `failures` failure lines more than the input's
@@ -174,6 +174,19 @@ pub enum Unsoundness {
     NotManifoldSolid,
     /// The body is a manifold solid whose volume is not positive.
     VolumeNotPositive,
+    /// The tolerance of `entity` (an edge on a closed-form curve, or a vertex all of whose
+    /// edges are) is above `bound`, the most a certificate allows it
+    /// (`docs/validity-and-tolerances.md` section 8: the body's tolerance, the input's own
+    /// for an entity it kept, or the faces' certified deviation if larger). A tolerance
+    /// grown past it states an error the construction does not prove.
+    ToleranceBeyondBound {
+        /// The edge or vertex.
+        entity: EntityRef,
+        /// Its tolerance.
+        tolerance: f64,
+        /// The bound.
+        bound: f64,
+    },
 }
 
 /// How loops of an offset face touch without crossing ([`OffsetFailure::WallsTouch`]).
@@ -449,6 +462,15 @@ impl core::fmt::Display for OffsetFailure {
                 Unsoundness::VolumeNotPositive => f.write_str(
                     "the local operation's body is a manifold solid whose volume is not \
                      positive: refused, the input unchanged",
+                ),
+                Unsoundness::ToleranceBeyondBound {
+                    entity,
+                    tolerance,
+                    bound,
+                } => write!(
+                    f,
+                    "the local operation's body holds {entity:?} at tolerance {tolerance:e}, \
+                     above the {bound:e} its certificate allows: refused, the input unchanged",
                 ),
             },
             Self::ExactCurveUncut => f.write_str(

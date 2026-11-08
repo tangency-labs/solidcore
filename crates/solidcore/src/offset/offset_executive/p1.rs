@@ -227,6 +227,10 @@ pub struct OffsetExecutive {
     /// edge uses ([`Self::keep_unmoved_edges`]).
     pub(super) kept_edges: BTreeSet<EdgeId>,
     pub(super) kept_edgeuses: BTreeSet<EdgeuseId>,
+    /// Not upstream: the gaps the final stitch of a local operation closed, each with the
+    /// tolerance growth it applied ([`crate::heal::stitch::p2::ClosedGap`]); read by the
+    /// local operation's soundness gate. Stitches inside the merge are not recorded.
+    pub(super) closed_gaps: Vec<crate::heal::stitch::p2::ClosedGap>,
     /// Not upstream (WR-346): the original faces of an inset whose offset collapses (a
     /// convex round thinner than the wall), mated across instead of offset
     /// (`m_sCollapsedFaces`; only with `Kernel::fixes.offset_collapsed_rounds_mated`).
@@ -291,6 +295,7 @@ impl OffsetExecutive {
             moved_faces: Vec::new(),
             kept_edges: BTreeSet::new(),
             kept_edgeuses: BTreeSet::new(),
+            closed_gaps: Vec::new(),
             collapsed_faces: Vec::new(),
             unmated_edgeuses: BTreeSet::new(),
             local_faces: Vec::new(),
@@ -591,6 +596,13 @@ impl OffsetExecutive {
     }
 
     /// Temporarily lends ownership to another executive part, without copying topology.
+    /// The gaps the final stitch of the last extended offset closed, with the tolerance
+    /// growth each applied (the local operation's gate reads them).
+    #[must_use]
+    pub fn closed_gaps(&self) -> &[crate::heal::stitch::p2::ClosedGap] {
+        &self.closed_gaps
+    }
+
     pub(super) fn take_offset_brep(&mut self) -> Option<Brep> {
         self.offset_brep.take()
     }
