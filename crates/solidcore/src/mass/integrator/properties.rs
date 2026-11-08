@@ -159,8 +159,9 @@ pub fn edge_properties(
 /// `n` its measure times `D^n`, where `D` is the start's distance from the origin of
 /// computation plus `L`: every point is within its arc length of the start, so `D` is
 /// the farthest point's distance or more, up to `L`'s estimate. A moment through zero is held to that size, not to its
-/// own value. Without a cross-section (`r = 0`) the tube's integrands are zero and
-/// their scales the integrator's floor.
+/// own value. Without a cross-section (`r = 0`) the tube's integrands are exactly zero,
+/// their scales zero, and the integrator takes each of their steps with an estimate of
+/// exactly zero.
 pub fn curve_properties(
     k: &Kernel,
     curve: &Curve,

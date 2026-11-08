@@ -20,7 +20,28 @@
 //! selection is ignored upstream. Disabled Romberg/Simpson and Bulirsch–Stoer paths
 //! are not exposed. No recursion; dimensions are bounded at 4096, steps at 1,000,000,
 //! and rejected step retries at 1024 to bound malformed caller input. Infinite error
-//! scales/accuracy and unused initial values retain their upstream behavior. The step
+//! scales/accuracy and unused initial values retain their upstream behavior. Not upstream:
+//! [`OdeIntegrator::integrate`] without [`OdeOptions::rate`] controls each component relative to its own size:
+//! upstream floors every component's error scale at `EFF_ZERO` in place, so an integral
+//! far below `1e-12` is held to `1e-12 * accuracy` absolute, whatever its size. The
+//! scale of a component is the largest of the caller's (`|y| + |h y'|` plus `tiny`, and
+//! the lower bound), the step's own `|h| max |g|` over its six samples, the largest `|y|`
+//! of the nodes so far, and `EFF_ZERO * |x2 - x1| * G`, `G` the largest sample of the
+//! component evaluated so far, retries included (upstream's number, now the relative
+//! factor of a floor that scales with the integrand; the one term that does not shrink
+//! with the step, which stops the steps shrinking without end where the integrand is zero
+//! at the start). Each scales exactly with the integrand, so above `tiny` there is no
+//! absolute constant and the steps and `k` times the value do not depend on `k` (bit for
+//! bit, for `k` a power of two). `G` is set by the largest trial step's samples, so the
+//! step count depends on the initial trial step as well as on the integrand: the
+//! invariance is under `k`, not under the initial step. [`OdeIntegrator::step`], and an
+//! integration with `rate` (below), keep upstream's in-place floor. Known limits: the additive `tiny` of
+//! [`OdeIntegrator::new`] (default `EFF_ZERO_SQ`, 1e-24) still holds an integral below
+//! about that to an absolute bound; for amplitudes near the subnormal range
+//! (about 1e-300) `EFF_ZERO * span * G` can underflow and the invariance is not claimed;
+//! and an integrand that is analytically zero but evaluated as noise above `EFF_ZERO` of
+//! its own size cannot converge, and ends in a typed `SM_ERR` (nothing is loosened). The
+//! step
 //! arrays (`ytemp`, `ak2`..`ak6`, `yerr`) are kept across the steps of one integration
 //! instead of allocated per step; they are zeroed or overwritten as the fresh ones
 //! were, so the values are the same. Not upstream: [`OdeOptions::rate`] holds each step to its
@@ -54,7 +75,9 @@ pub struct OdeOptions<'a> {
     pub initial_step: f64,
     /// Smallest accepted next step (`hmin`, upstream compares against its sign).
     pub minimum_step: f64,
-    /// Optional lower bounds for each component's error scale.
+    /// Optional lower bounds for each component's error scale. [`OdeIntegrator::integrate`]
+    /// adds no absolute floor to them: a component with no bound is controlled relative
+    /// to its own size (the module header).
     pub scale: Option<&'a [f64]>,
     /// The derivative reads only `x`, never `y`: the integration is a quadrature. Each
     /// step's error is then also estimated from the fifth divided difference of its six
@@ -105,6 +128,55 @@ pub struct OdeStep {
     pub next: f64,
 }
 
+/// How a step reads a component's error scale `s` (the size its error is compared with).
+#[derive(Debug)]
+enum ScaleControl<'a> {
+    /// Upstream: `s` below `EFF_ZERO` is replaced by `EFF_ZERO`, in place (the caller's
+    /// array is mutated, and the goldens of [`OdeIntegrator::step`] record that). With
+    /// `rate` ([`OdeOptions::rate`]) the step's share of the range and its own increment
+    /// are then added as a lower bound, as [`OdeIntegrator::step_in`] reads them.
+    Floored { rate: Option<f64> },
+    /// The scale of the integral's own size: the largest of
+    /// - the caller's `s`;
+    /// - `|h| max_j |g_j|` over the step's six samples (the step's share of the integral
+    ///   of the integrand's absolute value, which does not vanish at a zero of the
+    ///   integrand, but shrinks with `h`);
+    /// - `peak`, the largest `|y_i|` over the accepted nodes (which does not vanish where
+    ///   `y` passes through zero);
+    /// - `EFF_ZERO * span * G`, `G` (`samples`) the largest `|g_j|` of the component over
+    ///   all samples evaluated so far in this integration, retries included, so it never
+    ///   falls. It does not shrink with `h`: where the integral starts at a zero of the
+    ///   integrand the estimate falls like `h^5` with the third term, and without this
+    ///   one its ratio would stay constant and the steps shrink to underflow.
+    ///
+    /// All four scale exactly with the integrand, so the control is invariant under
+    /// `y -> k y`; above `tiny` (the caller's `s` adds the integrator's `tiny`, default
+    /// `EFF_ZERO_SQ`) there is no absolute constant, `EFF_ZERO` being the relative factor
+    /// of the last term. `G` takes the samples of every trial step, so the largest trial
+    /// step sets the floor and the step count depends on the initial step, not only on
+    /// the integrand. Near the subnormal range (amplitudes about 1e-300) the last term can
+    /// underflow and the invariance is not claimed. `s_eff == 0` only when every sample and
+    /// every `y` is exactly zero, and then the step's estimates are exactly zero
+    /// ([`relative_error`]). The limit: an integrand analytically zero but evaluated as
+    /// noise above `EFF_ZERO` of its own size has estimates above the floor at every `h`
+    /// and ends in `SM_ERR` at `OP_STEP_CONTROL`.
+    Relative {
+        peak: &'a [f64],
+        samples: &'a mut [f64],
+        span: f64,
+    },
+}
+
+/// A finished integration ([`OdeIntegrator::run`]).
+struct Run {
+    counts: StepCounts,
+    values: Vec<f64>,
+    /// Per component, the errors of the steps accepted through the rounding floor.
+    owed: Vec<f64>,
+    /// Per component, the size those errors are owed against.
+    size: Vec<f64>,
+}
+
 /// Local integrator configuration; it contains no shared or global state.
 #[derive(Debug, Clone, Copy)]
 pub struct OdeIntegrator {
@@ -123,6 +195,10 @@ impl Default for OdeIntegrator {
 
 impl OdeIntegrator {
     /// Constructor parameters of `SmODEIntegrator` (default: 10000, `EFF_ZERO_SQ`).
+    /// `tiny` is added to every component's error scale in [`OdeIntegrator::integrate`]:
+    /// a known limit, an absolute constant that holds an integral below about `tiny` to
+    /// an absolute bound. With `tiny = 0` the control is the integral's own at every
+    /// size (the module header).
     pub fn new(max_steps: u32, tiny: f64) -> Result<Self> {
         if max_steps > MAX_STEPS || !tiny.is_finite() {
             return Err(SolidError::invalid_input(
@@ -133,7 +209,11 @@ impl OdeIntegrator {
         Ok(Self { max_steps, tiny })
     }
 
-    /// Integrates into `initial`. The evaluator reads/writes zero-based components.
+    /// Integrates into `initial`. The evaluator reads/writes zero-based components. Each
+    /// step's error is compared with `accuracy` times the component's own size
+    /// (the module header), however small that is, above the integrator's `tiny`; the
+    /// floor `EFF_ZERO * |x2 - x1| * G` is relative to the largest sample `G` seen, so
+    /// the steps taken depend on `initial_step` as well as on the integrand.
     /// Initial values are preserved on failure and on the upstream early return;
     /// a nontrivial successful integration replaces them with the integral from zero.
     pub fn integrate<F>(
@@ -142,7 +222,7 @@ impl OdeIntegrator {
         x1: f64,
         x2: f64,
         options: OdeOptions<'_>,
-        mut evaluate: F,
+        evaluate: F,
     ) -> Result<StepCounts>
     where
         F: FnMut(f64, &[f64], &mut [f64]) -> Result<()>,
@@ -174,7 +254,36 @@ impl OdeIntegrator {
         if let Some(rounding) = options.rounding {
             validate_rounding(rounding, initial.len())?;
         }
-        let mut y = vec![0.0; initial.len()];
+        let run = self.run(initial.len(), x1, x2, options, evaluate)?;
+        // The steps accepted through the rounding floor: their errors, together, within
+        // the accuracy relative to the component's size, the one the step control read
+        // (the largest |y| of the nodes, which an integral through zero ends below; or
+        // its scale's lower bound), or the accuracy is below what the integrand resolves.
+        if !owed_within_accuracy(&run.owed, &run.size, options.accuracy) {
+            return Err(SolidError::sm_err(OP_STEP_CONTROL));
+        }
+        for (slot, value) in initial.iter_mut().zip(&run.values) {
+            *slot = *value;
+        }
+        Ok(run.counts)
+    }
+
+    /// The steps of [`OdeIntegrator::integrate`] over `n` validated components: the
+    /// integral's values, the steps taken, and per component the error its steps owe
+    /// (accepted through the rounding floor) with the size it is owed against. The
+    /// refusal of an owed error above the accuracy is the caller's.
+    fn run<F>(
+        &self,
+        n: usize,
+        x1: f64,
+        x2: f64,
+        options: OdeOptions<'_>,
+        mut evaluate: F,
+    ) -> Result<Run>
+    where
+        F: FnMut(f64, &[f64], &mut [f64]) -> Result<()>,
+    {
+        let mut y = vec![0.0; n];
         let mut dydx = y.clone();
         let mut scale = y.clone();
         let mut x = x1;
@@ -187,7 +296,11 @@ impl OdeIntegrator {
         // the step arrays, kept across the steps (sized by the first step)
         let mut scratch = CashKarpScratch::default();
         // per component, the errors of the steps accepted through the rounding floor
-        let mut debt = vec![0.0; initial.len()];
+        let mut debt = vec![0.0; n];
+        // per component, the largest |y| over the accepted nodes
+        let mut peak = vec![0.0; n];
+        // per component, the largest |g| over all samples evaluated so far
+        let mut sample_peak = vec![0.0; n];
         for _ in 0..self.max_steps {
             evaluate(x, &y, &mut dydx)?;
             finite(&dydx)?;
@@ -223,7 +336,14 @@ impl OdeIntegrator {
                 StepControl {
                     quadrature: options.quadrature,
                     rounding: options.rounding,
-                    rate: options.rate,
+                    scale: match options.rate {
+                        Some(rate) => ScaleControl::Floored { rate: Some(rate) },
+                        None => ScaleControl::Relative {
+                            peak: &peak,
+                            samples: &mut sample_peak,
+                            span: (x2 - x1).abs(),
+                        },
+                    },
                 },
             )
             .map_err(|e| match e {
@@ -249,25 +369,35 @@ impl OdeIntegrator {
             }
             // the step's values (`scratch.temp`, which the next step overwrites)
             core::mem::swap(&mut y, &mut scratch.temp);
+            for (p, v) in peak.iter_mut().zip(&y) {
+                *p = p.max(v.abs());
+            }
             if (x - x2) * (x2 - x1) >= 0.0 {
-                // The steps accepted through the rounding floor: their errors, together,
-                // within the accuracy relative to the integral (with `rate`, plus the
-                // range's share; or its scale's lower bound), or the accuracy is below what
-                // the integrand resolves.
-                for (i, owed) in debt.iter().enumerate() {
-                    let mut size = at(&y, i)?.abs();
-                    if let Some(rate) = options.rate {
-                        size += rate * (x2 - x1).abs();
-                    }
-                    if let Some(lower) = options.scale {
-                        size = size.max(at(lower, i)?);
-                    }
-                    if *owed > options.accuracy * size {
-                        return Err(SolidError::sm_err(OP_STEP_CONTROL));
-                    }
-                }
-                initial.copy_from_slice(&y);
-                return Ok(counts);
+                // the size each component's owed error is checked against: the one the
+                // step control read (`rate`: the integral and the range's share of it; else
+                // the largest |y| of the nodes, which an integral through zero ends below),
+                // or its scale's lower bound
+                let size = peak
+                    .iter()
+                    .zip(&y)
+                    .enumerate()
+                    .map(|(i, (p, v))| {
+                        let mut size = match options.rate {
+                            Some(rate) => v.abs() + rate * (x2 - x1).abs(),
+                            None => *p,
+                        };
+                        if let Some(lower) = options.scale {
+                            size = size.max(at(lower, i)?);
+                        }
+                        Ok(size)
+                    })
+                    .collect::<Result<Vec<f64>>>()?;
+                return Ok(Run {
+                    counts,
+                    values: y,
+                    owed: debt,
+                    size,
+                });
             }
             if step.next.abs() <= options.minimum_step {
                 return Err(SolidError::sm_err(OP_STEP_CONTROL));
@@ -277,7 +407,8 @@ impl OdeIntegrator {
         Err(SolidError::sm_err(OP_STEP_CONTROL))
     }
 
-    /// `RungeKutta5thOrderStep`; also applies the upstream in-place scale floor.
+    /// `RungeKutta5thOrderStep`; also applies the upstream in-place scale floor: the
+    /// caller supplies `scale`, and a value below `EFF_ZERO` is replaced by it in the array.
     pub fn step<F>(
         &self,
         y: &[f64],
@@ -305,7 +436,7 @@ impl OdeIntegrator {
             StepControl {
                 quadrature: false,
                 rounding: None,
-                rate: None,
+                scale: ScaleControl::Floored { rate: None },
             },
         )?;
         Ok(OdeStep {
@@ -319,9 +450,10 @@ impl OdeIntegrator {
     /// [`OdeIntegrator::step`] into `scratch`: the new values are left in
     /// `scratch.temp`, so the steps of one integration allocate nothing. `end` is the
     /// end of a step of `htry` (the step's last node, exactly; a smaller retry ends at
-    /// `x + h`). `control` as [`OdeOptions::quadrature`], [`OdeOptions::rounding`] and
-    /// [`OdeOptions::rate`]: a step whose estimate is above the accuracy but within its
-    /// own rounding is accepted, its error owed (`scratch.debt`, [`estimate_rounding`]).
+    /// `x + h`). `control` as [`OdeOptions::quadrature`], [`OdeOptions::rounding`] and the
+    /// error scale ([`ScaleControl`]): a step whose estimate is above the accuracy but
+    /// within its own rounding is accepted, its error owed (`scratch.debt`,
+    /// [`estimate_rounding`]).
     #[allow(clippy::too_many_arguments)] // `step`'s arguments plus the scratch arrays
     fn step_in<F>(
         y: &[f64],
@@ -354,7 +486,7 @@ impl OdeIntegrator {
         let StepControl {
             quadrature,
             rounding,
-            rate,
+            scale: mut scale_control,
         } = control;
         // (`y.len()` is bounded by `validate` above)
         scratch.resize(y.len());
@@ -371,34 +503,49 @@ impl OdeIntegrator {
             let mut errmax: f64 = 0.0;
             let mut embedded_max: f64 = 0.0;
             for i in 0..y.len() {
-                let s = scale
+                let slot = scale
                     .get_mut(i)
                     .ok_or_else(|| SolidError::invalid_input(OP, "component missing"))?;
-                if s.abs() < EFF_ZERO {
-                    *s = EFF_ZERO;
-                }
-                // this try's share of the range and its own increment
-                let s = if let Some(rate) = rate {
-                    s.max(h.abs() * rate + (at(&scratch.temp, i)? - at(y, i)?).abs())
-                } else {
-                    *s
-                };
                 let embedded = at(&scratch.errors, i)?;
                 let samples = step_samples(dydx, scratch, i)?;
+                let s = match &mut scale_control {
+                    ScaleControl::Floored { rate } => {
+                        if slot.abs() < EFF_ZERO {
+                            *slot = EFF_ZERO;
+                        }
+                        match rate {
+                            // this try's share of the range and its own increment
+                            Some(rate) => slot
+                                .max(h.abs() * *rate + (at(&scratch.temp, i)? - at(y, i)?).abs()),
+                            None => *slot,
+                        }
+                    }
+                    ScaleControl::Relative {
+                        peak,
+                        samples: sample_peak,
+                        span,
+                    } => {
+                        let seen = sample_peak
+                            .get_mut(i)
+                            .ok_or_else(|| SolidError::invalid_input(OP, "component missing"))?;
+                        *seen = samples.iter().fold(*seen, |m, g| m.max(g.abs()));
+                        relative_scale(*slot, h, samples, at(peak, i)?, EFF_ZERO * *span * *seen)
+                    }
+                };
                 let delta = sample_rounding(accuracy, rounding, i)?;
                 let rounding_of = |weights| {
                     delta.map_or(0.0, |delta| estimate_rounding(weights, h, delta, samples))
                 };
                 let embedded_rounding = rounding_of(EMBEDDED_ERROR_WEIGHTS);
-                let mut raw = (embedded / s).abs();
-                let mut ratio = (embedded / floored(s, embedded_rounding / accuracy)).abs();
+                let mut raw = relative_error(embedded, s);
+                let mut ratio = relative_error(embedded, floored(s, embedded_rounding / accuracy));
                 embedded_max = embedded_max.max(ratio);
                 let mut bound = embedded_rounding;
                 if quadrature {
                     let estimate = quadrature_estimate(h, samples)?;
                     let rounding = rounding_of(QUADRATURE_ERROR_WEIGHTS);
-                    raw = raw.max((estimate / s).abs());
-                    ratio = ratio.max((estimate / floored(s, rounding / accuracy)).abs());
+                    raw = raw.max(relative_error(estimate, s));
+                    ratio = ratio.max(relative_error(estimate, floored(s, rounding / accuracy)));
                     bound = bound.max(rounding);
                 }
                 errmax = errmax.max(ratio);
@@ -439,12 +586,11 @@ impl OdeIntegrator {
 }
 
 /// How [`OdeIntegrator::step_in`] controls a step: [`OdeOptions::quadrature`],
-/// [`OdeOptions::rounding`] and [`OdeOptions::rate`].
-#[derive(Clone, Copy)]
+/// [`OdeOptions::rounding`] and how the error scale is read.
 struct StepControl<'a> {
     quadrature: bool,
     rounding: Option<&'a [f64]>,
-    rate: Option<f64>,
+    scale: ScaleControl<'a>,
 }
 
 fn at(values: &[f64], i: usize) -> Result<f64> {
@@ -711,6 +857,24 @@ fn estimate_rounding(weights: [f64; 6], h: f64, delta: f64, samples: [f64; 6]) -
         )
 }
 
+/// [`ScaleControl::Relative`]'s scale for a step of size `h` on the samples `samples` of
+/// one component, whose caller's scale is `s`, whose accepted nodes peak at `peak` and
+/// whose step-independent floor is `floor`.
+fn relative_scale(s: f64, h: f64, samples: [f64; 6], peak: f64, floor: f64) -> f64 {
+    let largest = samples.iter().fold(0.0_f64, |m, g| m.max(g.abs()));
+    s.max(h.abs() * largest).max(peak).max(floor)
+}
+
+/// `|estimate / s|`, zero for an estimate of exactly zero (also on a scale of zero, where
+/// every sample is zero: [`ScaleControl::Relative`]).
+fn relative_error(estimate: f64, s: f64) -> f64 {
+    if estimate == 0.0 {
+        0.0
+    } else {
+        (estimate / s).abs()
+    }
+}
+
 /// The error scale `s` floored at `floor` when there is one (a zero floor leaves `s`
 /// as upstream's, also a negative one a caller's lower bound gave).
 fn floored(s: f64, floor: f64) -> f64 {
@@ -907,6 +1071,16 @@ where
 // Precise geometric and mass properties built on the integrator (documented by its
 // inner docs, whose links resolve in the module itself).
 pub mod properties;
+
+/// Whether the errors owed by the steps accepted through the rounding floor are, per
+/// component, within the accuracy times the size they are owed against (the size the step
+/// control read: the largest `|y|` of the nodes, or the scale's lower bound). A NaN is not
+/// within.
+fn owed_within_accuracy(owed: &[f64], size: &[f64], accuracy: f64) -> bool {
+    owed.iter()
+        .zip(size)
+        .all(|(owed, size)| *owed <= accuracy * size)
+}
 
 #[cfg(test)]
 mod tests {
@@ -1464,5 +1638,319 @@ mod tests {
             assert!(at_end, "no node at the end {b}");
             assert!((y[0] - (b - a)).abs() <= 1e-15, "{}", y[0]);
         }
+    }
+    /// `integral g` over `[a, b]` by the quadrature step control, at `accuracy`, the first
+    /// trial step a tenth of the interval (as the scalar [`integrate_opt_in`]).
+    fn quad(
+        integrator: &OdeIntegrator,
+        a: f64,
+        b: f64,
+        accuracy: f64,
+        g: impl Fn(f64) -> f64,
+    ) -> (f64, StepCounts) {
+        quad_from(integrator, a, b, (b - a) / 10.0, accuracy, g)
+    }
+
+    /// [`quad`] with the first trial step `first`.
+    fn quad_from(
+        integrator: &OdeIntegrator,
+        a: f64,
+        b: f64,
+        first: f64,
+        accuracy: f64,
+        g: impl Fn(f64) -> f64,
+    ) -> (f64, StepCounts) {
+        let mut y = [0.0];
+        let counts = integrator
+            .integrate(
+                &mut y,
+                a,
+                b,
+                OdeOptions {
+                    accuracy,
+                    initial_step: first,
+                    minimum_step: (b - a) / 100_000_000.0,
+                    scale: None,
+                    quadrature: true,
+                    rounding: None,
+                    rate: None,
+                },
+                |t, _, dy| {
+                    dy[0] = g(t);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        (y[0], counts)
+    }
+
+    /// The bound the step control implies on the sum of the steps' errors (their
+    /// estimates, each at most `accuracy * s_i`): `s_i` is at most
+    /// `peak + 2 |h_i| G + tiny`, with `peak <= span G` (`G` the largest `|g|` on the
+    /// interval) and `sum |h_i| = span`, so the total is at most
+    /// `accuracy * ((N + 2) span G + N tiny)`, `N` the accepted steps.
+    fn derived_bound(accuracy: f64, counts: StepCounts, span: f64, gmax: f64) -> f64 {
+        let n = f64::from(counts.good + counts.reduced);
+        accuracy * ((n + 2.0) * span * gmax + n * EFF_ZERO_SQ)
+    }
+
+    /// difftest `gen0994`: a sine of amplitude 4.7e-16 whose integral is 9.76e-17, 0.2 of
+    /// the amplitude. The step control held it to `1e-12 * accuracy` absolute (relative
+    /// error -4.7e-6 at accuracy 1e-9, 4700 times the accuracy). The bound asserted is the
+    /// one the control implies ([`derived_bound`]); the same integrand scaled by an exact
+    /// power of two to unit amplitude gives the same steps and, bit for bit, the same value
+    /// (the control has no absolute constant above `tiny`).
+    #[test]
+    fn an_integral_below_the_old_floor_is_held_relative_to_its_size() {
+        let (c0, c1, c2) = (
+            -4.719540182810223e-16_f64,
+            1.8640703447720268_f64,
+            0.938454838283926_f64,
+        );
+        let (a, b) = (0.4192727339336013_f64, 2.1527686633843524_f64);
+        let exact = -c0 / c1 * ((c1 * b + c2).cos() - (c1 * a + c2).cos());
+        assert!((exact / 9.756956687989441e-17 - 1.0).abs() < 1e-12);
+        let accuracy = 1e-9;
+        let sine = |c0: f64| move |t: f64| c0 * (c1 * t + c2).sin();
+        let (value, counts) = quad(&OdeIntegrator::default(), a, b, accuracy, sine(c0));
+        let scalar = integrate_opt_in(a, b, accuracy, true, |t| Ok(sine(c0)(t))).unwrap();
+        assert_eq!(scalar, value);
+        let bound = derived_bound(accuracy, counts, b - a, c0.abs());
+        assert!(
+            (value - exact).abs() <= bound,
+            "{:e} > {bound:e}",
+            (value - exact).abs()
+        );
+        let integrator = OdeIntegrator::new(10_000, 0.0).unwrap();
+        let scale = 2.0_f64.powi(51);
+        let (small, small_counts) = quad(&integrator, a, b, accuracy, sine(c0));
+        let (unit, unit_counts) = quad(&integrator, a, b, accuracy, sine(c0 * scale));
+        assert_eq!(small_counts, unit_counts);
+        assert_eq!(small * scale, unit);
+    }
+
+    /// `y -> k y` by a power of two scales every step quantity exactly: the same steps,
+    /// and `k` times the value, bit for bit, whatever `k` (no absolute constant).
+    #[test]
+    fn the_control_is_invariant_under_the_integrand_scale() {
+        let integrator = OdeIntegrator::new(10_000, 0.0).unwrap();
+        for accuracy in [1e-6, 1e-9, 1e-12] {
+            let (unit, unit_counts) = quad(&integrator, 0.0, 1.0, accuracy, f64::exp);
+            let exact = core::f64::consts::E - 1.0;
+            assert!(((unit - exact) / exact).abs() <= accuracy, "{accuracy}");
+            for power in [40, 80, 120] {
+                let k = 2.0_f64.powi(-power);
+                let (value, counts) = quad(&integrator, 0.0, 1.0, accuracy, |t| k * t.exp());
+                assert_eq!(counts, unit_counts, "k 2^-{power}, accuracy {accuracy}");
+                assert_eq!(value, k * unit, "k 2^-{power}, accuracy {accuracy}");
+            }
+        }
+    }
+
+    /// The default integrator (`tiny = 1e-24`) is scale invariant well above `tiny`, where
+    /// it is negligible against the integral.
+    #[test]
+    fn the_default_integrator_is_scale_invariant_above_its_tiny() {
+        let k = 2.0_f64.powi(-40);
+        let (value, counts) = quad(&OdeIntegrator::default(), 0.0, 1.0, 1e-9, |t| k * t.exp());
+        let exact = k * (core::f64::consts::E - 1.0);
+        assert!(((value - exact) / exact).abs() <= 4e-9, "{value:e}");
+        assert!(counts.good + counts.reduced < 200, "{counts:?}");
+    }
+
+    /// The known limit: below about `tiny` the default's additive constant sets the
+    /// scale, so only a finite value is asserted, not the relative accuracy.
+    #[test]
+    fn the_default_integrator_below_its_tiny_gives_a_finite_value() {
+        let k = 2.0_f64.powi(-120);
+        let (value, _) = quad(&OdeIntegrator::default(), 0.0, 1.0, 1e-9, |t| k * t.exp());
+        assert!(value.is_finite() && value > 0.0, "{value:e}");
+    }
+
+    /// An integrand that is zero at the start (the scale `|h g(x0)|` vanishes with the
+    /// step: the job the absolute floor did) converges, with no step underflow, at any
+    /// size, and in the same steps whatever the size. The original control did neither:
+    /// at accuracy 1e-9 and 1e-12 and unit size it ended in `step_control`, and at a size
+    /// of 2^-80 it was done in 3 steps because the absolute floor swallowed the integral.
+    /// Counts of the quartic `k t^4` on `[0, 1]`: 51, 186 and 724 steps at accuracy 1e-6,
+    /// 1e-9 and 1e-12.
+    #[test]
+    fn an_integrand_that_starts_at_zero_converges_at_any_size() {
+        let integrator = OdeIntegrator::new(10_000, 0.0).unwrap();
+        for accuracy in [1e-6, 1e-9, 1e-12] {
+            let mut counts = Vec::new();
+            for k in [1.0, 2.0_f64.powi(-80)] {
+                let (value, steps) = quad(&integrator, 0.0, 1.0, accuracy, |t| k * t.powi(4));
+                let exact = k / 5.0;
+                assert!(
+                    ((value - exact) / exact).abs() <= accuracy,
+                    "k {k:e}, accuracy {accuracy}: {value:e}"
+                );
+                counts.push((steps.good, steps.reduced));
+            }
+            assert_eq!(counts[0], counts[1], "accuracy {accuracy}");
+        }
+    }
+
+    /// An integral through zero (a centred moment, a signed area that cancels) converges
+    /// to the accuracy relative to the integral of the absolute value, at every size,
+    /// without the steps shrinking without end.
+    #[test]
+    fn an_integral_through_zero_converges_relative_to_the_absolute_integral() {
+        // (integrand, a, b, closed form, the largest |integrand|)
+        type Case = (fn(f64) -> f64, f64, f64, f64, f64);
+        let cases: [Case; 3] = [
+            (|t| t - 1.0, 0.0, 2.0, 0.0, 1.0),
+            (f64::cos, 0.0, core::f64::consts::PI, 0.0, 1.0),
+            (|t| t * t - 1.0 / 3.0, -1.0, 1.0, 0.0, 2.0 / 3.0),
+        ];
+        for (g, from, to, exact, gmax) in cases {
+            for k in [1.0, 2.0_f64.powi(-60)] {
+                for accuracy in [1e-6, 1e-9, 1e-12] {
+                    let (value, counts) =
+                        quad(&OdeIntegrator::default(), from, to, accuracy, |t| k * g(t));
+                    let bound = k * derived_bound(accuracy, counts, to - from, gmax);
+                    assert!(
+                        (value - k * exact).abs() <= bound,
+                        "k {k:e}, accuracy {accuracy}: {value:e}"
+                    );
+                    assert!(counts.good + counts.reduced < 200, "{counts:?}");
+                }
+            }
+        }
+    }
+
+    /// `G` is set by the largest trial step's samples, so the step count depends on the
+    /// first trial step as well as on the integrand; the value is held to the accuracy
+    /// for either, and each is invariant under `k` bit for bit.
+    #[test]
+    fn the_steps_depend_on_the_first_trial_step_and_not_on_the_scale() {
+        let integrator = OdeIntegrator::new(10_000, 0.0).unwrap();
+        let accuracy = 1e-9;
+        let k = 2.0_f64.powi(-80);
+        for first in [0.1, 0.5] {
+            let (value, counts) = quad_from(&integrator, 0.0, 1.0, first, accuracy, |t| t.powi(4));
+            let (scaled, scaled_counts) =
+                quad_from(&integrator, 0.0, 1.0, first, accuracy, |t| k * t.powi(4));
+            assert!(
+                ((value - 0.2) / 0.2).abs() <= accuracy,
+                "first {first}: {value:e}"
+            );
+            assert_eq!(scaled_counts, counts, "first {first}");
+            assert_eq!(scaled, k * value, "first {first}");
+        }
+    }
+
+    /// The owed-error check reads the size the step control read (the largest `|y|` of the
+    /// nodes, not the final value). The check itself: an error owed at 0.5 of the accuracy
+    /// times the peak is within, 5 times it is not, a NaN is not, and a final value of about
+    /// zero does not enter.
+    #[test]
+    fn the_owed_error_is_checked_against_the_size_the_control_read() {
+        let accuracy = 1e-6;
+        let peak = 1.0;
+        assert!(owed_within_accuracy(
+            &[0.5 * accuracy * peak],
+            &[peak],
+            accuracy
+        ));
+        assert!(owed_within_accuracy(&[accuracy * peak], &[peak], accuracy));
+        assert!(!owed_within_accuracy(
+            &[5.0 * accuracy * peak],
+            &[peak],
+            accuracy
+        ));
+        assert!(!owed_within_accuracy(&[f64::NAN], &[peak], accuracy));
+        // two components: one within, one not
+        assert!(!owed_within_accuracy(
+            &[0.0, 5.0 * accuracy],
+            &[1.0, 1.0],
+            accuracy
+        ));
+    }
+
+    /// End to end on a cancelling integral: `cos t` on `[0, pi]` ends at about zero with a
+    /// peak of about 1, so the size its owed error is checked against is the peak. A
+    /// rounding bound below the floor owes nothing and the integral is returned; one the
+    /// steps are accepted through owes (a measured 22 times the accuracy times the peak at
+    /// the least such bound: a step accepted through the floor owes about its estimate,
+    /// which is above the accuracy times its scale, so no bound makes the steps owe a part
+    /// of it) and the integral is refused with the step-control error.
+    #[test]
+    fn a_cancelling_integral_is_checked_against_its_peak_end_to_end() {
+        let accuracy = 1e-6;
+        let integrator = OdeIntegrator::default();
+        let go = |delta: f64| {
+            let rounding = [delta];
+            let options = OdeOptions {
+                accuracy,
+                initial_step: 0.3,
+                minimum_step: 1e-8,
+                scale: None,
+                quadrature: true,
+                rounding: Some(&rounding),
+                rate: None,
+            };
+            integrator.run(1, 0.0, core::f64::consts::PI, options, |t, _, dy| {
+                dy[0] = t.cos();
+                Ok(())
+            })
+        };
+        let none = go(1e-13).unwrap();
+        assert_eq!(none.owed[0], 0.0);
+        assert!(none.values[0].abs() < 1e-5, "{:e}", none.values[0]);
+        assert!((none.size[0] - 1.0).abs() < 0.1, "{}", none.size[0]);
+        let owes = go(1e-4).unwrap();
+        assert!(owes.owed[0] > accuracy * owes.size[0]);
+        let mut y = [0.0];
+        let rounding = [1e-4];
+        let result = integrator.integrate(
+            &mut y,
+            0.0,
+            core::f64::consts::PI,
+            OdeOptions {
+                accuracy,
+                initial_step: 0.3,
+                minimum_step: 1e-8,
+                scale: None,
+                quadrature: true,
+                rounding: Some(&rounding),
+                rate: None,
+            },
+            |t, _, dy| {
+                dy[0] = t.cos();
+                Ok(())
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(SolidError::Upstream {
+                operation: OP_STEP_CONTROL,
+                ..
+            })
+        ));
+    }
+
+    /// [`OdeIntegrator::step`] keeps upstream's contract: a caller's scale below
+    /// `EFF_ZERO` is replaced by it, in place.
+    #[test]
+    fn step_floors_a_small_caller_scale_in_place() {
+        let mut scale = [1e-13, 5.0];
+        let step = OdeIntegrator::default()
+            .step(
+                &[0.0, 0.0],
+                &[1.0, 1.0],
+                0.0,
+                0.1,
+                1e-6,
+                &mut scale,
+                |_, _, dy| {
+                    dy.fill(1.0);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert_eq!(scale, [EFF_ZERO, 5.0]);
+        assert!((step.values[0] - 0.1).abs() < 1e-15);
     }
 }
