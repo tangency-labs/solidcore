@@ -19,7 +19,7 @@ gone; no path removes every trim curve any more.
     to remove it and project the edge again; it now keeps it. The case joins the old chamfer in
     that test's survey of the fillet code the generic blend replaces.
   - The rig's areas are unchanged: `fixes.json` had the flag on.
-  - Goldens: `blend.fillet_executive_p3` (29 cases against main at a00676f5c) and `primitive.api_trim_ops` (2) move with
+  - Goldens: `blend.fillet_executive_p3` (29 cases against main's golden at 387a55ad6) and `primitive.api_trim_ops` (2) move with
     the kept trims. Their bodies' pcurves lie on their edges as before or closer (the largest
     distance, sampled, is unchanged to 1e-8 or drops, 4.1e-5 to 3.5e-5 on the tabbed plate's
     side), no edge use passes its tolerance that did not before, and the bodies' integrated

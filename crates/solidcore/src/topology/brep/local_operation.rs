@@ -2159,10 +2159,11 @@ mod tests {
         }
     }
 
-    /// Second review, finding 6: a cylinder's side given a cylinder of its radius one
-    /// rounding off its own axis (so not its own surface) with u and v swapped is closed in
-    /// one direction, as the side is, but round its v: the side's seam lines (u = 0 and
-    /// u = 2π) lift to two circles 2π apart along the axis, so the seam has no edge there:
+    /// Second review, finding 6: a cylinder's side given a cylinder of its radius off its own
+    /// axis (1e-12: any offset will do, as `is_own_surface` compares exactly; so not its
+    /// own surface) with u and v swapped is closed in one direction, as the side is, but
+    /// round its v: the side's seam lines (u = 0 and u = 2π) lift to two circles 2π apart
+    /// along the axis, so the seam has no edge there:
     /// refused as a seam opened before anything is built. Unswapped, it keeps the seam.
     /// Its own cylinder swapped is its own surface (`SwapUV` keeps the definition, WR-701,
     /// and the parametrisation is not compared): the face keeps its own copy.
