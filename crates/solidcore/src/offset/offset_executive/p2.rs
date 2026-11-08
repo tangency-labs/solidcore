@@ -79,13 +79,14 @@ use crate::heal::stitch::p2::MinGapRequest;
 use crate::kernel::Kernel;
 use crate::math::Vec3;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
-use crate::query::api_queries::{brep_is_manifold_solid, BrepRef};
+use crate::query::api_queries::{brep_is_closed_manifold, brep_is_manifold_solid, BrepRef};
 
 use crate::topology::brep::p1 as bp1;
 use crate::topology::brep::p3 as bp3;
 use crate::topology::brep::p4::{shrink_geometry, stitch_faces_with_context};
 use crate::topology::brep::p7::{make_face_with_curves_with_kernel_context, FaceCurvesInput};
 use crate::topology::brep::p9::CurveIdentity;
+use crate::topology::brep::validation::lost_manifold;
 use crate::topology::proto_topology::p1::CopyBrepMap;
 
 #[cfg(test)]
@@ -340,26 +341,25 @@ pub fn offset_brep(
         notifications.attributes,
     )?;
     let original_key = original.key();
-    // Opt-in (WR-657): as the shell does with WR-578's opt-in, an offset of a solid that
-    // is no closed manifold solid is refused rather than returned (upstream hands back,
-    // e.g., the loop gaps of a box with three chamfers meeting at a corner, volume 0).
-    // Only a merged offset is held to that: without the merge the overlapping offsets
-    // stay as they are, which is what the caller asked for (`OffsetBrep`'s `bDoSelfInt`).
-    let refuse_broken = kernel.fixes.offset_closes_loop_gaps
-        && kernel.fixes.offset_splits_corner_vertices
-        && options.merge_results
-        && brep_is_manifold_solid(original)?;
+    // (not upstream) an offset of a manifold solid is a manifold solid or a refusal (the
+    // ops contract, `finish`): upstream hands back, e.g., the loop gaps of a box with three
+    // chamfers meeting at a corner, volume 0. Only a merged offset is held to that: without
+    // the merge the overlapping offsets stay as they are, which is what the caller asked
+    // for (`OffsetBrep`'s `bDoSelfInt`).
     executive.use_creator_tangency_tol(kernel);
     let mut result = collapse_offset_status(executive.do_solid_offset(
         kernel,
-        Some(original),
+        Some(&mut *original),
         SolidOffsetOptions::default(),
         notifications,
     ))?;
-    // A result with no faces (the solid offset to nothing, #2092) is returned, as with
-    // the opt-in off.
-    if refuse_broken && !result.face_list().is_empty() && !brep_is_manifold_solid(&result)? {
-        return Err(SolidError::sm_err(OP_OFFSET));
+    // A result with no faces (the solid offset to nothing, #2092) is returned.
+    if options.merge_results && !result.face_list().is_empty() {
+        if let Some(what) = lost_manifold(brep_is_closed_manifold(&result)?, || {
+            brep_is_manifold_solid(original)
+        })? {
+            return Err(Failure::new(OP_OFFSET, OffsetFailure::Unsound { what }).into_error());
+        }
     }
     // (not upstream) the attributes the notifications left on the result's objects
     attributes::finish_attributes(&mut result, original_key, notifications)?;
@@ -559,31 +559,18 @@ impl OffsetExecutive {
                 tolerance,
                 notifications,
             )?;
-            // Opt-in (WR-344 addendum, tangency-labs/solidcore#1818): with the mated pairs
-            // of an extended offset left out of its merge, an offset the merge would have
-            // refused can reach the difference, which then hands back no solid (a ruled
-            // square-to-circle loft shelled inward: ten faces, not manifold, volume 0).
-            // The fork's `SmOffsetExecutive::ShellBrep` returns it too; its C API refuses
-            // any operation on a solid whose result is no closed manifold solid
-            // (`finish`, `SMLIB_ERR_NOT_SOLID`). As WR-454's and WR-578's opt-ins do for
-            // the offset, the flag must not turn upstream's refusal into a success on a
-            // broken body.
-            if kernel.fixes.offset_extended_edges_mated
-                && options.offset.extend_convex_edges
-                && input_is_manifold
-                && !brep_is_manifold_solid(&shell)?
+            // (not upstream) a shell of a manifold solid is a manifold solid or a refusal (the
+            // ops contract, `finish`): an offset the merge would have refused can reach the
+            // difference, which then hands back no solid (a ruled square-to-circle loft
+            // shelled inward: ten faces, not manifold, volume 0; a box's chamfer left open
+            // by an inset of its two sides' width, which the cavity meets along a line only).
+            // The returns above are ungated by design: a solid's offset that is no solid with
+            // `create_offset_solid` false is the sheet the caller asked for, and a sheet
+            // input's thickening is not a solid's shell.
+            if let Some(what) =
+                lost_manifold(brep_is_closed_manifold(&shell)?, || Ok(input_is_manifold))?
             {
-                return Err(SolidError::sm_err(OP_SHELL));
-            }
-            // Opt-in (WR-657): likewise with the corners split, a shell of a solid that is
-            // no closed manifold solid is refused (a box's chamfer left open by an inset of
-            // its two sides' width, which the cavity meets along a line only)
-            if kernel.fixes.offset_closes_loop_gaps
-                && kernel.fixes.offset_splits_corner_vertices
-                && input_is_manifold
-                && !brep_is_manifold_solid(&shell)?
-            {
-                return Err(SolidError::sm_err(OP_SHELL));
+                return Err(Failure::new(OP_SHELL, OffsetFailure::Unsound { what }).into_error());
             }
             make_shell_edges_exact(kernel, &mut shell, notifications)?;
             Ok(shell)
@@ -857,6 +844,32 @@ impl OffsetExecutive {
                     marked.insert(required(eu::mate(original, across)?, OP_EXTENDED)?);
                 }
             }
+            // On an inset shell with selected open faces (`shell_faces`), a tangent
+            // edge between an open shell face (offset 0) and a kept face (offset inward
+            // by `d`) becomes a `d`-wide step rather than a tangent intersection. Skip
+            // those pairs in the convex-tangent extension pass and defer them until
+            // after non-shell-tangent mapped edges run so adjacent wall mitres settle
+            // the shared offset vertices first (`marked.insert(edgeuse)` in the main
+            // loop stays unchanged for every edge use).
+            let shell_faces_list = self.shell_faces().to_vec();
+            let tan_tol = self.tangency_tol_degrees();
+            let is_inset = self.inset();
+            let is_shell_tangent =
+                |k: &Kernel, orig: &mut Brep, eu: EdgeuseId, rad: EdgeuseId| -> Result<bool> {
+                    if !is_inset || shell_faces_list.is_empty() {
+                        return Ok(false);
+                    }
+                    let f1 = eu::face(orig, eu)?;
+                    let f2 = eu::face(orig, rad)?;
+                    let in1 = f1.is_some_and(|f| shell_faces_list.contains(&f));
+                    let in2 = f2.is_some_and(|f| shell_faces_list.contains(&f));
+                    if in1 == in2 {
+                        return Ok(false);
+                    }
+                    let tan = eu2::is_tangent_sector(k, orig, eu, tan_tol, false, true)?;
+                    Ok(tan)
+                };
+
             if self.extend_convex_edges() {
                 for &edgeuse in &mapped {
                     kernel.check_cancelled(OP_EXTENDED)?;
@@ -871,6 +884,9 @@ impl OffsetExecutive {
                     let Some(radial) = select_radial(original, radial, &mapped, &marked)? else {
                         continue;
                     };
+                    if is_shell_tangent(kernel, original, edgeuse, radial)? {
+                        continue;
+                    }
                     if eu2::is_tangent_sector(
                         kernel,
                         original,
@@ -896,6 +912,7 @@ impl OffsetExecutive {
                 }
             }
 
+            let mut deferred_shell_tangents = Vec::new();
             for &edgeuse in &mapped {
                 kernel.check_cancelled(OP_EXTENDED)?;
                 let mut radial = required(eu::radial(original, edgeuse)?, OP_EXTENDED)?;
@@ -914,6 +931,23 @@ impl OffsetExecutive {
                     };
                     radial = selected;
                 }
+                if is_shell_tangent(kernel, original, edgeuse, radial)? {
+                    deferred_shell_tangents.push((edgeuse, radial));
+                    continue;
+                }
+                self.mapped_edge_prefix(
+                    kernel,
+                    original,
+                    edgeuse,
+                    radial,
+                    mark_type,
+                    &marked,
+                    notifications,
+                )?;
+            }
+
+            for (edgeuse, radial) in deferred_shell_tangents {
+                kernel.check_cancelled(OP_EXTENDED)?;
                 self.mapped_edge_prefix(
                     kernel,
                     original,
