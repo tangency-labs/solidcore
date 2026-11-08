@@ -2145,11 +2145,9 @@ mod tests {
     /// `BoxSide::ALL`'s order) runs on for the asked distance, measured as a dense polyline's length
     /// (Richardson-extrapolated from 2^15 and 2^16 chords, not the kernel's enclosure); and the
     /// iso curve crosses the side tangent continuously. Writes one line per face to
-    /// `$SC_TURN_NURBS_PROBE` when set. Needs the upstream test files (`Mouse.smb`; CI clones
-    /// them). The station of a v side was the middle of the box as extended so far, in u; the
-    /// construction promises the reach at the face's middle (`extended_by_distance_at`), and
-    /// the two stations differ by 0.0056 in u on Mouse face 0, where the length across moves
-    /// by 5e-6..1e-5 relative. No tolerance or expected value changed.
+    /// `$SC_TURN_NURBS_PROBE` when set. The reach is promised at the middle of the face's own
+    /// box along the side (`extended_by_distance_at`), so every side, the v sides too, is
+    /// measured there. Needs the upstream test files (`Mouse.smb`; CI clones them).
     #[test]
     fn turned_offsets_are_the_approximation_and_reach_the_extension() {
         use solidcore::geom::vector2d::Point2;
