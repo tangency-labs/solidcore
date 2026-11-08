@@ -308,11 +308,15 @@ pub fn tolerance_beyond_bound(
     // constructions store delta + eps).
     let zones = crate::geom::tol::xsect_tol_3d_from_zones(k, b.tolerance(), b.tolerance());
     let base = input.tolerance_cap.max(b.tolerance()).max(zones);
+    // A gap between an edge and its faces or vertices the cap covers is closed by the
+    // tolerance pass to twice the gap, plus a little (`docs/validity-and-tolerances.md`
+    // section 7.3): the edge may hold that, rounded up.
+    let held = (Ivl::from(base) * Ivl::from(crate::geom::tol::GAP_TOLERANCE_FACTOR)).hi;
     let mut allowance = Ivl::from(0.0);
     for gap in gaps.iter().filter(|g| g.gap <= base) {
         allowance = allowance + Ivl::from(gap.growth);
     }
-    let cap = (Ivl::from(base) + allowance).hi;
+    let cap = (Ivl::from(held) + allowance).hi;
     for (id, _) in b.edges().iter() {
         if let Some(bound) = edge_bound(b, id, cap)? {
             let tolerance = crate::topology::edge::tolerance(b, id)?;

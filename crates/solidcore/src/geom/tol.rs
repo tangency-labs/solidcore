@@ -196,6 +196,12 @@ pub const MODEL_SIZE_ESTIMATE: f64 = 50.0;
 pub const LARGE_SMALL_SIZE_RATIO: f64 = 1000.0;
 /// `SM_ZONE_TOL_3D`: default zone tolerance.
 pub const ZONE_TOL_3D: f64 = 1.0e-5;
+
+/// The factor a gap is raised to when the tolerance pass covers it
+/// (`SmBrep::UpdateAndValidateTolerances` checks against half the tolerance, so the
+/// tolerance becomes twice the gap, plus a little): `docs/validity-and-tolerances.md`
+/// section 7.3.
+pub const GAP_TOLERANCE_FACTOR: f64 = 2.001;
 /// `SM_TOL_GAP_GAIN`: over-size factor above an object's largest gap.
 pub const TOL_GAP_GAIN: f64 = 1.1;
 /// `SM_ANG_TOL_DEG`: angle tolerance in degrees.
@@ -1685,7 +1691,7 @@ pub fn update_object_tolerance(
 
                     // Note, SmBrep::UpdateAndValidateTolerances() checks against tol/2,
                     // so have to double the gap (plus a little).
-                    let new_tol = 2.001 * gap_length;
+                    let new_tol = GAP_TOLERANCE_FACTOR * gap_length;
                     if let Some(e) = gap.edge(b, 0)? {
                         crate::topology::edge::set_tolerance(
                             b,
@@ -1747,7 +1753,7 @@ pub fn update_object_tolerance(
                             face_set_tolerance(
                                 b,
                                 f,
-                                zone_tol3d(k, 2.001 * gap_length),
+                                zone_tol3d(k, GAP_TOLERANCE_FACTOR * gap_length),
                                 true,
                                 true,
                             )?;
