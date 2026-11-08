@@ -1521,14 +1521,8 @@ fn gather_ends(
             .copied()
             .ok_or_else(nul)?;
         let e = eu1::edge(target, fs.edgeuse(0)?.ok_or_else(nul)?)?.ok_or_else(nul)?;
-        let (_, edge_dir) = set_back_frame(
-            k,
-            target,
-            e,
-            Some(vtx),
-            corner.set_back_dist_along(target, e)?,
-            OP_FILL,
-        )?;
+        let setback = corner.set_back_dist_along(target, e)?;
+        let (_, edge_dir) = set_back_frame(k, target, e, Some(vtx), setback, OP_FILL)?;
         let from_start = edge::start_vertex(target, e)? == Some(vtx);
         let toward_vertex = if from_start { -edge_dir } else { edge_dir };
         let side = rail_dir.dot(toward_vertex);
@@ -1540,7 +1534,6 @@ fn gather_ends(
         // vertex, where a far corner cuts the round, set square onto the edge (the plane
         // `CalcSetBackVert` sets the setback vertex in, there). A setback that with its ease
         // reaches it ends past that cut.
-        let setback = corner.set_back_dist_along(target, e)?;
         let edge_curve = edge::evaluation_curve(target, e)?.ok_or_else(nul)?;
         let edge_ivl = edge::interval(target, e)?;
         let t0 = if from_start {
@@ -1557,8 +1550,8 @@ fn gather_ends(
                 edge::end_vertex(pseudo.brep(), r)?,
             ];
             for far in ends.into_iter().flatten() {
-                // the corner's own vertices, and a far one not yet placed (a corner made
-                // after this one: the edge's room holds the setback short of it)
+                // not the corner's own vertices; and a far vertex not yet placed has no
+                // point to measure, so a cut there is not seen here
                 if corner.vertices.contains(&far) || !pseudo.fillet_vertex(far)?.is_processed() {
                     continue;
                 }
