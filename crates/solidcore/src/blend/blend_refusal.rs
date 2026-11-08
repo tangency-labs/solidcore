@@ -72,15 +72,16 @@ pub enum BlendRefusal {
         /// The least setback: the farthest the rails beside an edge cross it.
         least: f64,
     },
-    /// A setback asked at `vertex` that, with its ease, does not fit on the corner's edges
-    /// (each edge's length less the far end's claim on it), or on its rounds (each round's
-    /// rails reach along its edge only as far as a far corner cuts them): one below
-    /// `largest` fits.
+    /// A setback asked at `vertex` that does not fit on the corner's edges, or on its rounds
+    /// where a far corner cuts them: one below `largest` fits. `why` says which test
+    /// refused it.
     SetbackTooLong {
         /// The corner's vertex.
         vertex: VertexId,
         /// The bound below which a setback fits.
         largest: f64,
+        /// Which test refused it.
+        why: SetbackTooLongWhy,
     },
     /// A chamfer's angle to its first face that runs out past the other face instead of
     /// meeting it: the chamfer's line and the other face meet only at an angle less than
@@ -94,6 +95,25 @@ pub enum BlendRefusal {
         /// The bound below which an angle meets the other face: pi less the wedge.
         largest: f64,
     },
+}
+
+/// Which test refused a setback as too long ([`BlendRefusal::SetbackTooLong`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SetbackTooLongWhy {
+    /// It reaches the far end of an edge at its corner, or the far end's own setback there:
+    /// `setback + far >= length` (the far end's setback 0 where it has none). Every set-back
+    /// corner, before the blends are traced; `largest` is the least of `length - far`.
+    Overlap,
+    /// At a Setback corner, with its ease it does not lie below an edge's room by the
+    /// tolerance: `setback + ease >= length - claim - tol`, the far end's claim its setback
+    /// and ease, or half the edge where every edge there is blended. `largest` is the least
+    /// of `room - ease`.
+    Room,
+    /// At a Setback corner, with its ease it reaches along an edge as far as a far corner
+    /// cuts one of the edge's round's rails, less the fit margin. `largest` is that reach
+    /// less the ease.
+    PastRails,
 }
 
 impl BlendRefusal {

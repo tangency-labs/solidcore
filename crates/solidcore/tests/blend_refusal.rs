@@ -375,7 +375,7 @@ fn a_setback_asked_that_does_not_fit_or_stops_short_is_refused() {
         matches!(
             err,
             SolidError::BlendRefused {
-                refusal: BlendRefusal::SetbackTooLong { vertex, largest },
+                refusal: BlendRefusal::SetbackTooLong { vertex, largest, .. },
                 ..
             } if vertex == v && largest == 20.0
         ),
@@ -434,7 +434,10 @@ fn a_setback_asked_past_a_far_cut_names_the_largest_with_its_ease() {
     let want = 35.0 - 1.0 - 1000.0 * tol;
     let largest = match r {
         Err(SolidError::BlendRefused {
-            refusal: BlendRefusal::SetbackTooLong { vertex, largest },
+            refusal:
+                BlendRefusal::SetbackTooLong {
+                    vertex, largest, ..
+                },
             ..
         }) if vertex == v => largest,
         other => panic!("{other:?}"),

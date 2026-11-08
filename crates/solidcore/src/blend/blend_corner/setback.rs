@@ -69,7 +69,7 @@ use std::sync::Arc;
 use crate::blend::blend_corner::ball::{solver_of_edgeuse_or_mate, BallSolvers};
 use crate::blend::blend_corner::swept::fmt_g;
 use crate::blend::blend_corner::{BlendCorner, BlendCornerEvent};
-use crate::blend::blend_refusal::BlendRefusal;
+use crate::blend::blend_refusal::{BlendRefusal, SetbackTooLongWhy};
 use crate::blend::blend_setback::{
     bisect_thousandths, certified_scale, containment, distances, fill_hole_counted,
     fill_hole_probe, Edge, Face, FaceKind, Fill, FillStats, Probe, Round,
@@ -261,6 +261,85 @@ pub fn asked_setback_not_built(corner: &FilletCorner) -> bool {
 /// The refusal's comment for [`asked_setback_not_built`].
 pub const SETBACK_NOT_BUILT: &str =
     "Fillet Error: a setback is asked for at a corner that builds none (neither the blend corner's Setback nor an N x N corner), so it would not be built";
+
+/// The setback asked at `vertex`: its fill's ([`set_back_fill_of`]), else the setback set on
+/// its corner ([`FilletCorner::set_back_dist`]); `0` for none.
+fn asked_at(corners: &[FilletCorner], fills: &[SetBackFill], vertex: VertexId) -> f64 {
+    if let Some(f) = set_back_fill_of(fills, vertex) {
+        return f.setback;
+    }
+    corners
+        .iter()
+        .find(|c| c.filleted_vertex() == Some(vertex))
+        .map_or(0.0, |c| c.set_back_dist.max(0.0))
+}
+
+/// Not the fork's (#3145): the setbacks asked at the made `corners` (their fills or their
+/// set setbacks, [`asked_at`]) that overlap on an edge: a setback that, with the far end's
+/// own (0 where it has none), reaches the edge's length, `setback + far >= length`, refused
+/// ([`SetbackTooLongWhy::Overlap`]) before the blends are traced, at every set-back corner,
+/// the Setback's and the N x N ones alike. No such setback builds: the corner's patch would
+/// run past the edge's other end. `largest` is the least of `length - far` over the corner's
+/// edges. The Setback's finer test ([`SetbackTooLongWhy::Room`], with the ease and the room's
+/// claims and tolerance) stays where it builds. The length is the edge curve's over its
+/// interval ([`Curve::length`], asked as the Setback's room asks it): exact for a line (its
+/// own length) and for a polyline span (the sum of its chords), otherwise the adaptive
+/// quadrature's value, accepted on its step-error estimates against a relative tolerance,
+/// not a bound. Where the length is only that estimate, a setback within the estimate's error
+/// of the length may be decided either way: the check relies on [`Curve::length`]'s estimate
+/// off lines and polylines (#3184). The first refused corner, with its vertex.
+///
+/// # Errors
+/// Those of the topology queries and the lengths.
+pub fn overlapping_setbacks(
+    k: &Kernel,
+    b: &Brep,
+    corners: &[FilletCorner],
+    fills: &[SetBackFill],
+) -> Result<Option<(VertexId, SetbackRefusal)>> {
+    for corner in corners {
+        let Some(vtx) = corner.filleted_vertex() else {
+            continue;
+        };
+        let d = asked_at(corners, fills, vtx);
+        if !d.is_finite() || d <= 0.0 {
+            continue;
+        }
+        let mut largest = BIG_DOUBLE;
+        let mut over = false;
+        for e in vertex::edges(b, vtx, None)? {
+            let Some(curve) = edge::evaluation_curve(b, e)? else {
+                continue;
+            };
+            // (asked as the Setback's room asks it, `set_backs`)
+            let length = curve.length(k, &edge::interval(b, e)?, 1.0e-3 * corner.approx_tol_3d)?;
+            let far = edge::other_vertex(b, e, Some(vtx))?
+                .filter(|&f| f != vtx)
+                .map_or(0.0, |f| asked_at(corners, fills, f));
+            largest = smin(largest, length - far);
+            if d + far >= length {
+                over = true;
+            }
+        }
+        if over {
+            let refusal = SetbackRefusal::no_room(
+                format!(
+                    "Fillet Error: a setback of {} reaches past an edge at its corner, or the far end's setback on it: a setback below {} fits",
+                    fmt_g(d),
+                    fmt_g(largest)
+                ),
+                None,
+            )
+            .typed(BlendRefusal::SetbackTooLong {
+                vertex: vtx,
+                largest,
+                why: SetbackTooLongWhy::Overlap,
+            });
+            return Ok(Some((vtx, refusal)));
+        }
+    }
+    Ok(None)
+}
 
 /// `SmFilletExecutive::GetSetBackFill`: the first fill asked at `vertex`.
 #[must_use]
@@ -1213,6 +1292,7 @@ pub fn make_setback_topology(
                 vtx,
                 largest,
                 "does not fit on the corner's edges",
+                SetbackTooLongWhy::Room,
             )));
         }
         if short {
@@ -1807,7 +1887,13 @@ fn grow_curved<S: SetbackSolvers>(
 
 /// A setback asked at `vtx` that, with its ease, does not fit (`why`): refused, naming
 /// `largest`, below which one fits ([`BlendRefusal::SetbackTooLong`]).
-fn setback_too_long(a: SetBackFill, vtx: VertexId, largest: f64, why: &str) -> SetbackRefusal {
+fn setback_too_long(
+    a: SetBackFill,
+    vtx: VertexId,
+    largest: f64,
+    why: &str,
+    test: SetbackTooLongWhy,
+) -> SetbackRefusal {
     SetbackRefusal::no_room(
         format!(
             "Fillet Error: a setback of {} (with its ease, {}) {why}: a setback below {} fits",
@@ -1820,6 +1906,7 @@ fn setback_too_long(a: SetBackFill, vtx: VertexId, largest: f64, why: &str) -> S
     .typed(BlendRefusal::SetbackTooLong {
         vertex: vtx,
         largest,
+        why: test,
     })
 }
 
@@ -1839,6 +1926,7 @@ fn past_rails(asked: Option<SetBackFill>, vtx: VertexId, reach: f64) -> SetbackR
         vtx,
         reach - a.ease,
         "reaches past where a far corner cuts a round",
+        SetbackTooLongWhy::PastRails,
     )
 }
 

@@ -2813,6 +2813,44 @@ impl<'target> FilletSession<'target> {
         })
     }
 
+    /// The chamfer's first distance (its setback along its first face) at which a chamfer
+    /// refused as too large builds: the fit `fit` ([`Self::fit_size`], or a refusal's) read
+    /// through the chamfer's
+    /// definition on its edge ([`FilletSolver::chamfer`]). At the edge's wedge the offsets
+    /// are linear in the sizes, `r_1 = (d_2 - d_1 cos a) / sin a`,
+    /// `r_2 = (d_1 - d_2 cos a) / sin a` ([`ChamferDefinition`]), so the chamfer whose offsets
+    /// are `lambda` times the asked ones is the asked chamfer scaled by `lambda`
+    /// ([`ChamferDefinition::scaled`]), exactly: a fit of a radius (`FitKind::Radius`, an
+    /// equal chamfer's one offset) is `lambda = fit / r_1`, a fit of a scale on two unequal
+    /// offsets (`FitKind::Scale`) is `lambda` itself. `None` for a fit on no
+    /// edge or a chord, or an edge whose solver keeps no chamfer, or a radius fit of a
+    /// chamfer whose two offsets differ (the fit is then a scale).
+    ///
+    /// [`FilletSolver::chamfer`]: crate::blend::fillet_solver::p1::FilletSolver::chamfer
+    /// [`ChamferDefinition`]: crate::surface::procedural_blend::chamfer::ChamferDefinition
+    /// [`ChamferDefinition::scaled`]: crate::surface::procedural_blend::chamfer::ChamferDefinition::scaled
+    #[must_use]
+    pub fn chamfer_fit(&self, fit: crate::blend::fillet_executive::FitSize<EdgeId>) -> Option<f64> {
+        use crate::blend::fillet_executive::p3::FitKind;
+        let edge = fit.edge?;
+        let target = self.target();
+        let chamfer = self.objects.solvers.iter().flatten().find_map(|solver| {
+            let base = solver.base();
+            let eu = base.edgeuse(0).ok()??;
+            (crate::topology::edgeuse::p1::edge(target, eu).ok()? == Some(edge))
+                .then_some(base.chamfer)?
+        })?;
+        let [r1, _] = chamfer.offsets().ok()?;
+        let lambda = match fit.kind {
+            // an equal chamfer's one offset: both offsets are r_1, to the conversion's rounding
+            FitKind::Radius if chamfer.holds([r1, r1]) => fit.size / r1,
+            FitKind::Scale => fit.size,
+            FitKind::Radius | FitKind::Chord => return None,
+        };
+        let [d1, _] = chamfer.scaled(lambda).setbacks();
+        (lambda.is_finite() && lambda > 0.0).then_some(d1)
+    }
+
     /// `SetDoGlobalMerge`.
     pub fn set_do_global_merge(&mut self, do_global_merge: bool) {
         self.executive.set_do_global_merge(do_global_merge);
