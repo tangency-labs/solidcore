@@ -104,10 +104,10 @@ const MAX_SPLITS: u32 = 12;
 /// Subdivisions of one Bernstein polynomial while isolating its roots: its pieces are then
 /// 2^-48 of a pcurve span, where a root left unisolated (a pcurve touching a knot line) ends a
 /// piece there.
-const MAX_DEPTH: u32 = 48;
+pub(crate) const MAX_DEPTH: u32 = 48;
 /// Subdivisions one root isolation may make: a root that touches its knot line (a double
 /// root, the only kind that keeps two sign changes as the pieces shrink) costs one a level.
-const MAX_SUBDIVISIONS: usize = 4096;
+pub(crate) const MAX_SUBDIVISIONS: usize = 4096;
 /// The least cosine between a face use's normal from the face's evaluator and from its net
 /// at one point: below it the net is not the face's surface and the face is refused.
 const SAME_SURFACE_COS: f64 = 0.5;
@@ -620,7 +620,14 @@ fn bernstein_halves(c: &[f64]) -> (Vec<f64>, Vec<f64>) {
 /// in `[0, 1]`: none where the coefficients keep one sign, exactly one where they change sign
 /// once (found by bisection to rounding), otherwise those of each half. Out of depth or work,
 /// the piece's two ends stand for the roots it holds.
-fn bernstein_roots(c: &[f64], lo: f64, hi: f64, depth: u32, work: &mut usize, out: &mut Vec<f64>) {
+pub(crate) fn bernstein_roots(
+    c: &[f64],
+    lo: f64,
+    hi: f64,
+    depth: u32,
+    work: &mut usize,
+    out: &mut Vec<f64>,
+) {
     let (Some(&first), Some(&last)) = (c.first(), c.last()) else {
         return;
     };
