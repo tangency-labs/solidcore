@@ -619,7 +619,8 @@ fn bernstein_halves(c: &[f64]) -> (Vec<f64>, Vec<f64>) {
 /// The roots in `[lo, hi]` of the polynomial with Bernstein coefficients `c` there, as places
 /// in `[0, 1]`: none where the coefficients keep one sign, exactly one where they change sign
 /// once (found by bisection to rounding), otherwise those of each half. Out of depth or work,
-/// the piece's two ends stand for the roots it holds.
+/// the piece's two ends stand for the roots it holds, and the result is `false`: the roots were
+/// not all isolated (a root of even multiplicity, or roots closer than the depth resolves).
 pub(crate) fn bernstein_roots(
     c: &[f64],
     lo: f64,
@@ -627,9 +628,9 @@ pub(crate) fn bernstein_roots(
     depth: u32,
     work: &mut usize,
     out: &mut Vec<f64>,
-) {
+) -> bool {
     let (Some(&first), Some(&last)) = (c.first(), c.last()) else {
-        return;
+        return true;
     };
     if first == 0.0 {
         out.push(lo);
@@ -643,7 +644,7 @@ pub(crate) fn bernstein_roots(
         .filter(|w| matches!(w, [x, y] if x != y))
         .count();
     if changes == 0 {
-        return;
+        return true;
     }
     if changes == 1 && first != 0.0 && last != 0.0 {
         let (mut a, mut b) = (0.0, 1.0);
@@ -662,17 +663,18 @@ pub(crate) fn bernstein_roots(
             }
         }
         out.push(lo + (hi - lo) * 0.5 * (a + b));
-        return;
+        return true;
     }
     if depth == 0 || *work == 0 {
         out.extend([lo, hi]);
-        return;
+        return false;
     }
     *work -= 1;
     let mid = 0.5 * (lo + hi);
     let (l, r) = bernstein_halves(c);
-    bernstein_roots(&l, lo, mid, depth - 1, work, out);
-    bernstein_roots(&r, mid, hi, depth - 1, work, out);
+    let left = bernstein_roots(&l, lo, mid, depth - 1, work, out);
+    let right = bernstein_roots(&r, mid, hi, depth - 1, work, out);
+    left && right
 }
 
 /// The two uses' values at one point: `P` and `Q` (module docs), enclosed, and a lower end of
@@ -1000,7 +1002,7 @@ mod tests {
         let c = [0.1875, 0.1875 - 0.5, 0.1875];
         let mut roots = Vec::new();
         let mut work = MAX_SUBDIVISIONS;
-        bernstein_roots(&c, 0.0, 1.0, MAX_DEPTH, &mut work, &mut roots);
+        assert!(bernstein_roots(&c, 0.0, 1.0, MAX_DEPTH, &mut work, &mut roots));
         roots.sort_by(f64::total_cmp);
         let want = [0.25, 0.75];
         assert_eq!(roots.len(), want.len(), "{roots:?}");
@@ -1009,8 +1011,13 @@ mod tests {
             "{roots:?}"
         );
         let mut none = Vec::new();
-        bernstein_roots(&[1.0, 0.5, 2.0], 0.0, 1.0, MAX_DEPTH, &mut work, &mut none);
+        assert!(bernstein_roots(&[1.0, 0.5, 2.0], 0.0, 1.0, MAX_DEPTH, &mut work, &mut none));
         assert!(none.is_empty());
+        // (s - 1/2)^2 = s^2 - s + 1/4: a double root, never isolated by a sign change; its
+        // coefficients halve to exact zeros at 1/2, both halves' ends there
+        let mut touch = Vec::new();
+        bernstein_roots(&[0.25, -0.25, 0.25], 0.0, 1.0, MAX_DEPTH, &mut work, &mut touch);
+        assert!(touch.iter().all(|&x| x == 0.5), "{touch:?}");
     }
 
     /// `P(t) = -1 + (8/3) t^2` along one direction, `Q = 1`: at the 3 Chebyshev points of

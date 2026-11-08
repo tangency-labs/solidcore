@@ -34,24 +34,37 @@
 //!   Guggenheimer, *Computing frames along a trajectory*, CAGD 6, 1989);
 //! - a **corner** between pieces, tangents `t_0` to `t_1`: the least rotation taking one to the
 //!   other, about `t_0 x t_1` by the angle between them (the limit of the double reflection
-//!   across a vanishing segment); none where the pieces meet G1.
+//!   across a vanishing segment); none where the pieces meet G1, by the procedural sweep's
+//!   rule (unit tangents within `1e-8`, docs/procedural-sweep.md section 3.1).
+//!
+//! The line and arc are the procedural sweep's closed forms
+//! ([`crate::surface::procedural_sweep::path`], `frame_side`), and both use its one rotation
+//! (`rodrigues`) and G1 rule (`G1_TANGENTS`). What is not shared is the span: there a span of
+//! a B-spline path is classified by samples and carries one normal; here a piece is given as
+//! a line, arc or helix and carries the whole transport, through helices and corners, which
+//! the procedural sweep has no frame for.
 //!
 //! Each is a rigid rotation computed by Rodrigues' formula, so a frame is orthonormal to
 //! rounding: its defect, the largest of `| |c_i|^2 - 1 |` and `|c_i . c_j|` over its columns,
 //! is `O(k eps)` for `k` composed rotations.
 //!
-//! **The laws (SolidCraft's conventions, carried over, not derived here).**
+//! **The laws (SolidCraft's conventions, carried over, not derived here).** Only geometric
+//! limits are refused here (a scale not positive, a path not crossing a parallel profile's
+//! plane or running along the orientation direction, a corner doubling back); SolidCraft's
+//! limits on them (four turns of twist, scales 0.01 to 100, 5 degrees and `1e-3`) are the
+//! ops entry's, labelled there, and the last two reach this module as
+//! [`Laws::min_crossing`] and [`Laws::min_across`].
 //! - `twist` turns the profile about its normal (turned to point the way the path leaves it)
 //!   by `twist u` radians, right-handed, and `end_scale` scales it about the path by
 //!   `1 + (end_scale - 1) u`, `u` the fraction of the path's arc length run.
-//! - A station at a corner (its fraction exactly one of [`Path::corner_fractions`], which
-//!   decides it: a fraction is placed on a piece by comparing it with the pieces' start
-//!   fractions, start over total, exactly) is the mitre: the rotation by half
-//!   the corner's angle, stretched by `1 / cos(theta / 2)` along `t_1 - t_0`.
+//! - A station asked as [`Stop::Corner`] is that corner's mitre (a fraction is never taken for
+//!   one): the rotation by half the corner's angle, stretched by `1 / cos(theta / 2)` along
+//!   `t_1 - t_0`.
 //! - [`Orientation::Parallel`] keeps the profile as drawn (the identity), and needs the path
-//!   to cross the profile's plane by 5 degrees or more throughout;
-//!   [`Orientation::Direction`] keeps the direction's projection square to the tangent, and
-//!   needs the path to stay more than `1e-3` (about 0.06 degrees) away from it.
+//!   to cross the profile's plane at every station, at more than [`Laws::min_crossing`] (the
+//!   angle between the tangent and the plane); [`Orientation::Direction`] keeps the
+//!   direction's projection square to the tangent, and needs the path to stay off the
+//!   direction, the sine of the angle between them more than [`Laws::min_across`].
 //! - Guide rails take the default orientation, no twist and scale 1, and a path without
 //!   corners. The station's plane, square to the path, meets each rail once; with one rail the
 //!   profile turns about the path to follow the line from the path to the rail and is scaled
@@ -62,11 +75,21 @@
 //! B-spline; a polyline is a degree-1 B-spline). The station's plane meets it at the roots of
 //! the plane's signed distance along it, `(X(t) - p W(t)) . t_path` in its homogeneous form,
 //! isolated on its Bezier spans by subdividing their Bernstein coefficients
-//! ([`crate::query::tangent_edge`]'s `bernstein_roots`). A plane the rail meets other than
-//! exactly once (not at all, or more than once) is refused, naming it.
+//! ([`crate::query::tangent_edge`]'s `bernstein_roots`). A coefficient within its own
+//! rounding (`gamma_5` of the sum of its terms' sizes, derived at `rail_crossing`) is taken
+//! as 0: the rail's point there lies in the plane to its rounding; a rail's end point within
+//! `1e-9 (1 + |P|)` of the plane (the point rule of docs/procedural-sweep.md section 3.1, by
+//! which the path's pieces meet) reaches it there. A root at a knot is
+//! one value for both spans that share it (only those exact duplicates merge; no window on
+//! the parameter). A plane the rail meets other than exactly once (not at all, more than
+//! once, touching it from one side, a double root the distance does not change sign over,
+//! or so near it that the roots cannot be isolated at `MAX_DEPTH`) is refused, naming it.
 //!
 //! **Refused.** A path piece that is not a line, arc or helix: a spline path's
 //! rotation-minimizing frame needs a certified enclosure (tangency-labs/solidcore#2572).
+//!
+//! **Platforms.** The frames use the platform's `sin_cos`, `atan2` and `acos`; they agree
+//! across platforms to rounding, not bit for bit.
 //!
 //! Deviations: no upstream counterpart. At most `MAX_PIECES` pieces, `MAX_STATIONS`
 //! stations, `MAX_TURNS` turns of an arc or helix; the root isolation's bounds are
@@ -77,8 +100,9 @@ use crate::error::{Result, SolidError};
 use crate::kernel::Kernel;
 use crate::math::{Point3, Vec3};
 use crate::nurbs::crv_basic::Curve as NurbCurve;
-use crate::nurbs::math::{CPoint, NOW};
+use crate::nurbs::math::{gamma, CPoint, NOW};
 use crate::query::tangent_edge::{bernstein_roots, MAX_DEPTH, MAX_SUBDIVISIONS};
+use crate::surface::procedural_sweep::path::{rodrigues, G1_TANGENTS};
 
 const OP: &str = "sweep::stations";
 
@@ -88,12 +112,6 @@ pub const MAX_PIECES: usize = 1000;
 pub const MAX_STATIONS: usize = 100_000;
 /// Most turns of one arc or helix piece.
 pub const MAX_TURNS: f64 = 1000.0;
-/// The most twist accepted: four turns (radians; SolidCraft's).
-pub const MAX_TWIST: f64 = 4.0 * std::f64::consts::TAU;
-/// The smallest end scale accepted (SolidCraft's).
-pub const MIN_SCALE: f64 = 0.01;
-/// The largest end scale accepted (SolidCraft's).
-pub const MAX_SCALE: f64 = 100.0;
 
 fn invalid(reason: &'static str) -> SolidError {
     SolidError::invalid_input(OP, reason)
@@ -106,10 +124,9 @@ fn unsupported(reason: &'static str) -> SolidError {
     }
 }
 
-/// `v` turned about the unit `axis` by `angle` (Rodrigues).
+/// `v` turned about the unit `axis` by `angle`: the procedural sweep's rotation.
 fn rotate(axis: Vec3, angle: f64, v: Vec3) -> Vec3 {
-    let (s, c) = angle.sin_cos();
-    v * c + axis.cross(v) * s + axis * (axis.dot(v) * (1.0 - c))
+    rodrigues(v, axis, angle)
 }
 
 /// A linear map by its columns.
@@ -196,6 +213,9 @@ impl Piece {
                 rise,
             } => (centre, axis, start, angle, rise),
         };
+        // `check` accepts an axis within 1e-12 of unit length; it is used normalized, so the
+        // rotations about it are rotations to rounding, not to that 1e-12
+        let axis = axis.unitize().ok()?;
         let d = start - centre;
         let radial = d - axis * axis.dot(d);
         let foot = start - radial;
@@ -269,6 +289,18 @@ impl Piece {
         Ok((p, t, m))
     }
 
+    /// How far the piece's tangent turns along it (radians): 0 on a line, the angle run on an
+    /// arc, `angle a / sqrt(a^2 + b^2)` on a helix (its curvature times its length).
+    fn tangent_turn(&self) -> f64 {
+        match self.screw() {
+            None => 0.0,
+            Some((_, _, radial, angle, rise)) => {
+                let a = radial.length();
+                angle * a / a.hypot(rise)
+            }
+        }
+    }
+
     /// The unit tangents at the piece's start and end.
     fn ends(&self) -> Result<(Point3, Vec3, Point3, Vec3)> {
         let (p0, t0, _) = self.at(0.0)?;
@@ -312,22 +344,26 @@ impl Measured {
     }
 }
 
-/// Below this angle (radians) two tangents meet G1: no corner.
-const G1: f64 = 1e-12;
-
+/// The corner where a piece ending along the unit `t0` meets one starting along the unit `t1`:
+/// none where they meet G1, the procedural sweep's rule (`|t1 - t0| <= 1e-8`,
+/// docs/procedural-sweep.md section 3.1, [`G1_TANGENTS`]).
 fn corner(t0: Vec3, t1: Vec3) -> Result<Corner> {
     let angle = t0.cross(t1).length().atan2(t0.dot(t1));
-    if angle <= G1 {
+    if (t1 - t0).length() <= G1_TANGENTS {
         return Ok(Corner {
             turn: IDENTITY,
             half: IDENTITY,
             mitre: None,
         });
     }
-    if angle >= std::f64::consts::PI - 1e-9 {
+    // past G1 the turn's axis t0 x t1 vanishes only where the path doubles back; it is a
+    // direction past the kernel's effective zero (`Vec3::unitize`, `EFF_ZERO` = 1e-12 in
+    // |t0 x t1| = sin theta), and then so is the bisector t0 + t1, at least as long
+    // (2 cos(theta / 2) >= sin theta). Short of that the mitre's stretch 1 / cos(theta / 2) is
+    // the geometry's, however large: a cap on it is a caller's convention
+    let Ok(axis) = t0.cross(t1).unitize() else {
         return Err(invalid("a path that doubles back at a corner"));
-    }
-    let axis = unit(t0.cross(t1), "a corner's axis")?;
+    };
     let stretch = unit(t1 - t0, "a corner's mitre")?;
     Ok(Corner {
         turn: rotation(axis, angle),
@@ -350,6 +386,8 @@ impl Path {
             let c = match last {
                 None => corner(t0, t0)?,
                 Some((end, t_end)) => {
+                    // two points are one by the procedural sweep's rule for a path's ends
+                    // (docs/procedural-sweep.md section 3.1: 1e-9 (1 + |P|))
                     if end.distance(p0) > 1e-9 * (1.0 + end.length()) {
                         return Err(invalid("a path whose pieces do not meet end to start"));
                     }
@@ -381,7 +419,7 @@ impl Path {
     }
 
     /// The fractions of the path's arc length at its corners (joints where the pieces do not
-    /// meet G1): a station asked at exactly one of these values is that corner's mitre.
+    /// meet G1), in order: corner `j`'s mitre is asked as [`Stop::Corner`]`(j)`.
     ///
     /// # Errors
     ///
@@ -396,6 +434,23 @@ impl Path {
             })
             .filter_map(|j| m.fraction(j))
             .collect())
+    }
+}
+
+impl Path {
+    /// Whether the path ends where it starts (within `1e-9 (1 + |p|)`, as its pieces must meet).
+    ///
+    /// # Errors
+    ///
+    /// As [`stations`] for the path.
+    pub fn is_closed(&self) -> Result<bool> {
+        self.measure()?;
+        let (Some(first), Some(last)) = (self.pieces.first(), self.pieces.last()) else {
+            return Err(invalid("a path without pieces"));
+        };
+        let (p0, _, _, _) = first.ends()?;
+        let (_, _, p1, _) = last.ends()?;
+        Ok(p0.distance(p1) <= 1e-9 * (1.0 + p0.length()))
     }
 }
 
@@ -433,8 +488,16 @@ pub struct Laws<'a> {
     pub end_scale: f64,
     /// Up to two guide rails.
     pub rails: Vec<&'a Curve>,
-    /// How the rails size the profile.
+    /// How the rails size the profile (ignored without rails).
     pub rail_fit: RailFit,
+    /// With [`Orientation::Parallel`], the least angle (radians, `[0, pi / 2)`) between the
+    /// path's tangent and the profile's plane at a station: the caller's limit (SolidCraft's is
+    /// 5 degrees). At 0, only a path that does not cross the plane is refused.
+    pub min_crossing: f64,
+    /// With [`Orientation::Direction`], the least sine (`[0, 1)`) of the angle between the
+    /// path's tangent and the direction at a station: the caller's limit (SolidCraft's is
+    /// `1e-3`). At 0, only a path along the direction is refused.
+    pub min_across: f64,
 }
 
 impl Default for Laws<'_> {
@@ -445,24 +508,32 @@ impl Default for Laws<'_> {
             end_scale: 1.0,
             rails: Vec::new(),
             rail_fit: RailFit::Scale,
+            min_crossing: 0.0,
+            min_across: 0.0,
         }
     }
 }
 
 impl Laws<'_> {
     fn check(&self) -> Result<()> {
-        if !(self.twist.is_finite() && self.twist.abs() <= MAX_TWIST) {
-            return Err(invalid("a twist past four turns"));
+        // the geometric limits only: the caller's conventions (SolidCraft's four turns of
+        // twist, its 0.01 to 100 end scale) are the caller's to check
+        if !self.twist.is_finite() {
+            return Err(invalid("a twist not finite"));
         }
-        if !(MIN_SCALE..=MAX_SCALE).contains(&self.end_scale) {
-            return Err(invalid("an end scale outside 0.01 to 100"));
+        if !(self.end_scale.is_finite() && self.end_scale > 0.0) {
+            return Err(invalid("an end scale not finite and positive"));
         }
         if let Orientation::Direction(d) = self.orientation {
-            if !(finite(d) && d.length() > 1e-9 && d.length() < 1e9) {
-                return Err(invalid(
-                    "an orientation direction not finite or of no length",
-                ));
+            if !(finite(d) && d.length_squared().is_finite()) {
+                return Err(invalid("an orientation direction not finite"));
             }
+        }
+        let crossing = (0.0..std::f64::consts::FRAC_PI_2).contains(&self.min_crossing);
+        if !(crossing && (0.0..1.0).contains(&self.min_across)) {
+            return Err(invalid(
+                "a least crossing angle outside [0, pi / 2) or least sine outside [0, 1)",
+            ));
         }
         if self.rails.len() > 2 {
             return Err(invalid("more than two guide rails"));
@@ -479,8 +550,21 @@ impl Laws<'_> {
     }
 }
 
-/// A station: a point of the path and the linear map placing the profile there (module
-/// docs).
+/// Where a station is asked: at a fraction of the path's arc length, or at a corner's mitre.
+/// A corner is named, never found by comparing fractions: a fraction at a corner places the
+/// station by its piece (the arriving piece's end below the corner's fraction, the leaving
+/// piece's start from it), never at the mitre.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Stop {
+    /// At this fraction of the path's arc length, in `[0, 1]`.
+    At(f64),
+    /// At the mitre of the path's corner `j` (in order: [`Path::corner_fractions`]).
+    Corner(usize),
+}
+
+/// A station: its point `at` and the linear map `m` placing the profile there (module docs).
+/// Without rails `at` is a point of the path; with rails it is where the map's origin goes,
+/// off the path (`anchor - m (a_0 - s_0)`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Station {
     /// The point.
@@ -489,16 +573,88 @@ pub struct Station {
     pub m: [Vec3; 3],
 }
 
-/// Where along the measured path the fraction `u` is: the point, unit tangent, transport from
-/// the path's start, and the corner when `u` is exactly at one.
-fn locate(m: &Measured, u: f64) -> Result<(Point3, Vec3, Map, Option<Corner>)> {
-    // which piece, and whether a corner, is decided on the fraction itself, compared with
-    // each piece's start fraction exactly (no window: [`Path::corner_fractions`])
+impl Station {
+    /// The translation of the station's affine map `q -> m q + t` with `first` the path's first
+    /// station: `t = at - m at_0`, so that `q` at the first station lands at
+    /// `at + m (q - at_0)`.
+    #[must_use]
+    pub fn translation(&self, first: &Station) -> Point3 {
+        self.at - apply(&self.m, first.at)
+    }
+}
+
+/// The smallest number of stations [`fractions`] gives (SolidCraft's).
+pub const MIN_SKIN_STATIONS: usize = 16;
+/// The largest number of stations [`fractions`] gives (SolidCraft's).
+pub const MAX_SKIN_STATIONS: usize = 2048;
+
+/// Where a skin through a sweep's stations puts them: SolidCraft's fit convention, carried
+/// over, not derived here. One station per degree of the path's tangent turn plus the twist
+/// (corners' turns included), at least as many as a rail's control points less one, between
+/// [`MIN_SKIN_STATIONS`] and [`MAX_SKIN_STATIONS`], evenly in arc length, with every joint's
+/// fraction ([`Path::joints`]) included exactly. SolidCraft measured the cubic skin's error
+/// near its ends falling as the step squared (a square of reach 7.1 twisted a quarter turn
+/// over 40 is 2e-7 off in volume at 1.4 degree steps); nothing here bounds the skin's distance
+/// from the law surface between the stations (tangency-labs/solidcore#3193).
+///
+/// # Errors
+///
+/// As [`stations`] for the path and laws; [`SolidError::InvalidInput`] for a rail with no
+/// NURBS form.
+pub fn fractions(path: &Path, laws: &Laws<'_>) -> Result<Vec<f64>> {
+    laws.check()?;
+    let m = path.measure()?;
+    let mut turn = laws.twist.abs();
+    for (i, (piece, _, _, c)) in m.pieces.iter().enumerate() {
+        turn += piece.tangent_turn();
+        if i > 0 {
+            if let Some((_, s)) = c.mitre {
+                // the corner's angle back from its mitre factor 1 / cos(theta / 2)
+                turn += 2.0 * (1.0 / s).acos();
+            }
+        }
+    }
+    let mut rail_points = 0;
+    for rail in &laws.rails {
+        let base = rail
+            .b_spline_base()
+            .ok_or_else(|| unsupported("a guide rail with no NURBS form"))?;
+        rail_points = rail_points.max(base.control_polygon()?.0.len());
+    }
+    let step = std::f64::consts::PI / 180.0;
+    let by_turn = (turn / step).ceil();
+    let by_turn = if by_turn.is_finite() && by_turn >= 0.0 {
+        by_turn as usize
+    } else {
+        MAX_SKIN_STATIONS
+    };
+    let n = by_turn
+        .max(rail_points.saturating_sub(1))
+        .clamp(MIN_SKIN_STATIONS, MAX_SKIN_STATIONS);
+    let mut out: Vec<f64> = (0..=n).map(|j| j as f64 / n as f64).collect();
+    out.extend((1..m.pieces.len()).filter_map(|j| m.fraction(j)));
+    out.sort_by(f64::total_cmp);
+    out.dedup();
+    Ok(out)
+}
+
+/// Where along the measured path a stop is: the point, unit tangent, transport from the
+/// path's start, and the corner for a [`Stop::Corner`].
+fn locate(m: &Measured, stop: Stop) -> Result<(Point3, Vec3, Map, Option<Corner>)> {
+    // a corner is named by its index: which piece a fraction lies on is decided by comparing
+    // it with the pieces' start fractions, never a mitre
+    let (u, corner) = match stop {
+        Stop::At(u) => (u, None),
+        Stop::Corner(j) => {
+            let i = corner_piece(m, j)?;
+            (m.fraction(i).unwrap_or(0.0), Some(i))
+        }
+    };
     let mut transport = IDENTITY;
     let count = m.pieces.len();
     for (i, (piece, start, len, c)) in m.pieces.iter().enumerate() {
         let before = compose(&c.turn, &transport);
-        if i > 0 && c.mitre.is_some() && m.fraction(i) == Some(u) {
+        if corner == Some(i) {
             let (p, t0_piece, _) = piece.at(0.0)?;
             let half = compose(&c.half, &transport);
             let t_prev = apply(&transpose_rotation(&c.turn), t0_piece);
@@ -523,6 +679,28 @@ fn locate(m: &Measured, u: f64) -> Result<(Point3, Vec3, Map, Option<Corner>)> {
     Err(invalid("a path without pieces"))
 }
 
+/// The fraction of the path's arc length a stop is at (a corner's: its start fraction).
+fn fraction_of(m: &Measured, stop: Stop) -> Result<f64> {
+    match stop {
+        Stop::At(u) => Ok(u),
+        Stop::Corner(j) => m
+            .fraction(corner_piece(m, j)?)
+            .ok_or_else(|| invalid("a corner the path does not have")),
+    }
+}
+
+/// The index of the piece that starts at the path's corner `j` (corners in order).
+fn corner_piece(m: &Measured, j: usize) -> Result<usize> {
+    (1..m.pieces.len())
+        .filter(|&i| {
+            m.pieces
+                .get(i)
+                .is_some_and(|(_, _, _, c)| c.mitre.is_some())
+        })
+        .nth(j)
+        .ok_or_else(|| invalid("a corner the path does not have"))
+}
+
 /// The inverse of a rotation: its transpose.
 fn transpose_rotation(r: &Map) -> Map {
     let [a, b, c] = *r;
@@ -533,8 +711,10 @@ fn transpose_rotation(r: &Map) -> Map {
     ]
 }
 
-/// The roots in its parameter of the signed distance of `rail` from the plane through `p`
-/// square to the unit `t`; refused unless exactly one.
+/// Where `rail` crosses the plane through `p` square to the unit `t`: the root in its
+/// parameter of its signed distance from the plane, taken span by span in Bernstein form.
+/// Refused unless exactly one root, at which the distance changes sign over the rail (a touch
+/// is not a crossing), and refused where the roots could not be isolated.
 fn rail_crossing(k: &Kernel, rail: &Curve, p: Point3, t: Vec3) -> Result<Point3> {
     let base = rail
         .b_spline_base()
@@ -566,26 +746,42 @@ fn rail_crossing(k: &Kernel, rail: &Curve, p: Point3, t: Vec3) -> Result<Point3>
     }
     let nurb = NurbCurve::new(pw, r, knots)?;
     let mut roots: Vec<f64> = Vec::new();
-    for span in nurb.decompose_bez()? {
+    // the signed distances at the rail's two ends (coefficients within their rounding zeroed)
+    let mut ends: Option<(f64, f64)> = None;
+    let spans = nurb.decompose_bez()?;
+    let last_span = spans.len().saturating_sub(1);
+    for (k_span, span) in spans.into_iter().enumerate() {
         let (Some(&a), Some(&b)) = (span.knots().first(), span.knots().last()) else {
             continue;
         };
+        let n_cp = span.cpts().len();
         let w = |c: &CPoint| if c.w == NOW { 1.0 } else { c.w };
-        let dist = |c: &CPoint| {
-            (c.x - p.x * w(c)) * t.x + (c.y - p.y * w(c)) * t.y + (c.z - p.z * w(c)) * t.z
-        };
-        let scale = span
-            .cpts()
-            .iter()
-            .map(|c| c.x.abs() + c.y.abs() + c.z.abs() + p.length() * w(c))
-            .fold(0.0, f64::max);
-        let floor = 64.0 * f64::EPSILON * scale;
+        // d_i = sum_j (x_ij - p_j w_i) t_j: per term a product, a difference and a product,
+        // then two sums, so |fl(d_i) - d_i| <= gamma_5 S_i, S_i = sum_j (|x_ij| + |p_j| w_i) |t_j|.
+        // S_i is itself computed in 5 roundings and the product with gamma_5 in one more, so
+        // the floor below is at least the bound. A coefficient within it is indistinguishable
+        // from 0 and is taken as 0: the rail's point there lies in the plane to its own rounding.
         let c: Vec<f64> = span
             .cpts()
             .iter()
-            .map(|c| {
-                let d = dist(c);
-                if d.abs() <= floor {
+            .enumerate()
+            .map(|(i, c)| {
+                let d =
+                    (c.x - p.x * w(c)) * t.x + (c.y - p.y * w(c)) * t.y + (c.z - p.z * w(c)) * t.z;
+                let size = (c.x.abs() + p.x.abs() * w(c)) * t.x.abs()
+                    + (c.y.abs() + p.y.abs() * w(c)) * t.y.abs()
+                    + (c.z.abs() + p.z.abs() * w(c)) * t.z.abs();
+                let floor = gamma(5) * size * (1.0 + gamma(6));
+                // the rail's own ends (its first and last control points, the clamped curve's
+                // end points) lie in the plane where they are one point with their foot on it,
+                // by the rule the path's pieces meet by (1e-9 (1 + |P|), docs/procedural-sweep.md
+                // section 3.1): a rail made to start on the path's first station, whose end is
+                // off it by its construction's rounding (an arc's cos 90 degrees), reaches it
+                let rail_end = (k_span == 0 && i == 0) || (k_span == last_span && i + 1 == n_cp);
+                let wc = w(c);
+                let at = Vec3::new(c.x / wc, c.y / wc, c.z / wc);
+                let touches = rail_end && (d / wc).abs() <= 1e-9 * (1.0 + at.length());
+                if d.abs() <= floor || touches {
                     0.0
                 } else {
                     d
@@ -595,22 +791,43 @@ fn rail_crossing(k: &Kernel, rail: &Curve, p: Point3, t: Vec3) -> Result<Point3>
         if c.iter().all(|x| *x == 0.0) {
             return Err(invalid("a guide rail lying in a station's plane"));
         }
+        if let (Some(&first), Some(&last)) = (c.first(), c.last()) {
+            ends = Some((ends.map_or(first, |(s, _)| s), last));
+        }
         let mut found = Vec::new();
         let mut work = MAX_SUBDIVISIONS;
-        bernstein_roots(&c, 0.0, 1.0, MAX_DEPTH, &mut work, &mut found);
+        if !bernstein_roots(&c, 0.0, 1.0, MAX_DEPTH, &mut work, &mut found) {
+            return Err(invalid(
+                "a guide rail running too near a station's plane to tell where it crosses",
+            ));
+        }
         for s in found {
-            let x = a + (b - a) * s;
-            // a root at a span's end is the next span's start: one crossing
-            if !roots
-                .iter()
-                .any(|y| (y - x).abs() <= 1e-12 * (1.0 + x.abs()))
-            {
+            // a span's ends are its knots exactly, so a root at a knot is one value for both
+            // spans that share it; only those exact duplicates merge
+            let x = if s == 0.0 {
+                a
+            } else if s == 1.0 {
+                b
+            } else {
+                a + (b - a) * s
+            };
+            if !roots.contains(&x) {
                 roots.push(x);
             }
         }
     }
     match roots.as_slice() {
-        [x] => rail.evaluate_point(k, *x),
+        [x] => {
+            // one root, but a crossing only where the distance changes sign over the rail: a
+            // rail touching the plane from one side (a root of even multiplicity) does not
+            let touches = ends.is_some_and(|(s, e)| (s > 0.0 && e > 0.0) || (s < 0.0 && e < 0.0));
+            if touches {
+                return Err(invalid(
+                    "a guide rail touching a station's plane without crossing it",
+                ));
+            }
+            rail.evaluate_point(k, *x)
+        }
         [] => Err(invalid(
             "a guide rail that does not reach a station's plane: it must run the path's length",
         )),
@@ -648,41 +865,48 @@ fn rail_frame(
 /// # Errors
 ///
 /// [`SolidError::InvalidInput`] for a path or laws out of range (pieces not meeting, a corner
-/// doubling back, a parallel profile the path does not cross, a path along the orientation
-/// direction, a rail not crossing a station's plane exactly once, rails along a path with
-/// corners, rails meeting each other or the path), fractions outside `[0, 1]` or past
-/// `MAX_STATIONS`; [`SolidError::Unsupported`] for a rail with no NURBS form; those of the
-/// rails' evaluations.
+/// doubling back, a twist not finite, an end scale not finite and positive, a parallel
+/// profile the path crosses at no more than `min_crossing`, a path along the orientation
+/// direction (within `min_across`), a rail not crossing a station's plane exactly once (one
+/// touching it, lying in it, or too near it to tell), rails meeting each other or the path),
+/// fractions outside `[0, 1]`, a corner the path does not have, or more than `MAX_STATIONS`
+/// stops; [`SolidError::Unsupported`] for rails along a path with corners and a rail with no
+/// NURBS form; those of the rails' evaluations.
 pub fn stations(
     k: &Kernel,
     path: &Path,
     profile_normal: Vec3,
     laws: &Laws<'_>,
-    at: &[f64],
+    at: &[Stop],
 ) -> Result<Vec<Station>> {
     laws.check()?;
     if at.is_empty() || at.len() > MAX_STATIONS {
         return Err(invalid("1 to MAX_STATIONS stations"));
     }
-    if at.iter().any(|u| !(0.0..=1.0).contains(u)) {
+    if at
+        .iter()
+        .any(|s| matches!(s, Stop::At(u) if !(0.0..=1.0).contains(u)))
+    {
         return Err(invalid("a station's fraction outside [0, 1]"));
     }
     let measured = path.measure()?;
     let n = unit(profile_normal, "a profile normal of no length")?;
-    let (p0, t0, _, _) = locate(&measured, 0.0)?;
+    let (p0, t0, _, _) = locate(&measured, Stop::At(0.0))?;
     let axis = if n.dot(t0) < 0.0 { n * -1.0 } else { n };
     if !laws.rails.is_empty() {
         return railed(k, &measured, laws, at, p0, t0);
     }
     let mut out = Vec::new();
-    for &u in at {
-        let (p, t, transport, at_corner) = locate(&measured, u)?;
+    for &stop in at {
+        let u = fraction_of(&measured, stop)?;
+        let (p, t, transport, at_corner) = locate(&measured, stop)?;
         let turn = match laws.orientation {
             Orientation::Perpendicular => transport,
             Orientation::Parallel => {
-                if t.dot(axis) < 5.0_f64.to_radians().sin() {
+                // the angle between the tangent and the plane is asin(t . axis)
+                if t.dot(axis) <= laws.min_crossing.sin() {
                     return Err(invalid(
-                        "a parallel profile the path does not cross by 5 degrees or more",
+                        "a parallel profile the path does not cross by the least angle asked",
                     ));
                 }
                 IDENTITY
@@ -690,8 +914,9 @@ pub fn stations(
             Orientation::Direction(d) => {
                 let frame = |t: Vec3| -> Result<Map> {
                     let d = unit(d, "an orientation direction of no length")?;
+                    // |across| is the sine of the angle between the tangent and the direction
                     let across = d - t * t.dot(d);
-                    if across.length() < 1e-3 {
+                    if across.length() <= laws.min_across {
                         return Err(invalid("a path running along the orientation direction"));
                     }
                     let r = unit(across, "a path running along the orientation direction")?;
@@ -730,7 +955,7 @@ fn railed(
     k: &Kernel,
     measured: &Measured,
     laws: &Laws<'_>,
-    at: &[f64],
+    at: &[Stop],
     s0: Point3,
     t0: Vec3,
 ) -> Result<Vec<Station>> {
@@ -738,8 +963,8 @@ fn railed(
         return Err(unsupported("guide rails along a path with corners"));
     }
     let near = |d: Vec3| d.length() <= 1e-9 * (1.0 + measured.total);
-    let across_at = |u: f64| -> Result<(Point3, Vec3, Point3, Vec3)> {
-        let (p, t, _, _) = locate(measured, u)?;
+    let across_at = |stop: Stop| -> Result<(Point3, Vec3, Point3, Vec3)> {
+        let (p, t, _, _) = locate(measured, stop)?;
         let mut hits = Vec::new();
         for rail in &laws.rails {
             hits.push(rail_crossing(k, rail, p, t)?);
@@ -751,7 +976,7 @@ fn railed(
         };
         Ok((p, t, anchor, v - t * v.dot(t)))
     };
-    let (_, _, a0, d0) = across_at(0.0)?;
+    let (_, _, a0, d0) = across_at(Stop::At(0.0))?;
     if near(d0) {
         return Err(invalid(
             "a guide rail starting on the path, or two starting at one point",
@@ -759,8 +984,8 @@ fn railed(
     }
     let u0 = unit(d0, "a guide rail's start")?;
     let mut out = Vec::new();
-    for &u in at {
-        let (_, t, anchor, d) = across_at(u)?;
+    for &stop in at {
+        let (_, t, anchor, d) = across_at(stop)?;
         if near(d) {
             return Err(invalid(
                 "a guide rail meeting the path, or two meeting: the profile shrinks to nothing",
