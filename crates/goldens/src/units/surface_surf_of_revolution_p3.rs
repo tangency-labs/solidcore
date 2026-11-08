@@ -939,7 +939,7 @@ mod tests {
     }
 
     /// WR-701, the invariant behind this unit's swap goldens: every swap case of the golden
-    /// (its fixtures and its 16 generated seeds) whose surface builds and swaps keeps its
+    /// (its fixtures and its 16 generated seeds) builds and swaps, and keeps its
     /// definition (the frame bit for bit), and the swapped surface at the domain fractions
     /// (b, a) of its natural domain is the unswapped one at (a, b) of its own, to 1e-12 of
     /// the surface's size, on a 9 x 9 grid.
@@ -1000,8 +1000,8 @@ mod tests {
             );
             checked += 1;
         }
-        eprintln!("swap cases {swaps}, checked {checked}");
-        assert!(checked > 0);
+        assert!(swaps > 0);
+        assert_eq!(checked, swaps, "every swap case builds and swaps");
     }
 
     /// The generators reach a successful run of every op on the Rust side.
