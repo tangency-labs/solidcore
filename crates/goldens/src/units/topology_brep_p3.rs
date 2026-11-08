@@ -2141,13 +2141,12 @@ mod tests {
     /// types and counts, agrees). For every converted face this rebuilds the approximation
     /// with the kernel's own call and checks the face's surface: over the approximation's box
     /// it is the approximation (within 1e-12 of its size); past each side it extends, the
-    /// iso curve through the side's middle (of the box as extended so far, in `BoxSide::ALL`'s
-    /// order) runs on for the asked distance, measured as a dense polyline's length
+    /// iso curve through the side's middle at the face (the approximation's box, where the
+    /// kernel measures a side extended after another) runs on for the asked distance, measured as a dense polyline's length
     /// (Richardson-extrapolated from 2^15 and 2^16 chords, not the kernel's enclosure); and the
     /// iso curve crosses the side tangent continuously. Writes one line per face to
     /// `$SC_TURN_NURBS_PROBE` when set.
     #[test]
-    #[ignore = "tangency-labs/solidcore#3100: nurbs_off_Mouse face 0's v sides reach the asked distance to 1e-5, not 1e-7"]
     fn turned_offsets_are_the_approximation_and_reach_the_extension() {
         use solidcore::geom::vector2d::Point2;
         use solidcore::nurbs::b_spline_surface_n_lib::p1::OffsetParamType;
@@ -2251,9 +2250,9 @@ mod tests {
                 );
                 failures += usize::from(on_box > 1e-12);
                 // the sides in BoxSide::ALL's order: (along u, side, far end, the middle of
-                // the other direction in the box as extended so far)
+                // the other direction at the face, where the kernel measures each side)
                 let mid_v = 0.5 * (bx.min().y + bx.max().y);
-                let mid_u = 0.5 * (e.min().x + e.max().x);
+                let mid_u = 0.5 * (bx.min().x + bx.max().x);
                 let sides = [
                     ("umin", true, bx.min().x, e.min().x, mid_v),
                     ("umax", true, bx.max().x, e.max().x, mid_v),
