@@ -237,24 +237,27 @@ pub fn extension_reach(
 /// of a side ([`shortest_across`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum Reach {
-    /// The least length across, bounded from below.
+    /// The least length across, bounded from below, of rows with the same weights.
     Shortest(f64),
-    /// A B-spline's side whose two rows differ in weights or in points (the ruled extension
-    /// of rows whose end weight ratios differ: a bounded reach, or the product form of
-    /// another degree, `surface::extend` module docs): the length across is measured at the
-    /// side's middle only, and no bound of it at the other stations is known (#3079).
+    /// The same for rows whose weights differ (a rational extension whose rows' end weight
+    /// ratios differ, #3079): bounded by [`unequal_rows_across`], and the extension must
+    /// reach the margin by that bound or be refused, not accepted short.
+    Unequal(f64),
+    /// Rows with differing weights whose length across has no positive lower bound.
     Unmeasured,
-    /// Nothing to bound: no B-spline, or a bound that is not positive.
+    /// Nothing to bound: no B-spline, rows that are not in one basis (the product form), or a
+    /// bound that is not positive.
     Open,
 }
 
 /// A lower bound of the distance from each extended side of `base`'s B-spline to the same
-/// side of `extended`, over the side's stations on `base`'s box: [`Reach::Open`] where `base` is no
-/// B-spline or the offset of one or the bound is not positive, [`Reach::Unmeasured`] where a
-/// side's two rows differ in weights or in points. Each row is a
+/// side of `extended`, over the side's stations on `base`'s box: [`Reach::Open`] where `base` is
+/// no B-spline or the offset of one, a side's rows are not in one basis or the bound is not
+/// positive. Rows with the same weights: each row is a
 /// curve in the same parameter and basis, with the same weights, so the difference at a
 /// station is a convex combination of the differences of their control points, and its length
-/// is at least the least of those along their mean direction. Past the box's corners the
+/// is at least the least of those along their mean direction. Rows whose weights differ:
+/// [`unequal_rows_across`]. Past the box's corners the
 /// rows go on narrowing, to nothing at a ruled face's apex; the margin's one offset past the
 /// reach is what stands for them.
 ///
@@ -281,6 +284,7 @@ pub(super) fn shortest_across(
     let from = near_surface.natural_uv_domain_with_nurb(k)?;
     let to = far_surface.natural_uv_domain_with_nurb(k)?;
     let mut shortest = f64::INFINITY;
+    let mut unequal = false;
     for (&side, done) in BoxSide::ALL.iter().zip(&extended.sides) {
         if !matches!(done, SideExtension::Extended(_)) {
             continue;
@@ -312,8 +316,22 @@ pub(super) fn shortest_across(
                 .canonical()
         };
         let (near, far) = (row(side.at(&from))?, row(side.at(&to))?);
-        if near.control_points.len() != far.control_points.len() || near.weights != far.weights {
-            return Ok(Reach::Unmeasured);
+        if near.control_points.len() != far.control_points.len()
+            || near.degree != far.degree
+            || near.knots != far.knots
+            || near.knot_multiplicities != far.knot_multiplicities
+        {
+            return Ok(Reach::Open);
+        }
+        if near.weights != far.weights {
+            match unequal_rows_across(&near, &far) {
+                Some(bound) if bound > 0.0 => {
+                    unequal = true;
+                    shortest = shortest.min(bound);
+                    continue;
+                }
+                _ => return Ok(Reach::Unmeasured),
+            }
         }
         let mut mean = Vec3::ZERO;
         for (a, b) in near.control_points.iter().zip(&far.control_points) {
@@ -327,10 +345,102 @@ pub(super) fn shortest_across(
         }
     }
     Ok(if shortest.is_finite() && shortest > 0.0 {
-        Reach::Shortest(shortest)
+        if unequal {
+            Reach::Unequal(shortest)
+        } else {
+            Reach::Shortest(shortest)
+        }
     } else {
         Reach::Open
     })
+}
+
+/// A lower bound of `|F(v) - A(v)|` over a side's stations `v`, for two rational rows `A`
+/// (near) and `F` (far) of one degree and knot vector whose weights differ, with positive
+/// weights (else none).
+///
+/// On a knot span `S` the rows' active points are `i` in `S` (`p + 1` of them), `beta_i =
+/// N_i w_i / W` and `alpha_i = N_i w'_i / W'` convex weights, `r_i = w'_i / w_i` and `R =
+/// sum beta_i r_i`, so `alpha_i = beta_i r_i / R`. With `D_i = P'_i - P_i`,
+/// `F - A = sum alpha_i D_i + sum (alpha_i - beta_i) (P_i - Q)` for any `Q` (both sets of
+/// weights sum to 1), `alpha_i - beta_i = beta_i (r_i / R - 1)`, and `r_i / R` lies in
+/// `[r_min / r_max, r_max / r_min]` over `S`. Along a unit `d`:
+/// `(F - A) . d >= min_S D_i . d - (r_max / r_min - 1) max_S |P_i - Q|`, `Q` the mean of the
+/// span's `P_i`; the least over the spans, over `1 + gamma_4` (`|d|` as computed), is a lower
+/// bound of the distance. `d` is the unit mean of the `D_i`. Every product and sum is counted:
+/// the dot products and distances by `gamma_6` of the points' l1 sizes (`docs/definitions-
+/// and-certificates.md` §5, point 5), the ratios by `gamma_4`. Spans are all the knot vector's,
+/// the stations the box's being among them (a superset: the bound is not tighter than needed
+/// to be true).
+fn unequal_rows_across(
+    near: &crate::nurbs::b_spline_curve::p2::CurveCanonical,
+    far: &crate::nurbs::b_spline_curve::p2::CurveCanonical,
+) -> Option<f64> {
+    use crate::nurbs::math::gamma;
+    let p = near.degree;
+    let n = near.control_points.len();
+    let weight = |c: &crate::nurbs::b_spline_curve::p2::CurveCanonical, i: usize| {
+        if c.weights.is_empty() {
+            Some(1.0)
+        } else {
+            c.weights.get(i).copied()
+        }
+    };
+    let mut knots = Vec::new();
+    for (&t, &m) in near.knots.iter().zip(&near.knot_multiplicities) {
+        knots.extend(std::iter::repeat_n(t, m));
+    }
+    if knots.len() != n.checked_add(p)?.checked_add(1)? {
+        return None;
+    }
+    let mut mean = Vec3::ZERO;
+    for (a, b) in near.control_points.iter().zip(&far.control_points) {
+        mean += *b - *a;
+    }
+    let d = mean.unitize().ok()?;
+    let mut size = 0.0_f64;
+    for pt in near.control_points.iter().chain(&far.control_points) {
+        size = size.max(pt.x.abs() + pt.y.abs() + pt.z.abs());
+    }
+    let mut least = f64::INFINITY;
+    for s in p..n {
+        let (t0, t1) = (*knots.get(s)?, *knots.get(s + 1)?);
+        if t1 <= t0 {
+            continue;
+        }
+        let active = s.checked_sub(p)?..=s;
+        let (mut r_min, mut r_max) = (f64::INFINITY, 0.0_f64);
+        let mut centre = Vec3::ZERO;
+        let mut dot = f64::INFINITY;
+        for i in active.clone() {
+            let (w, w1) = (weight(near, i)?, weight(far, i)?);
+            if !(w > 0.0 && w1 > 0.0 && w.is_finite() && w1.is_finite()) {
+                return None;
+            }
+            let r = w1 / w;
+            r_min = r_min.min(r);
+            r_max = r_max.max(r);
+            let a = near.control_points.get(i)?;
+            let b = far.control_points.get(i)?;
+            dot = dot.min((*b - *a).dot(d));
+            centre += Vec3::new(a.x, a.y, a.z);
+        }
+        #[allow(clippy::cast_precision_loss)]
+        let count = (p + 1) as f64;
+        let centre = centre * (1.0 / count);
+        let mut spread = 0.0_f64;
+        for i in active {
+            let a = near.control_points.get(i)?;
+            let off = Vec3::new(a.x, a.y, a.z) - centre;
+            spread = spread.max(sqrt(off.dot(off)));
+        }
+        // `r_max / r_min - 1` and the spread each carry their rounding
+        let ratio = (r_max / r_min) * (1.0 + gamma(4)) - 1.0;
+        let spread = spread * (1.0 + gamma(6)) + gamma(p + 4) * size;
+        least = least.min(dot - ratio.max(0.0) * spread);
+    }
+    let rounded = least - gamma(6) * size - gamma(p + 4) * size;
+    (rounded.is_finite()).then(|| rounded / (1.0 + gamma(4)))
 }
 
 /// A plane: a point on it and its unit normal, and the normal as its label gives it (the
@@ -2282,6 +2392,71 @@ mod tests {
             panic!("the rows are in one basis and weight");
         };
         assert!((shortest - 11.24 * 20.0 / 33.0).abs() <= 1e-6, "{shortest}");
+    }
+
+    /// Rows whose weights differ: the bound of [`unequal_rows_across`] is below the true
+    /// least distance between the extended side and the side (sampled here, as a test may) and
+    /// within a factor of five of it (the span-wise perturbation bound is not tight); the same sheet with one weight ratio for every row is bounded by the
+    /// equal-weights rule.
+    #[test]
+    fn rows_with_differing_weights_are_bounded_from_below() {
+        use crate::geom::vector2d::Vec2;
+        use crate::nurbs::b_spline_curve::KnotType;
+        use crate::nurbs::b_spline_surface::{
+            BSplineSurface, BSplineSurfaceForm, CanonicalSurfaceData,
+        };
+        use crate::surface::extend::Continuity;
+        let k = Kernel::default();
+        let sheet = |weights: &[f64]| {
+            Surface::from(
+                BSplineSurface::create_canonical(&CanonicalSurfaceData {
+                    u_degree: 1,
+                    v_degree: 1,
+                    control_points: &[
+                        Point3::new(0.0, 0.0, 0.0),
+                        Point3::new(0.0, 1.0, 0.0),
+                        Point3::new(1.0, 0.0, 0.0),
+                        Point3::new(1.0, 1.0, 0.5),
+                    ],
+                    form: BSplineSurfaceForm::Unspecified,
+                    u_multiplicities: &[2, 2],
+                    v_multiplicities: &[2, 2],
+                    u_knots: &[0.0, 1.0],
+                    v_knots: &[0.0, 1.0],
+                    knot_type: KnotType::Unspecified,
+                    weights: Some(weights),
+                    uv_domain: None,
+                })
+                .unwrap(),
+            )
+        };
+        let base = sheet(&[1.0, 1.0, 1.0, 2.0]);
+        let made = base
+            .extended_sides_keeping_parameters(&k, &BoxSide::ALL, Continuity::Ruled, 0.25)
+            .unwrap();
+        let Reach::Unequal(bound) = shortest_across(&k, &base, &made).unwrap() else {
+            panic!("the rows differ in weights");
+        };
+        // the least distance from the side u = 1 to its extension, sampled along v
+        let (from, to) = (
+            base.natural_uv_domain_with_nurb(&k).unwrap(),
+            made.surface.natural_uv_domain_with_nurb(&k).unwrap(),
+        );
+        let mut least = f64::INFINITY;
+        for i in 0..=200 {
+            let v = from.min().y + (from.max().y - from.min().y) * f64::from(i) / 200.0;
+            let a = base.evaluate_point(&k, Vec2::new(from.max().x, v)).unwrap();
+            let b = made
+                .surface
+                .evaluate_point(&k, Vec2::new(to.max().x, v))
+                .unwrap();
+            least = least.min((b - a).length());
+        }
+        assert!(bound <= least, "{bound} above the sampled {least}");
+        assert!(
+            bound >= 0.2 * least,
+            "{bound} far below the sampled {least}"
+        );
     }
 
     fn box_faceuses(k: &mut Kernel, inset: bool) -> (Brep, Vec<(FaceId, FaceuseId)>) {
