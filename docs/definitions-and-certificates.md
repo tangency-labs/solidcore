@@ -130,11 +130,12 @@ A round of the `Circle` class is certified on its own torus. The class is read w
 tolerance, so supports only that close to it (a plane 1e-13 off square to a cylinder's axis, as a
 record can carry them) have no torus that touches both exactly, and the round the solver builds,
 tangent to the supports as they are, lies on a torus of its own. Its definition is that torus: the
-torus derived from the net's own form (`AnalyticSupport::derive`), which the form is proved to lie
-on (`lies_on`), at bound 0; and the distance from it to the class's torus derived from the
-supports, stated (`ExactRound::supports_distance`: the axes' angle times the reach, the centres'
-distance and the radii's differences) and refused past the tolerance the class was read within.
-Supports exactly of the class give a distance at rounding. The supports are never moved to fit.
+torus of the net's own form (`own_torus`: a revolution's axis and generating arc, or a torus's
+label), which the form is proved to lie on (`lies_on`), at bound 0; and the distance from it to the
+class's torus derived from the supports, stated (`ExactRound::supports_distance`: the axes' angle
+times the reach, the centres' distance and the radii's differences) and refused past the tolerance
+the class was read within. Supports exactly of the class give a distance at rounding. The supports
+are never moved to fit.
 
 ### 3.4 The blend definition
 

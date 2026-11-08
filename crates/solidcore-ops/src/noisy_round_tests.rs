@@ -1,6 +1,7 @@
 //! #3066: a round on supports read from a record with rounding in their frames keeps its exact
-//! definition. The class is decided within the body's tolerance; the round's section is built
-//! on the class's torus, so its net is certified against the class's surface and answers
+//! definition. The class is decided within the body's tolerance; the round lies on a torus of
+//! its own, its net certified there at bound 0, and that torus's distance from the class's
+//! torus from the supports is held to the body's tolerance, so the round answers
 //! `procedural_blend()`.
 #![allow(
     clippy::unwrap_used,

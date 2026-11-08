@@ -48,7 +48,7 @@ use crate::surface::surface::Surface;
 const OP_TRANSFORM: &str = "surface::procedural_blend::exact::ExactRound::transform";
 const OP_CIRCLE: &str = "surface::procedural_blend::exact::ExactRound::supports_distance";
 
-/// The torus a round of the circle class is (#3066): a surface of revolution's, about its
+/// The torus a round of the circle class is: a surface of revolution's, about its
 /// placement's axis, of the circle its generating arc is on (the centre of a rational quadratic
 /// arc from its first span's control points: the midpoint of the chord pushed away from the
 /// middle point by `a^2 / h`, `a` the half chord, `h` the middle point's distance from the
@@ -358,7 +358,7 @@ impl ExactRound {
         Ok(0.0)
     }
 
-    /// A round of the circle class (#3066): the torus `net` is ([`own_torus`]: its revolution's
+    /// A round of the circle class: the torus `net` is ([`own_torus`]: its revolution's
     /// axis and generating circle, or its torus label), proved to hold its form to rounding
     /// ([`lies_on`]),
     /// and how far that torus is from the class's torus derived from the supports
