@@ -79,7 +79,7 @@ use crate::heal::stitch::p2::MinGapRequest;
 use crate::kernel::Kernel;
 use crate::math::Vec3;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
-use crate::query::api_queries::{brep_is_manifold_solid, BrepRef};
+use crate::query::api_queries::{brep_is_closed_manifold, brep_is_manifold_solid, BrepRef};
 
 use crate::topology::brep::p1 as bp1;
 use crate::topology::brep::p3 as bp3;
@@ -355,7 +355,7 @@ pub fn offset_brep(
     ))?;
     // A result with no faces (the solid offset to nothing, #2092) is returned.
     if options.merge_results && !result.face_list().is_empty() {
-        if let Some(what) = lost_manifold(brep_is_manifold_solid(&result)?, || {
+        if let Some(what) = lost_manifold(brep_is_closed_manifold(&result)?, || {
             brep_is_manifold_solid(original)
         })? {
             return Err(Failure::new(OP_OFFSET, OffsetFailure::Unsound { what }).into_error());
@@ -568,7 +568,7 @@ impl OffsetExecutive {
             // `create_offset_solid` false is the sheet the caller asked for, and a sheet
             // input's thickening is not a solid's shell.
             if let Some(what) =
-                lost_manifold(brep_is_manifold_solid(&shell)?, || Ok(input_is_manifold))?
+                lost_manifold(brep_is_closed_manifold(&shell)?, || Ok(input_is_manifold))?
             {
                 return Err(Failure::new(OP_SHELL, OffsetFailure::Unsound { what }).into_error());
             }

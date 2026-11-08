@@ -23,13 +23,14 @@ mod offset_fixture;
 
 use offset_fixture::{api_shell, offset_full, planar_faces_at, shell, volume};
 use solidcore::blend::fillet_executive::api::fillet_edges;
+use solidcore::boolean::api_brep::boolean_union;
 use solidcore::error::offset::{OffsetFailure, Unsoundness};
 use solidcore::error::Reason;
 use solidcore::geom::attribute::AttributeStore;
 use solidcore::math::Point3;
 use solidcore::offset::offset_executive::p2::{OffsetOptions, ShellOptions};
 use solidcore::primitive::api_primitives::create_box;
-use solidcore::query::api_queries::brep_is_manifold_solid;
+use solidcore::query::api_queries::{brep_is_closed_manifold, brep_is_manifold_solid};
 use solidcore::topology::api_files::read_brep_from_file;
 use solidcore::topology::brep::p1 as bp1;
 use solidcore::topology::brep::p10::TopologyEnv;
@@ -164,4 +165,25 @@ fn an_offset_that_is_no_solid_is_refused() {
             body.face_list().len()
         ),
     }
+}
+
+/// The predicate the gates ask of a result, `brep_is_closed_manifold`: no shell vertex and
+/// only manifold edges, the regions not counted. Two disjoint lumps pass it (as a body the
+/// executive leaves with its regions unlabelled would), two lumps touching along an edge
+/// do not (the edge has four faces).
+#[test]
+fn closed_manifold_does_not_count_regions_but_refuses_a_shared_edge() {
+    let mut k = Kernel::default();
+    let a = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 10.0, 10.0, 10.0).unwrap();
+    assert!(brep_is_closed_manifold(&a).unwrap());
+
+    let b = create_box(&mut k, Point3::new(20.0, 0.0, 0.0), 10.0, 10.0, 10.0).unwrap();
+    let apart = boolean_union(&mut k, a, b).unwrap();
+    assert_eq!(apart.face_list().len(), 12, "two lumps");
+    assert!(brep_is_closed_manifold(&apart).unwrap());
+
+    let c = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 10.0, 10.0, 10.0).unwrap();
+    let d = create_box(&mut k, Point3::new(10.0, 10.0, 0.0), 10.0, 10.0, 10.0).unwrap();
+    let touching = boolean_union(&mut k, c, d).unwrap();
+    assert!(!brep_is_closed_manifold(&touching).unwrap());
 }
