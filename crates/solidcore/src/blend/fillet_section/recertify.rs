@@ -41,6 +41,7 @@
 use core::cmp::Ordering;
 
 use super::certificate::{gn_certify_span, GnLaw, NurbsCurve};
+use super::continuation::{growth, section_degree, section_weight_range};
 use super::section::{
     certificate_faces, crosses_knot, inner_knots, net_of_spans, param, varying, NetForm,
     StationSystem, GN_THUMBWEIGHT_EQUAL_AREA,
@@ -619,7 +620,8 @@ fn recertify_in_frame(
                 "a piece of the net runs across a station of its definition",
             ));
         }
-        // (across, a piece may lie past the section's range: `beyond`)
+        // (across, a piece may lie past the section's [0, 1]: the continued section's
+        // growth covers it below; only an unbounded range is refused here)
         if !(piece.t[0].is_finite() && piece.t[1].is_finite() && piece.t[0] < piece.t[1]) {
             return Err(SolidError::invalid_input(
                 OP,
@@ -658,7 +660,10 @@ fn recertify_in_frame(
         let (ra, rb) = (net_form.station_rows(a)?, net_form.station_rows(b)?);
         let (homog, w) = net_form.span(a, &ra, b, &rb);
         let h = b.s - a.s;
-        let mut delta = 0.0_f64;
+        // the net's distance from the rows, over the pieces in the section's range and over
+        // those past it (a different bound each)
+        let mut delta_in: Option<f64> = None;
+        let mut delta_out: Option<f64> = None;
         // past the section's range [0, 1], where it has pieces: the continued section's
         // growth over the rows (module docs); `reach` the farthest |2 t - 1| and `v_lo` the
         // least weight of the rows there, `across` the t range of those pieces
@@ -724,12 +729,46 @@ fn recertify_in_frame(
                     None => piece.t,
                 });
             }
-            delta = delta.max(dist);
+            let slot = if beyond {
+                &mut delta_out
+            } else {
+                &mut delta_in
+            };
+            *slot = Some(slot.map_or(dist, |x| x.max(dist)));
         }
         // the bound proved: the certificate's, the net's distance from these rows, and how
-        // far these rows may be from the exact ones (the floor)
-        let delta = delta + shift;
-        let target = bound - delta - floor;
+        // far these rows may be from the exact ones (the floor). Over the pieces in the
+        // section's range it is the certificate plus their distance; over those past it,
+        // the certificate grown by the continued section's growth (Chebyshev's extremal
+        // property) plus theirs.
+        let delta_in = delta_in.map(|x| x + shift);
+        let delta_out = delta_out.map(|x| x + shift);
+        let v_hi = w.iter().fold(0.0_f64, |m, &x| m.max(x));
+        // the growth is known before the certificate unless the thumbweight is the equal
+        // area one, enclosed by the certificate itself (stated limit: then the certificate
+        // steers by the pieces in range, and a landing the growth takes over the bound is
+        // refused below, never accepted)
+        let early = match (across, equal_area) {
+            (Some(ext), false) => Some(section_growth(
+                d.order,
+                ld,
+                reach,
+                ext,
+                [v_hi, v_lo],
+                Some([d.thumbweight, d.thumbweight]),
+            )?),
+            _ => None,
+        };
+        let mut target = f64::INFINITY;
+        if let Some(x) = delta_in {
+            target = target.min(bound - x - floor);
+        }
+        if let (Some(x), Some(g)) = (delta_out, early) {
+            target = target.min((bound - x - floor) / g);
+        }
+        if delta_out.is_some() && early.is_none() {
+            target = target.min(bound - delta_out.unwrap_or(0.0) - floor);
+        }
         if target.partial_cmp(&0.0) != Some(Ordering::Greater) {
             return Err(SolidError::invalid_input(
                 OP,
@@ -752,16 +791,24 @@ fn recertify_in_frame(
             law.as_ref(),
             if any_defs { Some(&mut defs) } else { None },
         )?;
-        // the certificate holds on the section's [0, 1]; past it, the continued section's
-        // distance from the rows grows by Chebyshev's extremal property (module docs)
-        let growth = match across {
-            None => 1.0,
-            Some(ext) => {
-                let v_hi = w.iter().fold(0.0_f64, |m, &x| m.max(x));
-                section_growth(d.order, d.thumbweight, ld, reach, ext, [v_hi, v_lo], &vary)?
-            }
+        let late = match (across, early) {
+            (Some(ext), None) => Some(section_growth(
+                d.order,
+                ld,
+                reach,
+                ext,
+                [v_hi, v_lo],
+                Some(vary.w),
+            )?),
+            _ => early,
         };
-        let total = certified * growth + delta + floor;
+        let mut total = 0.0_f64;
+        if let Some(x) = delta_in {
+            total = total.max(certified + x + floor);
+        }
+        if let (Some(x), Some(g)) = (delta_out, late) {
+            total = total.max(certified * g + x + floor);
+        }
         if !matches!(
             total.partial_cmp(&bound),
             Some(Ordering::Less | Ordering::Equal)
@@ -778,41 +825,36 @@ fn recertify_in_frame(
 }
 
 /// The growth, past the section's `[0, 1]` over `ext`, of a distance from the continued
-/// section proved on `[0, 1]` ([`certify`](gn_certify_span)): `T_m(x) (max W max V) /
-/// (min W min V)` of docs/definitions-and-certificates.md 6.4 and
-/// [`crate::surface::extend::blend`], `m` the sum of the section's degree and the rows'
-/// (both `ld - 1`), `x` the farthest `|2 t - 1|` (`reach`), `W` the section's weight and
-/// `V = [max, min]` the rows' over `[0, 1]` and over the part past it. The thumbweight's
-/// enclosure of a G^n section is the equal area one's proved `vary.w`.
+/// section proved on `[0, 1]` ([`gn_certify_span`]): [`growth`] with `m` twice the
+/// section's degree (the rows are of it), `x` the farthest `|2 t - 1|` (`reach`), the
+/// section's weight over `[0, 1]` and `ext` ([`section_weight_range`]) and `V = [max,
+/// min]` the rows' over `[0, 1]` and over the part past it. `thumbweight` is the G^n
+/// section's proved enclosure of its thumbweight (`None` where not yet enclosed).
 ///
 /// # Errors
 ///
-/// `ExtendRefused` where the section's weight vanishes past `[0, 1]`; `InvalidInput` for a
-/// thumbweight not enclosed or a weight of the rows not positive.
+/// `ExtendRefused` where the section's weight vanishes past `[0, 1]`; `InvalidInput` for rows
+/// not of the section's degree, a thumbweight not enclosed, a weight of the rows not
+/// positive or a growth not finite.
 fn section_growth(
     order: u32,
-    thumbweight: f64,
     ld: usize,
     reach: f64,
     ext: [f64; 2],
     [v_hi, v_lo]: [f64; 2],
-    vary: &super::certificate::GnVarying,
+    thumbweight: Option<[f64; 2]>,
 ) -> Result<f64> {
-    use crate::surface::extend::blend::{chebyshev, section_weight_range};
-    let m = 2 * ld.saturating_sub(1);
+    let degree = section_degree(order);
+    if ld != degree + 1 {
+        return Err(SolidError::invalid_input(
+            OP,
+            "the net's rows are not of its section's degree",
+        ));
+    }
     let (w_hi, w_lo) = section_weight_range(order, [0.0, 1.0], ext, || {
-        let w = if thumbweight == GN_THUMBWEIGHT_EQUAL_AREA {
-            vary.w
-        } else {
-            [thumbweight, thumbweight]
-        };
-        if w[0].partial_cmp(&w[1]) == Some(Ordering::Greater) || w[0].is_nan() {
-            return Err(SolidError::invalid_input(
-                OP,
-                "the thumbweight is not enclosed over the span",
-            ));
-        }
-        Ok(w)
+        thumbweight.ok_or_else(|| {
+            SolidError::invalid_input(OP, "the thumbweight is not enclosed over the section")
+        })
     })?;
     if !(v_lo > 0.0 && v_hi.is_finite()) {
         return Err(SolidError::invalid_input(
@@ -820,7 +862,7 @@ fn section_growth(
             "a weight of the definition's rows past the section is not positive",
         ));
     }
-    let g = chebyshev(m, reach) * (w_hi * v_hi) / (w_lo * v_lo) * (1.0 + gamma(4 * m + 16));
+    let g = growth(2 * degree, reach, (w_hi, w_lo), (v_hi, v_lo));
     if g.is_finite() {
         Ok(g)
     } else {
@@ -1099,18 +1141,11 @@ fn sign(x: f64) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::super::certificate::GnVarying;
-    use super::super::tay::GnAreaCells;
     use super::*;
-    use crate::surface::extend::blend::chebyshev;
 
-    fn vary() -> GnVarying {
-        GnVarying {
-            n: 1,
-            r: [0.0, 0.0],
-            cells: GnAreaCells::default(),
-            w: [f64::INFINITY, f64::NEG_INFINITY],
-        }
+    /// `T_m(x)` for `x >= 1` by its closed form, independent of the recurrence.
+    fn cheb(m: usize, x: f64) -> f64 {
+        (m as f64 * x.acosh()).cosh()
     }
 
     /// The circle section's weight `1 - 2 t (1 - t) (1 - c)` is at most 1 over the
@@ -1123,14 +1158,14 @@ mod tests {
         let (reach, v) = (2.0 * 0.697_676_318_880_472_2 + 1.0, [1.5, 0.75]);
         let ld = 3;
         let m = 2 * (ld - 1);
-        let want = chebyshev(m, reach) * (1.0 * v[0]) / (1.0 * v[1]) * (1.0 + gamma(4 * m + 16));
-        let got = section_growth(1, 0.0, ld, reach, ext, v, &vary()).unwrap();
+        let want = cheb(m, reach) * (1.0 * v[0]) / (1.0 * v[1]) * (1.0 + gamma(4 * m + 16));
+        let got = section_growth(1, ld, reach, ext, v, None).unwrap();
         assert!(
             (got - want).abs() <= 1e-12 * want,
             "circle growth {got}, wanted {want}"
         );
-        let chord = section_growth(0, 0.0, 2, reach, ext, v, &vary()).unwrap();
-        let want = chebyshev(2, reach) * v[0] / v[1] * (1.0 + gamma(4 * 2 + 16));
+        let chord = section_growth(0, 2, reach, ext, v, None).unwrap();
+        let want = cheb(2, reach) * v[0] / v[1] * (1.0 + gamma(4 * 2 + 16));
         assert!((chord - want).abs() <= 1e-12 * want, "chord growth {chord}");
     }
 
@@ -1138,7 +1173,6 @@ mod tests {
     /// extension) reaches `1 + 2 max(0, t (t - 1))`, the chord's stays 1.
     #[test]
     fn the_circles_weight_past_its_arc_is_above_one() {
-        use crate::surface::extend::blend::section_weight_range;
         let t = 0.697_676_318_880_472_2;
         let (hi, lo) =
             section_weight_range(1, [-t, 0.0], [-2.0 * t, -t], || Ok([0.0, 0.0])).unwrap();
@@ -1149,5 +1183,72 @@ mod tests {
         assert_eq!(lo, 1.0);
         let chord = section_weight_range(0, [-t, 0.0], [-2.0 * t, -t], || Ok([0.0, 0.0]));
         assert_eq!(chord.unwrap(), (1.0, 1.0));
+    }
+
+    /// A rational curve of degree 7 (weights positive), as homogeneous control points.
+    fn curve() -> Vec<Hpt> {
+        (0..8)
+            .map(|i| {
+                let x = f64::from(i);
+                (
+                    Vec3::new(x, (0.7 * x).sin() * 3.0, (0.3 * x * x).cos()),
+                    1.0 + 0.3 * (1.3 * x).sin(),
+                )
+            })
+            .collect()
+    }
+
+    /// The homogeneous value at `tau` by the Bernstein form (binomials and powers, no
+    /// de Casteljau: independent of the code under test).
+    fn at(pts: &[Hpt], tau: f64) -> (Vec3, f64) {
+        let d = pts.len() - 1;
+        let mut binom = 1.0_f64;
+        let (mut p, mut w) = (Vec3::ZERO, 0.0);
+        for (i, &(q, wq)) in pts.iter().enumerate() {
+            let b = binom * tau.powi(i as i32) * (1.0 - tau).powi((d - i) as i32);
+            p += q * b;
+            w += wq * b;
+            binom = binom * (d - i) as f64 / (i + 1) as f64;
+        }
+        (p, w)
+    }
+
+    fn off(a: (Vec3, f64), b: (Vec3, f64)) -> f64 {
+        let d = a.0 - b.0;
+        d.x.abs()
+            .max(d.y.abs())
+            .max(d.z.abs())
+            .max((a.1 - b.1).abs())
+    }
+
+    #[test]
+    fn extrapolating_over_0_1_returns_the_curve_and_agrees_with_sub_curve_inside() {
+        let c = curve();
+        let (same, _) = extrapolate_curve(&c, 0.0, 1.0).unwrap();
+        assert_eq!(same, c);
+        let (cut, _) = extrapolate_curve(&c, 0.2, 0.7).unwrap();
+        let want = sub_curve(&c, 0.2, 0.7);
+        for (x, y) in cut.iter().zip(&want) {
+            assert!(off(*x, *y) < 1e-13, "{x:?} against {y:?}");
+        }
+    }
+
+    #[test]
+    fn extrapolating_past_0_1_is_the_same_curve_within_its_rounding() {
+        let c = curve();
+        for (lo, hi) in [(-0.7, 0.0), (-1.4, 0.1), (0.9, 1.6), (-0.3, 1.2)] {
+            let (cut, e) = extrapolate_curve(&c, lo, hi).unwrap();
+            let mut worst = 0.0_f64;
+            for j in 0..=10 {
+                let u = f64::from(j) / 10.0;
+                worst = worst.max(off(at(&cut, u), at(&c, lo + u * (hi - lo))));
+            }
+            assert!(worst > 0.0 || e > 0.0);
+            assert!(
+                worst <= e,
+                "[{lo}, {hi}]: observed {worst} over its bound {e}"
+            );
+            assert!(worst < 1e-9, "[{lo}, {hi}]: {worst} is not the same curve");
+        }
     }
 }
