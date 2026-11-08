@@ -55,6 +55,9 @@
 //! the first operand, and inverse transforms attempt all surviving operands before
 //! returning their first error. A callback that fails may already have mutated its
 //! operand; this does not promise transactionality within a transform.
+//! Not upstream (#3090, WR-756): [`place_vertices_on_face_corners`] (after the boolean's
+//! cleanup, a vertex more than the intersection tolerance off one of its faces moves to the
+//! corner its faces define, within half its tolerance and only when that cures the gap).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -852,56 +855,101 @@ pub(crate) fn boolean_post_process_with_notifications(
     Ok(())
 }
 
-/// Not upstream (#3090): places each of `vertices` whose gap to one of its faces is past the
-/// B-rep's intersection tolerance at the corner its faces define
+/// Not upstream (#3090): where `v` should stand when it lies more than the B-rep's
+/// intersection tolerance (`xsect_tol`) off one of its faces: the corner its faces define
 /// ([`calc_corner_from_faces`](crate::topology::vertex::corner::calc_corner_from_faces): the
-/// midpoint of two parallel faces that part, else the faces' surface intersection).
-/// `SmVertex::AssertValid` requires every vertex/face gap under that tolerance whatever the
-/// vertex's own, and a vertex the imprint kept where a vertex of an operand stood (its ball
-/// holds the other operand's point) lies on one face and a sliver off the other, as the
-/// two tangent fillets of operands a hair apart part by dx^2 / 4. Only a vertex whose
-/// tolerance is past the intersection tolerance can hold such a gap, and a corner further
-/// than that tolerance is left alone: the vertex keeps its ball.
+/// midpoint of two parallel faces that part, else the faces' surface intersection), or `None`
+/// to leave the vertex where it is. Left alone: a vertex whose tolerance is not past
+/// `xsect_tol` (it cannot hold such a gap), one already within `xsect_tol` of its faces,
+/// one whose faces define no corner (not found: unchanged), and one whose corner
+///
+/// - lies more than half the vertex's tolerance from it. The vertex's edge curves keep ending
+///   at its old point (`vertex::set_point` moves the point only), so the move is their new
+///   vertex/edge gap, and `docs/validity-and-tolerances.md` (the `SmBrep` list 2 invariants)
+///   asks vertex/edge and vertex/face gaps of at most half the vertex's tolerance. The move
+///   is measured here, `best_point.distance(old)`: `calc_corner_from_faces`'s `max_gap_3d` is
+///   that distance in all its branches but the parallel faces', where it is the residual.
+/// - leaves a gap of `xsect_tol` or more to any of its faces (measured with the vertex put
+///   at the corner for the measurement only): a partial move would stay invalid.
 ///
 /// # Errors
-/// Those of the vertex/face gap and corner calculations, and of `SmVertex::SetPoint`.
+/// Those of the vertex/face gap and corner calculations.
+fn face_corner_to_move_to(
+    k: &Kernel,
+    brep: &mut Brep,
+    v: VertexId,
+    xsect_tol: f64,
+) -> Result<Option<Point3>> {
+    use crate::topology::vertex::corner;
+    let tolerance = vertex::tolerance(brep, v)?;
+    if tolerance <= xsect_tol || corner::is_within_xsect_tol_3d_of_faces(k, brep, v, false)?.0 {
+        return Ok(None);
+    }
+    let at = corner::calc_corner_from_faces(k, brep, v)?;
+    let old = brep.vertex(v)?.point;
+    let moved = at.best_point.distance(old);
+    // an undefined corner point (NaN) stays out as well
+    if !at.found_point || moved.is_nan() || moved > tolerance / 2.0 {
+        return Ok(None);
+    }
+    brep.vertex_mut(v)?.point = at.best_point;
+    let within = corner::is_within_xsect_tol_3d_of_faces(k, brep, v, true);
+    brep.vertex_mut(v)?.point = old;
+    let within = within.map(|(within, ..)| within);
+    reset_vertex_face_gaps(brep, v)?;
+    Ok(within?.then_some(at.best_point))
+}
+
+/// The gaps cached on the uses of `v` are of a point it no longer has.
+fn reset_vertex_face_gaps(brep: &mut Brep, v: VertexId) -> Result<()> {
+    for vu in vertex::vertexuses(brep, v)? {
+        let r = brep.vertexuse_mut(vu)?;
+        r.vertex_face_gap.reset();
+        r.vertex_edge_gap.reset();
+    }
+    Ok(())
+}
+
+/// Not upstream (#3090): after the boolean's cleanup, moves each of `vertices` that
+/// [`face_corner_to_move_to`] says to the corner its faces define.
+/// `SmVertex::AssertValid` requires every vertex/face gap under the B-rep's intersection
+/// tolerance whatever the vertex's own, and a vertex the imprint kept where a vertex of an
+/// operand stood (its ball holds the other operand's point, `merge_vertex_neighborhood`) lies
+/// on one face and a sliver off the other, as the two tangent fillets of operands a hair
+/// apart part by dx^2 / 4. The step sits after the cleanup, not at that branch, because the
+/// cleanup is where the vertex's faces and edges are final: the corner is computed from the
+/// faces it keeps, and the vertices the cleanup deletes are not moved first.
+///
+/// # Errors
+/// Those of [`face_corner_to_move_to`] and of `SmVertex::SetPoint`; a vertex the cleanup
+/// deleted ([`SolidError::NotFound`]) is skipped.
 pub(crate) fn place_vertices_on_face_corners(
     k: &mut Kernel,
     brep: &mut Brep,
     vertices: &[VertexId],
     notifications: &mut edge::NotifyEnv<'_>,
 ) -> Result<()> {
-    use crate::topology::vertex::corner;
-    let xsect_tol = corner::xsect_tol_3d_of_brep(k, brep);
+    let xsect_tol = vertex::corner::xsect_tol_3d_of_brep(k, brep);
     for &v in vertices {
-        if brep.vertex(v).is_err() {
-            continue;
+        match brep.vertex(v) {
+            Ok(_) => {}
+            Err(SolidError::NotFound { .. }) => continue,
+            Err(e) => return Err(e),
         }
-        let tolerance = vertex::tolerance(brep, v)?;
-        if tolerance <= xsect_tol || corner::is_within_xsect_tol_3d_of_faces(k, brep, v, false)?.0 {
+        let Some(at) = face_corner_to_move_to(k, brep, v, xsect_tol)? else {
             continue;
-        }
-        let at = corner::calc_corner_from_faces(k, brep, v)?;
-        if !at.found_point || at.max_gap_3d > tolerance {
-            continue;
-        }
+        };
         let this = (notifications.key_of)(EntityRef::Vertex(v));
         vertex::set_point(
             brep,
             v,
-            at.best_point,
+            at,
             notifications.records,
             notifications.attributes,
             notifications.context.as_deref_mut(),
             this,
             &|vu| (notifications.key_of)(EntityRef::Vertexuse(vu)),
         )?;
-        // the gaps cached on the vertex's uses are of its old place
-        for vu in vertex::vertexuses(brep, v)? {
-            let r = brep.vertexuse_mut(vu)?;
-            r.vertex_face_gap.reset();
-            r.vertex_edge_gap.reset();
-        }
     }
     Ok(())
 }
@@ -1166,6 +1214,54 @@ mod tests {
 
     use super::*;
 
+    /// A 1 x 2 x 3 box's origin corner (three faces, none parallel), moved `d` along x,
+    /// with vertex tolerance `tolerance`.
+    fn box_corner_off(d: f64, tolerance: f64) -> (Kernel, Brep, VertexId) {
+        let mut k = Kernel::default();
+        let mut b = crate::primitive::api_primitives::create_box(&mut k, Vec3::ZERO, 1.0, 2.0, 3.0)
+            .unwrap();
+        let v = b
+            .vertices()
+            .ids()
+            .find(|&v| b.vertex(v).unwrap().point.distance(Vec3::ZERO) == 0.0)
+            .unwrap();
+        let r = b.vertex_mut(v).unwrap();
+        r.point = Vec3::new(d, 0.0, 0.0);
+        r.tolerance = tolerance;
+        (k, b, v)
+    }
+
+    #[test]
+    fn issue_3090_a_corner_inside_half_the_tolerance_is_moved_to() {
+        // 4e-4 off the x = 0 face: past XSectTol3d, within half of 1e-3
+        let (k, mut b, v) = box_corner_off(4.0e-4, 1.0e-3);
+        let xsect = vertex::corner::xsect_tol_3d_of_brep(&k, &b);
+        assert!(xsect < 4.0e-4);
+        let at = face_corner_to_move_to(&k, &mut b, v, xsect)
+            .unwrap()
+            .unwrap();
+        assert!(at.distance(Vec3::ZERO) <= 1e-12, "{at:?}");
+        // measuring leaves the vertex where it was
+        assert_eq!(b.vertex(v).unwrap().point, Vec3::new(4.0e-4, 0.0, 0.0));
+    }
+
+    #[test]
+    fn issue_3090_a_corner_past_half_the_tolerance_is_left() {
+        // 6e-4 off the face, tolerance 1e-3: the corner is 6e-4 away, past half of it
+        let (k, mut b, v) = box_corner_off(6.0e-4, 1.0e-3);
+        let xsect = vertex::corner::xsect_tol_3d_of_brep(&k, &b);
+        assert_eq!(face_corner_to_move_to(&k, &mut b, v, xsect).unwrap(), None);
+    }
+
+    #[test]
+    fn issue_3090_a_vertex_within_the_intersection_tolerance_or_without_room_is_left() {
+        let (k, mut b, v) = box_corner_off(1.0e-7, 1.0e-3);
+        let xsect = vertex::corner::xsect_tol_3d_of_brep(&k, &b);
+        assert_eq!(face_corner_to_move_to(&k, &mut b, v, xsect).unwrap(), None);
+        // a tolerance not past XSectTol3d cannot hold the gap
+        let (k, mut b, v) = box_corner_off(4.0e-4, xsect.min(1.0e-5));
+        assert_eq!(face_corner_to_move_to(&k, &mut b, v, xsect).unwrap(), None);
+    }
     #[test]
     fn cancellation_status_ignore_failure_preserves_control_errors() {
         for error in [

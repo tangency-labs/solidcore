@@ -16,6 +16,7 @@ mod common;
 use common::{edge_at, kernel_copy, volume};
 use solidcore::surface::surface::SurfaceKind;
 use solidcore::topology::face::p2 as face;
+use solidcore::topology::vertex::corner;
 use solidcore_ops::boolean::boolean;
 use solidcore_ops::sweep::{extrude, Curve, DraftCorner};
 use solidcore_ops::{blend, make_box, session, Blend, Body, BooleanOp, CheckLevel, Corners};
@@ -101,10 +102,32 @@ fn issue_3012_cut_of_filleted_boxes_a_sliver_apart() {
             // routine's slack (measured 4e-8).
             let faces = 2.0 * 26.0 * 10.0 + 4.0 * FRAC_PI_2 * 2.0 * 10.0 + 2.0 * v / h;
             let area = r.area(1e-8).unwrap();
+            // The fillets' pieces are each exactly dx / 2 of arc short over 10 (4 x 5 dx = 20 dx),
+            // up to a second-order term (measured 0.02 dx^2 at most: the arcs are not straight)
+            // and the area routine's slack of 1e-7 (measured 4e-8).
             assert!(
-                area < faces + 1e-7 && area > faces - 20.0 * dx - 1e-7,
-                "dx {dx} reversed {reversed}: area {area} vs {faces}"
+                (area - (faces - 20.0 * dx)).abs() < 0.05 * dx * dx + 1e-7,
+                "dx {dx} reversed {reversed}: area {area} vs {faces} - 20 dx"
             );
+            // What the fix does: every vertex of the result, the four tangent ends among them,
+            // lies below XSectTol3d off each of its faces, and none has grown past the 5e-5 the
+            // four tangent ends have at dx 1e-4, where nothing is moved (measured): the fix passes
+            // the check by moving the vertex, not by growing its tolerance.
+            let (k, mut brep) = kernel_copy(&r);
+            let xsect = corner::xsect_tol_3d_of_brep(&k, &brep);
+            for v in brep.vertices().ids().collect::<Vec<_>>() {
+                let (_, gap, _) =
+                    corner::is_within_xsect_tol_3d_of_faces(&k, &mut brep, v, true).unwrap();
+                assert!(
+                    gap < xsect,
+                    "dx {dx} reversed {reversed}: vertex gap {gap} vs {xsect}"
+                );
+                let tol = brep.vertex(v).unwrap().tolerance;
+                assert!(
+                    tol <= 5e-5 + 1e-12,
+                    "dx {dx} reversed {reversed}: vertex tolerance {tol}"
+                );
+            }
         }
     }
 }
