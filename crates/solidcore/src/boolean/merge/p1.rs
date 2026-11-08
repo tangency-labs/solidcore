@@ -72,7 +72,6 @@ use crate::kernel::Kernel;
 use crate::math::{Point3, Vec3};
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::query::brep::{self as qbrep, BoundingBoxOptions, BrepQuery};
-use crate::surface::surface::p2::{Surface, SurfaceKind};
 use crate::topology::brep::p4;
 use crate::topology::edgeuse::p1 as eu;
 use crate::topology::shell;
@@ -255,12 +254,15 @@ pub fn finish_face_coincidence(
 /// Whether the surfaces of two faces coincide within their tolerances. A radial sector
 /// only compares the faces at a mated edge, where tangent surfaces that part further
 /// along (a fillet against a fillet 1e-4 off) read as coincident; faces are coincident
-/// only when their surfaces are.
+/// only when their surfaces are. Plane, cone (a cylinder is a cone of semi-angle 0),
+/// sphere and torus pairs are decided from their definitions within the larger face
+/// tolerance ([`crate::surface::surface::p2::Surface::same_analytic_surface`]), two planes and every other kind keep
+/// the sector's answer.
 ///
 /// # Errors
 ///
 /// A null-pointer error for a face without a surface (the radial sector that found
-/// the pair has dereferenced both); those of the surface coincidence check.
+/// the pair has dereferenced both); those of the face bounding boxes.
 pub fn faces_coincide(
     k: &Kernel,
     brep: &Brep,
@@ -275,24 +277,19 @@ pub fn faces_coincide(
     ) else {
         return Err(SolidError::null_pointer(OP));
     };
-    // Only analytic pairs part where the sector cannot see (two planes keep their gap, which
-    // its step-off measures). The sampled check of other kinds (offset, B-spline) is not exact
-    // enough to overrule the sector: gating offset against offset reads the faces of the golden
-    // case `round_merge_deleted_surface_user_problemShell15_face8_inset` as apart and moves it.
-    let plane = |s: &Surface| matches!(s.kind(), SurfaceKind::Plane(_));
-    let analytic = |s: &Surface| {
-        plane(s)
-            || matches!(
-                s.kind(),
-                SurfaceKind::Cone(_) | SurfaceKind::Sphere(_) | SurfaceKind::Torus(_)
-            )
-    };
-    if !(analytic(a) && analytic(b)) || (plane(a) && plane(b)) {
-        return Ok(true);
-    }
     let tol = crate::topology::face::p2::tolerance(brep, face)?
         .max(crate::topology::face::p2::tolerance(other, other_face)?);
-    Ok(a.coincidence_check(k, b, tol, false)?.are_coincident)
+    // The two faces together: where the surfaces must agree.
+    let region = crate::query::face::p1::calculate_bounding_box(k, brep, face, false)?.union(
+        &crate::query::face::p1::calculate_bounding_box(k, other, other_face, false)?,
+    );
+    // Analytic pairs part where the sector cannot see (two planes keep their gap, which its
+    // step-off measures): decided from their definitions. Any other kind (offset, B-spline,
+    // extrusion, revolution) has no definition to compare and the sampled check is not exact
+    // enough to overrule the sector (offset against offset reads the faces of the golden case
+    // `round_merge_deleted_surface_user_problemShell15_face8_inset` as apart and moves it), so
+    // the sector decides.
+    Ok(a.same_analytic_surface(b, tol, &region).unwrap_or(true))
 }
 
 /// Classify an other-operand face use into a primary region. A single primary
