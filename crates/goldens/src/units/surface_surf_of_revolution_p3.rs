@@ -945,7 +945,7 @@ mod tests {
     /// the surface's size, on a 9 x 9 grid.
     #[test]
     fn every_swap_case_is_its_surface_with_u_and_v_exchanged() {
-        let ctx = crate::CaseContext {
+        let ctx = CaseContext {
             root: crate::case::repo_root(),
             seeds: 16,
         };
