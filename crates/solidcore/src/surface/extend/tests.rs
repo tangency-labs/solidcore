@@ -2711,12 +2711,106 @@ fn tangent_with_a_reflection_one_ulp_off_a_knot_leaves_no_sliver_span() {
     let end = g.end().unwrap();
     let copies = g.knots.iter().filter(|&&x| x == end).count();
     assert_eq!(copies, g.p + 1, "{:?}", g.knots);
+    // the reflection snapped onto the knot: the end is the ask to within the merge scale
     let asked = source.end().unwrap() + e;
     assert!(
-        (end - asked).abs() <= 4.0 * f64::EPSILON * asked.abs(),
+        (end - asked).abs() <= merge_scale(0.0, end),
         "{:?}",
         g.knots
     );
+}
+
+/// A degree 1 side `v` over `[0, 10]` with a curved net across (the issue's extrusion: a quadratic
+/// in u extruded 10 along z).
+fn tall_extrusion() -> Surface {
+    let row = |x: f64, y: f64| vec![[x, y, 0.0, 1.0], [x, y, 10.0, 1.0]];
+    spline(
+        &[row(0.0, 0.0), row(0.5, 0.0), row(1.0, 1.0)],
+        2,
+        1,
+        &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        &[0.0, 0.0, 10.0, 10.0],
+        false,
+    )
+}
+
+/// The result's end knot has `p + 1` copies and no span is below the merge scale.
+fn assert_clamped_and_no_sliver(g: &Local) {
+    let end = g.end().unwrap();
+    let copies = g.knots.iter().filter(|&&x| x == end).count();
+    assert_eq!(copies, g.p + 1, "{:?}", g.knots);
+    let scale = merge_scale(g.start().unwrap(), end);
+    let mut gaps = g
+        .knots
+        .windows(2)
+        .map(|w| w[1] - w[0])
+        .filter(|&gap| gap > 0.0);
+    assert!(gaps.all(|gap| gap >= scale), "{:?}", g.knots);
+}
+
+/// (#3093) The issue's extrusion, extended 20 past each v side of its face `[0, 10]`: the low
+/// side's solved extension is 20 + 3.6e-15 (the knots `[-20.000000000000004 .. 30.0]`), whose
+/// second mirror step reflects 3.6e-15 off the joint knot. Tangent and Curvature both leave each
+/// end knot at `p + 1` copies and no span below the merge scale.
+#[test]
+fn the_issues_extrusion_extends_20_past_both_v_sides_with_clamped_ends() {
+    let s = tall_extrusion();
+    let SurfaceKind::BSpline(b) = s.kind() else {
+        panic!()
+    };
+    let net = b.gw_nurb().unwrap().clone();
+    for side in [BoxSide::VMin, BoxSide::VMax] {
+        let source = Local::of(&net, side).unwrap();
+        for e in [20.0, 20.0 + 3.6e-15, 20.0 - 3.6e-15] {
+            for how in [Continuity::Tangent, Continuity::Curvature] {
+                let g = source.extended(how, e).unwrap().unwrap();
+                assert_clamped_and_no_sliver(&g);
+                let reach = g.end().unwrap() - source.end().unwrap();
+                assert!(
+                    (reach - e).abs() <= merge_scale(0.0, g.end().unwrap()),
+                    "{side:?} {how:?} {e}: {:?}",
+                    g.knots
+                );
+            }
+        }
+    }
+}
+
+/// Curvature across the last Bezier span `h` of a multi-span quadratic: asks just below, at and
+/// just above `h` (within the merge scale, then clear of it) meet their reach and keep clamped
+/// ends; the three within the merge scale are the one extension (the reflection on the knot `c`,
+/// where `b - (b - c)` can miss `c` by an ulp), so the extension is continuous in `e`.
+#[test]
+fn curvature_across_the_last_span_is_continuous_in_the_ask() {
+    let row = |x: f64, y: f64| vec![[x, y, 0.0, 1.0], [x, y, 1.0, 1.0]];
+    let s = spline(
+        &[row(0.0, 0.0), row(0.3, 0.0), row(0.7, 0.5), row(1.0, 1.0)],
+        2,
+        1,
+        &[0.0, 0.0, 0.0, 0.3, 1.0, 1.0, 1.0],
+        &[0.0, 0.0, 1.0, 1.0],
+        false,
+    );
+    let SurfaceKind::BSpline(b) = s.kind() else {
+        panic!()
+    };
+    let net = b.gw_nurb().unwrap().clone();
+    let source = Local::of(&net, BoxSide::UMax).unwrap();
+    let h = source.end().unwrap() - source.before_end(0).unwrap();
+    let make = |e: f64| source.extended(Continuity::Curvature, e).unwrap().unwrap();
+    for e in [0.9 * h, 1.1 * h] {
+        let g = make(e);
+        assert_clamped_and_no_sliver(&g);
+        let reach = g.end().unwrap() - source.end().unwrap();
+        assert!((reach - e).abs() <= 1e-12, "{e}: {:?}", g.knots);
+    }
+    let at = make(h);
+    for e in [h * (1.0 - 1e-12), h * (1.0 + 1e-12), h + 1e-15, h - 1e-15] {
+        let g = make(e);
+        assert_eq!(g.knots, at.knots, "{e}");
+        assert_eq!(g.rows, at.rows, "{e}");
+    }
+    assert_clamped_and_no_sliver(&at);
 }
 
 /// A ball patch's side is reported met only when its measured length is within the

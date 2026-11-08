@@ -135,10 +135,6 @@ const LEAST_STEP_TRIES: usize = 8;
 /// Tangent (each step mirrors the whole piece, doubling it), `ceil(e / h)` for Curvature (one
 /// span of the last span's length `h` a step).
 const MAX_STEPS: usize = 4096;
-/// A budget on the halvings of one mirror step that reflects beside a knot: each halving moves
-/// the reflection by half the step, so a knot within the merge scale of two of them is a
-/// coincidence of the knots, not of the ask.
-const MAX_HALVINGS: usize = 8;
 
 /// How a surface continues past its side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1089,7 +1085,7 @@ impl Local {
             let span = end - b;
             // the fixup's own tests, on the knots as they will be (the ends' scaled zero
             // is even in sign, so a low side's negated knots give the same)
-            let need = EFF_ZERO_PARAM.max(scaled_zero2(&a, &end));
+            let need = merge_scale(a, end);
             if span >= need && 1.0 + e / (b - c) > 1.0 {
                 return Ok(e);
             }
@@ -1100,19 +1096,30 @@ impl Local {
         Err(op_err())
     }
 
-    /// Whether a mirror step of `e` reflects the end at a point within the knot fixup's merge
-    /// scale ([`Self::least_step`]'s `need`) of a knot of the piece, without being on it: the
-    /// mirror would then make a span of that scale between the knot's image and the new end,
-    /// which the fixup merges. Reflecting on a knot (or past the start, at it) is exact.
-    fn reflects_beside_a_knot(&self, e: f64) -> Result<bool> {
+    /// The point a mirror step of `e` reflects the end at: `b - e`, not before the start, and
+    /// moved onto a knot of the piece when it lies within the knot fixup's merge scale
+    /// ([`merge_scale`], at the new end `2 b - refl`) of one without being on it. A reflection
+    /// beside a knot would make a span of that scale between the knot's image and the new end,
+    /// which the fixup merges, leaving the end knot past `p + 1` copies (#3093); on the knot
+    /// the mirror adds no knot and no such span. "On the knot" is exact float equality, by
+    /// intent: it is the exact reflection, and any other value is a different point. The step
+    /// is then `b - refl`: the ask moved by less than the merge scale, which is below the
+    /// side's resolution ([`Self::least_step`]). The extension of `e` stays a prefix of that
+    /// of a longer `e'`, and Curvature's last-span step, `b - (b - c)` off `c` by an ulp,
+    /// lands on `c`. Also whether the point was moved.
+    fn reflection(&self, e: f64) -> Result<(f64, bool)> {
         let a = self.start()?;
         let b = self.end()?;
         let refl = (b - e).max(a);
-        let need = EFF_ZERO_PARAM.max(scaled_zero2(&a, &(b + e)));
-        Ok(self
-            .knots
-            .iter()
-            .any(|&x| x < b && x != refl && (x - refl).abs() < need))
+        let need = merge_scale(a, 2.0 * b - refl);
+        let mut best: Option<(f64, f64)> = None;
+        for &x in &self.knots {
+            let off = (x - refl).abs();
+            if x < b && x != refl && off < need && best.is_none_or(|(_, o)| off < o) {
+                best = Some((x, off));
+            }
+        }
+        Ok(best.map_or((refl, false), |(x, _)| (x, true)))
     }
 
     /// The knot `back` places before the end's `p + 1` copies (`u_n` for 0).
@@ -1377,28 +1384,23 @@ impl Local {
                     // at least that long (a step shorter than it mirrors a span the net
                     // already has)
                     let least = cur.least_step()?;
+                    let b = cur.end()?;
                     let mut step = left.min(most);
-                    let rest = left - step;
-                    if rest > 0.0 && rest < least && left >= 2.0 * least {
+                    // a reflection beside a knot is put on it (`reflection`): the step is
+                    // then the distance to that knot, and what is left of the ask, below the
+                    // side's least step, is below its resolution
+                    let (refl, snapped) = cur.reflection(step)?;
+                    if snapped {
+                        step = b - refl;
+                    } else if left - step > 0.0 && left - step < least && left >= 2.0 * least {
                         step = 0.5 * left;
-                    }
-                    // a step whose reflection point lies within the fixup's merge scale of a
-                    // knot, but not on it, makes a span the fixup merges (the extension's end
-                    // knot repeated past `p + 1`, #3093): the step is halved until it is not,
-                    // where the rest stays at least a least step
-                    let mut halvings = 0;
-                    while cur.reflects_beside_a_knot(step)? {
-                        halvings += 1;
-                        if halvings > MAX_HALVINGS || 0.5 * step < least {
-                            return Err(SolidError::Unsupported {
-                                operation: OP,
-                                reason: "a mirror step reflects beside a knot and cannot be split",
-                            });
-                        }
-                        step *= 0.5;
+                        step = b - cur.reflection(step)?.0;
                     }
                     cur = cur.mirrored(step, how == Continuity::Curvature)?;
                     left -= step;
+                    if left < least {
+                        break;
+                    }
                 }
                 cur
             }
@@ -1739,8 +1741,7 @@ impl Local {
         let b = self.end()?;
         let a = self.start()?;
         let p = self.p;
-        let refl = b - e;
-        let refl = if refl < a { a } else { refl };
+        let (refl, _) = self.reflection(e)?;
         let piece_src = if refl > a {
             self.with_knot(refl)?
         } else {
@@ -1871,6 +1872,13 @@ fn mirror(pn: H, pn1: H) -> (impl Fn(H) -> H, f64, f64) {
         }
     };
     (map, amp, round)
+}
+
+/// The scale below which the knot fixup merges two knots of a vector from `a` to `end` (or
+/// spreads a span): the ends' scaled zero, at least `EFF_ZERO_PARAM`
+/// ([`fixup_knot_vector`](crate::nurbs::nurbs_crv::fixup_knot_vector)).
+fn merge_scale(a: f64, end: f64) -> f64 {
+    EFF_ZERO_PARAM.max(scaled_zero2(&a, &end))
 }
 
 /// The row's `w_(n-1) / w_n`.
