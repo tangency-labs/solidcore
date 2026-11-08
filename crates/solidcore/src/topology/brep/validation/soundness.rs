@@ -130,20 +130,25 @@ pub fn standing(k: &mut Kernel, b: &mut Brep) -> Result<Standing> {
 }
 
 /// Whether an operation that held a manifold solid lost it: `Some(NotManifoldSolid)` when
-/// the input was a manifold solid and the result is not. An input that was no solid is not
-/// blamed on the operation. The one rule the local operation's final gate
-/// (`topology::brep::local_operation`) and the solid offset's (`OffsetExecutive::do_solid_offset`)
-/// share.
-#[must_use]
-pub(crate) const fn manifold_lost(
-    input_manifold: bool,
+/// the result is no manifold solid and the input was one. An input that was no solid is not
+/// blamed on the operation. The one rule of the local operation's final gate
+/// (`topology::brep::local_operation`, `refuse_unsound`) and of the finished offset's and
+/// shell's (`offset::offset_executive::p2`, `offset_brep` and `shell_brep`).
+///
+/// The input is asked only when the result is no solid, so a sound result costs no second
+/// scan of the input and an input that cannot be queried does not fail a sound result.
+///
+/// # Errors
+///
+/// Those of `input`.
+pub(crate) fn lost_manifold(
     result_manifold: bool,
-) -> Option<crate::error::offset::Unsoundness> {
-    if input_manifold && !result_manifold {
-        Some(crate::error::offset::Unsoundness::NotManifoldSolid)
-    } else {
-        None
+    input: impl FnOnce() -> Result<bool>,
+) -> Result<Option<crate::error::offset::Unsoundness>> {
+    if result_manifold || !input()? {
+        return Ok(None);
     }
+    Ok(Some(crate::error::offset::Unsoundness::NotManifoldSolid))
 }
 
 /// The volume of the manifold solid `b`, integrated at [`VOLUME_ACCURACY`].

@@ -82,6 +82,7 @@ use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::query::api_queries::{brep_is_manifold_solid, BrepRef};
 
 use crate::topology::brep::p1 as bp1;
+use crate::topology::brep::validation::lost_manifold;
 use crate::topology::brep::p3 as bp3;
 use crate::topology::brep::p4::{shrink_geometry, stitch_faces_with_context};
 use crate::topology::brep::p7::{make_face_with_curves_with_kernel_context, FaceCurvesInput};
@@ -345,35 +346,24 @@ pub fn offset_brep(
     // chamfers meeting at a corner, volume 0. Only a merged offset is held to that: without
     // the merge the overlapping offsets stay as they are, which is what the caller asked
     // for (`OffsetBrep`'s `bDoSelfInt`).
-    let input_solid = options.merge_results && brep_is_manifold_solid(original)?;
     executive.use_creator_tangency_tol(kernel);
     let mut result = collapse_offset_status(executive.do_solid_offset(
         kernel,
-        Some(original),
+        Some(&mut *original),
         SolidOffsetOptions::default(),
         notifications,
     ))?;
     // A result with no faces (the solid offset to nothing, #2092) is returned.
-    if !result.face_list().is_empty() {
-        refuse_lost_solid(OP_OFFSET, input_solid, &result)?;
+    if options.merge_results && !result.face_list().is_empty() {
+        if let Some(what) = lost_manifold(brep_is_manifold_solid(&result)?, || {
+            brep_is_manifold_solid(original)
+        })? {
+            return Err(Failure::new(OP_OFFSET, OffsetFailure::Unsound { what }).into_error());
+        }
     }
     // (not upstream) the attributes the notifications left on the result's objects
     attributes::finish_attributes(&mut result, original_key, notifications)?;
     Ok(result)
-}
-
-/// (not upstream) The finished offset's or shell's gate: [`OffsetFailure::Unsound`] naming
-/// the lost solid when the input was a manifold solid and `result` is none
-/// (`crate::topology::brep::validation::manifold_lost`, the rule the local operation's
-/// gate shares).
-fn refuse_lost_solid(operation: &'static str, input_solid: bool, result: &Brep) -> Result<()> {
-    match crate::topology::brep::validation::manifold_lost(
-        input_solid,
-        brep_is_manifold_solid(result)?,
-    ) {
-        Some(what) => Err(Failure::new(operation, OffsetFailure::Unsound { what }).into_error()),
-        None => Ok(()),
-    }
 }
 
 impl OffsetExecutive {
@@ -573,8 +563,15 @@ impl OffsetExecutive {
             // ops contract, `finish`): an offset the merge would have refused can reach the
             // difference, which then hands back no solid (a ruled square-to-circle loft
             // shelled inward: ten faces, not manifold, volume 0; a box's chamfer left open
-            // by an inset of its two sides' width, which the cavity meets along a line only)
-            refuse_lost_solid(OP_SHELL, input_is_manifold, &shell)?;
+            // by an inset of its two sides' width, which the cavity meets along a line only).
+            // The returns above are ungated by design: a solid's offset that is no solid with
+            // `create_offset_solid` false is the sheet the caller asked for, and a sheet
+            // input's thickening is not a solid's shell.
+            if let Some(what) =
+                lost_manifold(brep_is_manifold_solid(&shell)?, || Ok(input_is_manifold))?
+            {
+                return Err(Failure::new(OP_SHELL, OffsetFailure::Unsound { what }).into_error());
+            }
             make_shell_edges_exact(kernel, &mut shell, notifications)?;
             Ok(shell)
         })();
