@@ -13,6 +13,8 @@
 //! trim curves, branch and bound over the edge's parameter. No recursion: the pieces are a
 //! list, at most [`MAX_WEDGE_PIECES`].
 
+use std::collections::BinaryHeap;
+
 use crate::blend::fillet_section::certificate::{
     curve_derivs_over, nurbs_partials_over_box, NurbsCurve,
 };
@@ -102,6 +104,35 @@ fn trim_b_spline(c: &Curve) -> Option<&BSplineCurve> {
         | CurveKind::CrvOnSurf(_)
         | CurveKind::TangentField(_)
         | CurveKind::Composite(_) => None,
+    }
+}
+
+/// A piece `[a, z]` of an edge's parameter with the upper end `hi` of its normals' cosine,
+/// ordered by `hi` (then by `a`) so the piece to halve next is the greatest.
+#[derive(Debug, Clone, Copy)]
+struct Piece {
+    hi: f64,
+    a: f64,
+    z: f64,
+}
+
+impl PartialEq for Piece {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+
+impl Eq for Piece {}
+
+impl PartialOrd for Piece {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Piece {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.hi.total_cmp(&other.hi).then(other.a.total_cmp(&self.a))
     }
 }
 
@@ -241,31 +272,31 @@ pub fn widest_wedge_bound(k: &Kernel, b: &mut Brep, e: EdgeId, gap: f64) -> Resu
     let (t0, t1) = (t0.min(t1), t0.max(t1));
     // the largest cosine proved at one parameter: a lower bound on the largest of all
     let mut least = normals_cos_over(&sides, Ivl::from(t_mid))?.lo;
-    let mut pieces = vec![(normals_cos_over(&sides, Ivl::new(t0, t1))?.hi, t0, t1)];
-    let mut top = f64::NEG_INFINITY;
+    let mut pieces = BinaryHeap::new();
+    pieces.push(Piece {
+        hi: normals_cos_over(&sides, Ivl::new(t0, t1))?.hi,
+        a: t0,
+        z: t1,
+    });
     while pieces.len() <= MAX_WEDGE_PIECES {
-        let Some((i, &(hi, a, z))) = pieces
-            .iter()
-            .enumerate()
-            .max_by(|x, y| x.1 .0.total_cmp(&y.1 .0))
-        else {
+        let Some(piece) = pieces.pop() else {
             break;
         };
-        top = hi;
+        let Piece { hi, a, z } = piece;
         let m = 0.5 * (a + z);
         // halved while it is past the gap and its middle splits it
         let splits = hi - least > gap && a < m && m < z;
         if !splits {
+            pieces.push(piece);
             break;
         }
-        pieces.swap_remove(i);
         least = least.max(normals_cos_over(&sides, Ivl::from(m))?.lo);
-        pieces.push((normals_cos_over(&sides, Ivl::new(a, m))?.hi, a, m));
-        pieces.push((normals_cos_over(&sides, Ivl::new(m, z))?.hi, m, z));
+        for (a, z) in [(a, m), (m, z)] {
+            let hi = normals_cos_over(&sides, Ivl::new(a, z))?.hi;
+            pieces.push(Piece { hi, a, z });
+        }
     }
-    for &(hi, ..) in &pieces {
-        top = top.max(hi);
-    }
+    let top = pieces.iter().fold(f64::NEG_INFINITY, |t, p| t.max(p.hi));
     // the wedge is pi less the normals' angle: acos(-c), rounded up; past 1 it is pi
     let below_one = top < 1.0;
     if !below_one {
