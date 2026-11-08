@@ -531,10 +531,14 @@ impl Surface {
         }
     }
 
-    /// Not upstream (WR-755): whether two analytic surfaces (plane, cone and cylinder,
-    /// sphere, torus) are the same surface within `tol_3d` inside the box `region`,
-    /// decided from their definitions, not by sampling. `None` when either is not
-    /// analytic or both are planes (their gap is measured by the plane's own check).
+    /// Not upstream (WR-755): whether two quadrics of one kind (cone and cylinder, sphere,
+    /// torus) are the same surface within `tol_3d` inside the box `region`, decided from
+    /// their definitions, not by sampling. `None` for any other pair: two planes (their
+    /// gap is measured by the plane's own check), a kind with no definition to compare,
+    /// and two different kinds. Different kinds are never one surface, but where they
+    /// touch tangentially they can stay within `tol_3d` of each other over a patch (a
+    /// sphere cap thinner than the tolerance on a plane, #2412), which a comparison of
+    /// definitions cannot see.
     ///
     /// - Cone (a cylinder is a cone of semi-angle 0): coaxial lines within `tol_3d` at the
     ///   box's diagonal away (parallel in either sense), and radii that differ by at most
@@ -544,8 +548,6 @@ impl Surface {
     /// - Torus: coaxial, centres and both radii within `tol_3d`. A torus whose major
     ///   radius is within `tol_3d` of 0 is the sphere of its minor radius and is
     ///   compared with spheres as such.
-    /// - Any other pairing of analytic kinds is a different surface: a plane is never a
-    ///   quadric's surface (a cone of semi-angle 90 degrees, a plane, is not built).
     #[must_use]
     pub fn same_analytic_surface(
         &self,
@@ -567,7 +569,6 @@ impl Surface {
             (a.0 - b.0).length() <= tol && (a.1 - b.1).abs() <= tol
         };
         match (self.kind(), other.kind()) {
-            (SurfaceKind::Plane(_), SurfaceKind::Plane(_)) => None,
             (SurfaceKind::Cone(a), SurfaceKind::Cone(b)) => {
                 let (pa, pb) = (&a.rev.position, &b.rev.position);
                 if !pa.are_coaxial(pb, tol, reach) {
@@ -617,27 +618,10 @@ impl Surface {
                         && (a.minor_radius - b.minor_radius).abs() <= tol,
                 )
             }
-            _ if self.is_analytic_kind() && other.is_analytic_kind() => {
-                // Sphere against sphere or a hole-less torus; every other mix differs.
-                Some(
-                    ball(self)
-                        .zip(ball(other))
-                        .is_some_and(|(x, y)| same_ball(x, y)),
-                )
-            }
-            _ => None,
+            // A sphere against a sphere or a hole-less torus; any other pair is left to the
+            // caller.
+            _ => ball(self).zip(ball(other)).map(|(x, y)| same_ball(x, y)),
         }
-    }
-
-    /// Whether this surface is a plane, cone, sphere or torus.
-    fn is_analytic_kind(&self) -> bool {
-        matches!(
-            self.kind(),
-            SurfaceKind::Plane(_)
-                | SurfaceKind::Cone(_)
-                | SurfaceKind::Sphere(_)
-                | SurfaceKind::Torus(_)
-        )
     }
 
     /// `SmSurface::CoincidenceCheck` (the base body): a plane `other` runs its own

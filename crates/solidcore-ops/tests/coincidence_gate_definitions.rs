@@ -160,17 +160,20 @@ fn torus_centre() {
     });
 }
 
+/// Two different kinds are left to the sector: where they touch tangentially they can stay
+/// within the tolerance over a patch (a sphere cap thinner than it on a plane, #2412's
+/// `box_and_sphere_poking_a_hair_through_a_face_is_a_closed_solid`).
 #[test]
-fn different_quadric_kinds_never_coincide() {
+fn different_quadric_kinds_are_left_to_the_sector() {
     assert!(
-        !gate(
+        gate(
             &make_sphere([0.0; 3], 5.0).unwrap(),
             &make_cylinder([0.0; 3], 5.0, 10.0).unwrap()
         )
         .0
     );
     assert!(
-        !gate(
+        gate(
             &make_cylinder([0.0; 3], 2.0, 10.0).unwrap(),
             &make_torus([0.0; 3], 8.0, 2.0).unwrap()
         )

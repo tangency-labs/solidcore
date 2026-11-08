@@ -283,12 +283,13 @@ pub fn faces_coincide(
     let region = crate::query::face::p1::calculate_bounding_box(k, brep, face, false)?.union(
         &crate::query::face::p1::calculate_bounding_box(k, other, other_face, false)?,
     );
-    // Analytic pairs part where the sector cannot see (two planes keep their gap, which its
-    // step-off measures): decided from their definitions. Any other kind (offset, B-spline,
-    // extrusion, revolution) has no definition to compare and the sampled check is not exact
-    // enough to overrule the sector (offset against offset reads the faces of the golden case
-    // `round_merge_deleted_surface_user_problemShell15_face8_inset` as apart and moves it), so
-    // the sector decides.
+    // Two quadrics of one kind part where the sector cannot see: decided from their
+    // definitions. The sector decides the rest: two planes (their gap is what its step-off
+    // measures), two different kinds (tangent, they can stay within the tolerance over a
+    // patch, #2412's sphere cap on a box face), and any kind with no definition to compare
+    // (offset, B-spline, extrusion, revolution), where the sampled check is not exact enough
+    // to overrule it (offset against offset reads the faces of the golden case
+    // `round_merge_deleted_surface_user_problemShell15_face8_inset` as apart and moves it).
     Ok(a.same_analytic_surface(b, tol, &region).unwrap_or(true))
 }
 
