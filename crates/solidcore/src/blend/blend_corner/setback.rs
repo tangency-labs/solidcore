@@ -1438,6 +1438,12 @@ enum Gathered {
     /// A setback vertex not on its rail (`DropPoint` found none): the fork's `SM_ERR`, a
     /// trial not placed while the setbacks grow.
     Unplaced,
+    /// A setback that, with its ease, reaches past where a far corner cuts a round's rail:
+    /// `reach`, the least of those cuts along the corner's edges from the vertex.
+    PastRails {
+        /// The least reach of the rounds' rails along the corner's edges.
+        reach: f64,
+    },
 }
 
 /// The fork's `gather` in `BuildSetBackFill`: each blend at its end section (its surface,
@@ -1445,7 +1451,9 @@ enum Gathered {
 /// the corner lies). The corner lies on the side of the end section that the blend's edge
 /// runs on to the vertex: the rail's direction there against the edge's at the setback (the
 /// frame `CalcSetBackVert` places the setback vertex in, `set_back_frame`), turned toward
-/// the vertex. Not the fork's end of the rails nearer the vertex (solidcore#2835).
+/// the vertex. Not the fork's end of the rails nearer the vertex (solidcore#2835). Not the
+/// fork either: a setback that, with its ease, reaches as far along its edge as a far corner
+/// cuts one of its round's rails (the rail's far vertex) is [`Gathered::PastRails`].
 #[allow(clippy::too_many_arguments)]
 fn gather_ends(
     k: &Kernel,
@@ -1462,6 +1470,8 @@ fn gather_ends(
     let n = faces.len();
     let mut surfaces: Vec<Surface> = Vec::with_capacity(n);
     let mut sides: Vec<(SurfParamType, f64, bool)> = Vec::with_capacity(n);
+    let mut reach = BIG_DOUBLE;
+    let mut past = false;
     for (i, &face) in faces.iter().enumerate() {
         let s = *corner.vertices.get(3 * i + 2).ok_or_else(nul)?;
         if !pseudo.fillet_vertex(s)?.is_processed() {
@@ -1519,15 +1529,66 @@ fn gather_ends(
             corner.set_back_dist_along(target, e)?,
             OP_FILL,
         )?;
-        let toward_vertex = if edge::start_vertex(target, e)? == Some(vtx) {
-            -edge_dir
-        } else {
-            edge_dir
-        };
+        let from_start = edge::start_vertex(target, e)? == Some(vtx);
+        let toward_vertex = if from_start { -edge_dir } else { edge_dir };
         let side = rail_dir.dot(toward_vertex);
         if !side.is_finite() || side.abs() <= 0.0 {
             // a rail square to its edge at the end section, or not finite
             return Err(err());
+        }
+        // how far along the edge the round's rails reach from the vertex: each rail's far
+        // vertex, where a far corner cuts the round, set square onto the edge (the plane
+        // `CalcSetBackVert` sets the setback vertex in, there). A setback that with its ease
+        // reaches it ends past that cut.
+        let setback = corner.set_back_dist_along(target, e)?;
+        let edge_curve = edge::evaluation_curve(target, e)?.ok_or_else(nul)?;
+        let edge_ivl = edge::interval(target, e)?;
+        let t0 = if from_start {
+            edge_ivl.min()
+        } else {
+            edge_ivl.max()
+        };
+        for j in 0..2 {
+            let Some(r) = pseudo.geom(fg)?.rail(j) else {
+                continue;
+            };
+            let ends = [
+                edge::start_vertex(pseudo.brep(), r)?,
+                edge::end_vertex(pseudo.brep(), r)?,
+            ];
+            for far in ends.into_iter().flatten() {
+                // the corner's own vertices, and a far one not yet placed (a corner made
+                // after this one: the edge's room holds the setback short of it)
+                if corner.vertices.contains(&far) || !pseudo.fillet_vertex(far)?.is_processed() {
+                    continue;
+                }
+                let foot = edge_curve.drop_point(
+                    k,
+                    &edge_ivl,
+                    pseudo.vertex_point(far)?,
+                    None,
+                    tol,
+                    None,
+                    SolverOperation::Minimize,
+                )?;
+                if !foot.success {
+                    return Err(err());
+                }
+                let t = foot.parameter;
+                let length = if t == t0 {
+                    0.0
+                } else {
+                    edge_curve.length(
+                        k,
+                        &Extent1d::from_min_max(smin(t, t0), smax(t, t0)),
+                        1.0e-3 * tol,
+                    )?
+                };
+                reach = smin(reach, length);
+                if setback + corner.ease_dist >= length - tol {
+                    past = true;
+                }
+            }
         }
         // the rails' direction: the one over the rails' interval whose iso-curve at the end
         // section passes through the rail there
@@ -1572,6 +1633,9 @@ fn gather_ends(
         }
         surfaces.push(surface);
         sides.push((along, end, side > 0.0));
+    }
+    if past {
+        return Ok(Gathered::PastRails { reach });
     }
     Ok(Gathered::Ends(surfaces, sides))
 }
@@ -1639,7 +1703,7 @@ impl Growth<'_> {
             self.tol,
         )? {
             Gathered::Ends(surfaces, sides) => Ok(Some((surfaces, sides))),
-            Gathered::Refused(_) | Gathered::Unplaced => Ok(None),
+            Gathered::Refused(_) | Gathered::Unplaced | Gathered::PastRails { .. } => Ok(None),
         }
     }
 
@@ -1744,10 +1808,39 @@ fn grow_curved<S: SetbackSolvers>(
     Ok(Ok(ends))
 }
 
+/// The refusal of a corner whose setbacks reach past where a far corner cuts a round's
+/// rail, `reach` along the corner's edges from the vertex (solidcore#2835): one asked for
+/// names the largest that fits with its ease ([`BlendRefusal::SetbackTooLong`]), as the
+/// room on its edges does.
+fn past_rails(asked: Option<SetBackFill>, vtx: VertexId, reach: f64) -> SetbackRefusal {
+    let Some(a) = asked else {
+        return SetbackRefusal::not_built(format!(
+            "Fillet Error: the setback corner's setbacks reach past where a far corner cuts a round, {} from the vertex",
+            fmt_g(reach)
+        ));
+    };
+    let largest = reach - a.ease;
+    SetbackRefusal::no_room(
+        format!(
+            "Fillet Error: a setback of {} (with its ease, {}) reaches past where a far corner cuts a round, {} from the vertex: a setback below {} fits",
+            fmt_g(a.setback),
+            fmt_g(a.setback + a.ease),
+            fmt_g(reach),
+            fmt_g(largest)
+        ),
+        None,
+    )
+    .typed(BlendRefusal::SetbackTooLong {
+        vertex: vtx,
+        largest,
+    })
+}
+
 /// `SmBlendCorner::BuildSetBackFill` (the fork's 61547af, 1506e2f): the Setback's fill
 /// ([`fill_hole`](crate::blend::blend_setback::fill_hole)), from the blends' surfaces at their end sections, and from it the base
 /// points and the spring curves' halves. `Ok(Err(refusal))` where the fill is refused (its
-/// reason noted), where it stands past a face ([`containment`], certified) farther than the
+/// reason noted), where the setbacks reach past a far corner's cut on a round's rail
+/// ([`past_rails`]), where it stands past a face ([`containment`], certified) farther than the
 /// corner's tolerance, or where the rule's setbacks overflowed. Beside a curved face
 /// (solidcore#2343, the fork's 37c9e1d) a fill refused as uncertified grows its setbacks
 /// with the real rounds (`grow_curved`, placing the setback vertices again through
@@ -1795,6 +1888,9 @@ pub fn build_setback_fill<S: SetbackSolvers>(
             Gathered::Ends(surfaces, sides) => (surfaces, sides),
             Gathered::Refused(why) => return Ok(Err(SetbackRefusal::not_built(why))),
             Gathered::Unplaced => return Err(err()),
+            Gathered::PastRails { reach } => {
+                return Ok(Err(past_rails(set_back_fill_of(fills, vtx), vtx, reach)))
+            }
         };
     // A corner left open is the Setback's hole, not filled (the fork's ef57570). G1: its face
     // curves are the spring curves, in closed form whatever a fill's heights: no fill is made
