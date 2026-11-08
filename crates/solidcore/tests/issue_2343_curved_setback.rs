@@ -25,11 +25,13 @@
     clippy::indexing_slicing
 )] // test helpers
 use solidcore::blend::blend_corner::BlendCornerEvent;
+use solidcore::blend::blend_refusal::BlendRefusal;
 use solidcore::blend::fillet_executive::session::FilletSession;
 use solidcore::blend::fillet_solver::p1::FilletSurfaceGeneratorType;
 use solidcore::boolean::api_brep::{boolean_difference, boolean_union};
 use solidcore::curve::curve::Curve;
 use solidcore::curve::ellipse::Ellipse;
+use solidcore::error::SolidError;
 use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::geom::global_solver::{SolutionRequested, SolverOperation};
@@ -164,6 +166,8 @@ struct Rounded {
     setbacks: Vec<f64>,
     /// The room on each of the corner's edges.
     room: Vec<f64>,
+    /// The refusal as data, where the session returned one ([`SolidError::BlendRefused`]).
+    refusal: Option<BlendRefusal>,
 }
 
 /// The vertex of `b` at `v`.
@@ -240,6 +244,10 @@ fn round_asked(
             }
         }
         let info = s.error_info();
+        let refusal = match &result {
+            Err(SolidError::BlendRefused { refusal, .. }) => Some(*refusal),
+            _ => None,
+        };
         Rounded {
             event,
             ok: result.is_ok(),
@@ -247,6 +255,7 @@ fn round_asked(
             fit: s.fit_setback(),
             setbacks,
             room,
+            refusal,
         }
     };
     if rounded.ok {
@@ -1172,4 +1181,122 @@ fn the_named_setback_builds() {
     assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
     assert!(r.ok, "asked {named}: {}", r.reason);
     graded(&mut k, &mut b, &case, 3);
+}
+
+/// The D prism with flat a 8 (R 10, H 20), bored about its axis with radius `bore` where
+/// given (the bore R 6.9 leaves the top a strip 1.1 wide beside the chord), and its top corner
+/// V = (8, 6, 20), where the top, the flat and the convex cylinder meet: the chord, the upright
+/// and the arc to round at 1, 1.5 and 2 there. At the chord's far vertex, (8, -6, 20), the
+/// chord's and the arc's rounds turn at the unrounded upright (a Mitre); the upright's round
+/// ends on the bottom. `faces`: the faces the rounded part has.
+fn d_prism_eight_case(bore: Option<f64>, faces: usize) -> (Kernel, Brep, Vec<EdgeId>, Case) {
+    let mut k = all_fixes();
+    let (rr, a, hh) = (10.0f64, 8.0f64, 20.0f64);
+    let h = (rr * rr - a * a).sqrt();
+    let mut b = d_prism(&mut k, 0.0, 0.0, rr, a, 0.0, hh);
+    if let Some(r) = bore {
+        let cyl = create_cylinder(&mut k, Point3::new(0.0, 0.0, -1.0), r, hh + 2.0).unwrap();
+        b = boolean_difference(&mut k, b, cyl).unwrap();
+    }
+    let edges = [[a, 0.0, hh], [a, h, 5.0], [-rr, 0.0, hh]]
+        .iter()
+        .map(|&p| pick(&k, &b, p))
+        .collect();
+    let s2 = 0.5f64.sqrt();
+    let mid = |c: Point3, e: Point3, r: f64| c + (e - c).unitize().unwrap() * r;
+    let case = Case {
+        name: if bore.is_some() {
+            "bored d prism, flat 8"
+        } else {
+            "d prism, flat 8"
+        },
+        v: Point3::new(a, h, hh),
+        reach: 9.5,
+        convex: true,
+        inside: Point3::new(0.0, 0.0, 10.0),
+        faces: vec![
+            CurvedFace::plane([0.0, 0.0, hh], [0.0, 0.0, 1.0]),
+            CurvedFace::plane([a, 0.0, 0.0], [1.0, 0.0, 0.0]),
+            CurvedFace {
+                kind: Kind::Cylinder,
+                at: Point3::new(0.0, 0.0, 0.0),
+                axis: Vec3::Z,
+                radius: rr,
+                slope: 0.0,
+                side: 1.0,
+            },
+        ],
+        // on the rounds past the setbacks asked below: the chord's at y = -4.5, the upright's
+        // at z = 5, the arc's opposite the flat
+        on_rounds: vec![
+            Point3::new(7.0 + s2, -4.5, 19.0 + s2),
+            mid(
+                Point3::new(6.5, 30.0f64.sqrt(), 5.0),
+                Point3::new(a, h, 5.0),
+                1.5,
+            ),
+            Point3::new(-8.0 - 2.0f64.sqrt(), 0.0, 18.0 + 2.0f64.sqrt()),
+        ],
+        k: 0.0,
+        faces_want: faces,
+    };
+    (k, b, edges, case)
+}
+
+/// #2835: a setback asked so long that its end section on the arc's round lies farther from
+/// the vertex than that round's far end. The round is extended past the Mitre at the chord's
+/// far vertex by a quarter of the turn its circle leaves open, and so comes back round toward
+/// V. The corner's side of each end section is where the round's edge runs on to the vertex
+/// there, not which end of its rails lies nearer the vertex: main took the latter, built
+/// asked 6.88 and refused 6.9 to 10.5 (bored R 6.9 or not; by hand the side flips at 6.893)
+/// as "a round's end section lies outside its rails' interval", naming no size. The issue's
+/// bored prism at 6, as before, and
+/// at 7.5, and the plain one at 9 build, graded as the corners above; each is short of where
+/// the far Mitre cuts the chord's round (below).
+#[test]
+fn d_prism_asked_long_setback_builds_on_its_rails() {
+    for (bore, asked, faces) in [(Some(6.9), 6.0, 14), (Some(6.9), 7.5, 14), (None, 9.0, 13)] {
+        let (mut k, mut b, edges, case) = d_prism_eight_case(bore, faces);
+        let r = round_asked(
+            &mut k,
+            &mut b,
+            &edges,
+            &[1.0, 1.5, 2.0],
+            case.v,
+            Some(asked),
+        );
+        assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
+        assert!(r.ok, "{}, asked {asked}: {}", case.name, r.reason);
+        graded(&mut k, &mut b, &case, 3);
+    }
+}
+
+/// #2835: a setback asked past where a far corner cuts a round is refused, naming the largest
+/// that fits on the rounds' rails. The Mitre at the chord's far vertex cuts the chord's round
+/// where its rail on the top meets the arc's round's rail there, (7, -sqrt 15, 20): 6 + sqrt 15
+/// (9.873) along the chord from V, short of the chord's 12. With the side above, the plain
+/// prism builds asked 9.85, and 9.9 to 11.9 failed later, trimming the rails, naming nothing.
+/// Asked 10.5 on the bored prism and on the plain one: `SetbackTooLong` at V with that
+/// largest, from the far corner's vertex.
+#[test]
+fn d_prism_asked_past_the_rails_names_the_setback_that_fits() {
+    let want = 6.0 + 15.0f64.sqrt();
+    for (bore, faces) in [(Some(6.9), 14), (None, 13)] {
+        let (mut k, mut b, edges, case) = d_prism_eight_case(bore, faces);
+        let v = vertex_at(&b, case.v);
+        let r = round_asked(&mut k, &mut b, &edges, &[1.0, 1.5, 2.0], case.v, Some(10.5));
+        assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
+        assert!(!r.ok, "{}: built", case.name);
+        match r.refusal {
+            Some(BlendRefusal::SetbackTooLong { vertex, largest }) => {
+                assert_eq!(vertex, v, "{}", case.name);
+                assert!(
+                    (largest - want).abs() <= 1e-6,
+                    "{}: {largest} against {want}",
+                    case.name
+                );
+            }
+            other => panic!("{}: {other:?}, {}", case.name, r.reason),
+        }
+    }
 }
