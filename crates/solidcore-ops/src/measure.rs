@@ -76,10 +76,6 @@ impl MassPropertiesEstimate {
     /// The inertia tensor about the centroid (row-major), whose off-diagonal terms are the
     /// negated products.
     #[must_use]
-    #[allow(
-        clippy::float_arithmetic,
-        reason = "negating the products is geometry; temporary until the kernel returns the tensor (#3143)"
-    )]
     pub fn inertia_tensor(&self) -> [[f64; 3]; 3] {
         self.tensor
     }
