@@ -13,6 +13,10 @@
     "real-box-high-corner-setback-eight": "tangency-labs/solidcore#2933: the corner patch overruns the setback of 8 along the top round and folds (pinched creases, two sliver faces); edge tolerance 5.17e-5",
     "stubs4-delete-edge-sphere_diff_3cylinders-e2-r0.5": "tangency-labs/solidcore#3053: with every fix off the round builds a body that is not closed (29 vertices, 44 edges, 9 faces, mass status 1007), where it was refused with status 1001"
   },
+  "intersect.topology_solver_p2": {
+    "analytic_face_torus_x_6_15": "tangency-labs/solidcore#3109: the projected maximum reports the fitted-silhouette scalar 1.6642154866673036, but its returned native point measures 1.6642135459403802",
+    "analytic_face_torus_x_7_15": "tangency-labs/solidcore#3109: the projected maximum reports the fitted-silhouette scalar 1.6642154866673036, but its returned native point measures 1.6642135459403802"
+  },
   "offset.offset_executive_p1": {
     "extend_bilinear_huge": "tangency-labs/solidcore#3000: a 5e8 extension of a bilinear sheet extends 3 of 4 sides; the opposite side's diameter is rounded on the whole net and reads as collapsed",
     "gen0004": "tangency-labs/solidcore#3079: the first surface is refused naming a size that is itself refused; the second surface is refused naming a size that is itself refused",
