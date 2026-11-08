@@ -4,12 +4,19 @@
 //! `(N . N) |P(V)|` for the orthogonal projection `P` onto the plane normal to
 //! `N`. `N` need not be unit length, so tree bounds must use the same scaled
 //! metric as the answers they are compared with.
+//!
+//! Upstream: none (replaces the sphere test in `SmTopologySolver::MayContainAnswer`
+//! for projected operations).
+//!
+//! Deviations: the upstream test compared an unscaled sphere distance with the scaled
+//! answers and applied no tolerance (WR-766).
 
 use crate::blend::fillet_section::interval::Ivl;
 use crate::blend::fillet_section::series::V3;
 use crate::geom::extent3d::Extent3d;
 use crate::math::Vec3;
 
+/// The interval cross product `a x b`.
 fn cross(a: V3<Ivl>, b: V3<Ivl>) -> V3<Ivl> {
     V3 {
         x: a.y * b.z - a.z * b.y,
@@ -19,15 +26,18 @@ fn cross(a: V3<Ivl>, b: V3<Ivl>) -> V3<Ivl> {
 }
 
 /// `N x V x N`, the projected difference in the queries' metric.
-pub(super) fn projected(v: V3<Ivl>, normal: V3<Ivl>) -> V3<Ivl> {
+fn projected(v: V3<Ivl>, normal: V3<Ivl>) -> V3<Ivl> {
     cross(cross(normal, v), normal)
 }
 
+/// The interval square `x^2`. It uses `mig^2 ..= mag^2` because `x * x` on an
+/// interval that holds 0 gives a negative lower end.
 fn square(x: Ivl) -> Ivl {
     Ivl::checked(x.mig() * x.mig(), x.mag() * x.mag())
 }
 
-pub(super) fn norm_squared(v: V3<Ivl>) -> Ivl {
+/// The interval squared length `|v|^2`.
+fn norm_squared(v: V3<Ivl>) -> Ivl {
     (square(v.x) + square(v.y)) + square(v.z)
 }
 
