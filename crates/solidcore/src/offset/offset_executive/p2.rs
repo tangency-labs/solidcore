@@ -340,15 +340,12 @@ pub fn offset_brep(
         notifications.attributes,
     )?;
     let original_key = original.key();
-    // Opt-in (WR-657): as the shell does with WR-578's opt-in, an offset of a solid that
-    // is no closed manifold solid is refused rather than returned (upstream hands back,
-    // e.g., the loop gaps of a box with three chamfers meeting at a corner, volume 0).
-    // Only a merged offset is held to that: without the merge the overlapping offsets
-    // stay as they are, which is what the caller asked for (`OffsetBrep`'s `bDoSelfInt`).
-    let refuse_broken = kernel.fixes.offset_closes_loop_gaps
-        && kernel.fixes.offset_splits_corner_vertices
-        && options.merge_results
-        && brep_is_manifold_solid(original)?;
+    // (not upstream) an offset of a manifold solid is a manifold solid or a refusal (the
+    // ops contract, `finish`): upstream hands back, e.g., the loop gaps of a box with three
+    // chamfers meeting at a corner, volume 0. Only a merged offset is held to that: without
+    // the merge the overlapping offsets stay as they are, which is what the caller asked
+    // for (`OffsetBrep`'s `bDoSelfInt`).
+    let input_solid = options.merge_results && brep_is_manifold_solid(original)?;
     executive.use_creator_tangency_tol(kernel);
     let mut result = collapse_offset_status(executive.do_solid_offset(
         kernel,
@@ -356,14 +353,27 @@ pub fn offset_brep(
         SolidOffsetOptions::default(),
         notifications,
     ))?;
-    // A result with no faces (the solid offset to nothing, #2092) is returned, as with
-    // the opt-in off.
-    if refuse_broken && !result.face_list().is_empty() && !brep_is_manifold_solid(&result)? {
-        return Err(SolidError::sm_err(OP_OFFSET));
+    // A result with no faces (the solid offset to nothing, #2092) is returned.
+    if !result.face_list().is_empty() {
+        refuse_lost_solid(OP_OFFSET, input_solid, &result)?;
     }
     // (not upstream) the attributes the notifications left on the result's objects
     attributes::finish_attributes(&mut result, original_key, notifications)?;
     Ok(result)
+}
+
+/// (not upstream) The finished offset's or shell's gate: [`OffsetFailure::Unsound`] naming
+/// the lost solid when the input was a manifold solid and `result` is none
+/// (`crate::topology::brep::validation::manifold_lost`, the rule the local operation's
+/// gate shares).
+fn refuse_lost_solid(operation: &'static str, input_solid: bool, result: &Brep) -> Result<()> {
+    match crate::topology::brep::validation::manifold_lost(
+        input_solid,
+        brep_is_manifold_solid(result)?,
+    ) {
+        Some(what) => Err(Failure::new(operation, OffsetFailure::Unsound { what }).into_error()),
+        None => Ok(()),
+    }
 }
 
 impl OffsetExecutive {
@@ -559,32 +569,12 @@ impl OffsetExecutive {
                 tolerance,
                 notifications,
             )?;
-            // Opt-in (WR-344 addendum, tangency-labs/solidcore#1818): with the mated pairs
-            // of an extended offset left out of its merge, an offset the merge would have
-            // refused can reach the difference, which then hands back no solid (a ruled
-            // square-to-circle loft shelled inward: ten faces, not manifold, volume 0).
-            // The fork's `SmOffsetExecutive::ShellBrep` returns it too; its C API refuses
-            // any operation on a solid whose result is no closed manifold solid
-            // (`finish`, `SMLIB_ERR_NOT_SOLID`). As WR-454's and WR-578's opt-ins do for
-            // the offset, the flag must not turn upstream's refusal into a success on a
-            // broken body.
-            if kernel.fixes.offset_extended_edges_mated
-                && options.offset.extend_convex_edges
-                && input_is_manifold
-                && !brep_is_manifold_solid(&shell)?
-            {
-                return Err(SolidError::sm_err(OP_SHELL));
-            }
-            // Opt-in (WR-657): likewise with the corners split, a shell of a solid that is
-            // no closed manifold solid is refused (a box's chamfer left open by an inset of
-            // its two sides' width, which the cavity meets along a line only)
-            if kernel.fixes.offset_closes_loop_gaps
-                && kernel.fixes.offset_splits_corner_vertices
-                && input_is_manifold
-                && !brep_is_manifold_solid(&shell)?
-            {
-                return Err(SolidError::sm_err(OP_SHELL));
-            }
+            // (not upstream) a shell of a manifold solid is a manifold solid or a refusal (the
+            // ops contract, `finish`): an offset the merge would have refused can reach the
+            // difference, which then hands back no solid (a ruled square-to-circle loft
+            // shelled inward: ten faces, not manifold, volume 0; a box's chamfer left open
+            // by an inset of its two sides' width, which the cavity meets along a line only)
+            refuse_lost_solid(OP_SHELL, input_is_manifold, &shell)?;
             make_shell_edges_exact(kernel, &mut shell, notifications)?;
             Ok(shell)
         })();
