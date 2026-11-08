@@ -18,7 +18,7 @@ gone; no path removes every trim curve any more.
     (cross-section 1, the fillet executive's old path) ends an ulp past `u = 1`. The shrink used
     to remove it and project the edge again; it now keeps it. The case joins the old chamfer in
     that test's survey of the fillet code the generic blend replaces.
-  - The rig's areas are unchanged: `fixes.json` had the flag on.
+  - The rig ran with the flag on; the kernel rig at the head is the PR's full gate.
   - Goldens: `blend.fillet_executive_p3` (29 cases against main's golden at 387a55ad6) and `primitive.api_trim_ops` (2) move with
     the kept trims. Their bodies' pcurves lie on their edges as before or closer (the largest
     distance, sampled, is unchanged to 1e-8 or drops, 4.1e-5 to 3.5e-5 on the tabbed plate's

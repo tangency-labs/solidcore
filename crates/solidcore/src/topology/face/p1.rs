@@ -30,8 +30,8 @@
 //! - **Shrink keeps exact trims and ends on knots (the fork's, not upstream).**
 //!   `shrink_geometry` keeps the face's trim curves where its surface's trim keeps the
 //!   surface's parameterization (WR-700, the fork's tangency-labs/smlib@6f811b8), and
-//!   takes a bound within 64 ulp of the knot vector's magnitude of a B-spline knot as that
-//!   knot (WR-702, @d80ea93; the fork scales by the knot's own magnitude, which misses a
+//!   takes a bound within 64 ulp of the knot vector's largest |knot| of a B-spline knot as
+//!   that knot (WR-702, @d80ea93; the fork scales by the knot's own magnitude, which misses a
 //!   knot at 0).
 //!   Upstream removes every trim curve and projects the edges again, and keeps a
 //!   sliver span past a knot.

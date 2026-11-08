@@ -28,7 +28,7 @@ rebuilds an analytic from its reversed net, as upstream does.
     surface of revolution no longer fails `SmSurfOfRevolution` #7, which came from its rebuild
     after the swap (`plan/findings/blend.fillet_solver_p2--wr592-revolution-polar-start-angle.md`);
     the corner checks clean.
-  - The rig's areas are unchanged: `fixes.json` had the flag on.
+  - The rig ran with the flag on; the kernel rig at the head is the PR's full gate.
   - Goldens: `surface.surf_of_revolution_p3`'s 165 swap cases keep the state the surface was made
     with (a cylinder built unbounded stays unbounded, as its unswapped copy is), and
     `query.face_p4`'s four natural faces on a swapped cylinder build, where the swap's rebuild
