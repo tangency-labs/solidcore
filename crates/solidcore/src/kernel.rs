@@ -821,8 +821,6 @@ pub struct UpstreamFixes {
     pub offset_walls_touch_refused: bool,
     /// An inset's `do_extended_offset` makes manifold only the finite regions of the merged offset that are cavity, not every finite region (upstream's own TODO there: "we will need to select regions to keep"): a region is cavity where one of its faces has the body's face the wall's thickness behind it and none has the body's face that far ahead. Where a floor is no thicker than the wall its two faces' offsets cross and the merge closes the region between them; kept, the cavity was no manifold solid and the shell failed with `SM_ERR` (1001) (WR-667; the fork's tangency-labs/smlib@37af643).
     pub offset_keep_cavity_regions: bool,
-    /// `SmBrep::LocalOperation` returns the failed extended offset's own status (e.g. `SM_ERR_OFFSET_WALLS_TOUCH`, 1042, or `SM_ERR_BAD_INTERSECTIONS`, 1027) instead of a generic `SM_ERR` (WR-345 addendum, #1442; tangency-labs/smlib a759622).
-    pub local_operation_offset_status: bool,
     /// In a local operation (`SmBrep::LocalOperation`), `SmOffsetGeometryCreation::ExtendTrimEdges` fails a tangent or lamina edge whose lift onto one face's new surface drops onto the other's farther than ten times `max(the offset edge's tolerance, the approximation tolerance)`, and `EdgeuseOffset` passes that failure on, so the operation is refused; upstream ignores it ("will be fixed later", which no later step of a local operation does) and returns a body with an edge as loose as the gap between a moved face and its unmoved tangent neighbour (WR-530, #402; the fork's tangency-labs/smlib@23c5b0a). Offsets and shells are unchanged.
     pub local_operation_refuses_loose_tangent_edges: bool,
     /// A local operation that moves one of two tangent faces along its normal builds the step: `EdgeuseOffset` finds the two faces parallel but apart across the edge (`IsStepAcrossEdge`) and builds the ruled wall between their edges (`CreateStepWall`, rails of uniform weight made non-rational), kept out of the face extensions; `CloseLoopGaps` closes the gaps the wall leaves at its ends and the edges running past its corners are split; a vertex moved past an edge's other end is `SM_ERR_OFFSET_EDGE_VANISHES` (1043) (WR-530 addendum; tangency-labs/smlib 5d428ae, 90aabff, 34318f4).
@@ -914,27 +912,31 @@ pub struct UpstreamFixes {
     /// `GlobalCurveSolve` searches are returned too, as the fork does (tangency-labs/smlib
     /// c8f6a31; changed by #2009 group C, WR-662). Off by default for pinned compatibility.
     pub planar_path_sweep_statuses: bool,
+    /// No longer read: fillet corners always do this, so the field goes when SolidCraft's set drops it.
     /// Fillet corners fail softly where a status upstream ignores would leave an unset
     /// value, as the fork does (tangency-labs/smlib 66b02de; #483, changed by #2009):
     /// `sm_TestG1Continuity` finds no tangency when an end tangent cannot be evaluated,
     /// and `CheckAndFixDegeneracy` refines a vertex's UV point only with a computed one.
     /// The binormal evaluations, the G1 angle and the Nx1 degeneracy test keep upstream's
-    /// handling, as the fork does. Off by default.
+    /// handling, as the fork does.
     pub fillet_corner_statuses: bool,
+    /// No longer read: `sm_CheckEdgeCurveDomains` always does this, so the field goes when SolidCraft's set drops it.
     /// `sm_CheckEdgeCurveDomains` returns no trimmed curve (the edge's own curve is
     /// used) when the copy cannot be made or trimmed, as the fork does
     /// (tangency-labs/smlib 66b02de; #483, changed by #2009), instead of returning an
-    /// untrimmed copy as the requested domain. Off by default.
+    /// untrimmed copy as the requested domain.
     pub fillet_edge_curve_domain_statuses: bool,
+    /// No longer read: `HaveTangentGaps` always does this, so the field goes when SolidCraft's set drops it.
     /// Offset tangent-gap checks skip a sample they cannot evaluate instead of
     /// measuring an unset point, as the fork does (`HaveTangentGaps`, tangency-labs/smlib
     /// 4803d6d; #483, changed by #2009); `ClosestPoint`'s status stays dropped and a
     /// successful query without a solution keeps its existing meaning.
     pub offset_tangent_gap_statuses: bool,
+    /// No longer read: the alignment always does this, so the field goes when SolidCraft's set drops it.
     /// Surface-intersection singularity alignment aligns nothing when the direction
     /// angle cannot be computed, as the fork does (`ALIGN_DIR_WITH_PREVIOUS_POINT`,
     /// tangency-labs/smlib e7ebc8d; #483, changed by #2009) instead of comparing an angle
-    /// read as zero. Captured when the intersector is built.
+    /// read as zero.
     pub ssi_alignment_statuses: bool,
     /// The B-rep's own edits, its `StitchAndOrient`, the offset and shell stitches and the
     /// Boolean merge, stitch and topology-intersection passes pass on the statuses SMLib
@@ -1292,8 +1294,6 @@ pub struct UpstreamFixes {
     pub boolean_lists_virtual_surface_copies: bool,
     /// `SmTopologyIntersector::CloseIntersectionLoop` relates a target edge with the sole other edge between the mated vertices only when the target's midpoint drops onto it within `max(2 * dMaxDist, the two edge tolerances)`, not whenever the closest-point drop succeeds (which it always does): two different edges between the same vertices, such as a cylinder rim's long arc and a crescent prism's r 6 arc, were related as one, and the wall was built on the wrong curve (WR-528; the fork's tangency-labs/smlib@e881cdb).
     pub close_loop_relates_only_coincident_edges: bool,
-    /// `SmSphere::IntersectWithPlane` and `IntersectWithSphere` return a single touching point only when the intersection circle's own radius (`sqrt(R^2 - d^2)`, or the two-sphere circle's height, each formed from the gaps to tangency) is within the tolerance, not whenever the gap to tangency is, which collapsed circles of radius up to about `sqrt(2 R tol)` (1e-3 for `R = 1`, `tol = 1e-6`) into one point (WR-79 part 1, #396; the fork's tangency-labs/smlib@1f5c0f7 (was 30d25bf)).
-    pub sphere_small_circle_not_touching: bool,
     /// `SmAdvSurfaceIntersector::FindInteriorCurves` seeds a Newton search for isolated tangential contact points (zeros of `S1 - S2` with parallel normals, 4x4 system with the exact Jacobian) from the leaf pairs it cannot trace (normals within 5 or 2 degrees, no local intersection), plus the poles, and adds each contact with a numerically zero gap and normals within 1e-4 rad that is not on a curve already found as a degenerate `TOUCHING` curve (WR-74, #394; the fork's tangency-labs/smlib@9e8bf10 (was c26edbc)). Higher-order contacts (equal curvature) are not found.
     pub ssi_tangent_contact_points: bool,
     /// `SmAdvSurfaceIntersector::FindInteriorCurves` traces a start point whose surface normals are within 5 degrees (guess) or 2 degrees (solution) on probation instead of skipping it, keeping the trace only when it closes into a crossing loop whose box diagonal exceeds twice the tolerance; starts below `2 tol / model size` radians are still skipped and rejected traces (and their start points) are remembered so neighbouring starts are not retraced. A small loop between nearly tangent surfaces (a plane just above a NURBS paraboloid's apex) was otherwise never found (WR-79 part 2, #396; the fork's tangency-labs/smlib@1f5c0f7 (was 30d25bf)).
@@ -1442,11 +1442,6 @@ pub struct UpstreamFixes {
     pub ascii_doubles_round_trip: bool,
     /// A round whose filleted edge runs on tangentially at a vertex into an edge of its own convexity that its rail on that face runs alongside and never meets (an R2 corner arc of a plate's outline between straight sides, picked alone) ends at its section through the vertex: the round is cut there by the plane normal to the filleted edge, and the region between the round, its faces and the end sections is subtracted from the body, a flat end face (the section's corner) left on each such end. With `fillet_nx1_end_rib_global_merge` the end rib was deleted for the global merge, which cannot cut a round lying along the continued edge, and `DoFilleting` left an open body (`fillet_edges` refused it as not closed with `fillet_refuse_non_manifold_result`); pinned SMLib fails the corner (`SM_FILERR_VERTEX_PROBLEM`, 1001). Only a single round whose both ends are such ends is built; any other combination is refused with `FilletErrorType::NoRoom` (WR-674, #2176; own design, not in the fork, whose `CalcCornerEdgeGeom` takes the global merge as WR-303 does).
     pub fillet_round_ends_at_tangent_continuation: bool,
-    /// A boss or a cut whose footprint is an inner loop of a face a round rolls on, and which
-    /// the round's band reaches, stays: the round runs its whole edge, the feature's walls are
-    /// carried to it and it is trimmed there in place, instead of the merge dropping the
-    /// feature (WR-703, the fork's eb883ad; `blend::fillet_executive::session::keep_features`).
-    pub fillet_keep_features: bool,
     /// A blend-curve fillet (`SM_FSG_BLEND_CURVE`) is built by the G^n section generator ([`crate::blend::fillet_section::section::GnSectionFsg`], the fork's `SmGnSectionFSG`) in place of `SmBlendCurveCrossSectionFSG`: the section of order n = continuity (2 to 4) and thumbweight w (below 1, the fork's b9d6a72, or `GN_THUMBWEIGHT_EQUAL_AREA` = 2, the default: the w at which the section takes off the area the ball's circle does, the fork's 6148773 = d01d7b0's 1947a45, resolved at every station from that station's own wedge, with its s-derivative, so that w varies along the blend: the surface interpolates the section's homogeneous rows, each a cubic Hermite curve of its values and s-derivatives, and the certificate bounds their remainder too, the fork's 7102bc5), `S(t) = f T1(1 - p1) + (1 - f) T2(p2)` over the faces' order-n jets along the rails, a rational Bezier section times the jets' cubic Hermite curves along the rails, certified span by span within a tenth of the fillet's tolerance; its contact with each face is of order n + 1 (n + 2 between planes). `SetFilletParameters` refuses another order or thumbweight (`SM_ERR_INVALID_INPUT`), the corners build theirs with the same order and thumbweight (and refuse to convert two that differ), the tangent end's rib takes the order of contact found at its rail (`ContactOrderAt`), and a round's ease before a setback blends into the order-2 section at thumbweight 0, not the equal area default (the fork's 22d258a = d01d7b0's adb9854). With it the `blend_curve_at_thirds` executive option is not used: the fork removed `SetBlendCurveAtThirds` when this generator replaced the blend curve, the ease's at-thirds G2 target among it; `fillet_blend_curve_revolved_on_arc` does not revolve it (the fork's `AdjustCrossSection` change, which refuses an order above 3, has no port: the function is not ported) (WR-685, #2250; the fork's tangency-labs/smlib@11ea2d9 = d01d7b0's 0bd3f4d, smlib#78).
     ///
     /// With it a variable round is the union of its balls (the fork's d2a6125, f2ec002, e9560e3, 2714d37 and 6007a3d, rebased from 6b346f6, 5db8feb, fb5c060, d622107 and 8bedf89): a variable-radius or constant-distance solver's circle section is the circle along which the balls' envelope touches the ball, square to the centre line and moved along it by `-r r'/|c'|`, not the great circle through the rails; a round whose balls fold over one another is refused (`FilletErrorType::NoRoom`, `NoRoomReason::BallsFold`, naming the radius there); a cliff overflow's law check (`sm_HoldsItsLaw`) tests the touch circle; and `SmApiVariableRadiusFillet` takes the G^n section's default thumbweight (WR-685 addendum 2026-11-01).

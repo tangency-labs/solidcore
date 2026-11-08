@@ -83,7 +83,7 @@ pub enum Error {
         largest: f64,
     },
     /// The kernel reported success but the operation did nothing: a blend that made no face, a
-    /// face move or draft that moved no face.
+    /// face move or draft that moved no face, an extension shorter than the side can carry.
     NoEffect,
     /// The answer is not exact in the input's geometry.
     NotExact,
@@ -182,8 +182,9 @@ pub enum Error {
         /// The least setback.
         least: f64,
     },
-    /// A corner's setback that does not fit on its edges (the kernel's
-    /// `BlendRefusal::SetbackTooLong`): one below `largest` fits.
+    /// A corner's setback that does not fit on its edges, or on its rounds where a far
+    /// corner cuts one (the kernel's `BlendRefusal::SetbackTooLong`): one below `largest`
+    /// fits.
     SetbackTooLong {
         /// The corner's vertex index.
         vertex: usize,
