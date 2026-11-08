@@ -4,7 +4,9 @@
   (WR-701) and `face_shrink_bound_on_knot` (WR-702) become the default and are removed.
 - **Measured at:** main b13f07fbd with each flag forced on alone (`goldens --goldens --all`),
   and the branch head on that main. Each case below moves by its flag alone; the union of
-  the three runs is exactly what the head moves.
+  the three runs is exactly what the head moves. Rechecked after the rebase on main
+  1ef8d8adb: `blend.fillet_executive_p3` fails the same 29 cases, the same 14 over 1e-6 with
+  the same relative moves; the other five units' blessed lines apply as they were and pass.
 
 ## Which flag moves which golden
 
@@ -22,7 +24,9 @@ The fillet columns count cases differing in some number past 1e-9 and overlap: 3
 1 by WR-702 alone (`source-file-nurb_box-edge5`), 5 by more than one. Three of the 32
 (`stubs4-degenerate-test5-e2-r0.5`, `-e3-r0.5`, `source-file-box_with_large_fillet-edge4`,
 at most 4.5e-9 relative) stay inside the golden's block tolerance (1e-9 of the block's
-absolute sum), so the golden counts 29.
+absolute sum), so the golden counts 29. A full `--bless` rewrites more lines (135 at
+1ef8d8adb, 109 at an earlier base): every case whose numbers differ in any bit. The bless
+commit keeps main's line for every case that passes main's golden, so only the 29 change.
 
 ## `blend.fillet_executive_p3`: the rows moving more than 1e-6
 
@@ -64,13 +68,23 @@ absolute sum), so the golden counts 29.
 
 ## `query.face_p3` gen0506
 
-The cylinder is built with `u` clamped from +-1234567 and `v` in [0, 6.91492608675138],
-the same domain on main and here. Main's swap refit moved the frame's origin to
-z = -1234567 and tilted its y axis by 7.2e-10 rad; at a distance of 1.23e6 that is a
-lateral shift of up to 8.9e-4 at the clamped ends, and the `interval_bounds` taken on that
-surface move with it (0.1061569 to 0.1062535 and 0.1504638 to 0.1505659). With the definition kept the frame is the one made (origin 0,
-axes x and y), and the `uv_line` end at the domain's start reads `v = 0.0` instead of
--8.9e-16. The domain does not shift; the old refit moved the surface.
+The face's cylinder is built with `u` clamped from +-1234567 and `v` in
+[0, 6.91492608675138], the same domain on main and here. Main's swap refit moved the
+frame's origin to z = -1234567 and tilted its y axis by 7.2e-10 rad; the head keeps the
+frame the cylinder was made with (origin 0, axes x and y). The bisector's `uv_line` is the
+line between two of the face's loop points in the surface's parameters:
+
+| End | Main | Head |
+|---|---|---|
+| start (u, v) | (-3.8678244843, 6.91492608675138) | (-3.8713482691, 6.91492608675138) |
+| end (u, v) | (38.4221047691, -8.9e-16) | (38.4132950695, 0.0) |
+
+Against the made domain: the head's end lies on the domain's start `v = 0` exactly, main's
+is 8.9e-16 outside it; the `v` ends are the domain's bounds on both sides. The `u` ends move
+by 3.5e-3 and 8.8e-3 and the `interval_bounds` with them (0.1061569 to 0.1062535,
+0.1504638 to 0.1505659): the loop points are mapped into a different surface map (main's
+refit frame against the made one). I have not derived that `u` move in closed form; the
+domain itself does not shift.
 
 ## `surface.surf_of_revolution_p3` (165 swap cases)
 
