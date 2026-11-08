@@ -400,12 +400,16 @@ fn measured(
     let Some((centre, n, radius)) = circle(&local, iso, x0)? else {
         return Err(SolidError::sm_err(OP));
     };
-    let nerr = if matches!(iso, Iso::Parallel) { gamma(8) } else {
+    let nerr = if matches!(iso, Iso::Parallel) {
+        gamma(8)
+    } else {
         let v = f.axis.cross(x0);
         let ev = (2.0 * err + gamma(16) * x0.length()) * (1.0 + gamma(8));
         if v.length() > ev {
             (2.0 * ev / (v.length() - ev) + gamma(16)) * (1.0 + gamma(8))
-        } else { f64::INFINITY }
+        } else {
+            f64::INFINITY
+        }
     };
     let (far, ef) = super::measure::point(s, far, f.origin)?;
     let (half, eh) = super::measure::point(s, half, f.origin)?;
@@ -414,7 +418,7 @@ fn measured(
     let source_sense = super::measure::turn_sign(half - far, x0 - half, n, es, nerr);
     let n = if source_sense.0 { n * -1.0 } else { n };
     let radius_err = if matches!(iso, Iso::Parallel) {
-        // gamma_16: axis dot (3 products, 2 sums), projection (3 products,
+        // `gamma_16`: axis dot (3 products, 2 sums), projection (3 products,
         // 3 differences), norm (3 squares, 2 sums, sqrt), and bound arithmetic.
         // Projection's norm is at most 2 for a stored unit axis; Higham §§3.1–3.4.
         (2.0 * err + gamma(16) * (x0.length() + radius)) * (1.0 + gamma(4))
@@ -425,14 +429,18 @@ fn measured(
     // chord/radius conditioning: a fixed post-asin addition is not sufficient
     // near a diameter. Endpoint displacement is <= bound, so these inputs
     // conservatively cover both endpoint and projected-centre perturbations.
-    let eu = (4.0 * (err + err1) + radius_err
+    let eu = (4.0 * (err + err1)
+        + radius_err
         + (2.0 * nerr + nerr * nerr) * (x0.length() + centre.length())
-        + gamma(32) * (x0.length() + x1.length() + centre.length()) + 4.0 * bound)
+        + gamma(32) * (x0.length() + x1.length() + centre.length())
+        + 4.0 * bound)
         * (1.0 + gamma(16));
     let mut sense = super::measure::turn_sign(x0 - centre, x1 - centre, n, eu, nerr);
     sense.1 &= source_sense.1;
     super::measure::oriented_arc(
-        (chord, chord_err + 4.0 * bound), (radius, radius_err + 4.0 * bound), sense,
+        (chord, chord_err + 4.0 * bound),
+        (radius, radius_err + 4.0 * bound),
+        sense,
     )
 }
 
@@ -447,7 +455,11 @@ pub(super) fn widened_across(
         .ok_or_else(|| SolidError::sm_err(OP))?;
     let middle = side.point(dom, 0.5);
     let end = side.at(&knot_box(&form)?);
-    let to = if side.is_u() { Point2::new(end, middle.y) } else { Point2::new(middle.x, end) };
+    let to = if side.is_u() {
+        Point2::new(end, middle.y)
+    } else {
+        Point2::new(middle.x, end)
+    };
     let from = source_side.point(source_dom, 0.5);
     // These are the very floating-point STEP parameters used by analytic point
     // evaluation. They select the definition's points; no world-coordinate net
@@ -456,9 +468,13 @@ pub(super) fn widened_across(
     let b = s.convert_uv_from_nurbs_to_step(k, to)?;
     let parallel = round_the_axis(s, side) == Some(true);
     let (radius, radius_err, delta) = match support.implicit() {
-        Implicit::Cone { radius, tan_angle, .. } => {
+        Implicit::Cone {
+            radius, tan_angle, ..
+        } => {
             if !parallel {
-                return Ok(super::measure::across(super::measure::chord(&form, middle, to)?));
+                return Ok(super::measure::across(super::measure::chord(
+                    &form, middle, to,
+                )?));
             }
             let term = tan_angle * a.y;
             let r = radius + term;
@@ -471,24 +487,35 @@ pub(super) fn widened_across(
                 // |cos'| <= 1; two angle-conversion operations, cos's one ulp,
                 // product and evaluation of the bound (Higham §§3.1–3.4).
                 (r, gamma(8) * radius * (1.0 + latitude.abs()), b.x - a.x)
-            } else { (radius, 0.0, b.y - a.y) }
+            } else {
+                (radius, 0.0, b.y - a.y)
+            }
         }
         Implicit::Torus { major, minor, .. } => {
             if parallel {
                 let latitude = a.y.to_radians();
                 let term = minor * latitude.cos();
-                (major + term, gamma(12) * (major.abs() + minor * (1.0 + latitude.abs())), b.x - a.x)
-            } else { (minor, 0.0, b.y - a.y) }
+                (
+                    major + term,
+                    gamma(12) * (major.abs() + minor * (1.0 + latitude.abs())),
+                    b.x - a.x,
+                )
+            } else {
+                (minor, 0.0, b.y - a.y)
+            }
         }
         Implicit::Plane { .. } => {
-            return Ok(super::measure::across(super::measure::chord(&form, middle, to)?));
+            return Ok(super::measure::across(super::measure::chord(
+                &form, middle, to,
+            )?));
         }
     };
     let angle = delta.to_radians().abs();
     // One difference and the two operations converting degrees to radians.
     let angle_err = gamma(4) * angle;
     Ok(super::measure::across(super::measure::circle_from_angle(
-        (radius, radius_err), (angle, angle_err),
+        (radius, radius_err),
+        (angle, angle_err),
     )?))
 }
 
@@ -555,7 +582,9 @@ fn extend_side(
         measured(s, (at(s, 0.0), at(s, 1.0)), f, iso, sense, bound)
     };
     let value = |e: f64| -> Result<Option<f64>> {
-        made(e)?.map(|(s, _)| measure(&s, 0.0).map(|m| m.0)).transpose()
+        made(e)?
+            .map(|(s, _)| measure(&s, 0.0).map(|m| m.0))
+            .transpose()
     };
     let across_of = |s: &BSplineSurface, bound: f64| -> Result<Across> {
         Ok(super::measure::across(measure(s, bound)?))

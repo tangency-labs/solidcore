@@ -74,13 +74,12 @@ pub(super) fn point(s: &BSplineSurface, uv: Point2, o: Vec3) -> Result<(Vec3, f6
         ctrl,
         [false; 2],
     );
-    let (d, e) =
-        certified_partials(&eval, [uv.x, uv.y]).map_err(|_| not_exact(None))?;
+    let (d, e) = certified_partials(&eval, [uv.x, uv.y]).map_err(|_| not_exact(None))?;
     let p = d.first().and_then(|r| r.first()).ok_or_else(op_err)?;
     let err = *e.first().and_then(|r| r.first()).ok_or_else(op_err)?;
     // Higham, Accuracy and Stability of Numerical Algorithms, 2nd ed., §§3.1–3.4:
-    // gamma_1 encloses each FMA's error from its rounded LOCAL result. Division by
-    // w_min and sqrt(3) turn the coordinate bound into a Euclidean one. gamma_8
+    // `gamma_1` encloses each FMA's error from its rounded LOCAL result. Division by
+    // w_min and sqrt(3) turn the coordinate bound into a Euclidean one. `gamma_8`
     // widens these products, division, addition and the bound's own evaluation.
     // The evaluator includes its de Boor gamma_(12p+4) per direction and projection.
     let err = (err + 3f64.sqrt() * gamma(1) * mag / wmin) * (1.0 + gamma(8));
@@ -128,7 +127,7 @@ pub(super) fn chord(s: &BSplineSurface, a: Point2, b: Point2) -> Result<(f64, f6
         let (length, err) = endpoint_chord(s, x, y)?;
         let scale = ((to - from) / (hi - lo)).abs();
         let value = length * scale;
-        // gamma_4: two parameter differences, division, multiplication (Higham §3).
+        // `gamma_4`: two parameter differences, division, multiplication (Higham §3).
         return Ok((value, (err * scale + gamma(4) * value) * (1.0 + gamma(4))));
     }
     endpoint_chord(s, a, b)
@@ -139,7 +138,7 @@ fn endpoint_chord(s: &BSplineSurface, a: Point2, b: Point2) -> Result<(f64, f64)
     let (x, ex) = point(s, a, origin)?;
     let (y, ey) = point(s, b, origin)?;
     let chord = (y - x).length();
-    // gamma_8: coordinate differences, three squares, two sums and sqrt; adding the
+    // `gamma_8`: coordinate differences, three squares, two sums and sqrt; adding the
     // two evaluation errors uses the triangle inequality, not independence (Higham §3).
     let err = (ex + ey + gamma(8) * (x.length() + y.length() + chord)) * (1.0 + gamma(8));
     Ok((chord, err))
@@ -164,7 +163,7 @@ pub(super) fn arc(chord: (f64, f64), radius: (f64, f64), long: bool) -> Result<(
         // its infinite enclosure cannot pass the unchanged acceptance test.
         return Ok((length, f64::INFINITY));
     }
-    // gamma_8 covers radius/chord endpoint arithmetic, division, asin's rounding
+    // `gamma_8` covers radius/chord endpoint arithmetic, division, asin's rounding
     // (one ulp), multiplication, and the complement's subtraction. As in the kernel's
     // other closed forms, elementary functions are assumed accurate to one ulp.
     // Higham §§3.1–3.4 apply to the arithmetic; monotonicity encloses asin's conditioning.
@@ -190,13 +189,13 @@ pub(super) fn arc(chord: (f64, f64), radius: (f64, f64), long: bool) -> Result<(
 
 /// A sign used to select an arc is certified separately from its length. `e`
 /// bounds each radial vector, `en` the unit normal. A 3x3 scalar triple product
-/// has six products, three differences and a dot product (gamma_32 including
+/// has six products, three differences and a dot product (`gamma_32` including
 /// bound arithmetic). Multilinearity encloses the input perturbations.
 pub(super) fn turn_sign(a: Vec3, b: Vec3, n: Vec3, e: f64, en: f64) -> (bool, bool) {
     let (x, y) = (a.length(), b.length());
     let value = a.cross(b).dot(n);
-    let error = ((x + y) * e + e * e + en * (x + e) * (y + e)
-        + gamma(32) * x * y) * (1.0 + gamma(16));
+    let error =
+        ((x + y) * e + e * e + en * (x + e) * (y + e) + gamma(32) * x * y) * (1.0 + gamma(16));
     (value < 0.0, value.abs() > error)
 }
 
@@ -204,10 +203,14 @@ pub(super) fn turn_sign(a: Vec3, b: Vec3, n: Vec3, e: f64, en: f64) -> (bool, bo
 /// The nominal value remains available to bracket a root; infinite/large bounds
 /// cannot pass the existing exactness test.
 pub(super) fn oriented_arc(
-    chord: (f64, f64), radius: (f64, f64), sense: (bool, bool),
+    chord: (f64, f64),
+    radius: (f64, f64),
+    sense: (bool, bool),
 ) -> Result<(f64, f64)> {
     let (length, error) = arc(chord, radius, sense.0)?;
-    let error = if sense.1 { error } else {
+    let error = if sense.1 {
+        error
+    } else {
         error + 2.0 * PI * (radius.0 + radius.1) * (1.0 + gamma(8))
     };
     Ok((length, error))
@@ -216,10 +219,11 @@ pub(super) fn oriented_arc(
 /// The side-centred circle offset has chord 2 r sin(angle/2). This evaluates
 /// the difference directly, without subtracting nearly equal radial points.
 /// Angle and radius uncertainties are propagated BEFORE asin. Higham §§3.1–3.4:
-/// gamma_8 covers halving, sine (one ulp), the two products and bound arithmetic;
+/// `gamma_8` covers halving, sine (one ulp), the two products and bound arithmetic;
 /// |sin'| <= 1 supplies the absolute input-angle contribution.
 pub(super) fn circle_from_angle(
-    (r, er): (f64, f64), (angle, ea): (f64, f64),
+    (r, er): (f64, f64),
+    (angle, ea): (f64, f64),
 ) -> Result<(f64, f64)> {
     let sine = (0.5 * angle).sin().abs();
     let chord = 2.0 * r * sine;

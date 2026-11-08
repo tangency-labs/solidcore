@@ -214,11 +214,7 @@ pub(super) fn knot_box(s: &BSplineSurface) -> Result<Extent2d> {
 /// circle. The extension's own points cannot: at the least step they lie within about
 /// `EFF_ZERO_PARAM` of each other, so their chords are nearly parallel and the sense of
 /// their turn is rounding (a sense flipped by it measures the arc the long way round).
-pub(super) fn source_iso(
-    dom: &Extent2d,
-    side: BoxSide,
-    middle: Point2,
-) -> (Point2, Point2) {
+pub(super) fn source_iso(dom: &Extent2d, side: BoxSide, middle: Point2) -> (Point2, Point2) {
     let (lo, hi) = (dom.min(), dom.max());
     let (far, half) = match side {
         BoxSide::UMin | BoxSide::UMax => {
@@ -269,7 +265,11 @@ fn extend_side(
         let Some(g) = super::local_iso::natural(&source, side, c, e)? else {
             return Ok(None);
         };
-        if !keeps(net, g.world.gw_nurb().ok_or_else(|| SolidError::sm_err(OP))?, side)? {
+        if !keeps(
+            net,
+            g.world.gw_nurb().ok_or_else(|| SolidError::sm_err(OP))?,
+            side,
+        )? {
             return Err(SolidError::port_invariant(
                 OP,
                 "the extension moved the source's net",
@@ -304,13 +304,13 @@ fn extend_side(
     let (a, b) = (x_half - x_far, x_side - x_half);
     let raw = a.cross(b);
     let norm = raw.length();
-    // Higham §§3.1–3.4: gamma_16 covers the two differences, six cross-product
+    // Higham §§3.1–3.4: `gamma_16` covers the two differences, six cross-product
     // products and three differences, squares/sums/sqrt, and bound arithmetic.
     let ea = ef + eh + gamma(2) * (x_half.length() + x_far.length());
     let eb = es + eh + gamma(2) * (x_side.length() + x_half.length());
     let en = (a.length() * eb + b.length() * ea + ea * eb + gamma(16) * a.length() * b.length())
         * (1.0 + gamma(8));
-    if !(norm > en) {
+    if norm.partial_cmp(&en) != Some(std::cmp::Ordering::Greater) {
         return Err(refused(ExtendRefusal::NotExact, None));
     }
     let n = raw * (1.0 / norm);
@@ -322,7 +322,7 @@ fn extend_side(
         let (u0, u1) = (x0 - cc, x1 - cc);
         let radius = u0.length();
         // The projection's sensitivity to its normal and point, plus its dot,
-        // product, difference and norm's gamma_16 (Higham §§3.1–3.4).
+        // product, difference and norm's `gamma_16` (Higham §§3.1–3.4).
         let er = (2.0 * e0
             + (2.0 * nerr + nerr * nerr) * x0.length()
             + gamma(16) * (x0.length() + radius))
@@ -334,7 +334,9 @@ fn extend_side(
         // 4*bound conservatively, propagating it through asin rather than adding
         // a fixed length error near a diameter.
         let (length, rounding) = super::measure::oriented_arc(
-            (chord, chord_err + 4.0 * bound), (radius, er + 4.0 * bound), sense,
+            (chord, chord_err + 4.0 * bound),
+            (radius, er + 4.0 * bound),
+            sense,
         )?;
         let (t0, t1) = (x0 - z * x0.dot(z), x1 - z * x1.dot(z));
         Ok(Measure {
@@ -343,10 +345,30 @@ fn extend_side(
             turn: angle(t0, t1),
         })
     };
+    // The probes that steer the solve for an extension parameter (bracketing, bisection) are
+    // plain evaluations in the sphere's frame: they may be asked far past what is certified,
+    // and nothing is accepted from them. The extension finally built is measured by
+    // `measure`, with its rounding, in `across_of`.
+    let probe = |s: &BSplineSurface| -> Result<Measure> {
+        let x0 = s.evaluate_point(at(s, 0.0))?;
+        let x1 = s.evaluate_point(at(s, 1.0))?;
+        let cc = n * n.dot(x0);
+        let (u0, u1) = (x0 - cc, x1 - cc);
+        let mut phi = u0.cross(u1).dot(n).atan2(u0.dot(u1));
+        if phi < 0.0 {
+            phi += 2.0 * PI;
+        }
+        let (t0, t1) = (x0 - z * x0.dot(z), x1 - z * x1.dot(z));
+        Ok(Measure {
+            length: u0.length() * phi,
+            rounding: 0.0,
+            turn: angle(t0, t1),
+        })
+    };
     let value = |e: f64, turn: bool| -> Result<Option<f64>> {
         Ok(match made(e)? {
             Some(g) => {
-                let m = measure(&g.local, 0.0)?;
+                let m = probe(&g.local)?;
                 Some(if turn { m.turn } else { m.length })
             }
             None => None,
@@ -569,8 +591,10 @@ fn certify_circle(s: &BSplineSurface, side: BoxSide, middle: Point2, c: Vec3) ->
     let mut input = 0.0_f64;
     for p in net.cpts().iter().flatten() {
         let w = if p.w == NOW { 1.0 } else { p.w };
-        input = input.max(p.x.abs().max(p.y.abs()).max(p.z.abs())
-            + (1.0 + c.x.abs().max(c.y.abs()).max(c.z.abs())) * w.abs());
+        input = input.max(
+            p.x.abs().max(p.y.abs()).max(p.z.abs())
+                + (1.0 + c.x.abs().max(c.y.abs()).max(c.z.abs())) * w.abs(),
+        );
     }
     // Convex de Boor extraction: <=12q+4 operations on a path; the extra
     // four cover input/translation and evaluating this bound (Higham §3).
@@ -580,7 +604,7 @@ fn certify_circle(s: &BSplineSurface, side: BoxSide, middle: Point2, c: Vec3) ->
     for p in iso.cpts() {
         let w = if p.w == NOW { 1.0 } else { p.w };
         // One fused rounding per local coordinate, already covered by the
-        // determinant's gamma_32 below; never round C w separately at |C|.
+        // determinant's `gamma_32` below; never round C w separately at |C|.
         let local = [
             (-c.x).mul_add(w, p.x),
             (-c.y).mul_add(w, p.y),
@@ -607,8 +631,9 @@ fn certify_circle(s: &BSplineSurface, side: BoxSide, middle: Point2, c: Vec3) ->
     let three = m0 * mm * ml;
     // Product perturbation without subtracting nearly equal products. These
     // three terms contain all seven nonempty subsets of perturbed factors.
-    let perturb = ((m0 + error) * (mm + error) * error
-        + (m0 + error) * error * ml + error * mm * ml) * (1.0 + gamma(12));
+    let perturb =
+        ((m0 + error) * (mm + error) * error + (m0 + error) * error * ml + error * mm * ml)
+            * (1.0 + gamma(12));
     // the three span a plane: a minor well past arithmetic AND input rounding
     let spans = [(0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)]
         .iter()
@@ -626,8 +651,9 @@ fn certify_circle(s: &BSplineSurface, side: BoxSide, middle: Point2, c: Vec3) ->
         // expansion along the fourth row; |fl(det) - det| <= gamma_K per(|A|) <= gamma_K 4!
         // times the product of the rows' sizes
         let det = -g(row, 0) * m123 + g(row, 1) * m023 - g(row, 2) * m013 + g(row, 3) * m012;
-        let tolerance = 24.0 * (gamma(32) * three * mag
-            + perturb * (mag + error) + three * error) * (1.0 + gamma(12));
+        let tolerance = 24.0
+            * (gamma(32) * three * mag + perturb * (mag + error) + three * error)
+            * (1.0 + gamma(12));
         if det.abs() > tolerance {
             return Err(refused(ExtendRefusal::NotExact, None));
         }

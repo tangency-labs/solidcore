@@ -88,8 +88,7 @@ fn arc(x: f64) -> f64 {
     0.5 * x * (1.0 + 4.0 * x * x).sqrt() + 0.25 * (2.0 * x).asinh()
 }
 
-/// The enclosure holds `d` within the stop: `max(1e-9 d, its truncation and rounding parts and
-/// the stored net's resolution)`,
+/// The enclosure holds `d` within the stop: `max(1e-9 d, its truncation and rounding parts)`,
 /// every leaf converged, the truncation part at most `1e-9 d` and the rounding part at most
 /// `1e-6 d` (owner); the source kept and the extension's bound finite.
 fn meets(e: &Extended, d: f64) {
@@ -103,7 +102,7 @@ fn meets(e: &Extended, d: f64) {
         e.extension
     );
     let b = a.enclosure;
-    let tol = (1e-9 * d).max(a.truncation + a.rounding + a.resolution);
+    let tol = (1e-9 * d).max(a.truncation + a.rounding);
     assert!(b.lower >= d - tol && b.upper <= d + tol, "{b:?} for {d}");
     assert_eq!(e.source, 0.0);
     assert!(e.extension >= 0.0, "{}", e.extension);
@@ -564,6 +563,11 @@ fn natural_carries_a_bound_that_holds_the_closed_form() {
 /// A length that is not measured to the stop is no measurement: not met however close
 /// (owner): a leaf not converged, a truncation part past `1e-9 d`, a rounding part past
 /// `1e-6 d`, an extension bound not finite, or no length at all.
+///
+/// The last case once expected a narrow enclosure 3e-9 off `d` to be `Met` when the stored
+/// net's resolution was 4e-9 (the stop then widened by the resolution) and `Short` at 1e-9.
+/// The stop is exact (#2977): the enclosure is 3e-9 off `d` and the stop is `max(1e-9 d, its
+/// parts)` = 1e-9, so it is `Short` at either resolution.
 #[test]
 fn a_length_not_measured_to_the_stop_is_unproved() {
     let at = |lower: f64, upper: f64, truncation: f64, rounding: f64, converged: bool| Across {
@@ -607,13 +611,12 @@ fn a_length_not_measured_to_the_stop_is_unproved() {
         says(Some(&at(2.0, 9.0, 0.0, 7.0, true)), 0.0, d),
         Says::Past(_)
     ));
-    // a narrow enclosure off d by more than the stop but within the stored net's own
-    // resolution (no net of floats is nearer): met; past its resolution: short
+    // a narrow enclosure off d by more than the stop: short, whatever the net's resolution
     let off = |resolution: f64| Across {
         resolution,
         ..at(1.0 - 3e-9, 1.0 - 3e-9 + 1e-15, 0.0, 1e-15, true)
     };
-    assert_eq!(says(Some(&off(4e-9)), 0.0, d), Says::Met);
+    assert!(matches!(says(Some(&off(4e-9)), 0.0, d), Says::Short(_)));
     assert!(matches!(says(Some(&off(1e-9)), 0.0, d), Says::Short(_)));
 }
 
@@ -1126,16 +1129,46 @@ fn ruled_with_end_weight_ratios_that_differ_is_c1_straight_and_reaches_any_dista
             let l = c.derivs(1.0, Side::Left, 1).unwrap()[1];
             let r = c.derivs(1.0, Side::Right, 1).unwrap()[1];
             assert!(l.distance(r) < 1e-12 * l.length(), "{v}: {l:?} {r:?}");
-            // straight past it: every point on the line through the joint along S_u
+            // straight past it: every point on the chord from the joint to the far end (along
+            // S_u, with C1 above), to the rounding of making and evaluating the net
+            let bound = straightness_bound(b.gw_nurb().unwrap());
             let p0 = e.surface.evaluate_point(&k(), Vec2::new(1.0, v)).unwrap();
+            let chord = e
+                .surface
+                .evaluate_point(&k(), Vec2::new(d.max().x, v))
+                .unwrap()
+                - p0;
             for i in 1..=8 {
                 let u = 1.0 + (d.max().x - 1.0) * f64::from(i) / 8.0;
                 let p = e.surface.evaluate_point(&k(), Vec2::new(u, v)).unwrap();
-                let off = (p - p0).cross(l).length() / l.length();
-                assert!(off < 1e-12 * (1.0 + distance), "{v} {u}: {p:?} off {off}");
+                let off = (p - p0).cross(chord).length() / chord.length();
+                assert!(off <= bound, "{v} {u}: {p:?} off {off}, bound {bound}");
             }
         }
     }
+}
+
+/// The most a point of an extension's row past the joint can be off the chord through two others
+/// of the row, from rounding: the exact rows are straight, the Ruled points `X1 + t X2` (or
+/// `H_n + t D`) are each `lin`s of a product and a sum (`gamma_4` of the homogeneous coordinates,
+/// over the least weight), and evaluating the net at a point is the kernel's de Boor,
+/// `16 (p + q + 2)` operations of the 3D size as [`crate::surface::implicit`]'s form checks
+/// take it. Three points each within that of a common line put the middle one within three
+/// times it of the chord of the others.
+fn straightness_bound(net: &Net) -> f64 {
+    use crate::nurbs::math::gamma;
+    let (mut h, mut w_min, mut size) = (0.0_f64, f64::INFINITY, 0.0_f64);
+    for c in net.rows().flatten() {
+        let w = if c.w == NOW { 1.0 } else { c.w };
+        h = h.max(c.x.abs()).max(c.y.abs()).max(c.z.abs());
+        w_min = w_min.min(w);
+        size = size
+            .max((c.x / w).abs())
+            .max((c.y / w).abs())
+            .max((c.z / w).abs());
+    }
+    let (p, q) = net.degrees();
+    3.0 * (gamma(4) * h / w_min + gamma(16 * (p + q + 2)) * size)
 }
 
 /// A rational net of degree 2 both ways, of 3 spans in v (one knot double), whose weights are
@@ -1224,12 +1257,16 @@ fn the_ruled_product_form_past_every_side_keeps_the_source_and_every_row_is_stra
                 l.distance(r) < 1e-9 * l.length(),
                 "{side:?} {t}: {l:?} {r:?}"
             );
+            // straight past it, as for the row pair: on the chord to the far end, to the
+            // rounding of making and evaluating the net
+            let bound = straightness_bound(net);
             let p0 = e.surface.evaluate_point(&k(), uv(joint, t)).unwrap();
+            let chord = e.surface.evaluate_point(&k(), uv(far, t)).unwrap() - p0;
             for i in 1..=8 {
                 let a = joint + (far - joint) * f64::from(i) / 8.0;
                 let p = e.surface.evaluate_point(&k(), uv(a, t)).unwrap();
-                let off = (p - p0).cross(l).length() / l.length();
-                assert!(off < 1e-9, "{side:?} {t} {a}: off {off}");
+                let off = (p - p0).cross(chord).length() / chord.length();
+                assert!(off <= bound, "{side:?} {t} {a}: off {off}, bound {bound}");
             }
         }
     }
@@ -2448,49 +2485,76 @@ fn reference_length(e: &Extended, side: BoxSide) -> f64 {
     total
 }
 
-/// A tolerance-sized extension (`1e-5`, a B-rep tolerance at part size; `1.0133e-3`, a
-/// pyramid file's) of a side about 170 from the origin is certified Natural and Ruled (the
-/// local operation's), past either end, on a polynomial and a rational net: the across
+/// A tolerance-sized extension of a side about 170 from the origin, past either end, on a
+/// polynomial and a rational net, Natural and Ruled (the local operation's): the across
 /// measure works on the net's differences from the joint, so its rounding is the extension's
 /// size times a few ulps, not the part's; the construction bound counts a weight's error at
-/// the weights' size. Its enclosure holds a high-precision reference length, and its parts
-/// bound the measure's real error. (Tangent and Curvature still carry their mirror's bound
-/// at the part's size: refused at `1e-5` here.)
+/// the weights' size. (Tangent and Curvature are certified at a far part in difference form:
+/// `a_mirror_extension_far_from_the_origin_is_bounded_in_difference_form`.)
+///
+/// The stop is exact (#2977). The stored points near 170 lie on a lattice of one ulp,
+/// `2^-45 = 2.8e-14`, so the length across moves in steps of that order and meets `d` to
+/// `1e-9 d` only where a step lands within it: for `d >= s / 2e-9` (`s` the step, 1.4e-5) every
+/// `d` is reachable by this argument, and `1e-4` and `1.0133e-3` (a pyramid file's tolerance)
+/// are asked below and built. `1e-5` (a B-rep tolerance at part size, which this test once
+/// asked and expected built, the stop then widened by the net's resolution) is reached only
+/// where a step lands within `1e-14` of it: where it is not, the extension is refused
+/// `NotExact`, naming the length it reaches (9.99999998706e-6 for the polynomial net's `UMax`,
+/// Ruled), and asking that length builds and meets it. The enclosure of every built extension
+/// holds a high-precision reference length and its parts bound the measure's real error.
 #[test]
 fn a_tolerance_sized_extension_of_a_part_size_side_is_certified() {
+    let check = |e: &Extended, side: BoxSide, d: f64, tag: &str| {
+        meets(e, d);
+        let a = e.across;
+        let exact = reference_length(e, side);
+        let b = a.enclosure;
+        assert!(
+            b.lower <= exact && exact <= b.upper,
+            "{tag}: {b:?} does not hold {exact}"
+        );
+        // the measure's real error within its rounding part (its truncation part is the
+        // leaves' gap, the rest of the enclosure's width)
+        let error = (b.mid() - exact).abs();
+        assert!(
+            error <= a.rounding + a.truncation,
+            "{tag}: error {error:e} past {a:?}"
+        );
+    };
+    let mut refused_polynomial_umax_ruled = false;
     for rational in [false, true] {
         let s = part_side(rational);
         for side in [BoxSide::UMin, BoxSide::UMax] {
             for how in [Continuity::Natural, Continuity::Ruled] {
-                for d in [1e-5, 1.013_333_358_765e-3] {
+                let ask = |d: f64| s.extended_by_distance(&k(), &dom(&s), side, how, d);
+                // reached: built
+                for d in [1e-4, 1.013_333_358_765e-3] {
                     let tag = format!("rational {rational} {side:?} {how:?} {d:e}");
-                    let e = s
-                        .extended_by_distance(&k(), &dom(&s), side, how, d)
+                    let e = ask(d)
                         .unwrap_or_else(|err| panic!("{tag}: {err:?}"))
                         .unwrap_or_else(|| panic!("{tag}: not extended"));
-                    meets(&e, d);
-                    let a = e.across;
-                    let exact = reference_length(&e, side);
-                    let b = a.enclosure;
-                    assert!(
-                        b.lower <= exact && exact <= b.upper,
-                        "{tag}: {b:?} does not hold {exact}"
-                    );
-                    // the measure's real error within its rounding part (its truncation
-                    // part is the leaves' gap, the rest of the enclosure's width)
-                    let error = (b.mid() - exact).abs();
-                    assert!(
-                        error <= a.rounding + a.truncation,
-                        "{tag}: error {error:e} past {a:?}"
-                    );
-                    if std::env::var("EXTEND_REPORT").is_ok() {
-                        eprintln!(
-                            "{tag}: rounding {:e} ({:e} of d), error {error:e}, extension {:e}",
-                            a.rounding,
-                            a.rounding / d,
-                            e.extension
-                        );
+                    check(&e, side, d, &tag);
+                }
+                // a tolerance whose step may not land within the stop: built, or refused
+                // naming the length reached, which builds
+                let d = 1e-5;
+                let tag = format!("rational {rational} {side:?} {how:?} {d:e}");
+                match ask(d) {
+                    Ok(Some(e)) => check(&e, side, d, &tag),
+                    Err(SolidError::ExtendRefused {
+                        refusal: ExtendRefusal::NotExact,
+                        distance: Some(named),
+                        ..
+                    }) => {
+                        refused_polynomial_umax_ruled |=
+                            !rational && side == BoxSide::UMax && how == Continuity::Ruled;
+                        assert!(named < d && d - named < 1e-7 * d, "{tag}: {named:e}");
+                        let e = ask(named)
+                            .unwrap_or_else(|err| panic!("{tag} named {named:e}: {err:?}"))
+                            .unwrap_or_else(|| panic!("{tag} named {named:e}: not extended"));
+                        check(&e, side, named, &tag);
                     }
+                    other => panic!("{tag}: {:?}", other.map(|e| e.map(|e| e.across))),
                 }
             }
         }
@@ -2501,6 +2565,10 @@ fn a_tolerance_sized_extension_of_a_part_size_side_is_certified() {
         assert_eq!(e.sides[1], SideExtension::Unchanged, "rational {rational}");
         assert_eq!(dom(&e.surface), dom(&s));
     }
+    assert!(
+        refused_polynomial_umax_ruled,
+        "1e-5 on the polynomial net's UMax, Ruled, is not reached by its lattice"
+    );
 }
 
 /// A side of the pyramid the difftest unit's `Solids/pyramid.smb` is: a bicubic patch over
@@ -2555,7 +2623,7 @@ fn a_pyramid_side_extends_by_its_tolerance_past_its_base_after_its_ends() {
             panic!("{side:?}: {done:?}");
         };
         assert!(a.rounding <= 1e-6 * d, "{side:?}: {a:?}");
-        let tol = (1e-9 * d).max(a.truncation + a.rounding + a.resolution);
+        let tol = (1e-9 * d).max(a.truncation + a.rounding);
         assert!(
             a.enclosure.lower >= d - tol && a.enclosure.upper <= d + tol,
             "{side:?}: {a:?}"
@@ -2646,6 +2714,268 @@ fn tangent_past_one_mirror_step_leaves_no_sliver_span() {
         "{:?}",
         g.knots
     );
+}
+
+/// (#3093) Tangent asked a little more than two ranges of a degree 1 side: the second step's
+/// reflection falls 4.4e-16 off the joint knot the first step left, which is within the knot
+/// fixup's merge scale (1.2e-8). Mirrored there it made a span of 4.4e-16 that the fixup
+/// merges, leaving the end knot repeated past `p + 1`. The reflection is put on the knot, so
+/// every span of the extension is at least the merge scale, the end knot has `p + 1` copies and
+/// it is the ask to within that scale.
+#[test]
+fn tangent_reflecting_within_the_merge_scale_of_a_knot_leaves_no_sliver_span() {
+    let s = parabola();
+    let SurfaceKind::BSpline(b) = s.kind() else {
+        panic!()
+    };
+    let net = b.gw_nurb().unwrap().clone();
+    let source = Local::of(&net, BoxSide::VMax).unwrap();
+    let least = source.least_step().unwrap();
+    // two ranges and an ulp: the second step is 1 + 4.4e-16 long, its reflection 4.4e-16 off
+    // the knot 1 the first step left
+    let e = 2.0 * source.range().unwrap() + 2.0 * f64::EPSILON;
+    let g = source.extended(Continuity::Tangent, e).unwrap().unwrap();
+    let mut gaps = g
+        .knots
+        .windows(2)
+        .map(|w| w[1] - w[0])
+        .filter(|&gap| gap > 0.0);
+    assert!(gaps.all(|gap| gap >= least), "{:?}", g.knots);
+    let end = g.end().unwrap();
+    let copies = g.knots.iter().filter(|&&x| x == end).count();
+    assert_eq!(copies, g.p + 1, "{:?}", g.knots);
+    // the reflection snapped onto the knot: the end is the ask to within the merge scale
+    let asked = source.end().unwrap() + e;
+    assert!(
+        (end - asked).abs() <= merge_scale(0.0, end),
+        "{:?}",
+        g.knots
+    );
+}
+
+/// A degree 1 side `v` over `[0, 10]` with a curved net across (the issue's extrusion: a quadratic
+/// in u extruded 10 along z).
+fn tall_extrusion() -> Surface {
+    let row = |x: f64, y: f64| vec![[x, y, 0.0, 1.0], [x, y, 10.0, 1.0]];
+    spline(
+        &[row(0.0, 0.0), row(0.5, 0.0), row(1.0, 1.0)],
+        2,
+        1,
+        &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        &[0.0, 0.0, 10.0, 10.0],
+        false,
+    )
+}
+
+/// The result's end knot has `p + 1` copies and no span is below the merge scale.
+fn assert_clamped_and_no_sliver(g: &Local) {
+    let end = g.end().unwrap();
+    let copies = g.knots.iter().filter(|&&x| x == end).count();
+    assert_eq!(copies, g.p + 1, "{:?}", g.knots);
+    let scale = merge_scale(g.start().unwrap(), end);
+    let mut gaps = g
+        .knots
+        .windows(2)
+        .map(|w| w[1] - w[0])
+        .filter(|&gap| gap > 0.0);
+    assert!(gaps.all(|gap| gap >= scale), "{:?}", g.knots);
+}
+
+/// (#3093) The issue's extrusion, extended 20 past each v side of its face `[0, 10]`: the low
+/// side's solved extension is 20 + 3.6e-15 (the knots `[-20.000000000000004 .. 30.0]`), whose
+/// second mirror step reflects 3.6e-15 off the joint knot. Tangent and Curvature both leave each
+/// end knot at `p + 1` copies and no span below the merge scale.
+#[test]
+fn the_issues_extrusion_extends_20_past_both_v_sides_with_clamped_ends() {
+    let s = tall_extrusion();
+    let SurfaceKind::BSpline(b) = s.kind() else {
+        panic!()
+    };
+    let net = b.gw_nurb().unwrap().clone();
+    for side in [BoxSide::VMin, BoxSide::VMax] {
+        let source = Local::of(&net, side).unwrap();
+        for e in [20.0, 20.0 + 3.6e-15, 20.0 - 3.6e-15] {
+            for how in [Continuity::Tangent, Continuity::Curvature] {
+                let g = source.extended(how, e).unwrap().unwrap();
+                assert_clamped_and_no_sliver(&g);
+                let reach = g.end().unwrap() - source.end().unwrap();
+                assert!(
+                    (reach - e).abs() <= merge_scale(0.0, g.end().unwrap()),
+                    "{side:?} {how:?} {e}: {:?}",
+                    g.knots
+                );
+            }
+        }
+    }
+}
+
+/// Curvature across the last Bezier span `h` of a multi-span quadratic: asks just below, at and
+/// just above `h` meet their reach and keep clamped ends; asks within the merge scale below `h`
+/// are the one extension at `h` (the reflection on the knot `c`, where `b - (b - c)` can miss
+/// `c` by an ulp), so the extension is continuous in `e`.
+#[test]
+fn curvature_across_the_last_span_is_continuous_in_the_ask() {
+    let row = |x: f64, y: f64| vec![[x, y, 0.0, 1.0], [x, y, 1.0, 1.0]];
+    let s = spline(
+        &[row(0.0, 0.0), row(0.3, 0.0), row(0.7, 0.5), row(1.0, 1.0)],
+        2,
+        1,
+        &[0.0, 0.0, 0.0, 0.3, 1.0, 1.0, 1.0],
+        &[0.0, 0.0, 1.0, 1.0],
+        false,
+    );
+    let SurfaceKind::BSpline(b) = s.kind() else {
+        panic!()
+    };
+    let net = b.gw_nurb().unwrap().clone();
+    let source = Local::of(&net, BoxSide::UMax).unwrap();
+    let h = source.end().unwrap() - source.before_end(0).unwrap();
+    let make = |e: f64| source.extended(Continuity::Curvature, e).unwrap().unwrap();
+    for e in [0.9 * h, 1.1 * h] {
+        let g = make(e);
+        assert_clamped_and_no_sliver(&g);
+        let reach = g.end().unwrap() - source.end().unwrap();
+        assert!((reach - e).abs() <= 1e-12, "{e}: {:?}", g.knots);
+    }
+    // within the merge scale of the knot: below it the step snaps onto the knot, the extension
+    // the one at `h`; above it the remainder under a least step is split off and the ask met
+    let at = make(h);
+    for e in [h * (1.0 - 1e-12), h - 1e-15] {
+        let g = make(e);
+        assert_eq!(g.knots, at.knots, "{e}");
+        assert_eq!(g.rows, at.rows, "{e}");
+    }
+    for e in [h * (1.0 + 1e-12), h + 1e-15] {
+        let g = make(e);
+        assert_clamped_and_no_sliver(&g);
+        let reach = g.end().unwrap() - source.end().unwrap();
+        assert!((reach - e).abs() <= 1e-12, "{e}: {:?}", g.knots);
+    }
+    assert_clamped_and_no_sliver(&at);
+}
+
+/// A quadratic with a knot at 0.3 along u, extruded 1 along z.
+fn multi_span_quadratic() -> Surface {
+    let row = |x: f64, y: f64| vec![[x, y, 0.0, 1.0], [x, y, 1.0, 1.0]];
+    spline(
+        &[row(0.0, 0.0), row(0.3, 0.0), row(0.7, 0.5), row(1.0, 1.0)],
+        2,
+        1,
+        &[0.0, 0.0, 0.0, 0.3, 1.0, 1.0, 1.0],
+        &[0.0, 0.0, 1.0, 1.0],
+        false,
+    )
+}
+
+/// The snap window is the fixup's merge scale (1.2e-8 in parameter): a Tangent step reflecting
+/// 1e-9 off the knot 0.3 is the step that reflects on it, bit for bit; one reflecting 2e-8 off
+/// it is untouched, the mirror of its own reflection point, which becomes a knot.
+#[test]
+fn a_reflection_inside_the_merge_scale_snaps_and_one_outside_is_untouched() {
+    let s = multi_span_quadratic();
+    let SurfaceKind::BSpline(b) = s.kind() else {
+        panic!()
+    };
+    let net = b.gw_nurb().unwrap().clone();
+    let source = Local::of(&net, BoxSide::UMax).unwrap();
+    let end = source.end().unwrap();
+    let on = source
+        .extended(Continuity::Tangent, end - 0.3)
+        .unwrap()
+        .unwrap();
+    // above the knot: the snapped step is the longer one, the extension the step on the knot
+    let e = end - (0.3 + 1e-9);
+    let g = source.extended(Continuity::Tangent, e).unwrap().unwrap();
+    assert_eq!(g.knots, on.knots);
+    assert_eq!(g.rows, on.rows);
+    // below it: the snapped step is the shorter one and leaves a remainder under a least
+    // step, split off so the extension reaches the ask
+    let e = end - (0.3 - 1e-9);
+    let g = source.extended(Continuity::Tangent, e).unwrap().unwrap();
+    assert_clamped_and_no_sliver(&g);
+    assert!((g.end().unwrap() - end - e).abs() <= merge_scale(0.0, g.end().unwrap()));
+    for delta in [2e-8, -2e-8] {
+        let e = end - (0.3 + delta);
+        let g = source.extended(Continuity::Tangent, e).unwrap().unwrap();
+        let direct = source.mirrored(end - e, false).unwrap();
+        assert_eq!(g.knots, direct.knots, "{delta}");
+        // the extension is made in each row's local frame, so its rows differ from the
+        // direct mirror by the frame's translations: one rounding each way, within a few
+        // gamma_8 of the net's size
+        assert_eq!(g.rows.len(), direct.rows.len(), "{delta}");
+        let tol = 4.0 * gamma(8) * g.size();
+        for (a, b) in g.rows.iter().zip(&direct.rows) {
+            assert_eq!(a.len(), b.len(), "{delta}");
+            for (x, y) in a.iter().zip(b) {
+                for (u, v) in x.iter().zip(y) {
+                    assert!((u - v).abs() <= tol, "{delta}: {u} vs {v}");
+                }
+            }
+        }
+        assert_ne!(g.knots, on.knots, "{delta}");
+    }
+}
+
+/// A snapped step that leaves a remainder shorter than the least step is split in two when it
+/// can be, and refused naming the length reached when it cannot: an extension is never short.
+#[test]
+fn a_snapped_step_leaves_no_short_remainder() {
+    let s = multi_span_quadratic();
+    let SurfaceKind::BSpline(b) = s.kind() else {
+        panic!()
+    };
+    let net = b.gw_nurb().unwrap().clone();
+    let source = Local::of(&net, BoxSide::UMax).unwrap();
+    let least = source.least_step().unwrap();
+    let end = source.end().unwrap();
+    // the first step (the whole piece, 1.0) reflects on the start; the ask is half a least
+    // step more: split in two, the end the ask
+    let e = source.range().unwrap() + 0.5 * least;
+    let g = source.extended(Continuity::Tangent, e).unwrap().unwrap();
+    assert!((g.end().unwrap() - end - e).abs() <= merge_scale(0.0, g.end().unwrap()));
+    // the second step of an ask 1.0 + 0.7 + 0.5 least: the whole piece [0, 2] is not yet
+    // reached by 0.7 (it reflects 0.3 beside the knot 1.3 mirrored): never short
+    let e = 0.7 + 0.5 * least;
+    match source.extended(Continuity::Tangent, e) {
+        Ok(Some(g)) => assert!(
+            g.end().unwrap() - end >= e - merge_scale(0.0, g.end().unwrap()),
+            "{:?}",
+            g.knots
+        ),
+        Err(SolidError::ExtendRefused {
+            refusal: ExtendRefusal::NotExact,
+            distance: Some(w),
+            ..
+        }) => assert!(source.extended(Continuity::Tangent, w).unwrap().is_some()),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The length solve at an ask whose reflection is within the snap window of a knot: the issue's
+/// extrusion (rulings 10 long) extended 20 + 1e-9 past its high side. It meets the length
+/// within the contract, or is refused naming a length that works: never Ok short.
+#[test]
+fn the_length_solve_at_a_snapped_ask_meets_the_length_or_names_one_that_works() {
+    let kk = k();
+    let s = tall_extrusion();
+    let d0 = dom(&s);
+    for d in [20.0 + 1e-9, 20.0 + 1e-8, 20.0 + 3e-8] {
+        match s.extended_by_distance(&kk, &d0, BoxSide::VMax, Continuity::Tangent, d) {
+            Ok(Some(e)) => meets(&e, d),
+            Err(SolidError::ExtendRefused {
+                refusal: ExtendRefusal::NotExact,
+                distance: Some(w),
+                ..
+            }) => {
+                let e = s
+                    .extended_by_distance(&kk, &d0, BoxSide::VMax, Continuity::Tangent, w)
+                    .unwrap()
+                    .unwrap();
+                meets(&e, w);
+            }
+            other => panic!("{d}: {other:?}"),
+        }
+    }
 }
 
 /// A ball patch's side is reported met only when its measured length is within the
@@ -2806,40 +3136,124 @@ fn sides_extended_in_turn_each_meet_the_distance_at_the_face() {
     }
 }
 
-/// A straight analytic iso has a distance-sized rounding budget, even when the
-/// requested widening is much shorter than the cylinder's radius (#2980).
+/// The parabola of [`parabola`] moved by `(o, o, o)`.
+fn moved_parabola(o: f64) -> Surface {
+    let row = |x: f64, y: f64| vec![[x + o, y + o, o, 1.0], [x + o, y + o, 1.0 + o, 1.0]];
+    spline(
+        &[row(0.0, 0.0), row(0.5, 0.0), row(1.0, 1.0)],
+        2,
+        1,
+        &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        &[0.0, 0.0, 1.0, 1.0],
+        false,
+    )
+}
+
+/// The mirror extension's rounding is measured in difference form about each row's own end
+/// point (#2977): at a part 1e5 from the origin its bound is the rounding of moving the points
+/// back (`2 gamma_2` of their size) and the origin's own bound, not the mirror's gain on the
+/// absolute coordinates (`gamma_12 gain` of 1e5, six times that and more).
+#[test]
+fn a_mirror_extension_far_from_the_origin_is_bounded_in_difference_form() {
+    let kk = k();
+    let o = 1e5;
+    let floor = 2.0 * gamma(2) * (o + 2.0) * (1.0 + gamma(16));
+    for how in [Continuity::Tangent, Continuity::Curvature] {
+        let d = 0.4;
+        let at = |o: f64| {
+            let s = moved_parabola(o);
+            s.extended_by_distance(&kk, &dom(&s), BoxSide::UMax, how, d)
+                .unwrap_or_else(|err| panic!("{how:?} at {o:e}: {err:?}"))
+                .unwrap_or_else(|| panic!("{how:?} at {o:e}: not extended"))
+        };
+        let (near, far) = (at(0.0), at(o));
+        meets(&near, d);
+        meets(&far, d);
+        assert!(
+            far.extension <= 2.0 * floor + 64.0 * near.extension,
+            "{how:?}: {:e} at 1e5, {:e} at the origin, floor {floor:e}",
+            far.extension,
+            near.extension
+        );
+    }
+}
+
+/// A straight strip of two points along x at 1e5, extended by Tangent: the end point's x is
+/// stored on the lattice of one ulp (`2^-36` there), so the length across takes only the
+/// values `k 2^-36`. A distance half a lattice step off every one of them is not met to the
+/// stop (1e-9 of it, 1e-12, is far below the step): the extension is refused as not exact,
+/// naming the longest length it does reach, and asking that length succeeds (#2977).
+#[test]
+fn a_distance_the_stored_net_cannot_resolve_is_refused_naming_the_reachable_length() {
+    let kk = k();
+    let o = 1e5;
+    let row = |z: f64| vec![[o, 0.0, z, 1.0], [o + 1.0, 0.0, z, 1.0]];
+    let s = spline(
+        &[row(0.0), row(1.0)],
+        1,
+        1,
+        &[0.0, 0.0, 1.0, 1.0],
+        &[0.0, 0.0, 1.0, 1.0],
+        false,
+    );
+    // the strip runs along v, the side extended is VMax
+    let step = 2f64.powi(-36);
+    let d = ((1e-3 / step).round() + 0.5) * step;
+    let ask = |d: f64| s.extended_by_distance(&kk, &dom(&s), BoxSide::VMax, Continuity::Tangent, d);
+    let Err(SolidError::ExtendRefused {
+        refusal: ExtendRefusal::NotExact,
+        distance: Some(named),
+        ..
+    }) = ask(d)
+    else {
+        panic!("{:?}", ask(d).map(|e| e.map(|e| e.across)));
+    };
+    assert!(named > 0.0 && named < d, "{named:e} for {d:e}");
+    assert!(d - named < 2.0 * step, "{named:e} for {d:e}");
+    let e = ask(named)
+        .unwrap_or_else(|err| panic!("the named {named:e}: {err:?}"))
+        .expect("extended");
+    meets(&e, named);
+}
+
+/// A straight analytic iso has a distance-sized rounding budget, even when the requested
+/// widening is much shorter than the cylinder's radius (#2980). The cylinder's axial
+/// parameter runs to 3, where one ulp (4.4e-16) is already `STOP` of a distance of 4.4e-7:
+/// below that no stored parameter meets the distance, and the answer is none or a refusal,
+/// never an extension that claims it.
 #[test]
 fn a_cylinder_widens_by_small_distances_along_its_axis() {
     let kk = k();
     let s = unit_cylinder(&kk);
-    for d in [5e-9, 1e-8, 1e-7, 1e-6, 5e-6] {
+    for d in [1e-6, 2e-6, 5e-6] {
         let e = s
             .extended_by_distance(&kk, &dom(&s), BoxSide::VMax, Continuity::Natural, d)
-            .unwrap_or_else(|err| panic!("by {d:e}: {err:?}"));
-        // These two asks are below this four-unit cylinder's least knot step;
-        // preserve the existing, proved `Unchanged` outcome rather than widening
-        // it by a distance it never asked for.
-        if d <= 1e-8 {
-            assert!(e.is_none(), "by {d:e}: expected below-resolution result");
-            continue;
-        }
-        let e = e.unwrap_or_else(|| panic!("by {d:e}: not extended"));
+            .unwrap_or_else(|err| panic!("by {d:e}: {err:?}"))
+            .unwrap_or_else(|| panic!("by {d:e}: not extended"));
         meets(&e, d);
         assert!(e.across.rounding <= 1e-6 * d, "{:?}", e.across);
     }
+    for d in [5e-9, 1e-8, 1e-7] {
+        match s.extended_by_distance(&kk, &dom(&s), BoxSide::VMax, Continuity::Natural, d) {
+            Ok(None) | Err(SolidError::ExtendRefused { .. }) => {}
+            other => panic!("by {d:e}: {:?}", other.map(|e| e.map(|e| e.across))),
+        }
+    }
 }
 
-/// Diagnostic matrix for #2980; retained to reproduce the before/after evidence.
+/// The chord of an arc, measured in difference form, encloses every radius and angle in their error boxes (#2980).
 #[test]
 fn circle_chord_interval_encloses_both_sides_of_a_diameter() {
     for a in [1e-8, 1e-4, 0.5, PI - 1e-6, PI, PI + 1e-6, 2.0 * PI - 1e-6] {
         let (r, er, ea) = (1.25, 1e-14, 1e-14);
-        let (length, rounding) = super::measure::circle_from_angle((r, er), (a, ea)).unwrap();
+        let (length, rounding) = measure::circle_from_angle((r, er), (a, ea)).unwrap();
         for radius in [r - er, r, r + er] {
             for angle in [a - ea, a, a + ea] {
                 let want = radius * angle;
-                assert!((want - length).abs() <= rounding,
-                    "angle={a:e} want={want:e} length={length:e} rounding={rounding:e}");
+                assert!(
+                    (want - length).abs() <= rounding,
+                    "angle={a:e} want={want:e} length={length:e} rounding={rounding:e}"
+                );
             }
         }
     }
@@ -2847,10 +3261,10 @@ fn circle_chord_interval_encloses_both_sides_of_a_diameter() {
 
 #[test]
 fn an_uncertain_circle_turn_does_not_certify_the_short_arc() {
-    let sense = super::measure::turn_sign(Vec3::X, Vec3::X, Vec3::Z, 1e-14, 1e-14);
+    let sense = measure::turn_sign(Vec3::X, Vec3::X, Vec3::Z, 1e-14, 1e-14);
     assert!(!sense.1);
-    let a = super::measure::across(super::measure::oriented_arc((1e-6, 1e-14), (1.0, 1e-14), sense).unwrap());
-    assert!(!super::exact(&a, 0.0, 1e-6));
+    let a = measure::across(measure::oriented_arc((1e-6, 1e-14), (1.0, 1e-14), sense).unwrap());
+    assert!(!exact(&a, 0.0, 1e-6));
     assert!(a.enclosure.upper >= 2.0 * PI - 1e-6);
 }
 
@@ -2862,66 +3276,47 @@ fn a_far_ball_patch_extends_by_the_same_small_distance_as_at_the_origin() {
         let c = Vec3::new(o, o, 0.0);
         let r = 2.0;
         let (net, _, _) = crate::blend::blend_corner::ball::ball_triangle_patch(
-            c, r, &[Vec3::X, Vec3::Y, Vec3::Z], 0, false,
-        ).unwrap();
-        let s = Surface::from(crate::surface::ball_patch::BallPatch::create(&net, c, r).unwrap());
-        let d = 1e-3;
-        let e = s.extended_sides(&kk, &[BoxSide::UMin], Continuity::Natural, d)
-            .unwrap_or_else(|err| panic!("at {o:e} by {d:e}: {err:?}"));
-        let SideExtension::Extended(a) = e.sides[0] else {
-            panic!("at {o:e}: {:?}", e.sides);
-        };
-        assert!(super::exact(&a, e.extension, d), "at {o:e}: {a:?}");
-        assert!((a.enclosure.mid() - d).abs() <= 1e-12 * d, "at {o:e}: {a:?}");
-        let SurfaceKind::BallPatch(out) = e.surface.kind() else { panic!("not a ball patch"); };
-        assert!(lies_on(out.net(), &Implicit::Sphere { centre: c, radius: r }).unwrap());
-        let old = net.gw_nurb().unwrap();
-        let new = out.net().gw_nurb().unwrap();
-        assert!(old.cpts().iter().flatten().all(|p| new.cpts().iter().flatten()
-            .any(|q| p.x == q.x && p.y == q.y && p.z == q.z && p.w == q.w)));
-    }
-}
-
-#[test]
-fn difference_form_certificate_table() {
-    let kk = k();
-    for o in [0.0, 1e3, 1e5] {
-        let pl = Axis2Placement::new(Vec3::new(o, o, 0.0), Vec3::Z, Vec3::X);
-        let mut cone = Cone::create_canonical(&kk, &pl, 2.0, 1.0, 1.0, false, false).unwrap();
-        cone.adjust_step_uv_domain(&kk, &Extent2d::from_bounds(0.0, 0.0, 90.0, 1.0))
-            .unwrap();
-        let cone = Surface::from(cone);
-        let c = Vec3::new(o, o, 0.0);
-        let (net, _, _) = crate::blend::blend_corner::ball::ball_triangle_patch(
             c,
-            2.0,
+            r,
             &[Vec3::X, Vec3::Y, Vec3::Z],
             0,
             false,
         )
         .unwrap();
-        let ball =
-            Surface::from(crate::surface::ball_patch::BallPatch::create(&net, c, 2.0).unwrap());
-        for d in [1e-5, 1e-4, 1e-3] {
-            let e =
-                cone.extended_by_distance(&kk, &dom(&cone), BoxSide::UMin, Continuity::Natural, d);
-            println!(
-                "TABLE cone o={o:e} d={d:e} {:?}",
-                e.as_ref().map(|e| e.as_ref().map(|e| e.across.rounding))
-            );
-            let e = ball.extended_sides(&kk, &[BoxSide::UMin], Continuity::Natural, d);
-            println!(
-                "TABLE ball o={o:e} d={d:e} {:?}",
-                e.as_ref().map(|e| (e.sides, e.extension))
-            );
-        }
-    }
-    let s = unit_cylinder(&kk);
-    for d in [5e-9, 1e-8, 1e-7, 1e-6, 5e-6] {
-        let e = s.extended_by_distance(&kk, &dom(&s), BoxSide::VMax, Continuity::Natural, d);
-        println!(
-            "TABLE cylinder d={d:e} {:?}",
-            e.as_ref().map(|e| e.as_ref().map(|e| e.across.rounding))
+        let s = Surface::from(crate::surface::ball_patch::BallPatch::create(&net, c, r).unwrap());
+        let d = 1e-3;
+        let e = s
+            .extended_sides(&kk, &[BoxSide::UMin], Continuity::Natural, d)
+            .unwrap_or_else(|err| panic!("at {o:e} by {d:e}: {err:?}"));
+        let SideExtension::Extended(a) = e.sides[0] else {
+            panic!("at {o:e}: {:?}", e.sides);
+        };
+        assert!(exact(&a, e.extension, d), "at {o:e}: {a:?}");
+        assert!(
+            (a.enclosure.mid() - d).abs() <= 1e-12 * d,
+            "at {o:e}: {a:?}"
         );
+        let SurfaceKind::BallPatch(out) = e.surface.kind() else {
+            panic!("not a ball patch");
+        };
+        assert!(lies_on(
+            out.net(),
+            &Implicit::Sphere {
+                centre: c,
+                radius: r
+            }
+        )
+        .unwrap());
+        let old = net.gw_nurb().unwrap();
+        let new = out.net().gw_nurb().unwrap();
+        assert!(old
+            .cpts()
+            .iter()
+            .flatten()
+            .all(|p| new
+                .cpts()
+                .iter()
+                .flatten()
+                .any(|q| p.x == q.x && p.y == q.y && p.z == q.z && p.w == q.w)));
     }
 }

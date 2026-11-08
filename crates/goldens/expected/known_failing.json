@@ -10,8 +10,17 @@
   "blend.fillet_executive_p3": {
     "issue-2349-teardrop-full-r0.5": "tangency-labs/solidcore#2349: the closed round's first span is off the true round by 7.9e-4 against a 4e-5 edge tolerance; the curved-spine mitre and both exact pcurves remain unimplemented",
     "issue-2349-teardrop-full-r3": "tangency-labs/solidcore#2349: the closed-angle mitre is not certified; tangency-labs/solidcore#2404 tracks the refusal size whose fresh build fails validity",
-    "real-box-high-corner-setback-eight": "tangency-labs/solidcore#2933: the corner patch overruns the setback of 8 along the top round and folds (pinched creases, two sliver faces); edge tolerance 5.17e-5",
     "stubs4-delete-edge-sphere_diff_3cylinders-e2-r0.5": "tangency-labs/solidcore#3053: with every fix off the round builds a body that is not closed (29 vertices, 44 edges, 9 faces, mass status 1007), where it was refused with status 1001"
+  },
+  "intersect.topology_solver_p2": {
+    "subdivided_1_14_1_12_11_2_1": "tangency-labs/solidcore#3147: the All projected minimum returns 7 of the 21 answers within tolerance; the 14 missing are line endpoints (t = 0 or 1), leaving 5 of 12 vertices without an answer",
+    "subdivided_1_14_1_12_11_2_3": "tangency-labs/solidcore#3147: the All projected minimum returns 7 of the 21 answers within tolerance; the 14 missing are line endpoints (t = 0 or 1), leaving 5 of 12 vertices without an answer",
+    "subdivided_1_14_1_12_11_50_1": "tangency-labs/solidcore#3147: the All projected minimum returns 7 of the 26 answers within tolerance; the 19 missing are line endpoints (t = 0 or 1), leaving 5 of 12 vertices without an answer",
+    "subdivided_1_14_1_12_11_50_3": "tangency-labs/solidcore#3147: the All projected minimum returns 7 of the 26 answers within tolerance; the 19 missing are line endpoints (t = 0 or 1), leaving 5 of 12 vertices without an answer",
+    "subdivided_1_14_1_40_30_2_1": "tangency-labs/solidcore#3147: the All projected minimum returns 24 of the 72 answers within tolerance; the 48 missing are line endpoints (t = 0 or 1), leaving 16 of 40 vertices without an answer",
+    "subdivided_1_14_1_40_30_2_3": "tangency-labs/solidcore#3147: the All projected minimum returns 24 of the 72 answers within tolerance; the 48 missing are line endpoints (t = 0 or 1), leaving 16 of 40 vertices without an answer",
+    "subdivided_1_14_1_40_30_50_1": "tangency-labs/solidcore#3147: the All projected minimum returns 24 of the 88 answers within tolerance; the 64 missing are line endpoints (t = 0 or 1), leaving 16 of 40 vertices without an answer",
+    "subdivided_1_14_1_40_30_50_3": "tangency-labs/solidcore#3147: the All projected minimum returns 24 of the 88 answers within tolerance; the 64 missing are line endpoints (t = 0 or 1), leaving 16 of 40 vertices without an answer"
   },
   "offset.offset_executive_p1": {
     "extend_bilinear_huge": "tangency-labs/solidcore#3000: a 5e8 extension of a bilinear sheet extends 3 of 4 sides; the opposite side's diameter is rounded on the whole net and reads as collapsed",
