@@ -625,7 +625,7 @@ fn eased_asked_setback_is_the_setback_fill() {
 }
 
 /// A setback asked for that does not fit on the corner's edges (20, the upright edge's
-/// length) is refused as no room, naming the setback that fits; one that stops short of
+/// length) is refused by the overlap check (#3145) before the corner is built, naming the setback that fits; one that stops short of
 /// where the rails cross (0), or whose rails cross behind their ends (5), is refused with
 /// its reason (the fork's `SM_FILERR_CORNER_UNSUPPORTED`, this port's 9).
 #[test]
@@ -640,7 +640,7 @@ fn asked_setback_that_does_not_fit_is_refused() {
     );
     assert!(r.body.is_none());
     assert_eq!(r.code, 8);
-    assert_eq!(r.comment, "Fillet Error: a setback of 20 (with its ease, 20) does not fit on the corner's edges: a setback below 20 fits");
+    assert_eq!(r.comment, "Fillet Error: a setback of 20 reaches past an edge at its corner, or the far end's setback on it: a setback below 20 fits");
     assert!(r.fit < 0.0);
     let r = blend_box(
         &mut k,
