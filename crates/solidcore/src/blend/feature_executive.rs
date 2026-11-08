@@ -1564,7 +1564,9 @@ fn validate_patch(
         // not upstream (#3218): nothing of the faces along the loop, extended, is left on it
         return Err(limit_error(
             DefeatureFailure::NotEnclosed { extended_by },
-            Some(assert_failure("No Surfaces available to connect Loop Edges")),
+            Some(assert_failure(
+                "No Surfaces available to connect Loop Edges",
+            )),
         ));
     }
 
@@ -1841,7 +1843,10 @@ fn ext_surface_rebuild(
                         e
                     } else {
                         // not upstream (#3218): the extension's refusal is the loop's limit
-                        limit_error(DefeatureFailure::ExtensionRefused { distance: ext }, Some(e))
+                        limit_error(
+                            DefeatureFailure::ExtensionRefused { distance: ext },
+                            Some(e),
+                        )
                     }
                 })?;
 

@@ -121,7 +121,10 @@ fn wr_656_defeature_refuses_and_keeps_the_box() {
                     ),
                     "face {face}: {r:?}"
                 );
-                assert!(matches!(f.entity, Some(EntityRef::Edge(_))), "face {face}: {r:?}");
+                assert!(
+                    matches!(f.entity, Some(EntityRef::Edge(_))),
+                    "face {face}: {r:?}"
+                );
                 assert_eq!(e.sm_status(), Some(SM_ERR), "face {face}");
             }
             other => panic!("face {face}: refused naming its limit, got {other:?}"),

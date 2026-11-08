@@ -67,22 +67,36 @@ fn read(k: &mut Kernel, file: &str) -> Option<Brep> {
 /// Face `face` of `file` defeatured alone with base rebuild `base_rb` (and the base extension
 /// distance `ext`, when given): the refusal's limit, checked to be at an edge with the
 /// status `SM_ERR`, and the base unchanged.
-fn limit(file: &str, face: usize, base_rb: RebuildBrepType, ext: Option<f64>) -> Option<DefeatureFailure> {
+fn limit(
+    file: &str,
+    face: usize,
+    base_rb: RebuildBrepType,
+    ext: Option<f64>,
+) -> Option<DefeatureFailure> {
     let mut k = Kernel::default();
     let mut b = read(&mut k, file)?;
     let faces = bp1::faces(&b, None).unwrap();
     let before = faces.len();
     let r = {
         let mut ex = FeatureExecutive::new(&mut k, &mut b).unwrap();
-        ex.add_feature(&mut k, &[faces[face]], base_rb, RebuildBrepType::ExtendSurface)
-            .unwrap()
-            .unwrap();
+        ex.add_feature(
+            &mut k,
+            &[faces[face]],
+            base_rb,
+            RebuildBrepType::ExtendSurface,
+        )
+        .unwrap()
+        .unwrap();
         if let Some(d) = ext {
             ex.set_base_ext_dist(d);
         }
         ex.do_defeature(&mut k)
     };
-    assert_eq!(bp1::faces(&b, None).unwrap().len(), before, "{file} {face}: base changed");
+    assert_eq!(
+        bp1::faces(&b, None).unwrap().len(),
+        before,
+        "{file} {face}: base changed"
+    );
     match &r {
         Err(e @ SolidError::Failed(f)) => {
             assert!(matches!(f.entity, Some(EntityRef::Edge(_))), "{r:?}");
@@ -98,7 +112,12 @@ fn limit(file: &str, face: usize, base_rb: RebuildBrepType, ext: Option<f64>) ->
 
 #[test]
 fn a_planar_cap_on_a_cylinder_fillet_s_loop_is_refused_as_not_planar() {
-    let Some(l) = limit("box_with_large_fillet.smb", 6, RebuildBrepType::PlanarCap, None) else {
+    let Some(l) = limit(
+        "box_with_large_fillet.smb",
+        6,
+        RebuildBrepType::PlanarCap,
+        None,
+    ) else {
         return;
     };
     assert_eq!(l, DefeatureFailure::LoopNotPlanar);
@@ -119,16 +138,29 @@ fn an_extension_by_nothing_is_refused_as_the_extension_s() {
 
 #[test]
 fn a_fillet_ending_on_a_tangent_fillet_is_refused_as_tangent_neighbours() {
-    let Some(l) = limit("Fillet/fillet1019.smb", 3, RebuildBrepType::ExtendSurface, None) else {
+    let Some(l) = limit(
+        "Fillet/fillet1019.smb",
+        3,
+        RebuildBrepType::ExtendSurface,
+        None,
+    ) else {
         return;
     };
     let within = Kernel::default().tolerances.ang_tol_deg;
-    assert_eq!(l, DefeatureFailure::TangentNeighbours { within_deg: within });
+    assert_eq!(
+        l,
+        DefeatureFailure::TangentNeighbours { within_deg: within }
+    );
 }
 
 #[test]
 fn a_box_face_is_refused_as_not_enclosed() {
-    let Some(l) = limit("box_with_large_fillet.smb", 0, RebuildBrepType::ExtendSurface, None) else {
+    let Some(l) = limit(
+        "box_with_large_fillet.smb",
+        0,
+        RebuildBrepType::ExtendSurface,
+        None,
+    ) else {
         return;
     };
     assert!(matches!(l, DefeatureFailure::NotEnclosed { .. }), "{l:?}");
