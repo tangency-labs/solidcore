@@ -1282,6 +1282,108 @@ fn create_analytic_extension(k: &Kernel, surface: &Surface, dist: f64) -> Result
     Ok(Some(copy))
 }
 
+/// (`offset_analytic_mate_branch_from_vertex`) A curve's parameter nearest `p` and its distance:
+/// the nearest of `SAMPLES` stations, then a local solve from it.
+fn nearest_on(k: &Kernel, c: &Curve, p: Point3, tol: f64) -> Option<(f64, f64)> {
+    const SAMPLES: u32 = 100;
+    let iv = c.natural_interval();
+    let mut best: Option<(f64, f64)> = None;
+    for i in 0..=SAMPLES {
+        let t = iv.evaluate(f64::from(i) / f64::from(SAMPLES));
+        if let Ok(q) = c.evaluate_point(k, t) {
+            let d = distance(q, p);
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((t, d));
+            }
+        }
+    }
+    let (t0, d0) = best?;
+    match c.drop_point(k, &iv, p, None, tol, Some(t0), SolverOperation::Minimize) {
+        Ok(dp) if dp.success && dp.distance <= d0 => Some((dp.parameter, dp.distance)),
+        _ => Some((t0, d0)),
+    }
+}
+
+/// (`offset_analytic_mate_branch_from_vertex`) The part of an exact intersection curve that starts at a vertex of `edge`
+/// (within `tol`) and lies on both extended surfaces within `tol`: the longest such prefix,
+/// found by bisection on its length. `None` when no candidate starts at the edge's vertices.
+fn exact_branch_from_vertex<O: ClassObject + SolutionObject>(
+    k: &Kernel,
+    brep: &impl OffsetBrep<O>,
+    edge: O,
+    marched: &Curve,
+    exact: &[Curve],
+    tol: f64,
+    ssi_tol: f64,
+    surfaces: [(&Surface, &Extent2d); 2],
+) -> Result<Option<Curve>> {
+    let mut vertices: Vec<Point3> = Vec::new();
+    if let Some(v0) = brep.edge_vertex(edge)? {
+        vertices.push(brep.vertex_point(v0)?);
+        if let Some(v1) = brep.edge_other_vertex(edge, v0)? {
+            vertices.push(brep.vertex_point(v1)?);
+        }
+    }
+    // only where the marched piece MISSES a vertex of the edge by more than `tol` (it would be
+    // reached by extrapolation): a piece that passes through both vertices is left to the
+    // existing path
+    let missed: Vec<Point3> = vertices
+        .iter()
+        .copied()
+        .filter(|v| nearest_on(k, marched, *v, tol).is_none_or(|(_, d)| d > tol))
+        .collect();
+    if missed.is_empty() {
+        return Ok(None);
+    }
+    let vertices = missed;
+    for candidate in exact {
+        let civ = candidate.natural_interval();
+        let (Ok(a), Ok(b)) = (candidate.evaluate_point(k, civ.min()), candidate.evaluate_point(k, civ.max())) else {
+            continue;
+        };
+        let from_start = vertices.iter().any(|v| distance(*v, a) <= tol);
+        let from_end = vertices.iter().any(|v| distance(*v, b) <= tol);
+        if !from_start && !from_end {
+            continue;
+        }
+        // the prefix from the vertex end up to `t`, if it lies on both surfaces within `tol`
+        let fits = |t: f64| -> Result<Option<Curve>> {
+            let mut iv = if from_start { Extent1d::from_min_max(civ.min(), t) } else { Extent1d::from_min_max(t, civ.max()) };
+            if iv.length() <= 0.0 {
+                return Ok(None);
+            }
+            let mut c = candidate.copy(k)?;
+            c.trim(k, &mut iv, TrimMode::Notify)?;
+            for (surface, domain) in surfaces {
+                let dropped = surface.drop_curve::<NoObject>(k, domain, &c, &c.natural_interval(), ssi_tol, true, None, true)?;
+                if dropped.uv_curves.len() != 1 || dropped.max_drop_to_surf > tol {
+                    return Ok(None);
+                }
+            }
+            Ok(Some(c))
+        };
+        let (mut good, mut bad) = if from_start { (civ.min(), civ.max()) } else { (civ.max(), civ.min()) };
+        if let Some(c) = fits(bad)? {
+            return Ok(Some(c));
+        }
+        let mut best = None;
+        for _ in 0..40 {
+            let m = 0.5 * (good + bad);
+            match fits(m)? {
+                Some(c) => {
+                    good = m;
+                    best = Some(c);
+                }
+                None => bad = m,
+            }
+        }
+        if best.is_some() {
+            return Ok(best);
+        }
+    }
+    Ok(None)
+}
+
 /// The fork's `sm_ExactPiece` (tangency-labs/smlib@fddc366, behind
 /// [`crate::kernel::UpstreamFixes::offset_analytic_mate_edges`]): the exact line or
 /// conic of `exact` that `marched` (a marched intersection piece) approximates, as a
@@ -3873,8 +3975,26 @@ impl OffsetGeometryCreation {
                         if marched.is_degenerate(k, EFF_ZERO, None)? {
                             continue;
                         }
-                        let Some(piece) = exact_piece(k, marched, &exact.curves_3d, tol)? else {
-                            continue;
+                        let piece = match exact_piece(k, marched, &exact.curves_3d, tol)? {
+                            Some(pc) => pc,
+                            None => {
+                                // (opt-in `offset_analytic_mate_branch_from_vertex`) the marcher can miss the branch of the
+                                // intersection that runs along the true faces when it starts where one surface is
+                                // tangent to a line of the other (a plane touching a cone's ruling): it then finds
+                                // only a branch on the tangent extensions, and the edge would be reached by
+                                // extrapolating that branch past its end. The exact intersection of the analytic
+                                // surfaces does start at the edge's own vertex: its longest part from that vertex
+                                // that lies on both extended surfaces within `tol` (where the extensions are the
+                                // analytic surfaces themselves) takes the piece's place.
+                                let Some(pc) = (if k.fixes.offset_analytic_mate_branch_from_vertex {
+                                    exact_branch_from_vertex(k, brep, edge, marched, &exact.curves_3d, tol, ssi_tol, [(&s1, &domain1), (other, &domain2)])?
+                                } else {
+                                    None
+                                }) else {
+                                    continue;
+                                };
+                                pc
+                            }
                         };
                         let mut uv: [Option<Curve>; 2] = [None, None];
                         for (i_surf, slot) in uv.iter_mut().enumerate() {
