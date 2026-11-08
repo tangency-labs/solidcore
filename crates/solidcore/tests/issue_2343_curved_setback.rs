@@ -45,6 +45,7 @@ use solidcore::query::api_queries::{brep_bounding_box, get_edges, get_faces};
 use solidcore::surface::procedural_blend::convert::{corner_rebuild, corner_to_record};
 use solidcore::surface::procedural_blend::corner::CornerKind;
 use solidcore::surface::procedural_blend::record::{CornerRecord, QuadricKindRecord};
+use solidcore::surface::procedural_blend::BlendRef;
 use solidcore::surface::surface::assert_valid::grid_has_non_monotonic_points;
 use solidcore::surface::surface::p2::SurfaceKind;
 use solidcore::surface::surface::p4::NoObject;
@@ -1211,7 +1212,7 @@ fn d_prism_eight_case(bore: Option<f64>, faces: usize) -> (Kernel, Brep, Vec<Edg
             "d prism, flat 8"
         },
         v: Point3::new(a, h, hh),
-        reach: 9.5,
+        reach: 11.0,
         convex: true,
         inside: Point3::new(0.0, 0.0, 10.0),
         faces: vec![
@@ -1268,6 +1269,49 @@ fn d_prism_asked_long_setback_builds_on_its_rails() {
         assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
         assert!(r.ok, "{}, asked {asked}: {}", case.name, r.reason);
         graded(&mut k, &mut b, &case, 3);
+        kept_definitions(&k, &b, &case, 3);
+    }
+}
+
+/// The rounds through `case.on_rounds` keep their exact rounds' definitions, and the fill's
+/// 2n patches the Setback's, each re-certified from it: the corner's side at each end section
+/// decides where the rounds are trimmed and which jets the fill takes.
+fn kept_definitions(k: &Kernel, b: &Brep, case: &Case, n: usize) {
+    let name = case.name;
+    let surfaces: Vec<Surface> = get_faces(b)
+        .unwrap()
+        .into_iter()
+        .filter_map(|f| b.face(f).unwrap().surface.clone())
+        .collect();
+    for &p in &case.on_rounds {
+        let s = surfaces
+            .iter()
+            .find(|s| nearest(k, s, p).1 <= 1e-9)
+            .unwrap_or_else(|| panic!("{name}: no round through {p:?}"));
+        assert!(
+            matches!(s.procedural_blend(), Some(BlendRef::Exact { .. })),
+            "{name}: the round through {p:?} keeps no exact round's definition"
+        );
+    }
+    let patches: Vec<&Surface> = surfaces
+        .iter()
+        .filter(|s| {
+            s.procedural_blend()
+                .and_then(|d| d.corner())
+                .is_some_and(|c| c.kind() == CornerKind::Setback)
+        })
+        .collect();
+    assert_eq!(
+        patches.len(),
+        2 * n,
+        "{name}: patches keeping a Setback definition"
+    );
+    for s in patches {
+        assert_eq!(
+            s.procedural_blend().unwrap().recertify(k).unwrap(),
+            0.0,
+            "{name}"
+        );
     }
 }
 
@@ -1276,27 +1320,46 @@ fn d_prism_asked_long_setback_builds_on_its_rails() {
 /// where its rail on the top meets the arc's round's rail there, (7, -sqrt 15, 20): 6 + sqrt 15
 /// (9.873) along the chord from V, short of the chord's 12. With the side above, the plain
 /// prism builds asked 9.85, and 9.9 to 11.9 failed later, trimming the rails, naming nothing.
-/// Asked 10.5 on the bored prism and on the plain one: `SetbackTooLong` at V with that
-/// largest, from the far corner's vertex.
+/// Asked 10.5 on the bored prism and on the plain one: `SetbackTooLong` at V naming that
+/// reach less the fit margin (the bound is open: a setback at it would leave the chord's round
+/// no length past its end section), a thousand of the chord's tolerances. Asked that size,
+/// the plain prism builds, graded as the corners above. The bored one is refused there by the
+/// bore ("a round kept round a feature does not close on the body"; the bore's own bound is
+/// #2343's (d)), not by the rails.
 #[test]
 fn d_prism_asked_past_the_rails_names_the_setback_that_fits() {
-    let want = 6.0 + 15.0f64.sqrt();
     for (bore, faces) in [(Some(6.9), 14), (None, 13)] {
         let (mut k, mut b, edges, case) = d_prism_eight_case(bore, faces);
         let v = vertex_at(&b, case.v);
+        let want = 6.0 + 15.0f64.sqrt() - 1000.0 * edge::tolerance(&b, edges[0]).unwrap();
         let r = round_asked(&mut k, &mut b, &edges, &[1.0, 1.5, 2.0], case.v, Some(10.5));
         assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
         assert!(!r.ok, "{}: built", case.name);
-        match r.refusal {
+        let named = match r.refusal {
             Some(BlendRefusal::SetbackTooLong { vertex, largest }) => {
                 assert_eq!(vertex, v, "{}", case.name);
                 assert!(
-                    (largest - want).abs() <= 1e-6,
+                    (largest - want).abs() <= 1e-9,
                     "{}: {largest} against {want}",
                     case.name
                 );
+                largest
             }
             other => panic!("{}: {other:?}, {}", case.name, r.reason),
+        };
+        if bore.is_none() {
+            let (mut k, mut b, edges, case) = d_prism_eight_case(bore, faces);
+            let r = round_asked(
+                &mut k,
+                &mut b,
+                &edges,
+                &[1.0, 1.5, 2.0],
+                case.v,
+                Some(named),
+            );
+            assert!(r.ok, "{}, asked {named}: {}", case.name, r.reason);
+            graded(&mut k, &mut b, &case, 3);
+            kept_definitions(&k, &b, &case, 3);
         }
     }
 }
