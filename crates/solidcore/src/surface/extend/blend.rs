@@ -144,20 +144,9 @@ pub(super) fn blend_extended(
     let m = section_degree + net_degree;
     let x = (2.0 * te - t0 - t1).abs() / (t1 - t0);
     let cheb = chebyshev(m, x);
-    let (w_hi, w_lo) = match order {
-        0 => (1.0, 1.0),
-        1 => {
-            let off = |t: f64| (t * (t - 1.0)).max(0.0);
-            let hi = 1.0 + 2.0 * off(t0).max(off(t1));
-            let (lo_t, hi_t) = (ts.min(te), ts.max(te));
-            let lo = if lo_t < 1.0 && hi_t > 0.0 { 0.5 } else { 1.0 };
-            (hi, lo)
-        }
-        _ => {
-            let w = thumbweight(k, pb)?;
-            gn_weight_range(n, [t0, t1], [ts.min(te), ts.max(te)], w)?
-        }
-    };
+    let (w_hi, w_lo) = section_weight_range(order, [t0, t1], [ts.min(te), ts.max(te)], || {
+        thumbweight(k, pb)
+    })?;
     let (v_hi, _) = weights(source_net);
     let (_, v_lo) = weights(out_net);
     if !(v_lo > 0.0 && v_hi.is_finite()) {
@@ -186,6 +175,38 @@ pub(super) fn blend_extended(
         surface: Surface::from(out),
         ..grown
     }))
+}
+
+/// The section's weight `W(t)` of order `order`: its largest value over `certified`, the t
+/// range the distance is proved on, and its least over `ext`, the extension's, rounded
+/// outward. The chord's is 1; the circle's `1 - 2 t (1 - t) (1 - c)` is at most
+/// `1 + 2 max(0, t (t - 1))` (1 on `[0, 1]`) and at least 1 off `(0, 1)`, above 1/2 on it;
+/// a G^n section's is [`gn_weight_range`] over `thumbweight()`, the thumbweight's proved
+/// `[lo, hi]` (asked for only by a G^n section).
+///
+/// # Errors
+///
+/// Those of `thumbweight` and [`gn_weight_range`].
+pub(crate) fn section_weight_range(
+    order: u32,
+    certified: [f64; 2],
+    ext: [f64; 2],
+    thumbweight: impl FnOnce() -> Result<[f64; 2]>,
+) -> Result<(f64, f64)> {
+    match order {
+        0 => Ok((1.0, 1.0)),
+        1 => {
+            let off = |t: f64| (t * (t - 1.0)).max(0.0);
+            let hi = 1.0 + 2.0 * off(certified[0]).max(off(certified[1]));
+            let lo = if ext[0] < 1.0 && ext[1] > 0.0 {
+                0.5
+            } else {
+                1.0
+            };
+            Ok((hi, lo))
+        }
+        n => gn_weight_range(n as usize, certified, ext, thumbweight()?),
+    }
 }
 
 /// The thumbweight of `pb`'s G^n section over its face, `[lo, hi]`: a constant one, or the

@@ -125,7 +125,7 @@ fn extrapolate_curve(pts: &[Hpt], lo: f64, hi: f64) -> Result<(Vec<Hpt>, f64)> {
         .len()
         .checked_sub(1)
         .ok_or_else(|| SolidError::sm_err(OP))?;
-    let mut out = Vec::with_capacity(pts.len());
+    let mut out = Vec::new();
     for i in 0..=d {
         let mut level: Vec<Hpt> = pts.to_vec();
         for step in 0..d {
@@ -758,7 +758,7 @@ fn recertify_in_frame(
             None => 1.0,
             Some(ext) => {
                 let v_hi = w.iter().fold(0.0_f64, |m, &x| m.max(x));
-                section_growth(d, ld, reach, ext, [v_hi, v_lo], &vary)?
+                section_growth(d.order, d.thumbweight, ld, reach, ext, [v_hi, v_lo], &vary)?
             }
         };
         let total = certified * growth + delta + floor;
@@ -790,42 +790,30 @@ fn recertify_in_frame(
 /// `ExtendRefused` where the section's weight vanishes past `[0, 1]`; `InvalidInput` for a
 /// thumbweight not enclosed or a weight of the rows not positive.
 fn section_growth(
-    d: &crate::surface::procedural_blend::BlendDefinition,
+    order: u32,
+    thumbweight: f64,
     ld: usize,
     reach: f64,
     ext: [f64; 2],
     [v_hi, v_lo]: [f64; 2],
     vary: &super::certificate::GnVarying,
 ) -> Result<f64> {
-    use crate::surface::extend::blend::{chebyshev, gn_weight_range};
+    use crate::surface::extend::blend::{chebyshev, section_weight_range};
     let m = 2 * ld.saturating_sub(1);
-    let (w_hi, w_lo) = match d.order {
-        0 => (1.0, 1.0),
-        // (1 - 2 t (1 - t) (1 - c): 1 off (0, 1), above 1/2 on it)
-        1 => (
-            1.0,
-            if ext[0] < 1.0 && ext[1] > 0.0 {
-                0.5
-            } else {
-                1.0
-            },
-        ),
-        _ => {
-            let n = d.order as usize;
-            let w = if d.thumbweight == GN_THUMBWEIGHT_EQUAL_AREA {
-                vary.w
-            } else {
-                [d.thumbweight, d.thumbweight]
-            };
-            if w[0].partial_cmp(&w[1]) == Some(Ordering::Greater) || w[0].is_nan() {
-                return Err(SolidError::invalid_input(
-                    OP,
-                    "the thumbweight is not enclosed over the span",
-                ));
-            }
-            gn_weight_range(n, [0.0, 1.0], ext, w)?
+    let (w_hi, w_lo) = section_weight_range(order, [0.0, 1.0], ext, || {
+        let w = if thumbweight == GN_THUMBWEIGHT_EQUAL_AREA {
+            vary.w
+        } else {
+            [thumbweight, thumbweight]
+        };
+        if w[0].partial_cmp(&w[1]) == Some(Ordering::Greater) || w[0].is_nan() {
+            return Err(SolidError::invalid_input(
+                OP,
+                "the thumbweight is not enclosed over the span",
+            ));
         }
-    };
+        Ok(w)
+    })?;
     if !(v_lo > 0.0 && v_hi.is_finite()) {
         return Err(SolidError::invalid_input(
             OP,
@@ -1106,5 +1094,60 @@ fn sign(x: f64) -> i32 {
         -1
     } else {
         0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::certificate::GnVarying;
+    use super::super::tay::GnAreaCells;
+    use super::*;
+    use crate::surface::extend::blend::chebyshev;
+
+    fn vary() -> GnVarying {
+        GnVarying {
+            n: 1,
+            r: [0.0, 0.0],
+            cells: GnAreaCells::default(),
+            w: [f64::INFINITY, f64::NEG_INFINITY],
+        }
+    }
+
+    /// The circle section's weight `1 - 2 t (1 - t) (1 - c)` is at most 1 over the
+    /// certificate's `[0, 1]` (the `max W` of the growth: the distance is proved there) and
+    /// exceeds 1 off it; the growth is the closed form of
+    /// definitions-and-certificates 6.4 with that `W`, the chord's being 1.
+    #[test]
+    fn the_growth_past_the_section_is_the_closed_form() {
+        let ext = [-0.697_676_318_880_472_2, 0.0];
+        let (reach, v) = (2.0 * 0.697_676_318_880_472_2 + 1.0, [1.5, 0.75]);
+        let ld = 3;
+        let m = 2 * (ld - 1);
+        let want = chebyshev(m, reach) * (1.0 * v[0]) / (1.0 * v[1]) * (1.0 + gamma(4 * m + 16));
+        let got = section_growth(1, 0.0, ld, reach, ext, v, &vary()).unwrap();
+        assert!(
+            (got - want).abs() <= 1e-12 * want,
+            "circle growth {got}, wanted {want}"
+        );
+        let chord = section_growth(0, 0.0, 2, reach, ext, v, &vary()).unwrap();
+        let want = chebyshev(2, reach) * v[0] / v[1] * (1.0 + gamma(4 * 2 + 16));
+        assert!((chord - want).abs() <= 1e-12 * want, "chord growth {chord}");
+    }
+
+    /// The circle's weight over a certified range outside `[0, 1]` (an extension of an
+    /// extension) reaches `1 + 2 max(0, t (t - 1))`, the chord's stays 1.
+    #[test]
+    fn the_circles_weight_past_its_arc_is_above_one() {
+        use crate::surface::extend::blend::section_weight_range;
+        let t = 0.697_676_318_880_472_2;
+        let (hi, lo) =
+            section_weight_range(1, [-t, 0.0], [-2.0 * t, -t], || Ok([0.0, 0.0])).unwrap();
+        assert!(
+            (hi - (1.0 + 2.0 * t * (1.0 + t))).abs() <= 1e-15 * hi,
+            "hi {hi}"
+        );
+        assert_eq!(lo, 1.0);
+        let chord = section_weight_range(0, [-t, 0.0], [-2.0 * t, -t], || Ok([0.0, 0.0]));
+        assert_eq!(chord.unwrap(), (1.0, 1.0));
     }
 }
