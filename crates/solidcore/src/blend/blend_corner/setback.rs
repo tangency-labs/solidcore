@@ -1567,23 +1567,19 @@ fn gather_ends(
                     None,
                     SolverOperation::Minimize,
                 )?;
-                // a vertex with no foot on the edge cuts no part of it: not measured, as one
-                // not yet placed
-                if !foot.success {
+                // A vertex with no foot on the edge, or whose foot is the vertex's own end (the
+                // drop clamped there: it lies behind the corner, not along the edge), cuts no
+                // part of the edge between the corner and its setback: not measured, as one not
+                // yet placed. Exact: only a clamped foot is that end.
+                if !foot.success || foot.parameter == t0 {
                     continue;
                 }
                 let t = foot.parameter;
-                // a foot at the vertex's own parameter (the drop clamped there) has no length
-                // to measure
-                let length = if t == t0 {
-                    0.0
-                } else {
-                    edge_curve.length(
-                        k,
-                        &Extent1d::from_min_max(smin(t, t0), smax(t, t0)),
-                        1.0e-3 * tol,
-                    )?
-                };
+                let length = edge_curve.length(
+                    k,
+                    &Extent1d::from_min_max(smin(t, t0), smax(t, t0)),
+                    1.0e-3 * tol,
+                )?;
                 let fits = length - margin;
                 reach = smin(reach, fits);
                 if setback + corner.ease_dist > fits + tol {
