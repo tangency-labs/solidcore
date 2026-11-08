@@ -227,7 +227,7 @@ fn three_features<'b>(k: &mut Kernel, b: &'b mut Brep) -> FeatureExecutive<'b> {
     ex
 }
 
-/// (#3179 review, CodeRabbit) A feature that cannot be partitioned (`defeature_ready` false)
+/// (#3179 review, `CodeRabbit`) A feature that cannot be partitioned (`defeature_ready` false)
 /// is not counted as taken off, though `build_patches` marks it rebuilt before refusing it:
 /// it is kept, it has nothing to put back, so the call is refused and the base is as it was.
 #[test]
