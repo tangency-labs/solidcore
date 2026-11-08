@@ -22,6 +22,12 @@
 //! - `|H - S|` on the span is the round's own certificate ([`gn_certify_span`]), asked for
 //!   what ε leaves after that.
 //!
+//! A piece past the section's range `[0, 1]` (a round extended across its section,
+//! [`crate::surface::extend::blend`]) is compared with H continued: its rows cut by
+//! blossoms at the piece's range (the rounding of that extrapolation counted), and
+//! `|H - S|` there is the certificate's bound on `[0, 1]` times the growth of
+//! docs/definitions-and-certificates.md 6.4 ([`section_growth`]).
+//!
 //! The bound is their sum with the floor ([`precision_floor`]), a forward error bound of
 //! computing H, at most ε, or the net is refused. A blend stores ε as its certificate, the
 //! net's rounding off its rows and three floors: H computed again is within two floors of
@@ -102,6 +108,61 @@ fn sub_curve(pts: &[Hpt], lo: f64, hi: f64) -> Vec<Hpt> {
         split(&left, lo / hi).1
     } else {
         left
+    }
+}
+
+/// One Bezier curve of homogeneous points re-expressed over `[lo, hi]` of its parameter,
+/// where that range may lie outside `[0, 1]`: the same rational polynomial continued. Its
+/// control points are the blossom `b(lo^(d-i), hi^i)`, each by de Casteljau steps at `lo`
+/// then `hi` (an affine step is valid at any parameter). Returns the points and `E`, a
+/// bound of how far each of their four homogeneous coordinates is from the exact ones: a
+/// step `(1 - tau) a + tau b` is four operations on coordinates of at most `M` (the input's
+/// largest, `Lambda^k M` after k steps, `Lambda = max (|1 - tau| + |tau|)`), so by the
+/// recurrence `e_(k+1) <= Lambda e_k + gamma_4 Lambda^(k+1) M` the d steps are within
+/// `d gamma_4 Lambda^d M`.
+fn extrapolate_curve(pts: &[Hpt], lo: f64, hi: f64) -> Result<(Vec<Hpt>, f64)> {
+    let d = pts
+        .len()
+        .checked_sub(1)
+        .ok_or_else(|| SolidError::sm_err(OP))?;
+    let mut out = Vec::with_capacity(pts.len());
+    for i in 0..=d {
+        let mut level: Vec<Hpt> = pts.to_vec();
+        for step in 0..d {
+            let tau = if step < d - i { lo } else { hi };
+            level = level
+                .windows(2)
+                .map(|w| match w {
+                    [(pa, wa), (pb, wb)] => {
+                        (*pa * (1.0 - tau) + *pb * tau, wa * (1.0 - tau) + wb * tau)
+                    }
+                    _ => (Vec3::ZERO, 0.0),
+                })
+                .collect();
+        }
+        out.push(
+            level
+                .first()
+                .copied()
+                .ok_or_else(|| SolidError::sm_err(OP))?,
+        );
+    }
+    let size = pts
+        .iter()
+        .fold(0.0_f64, |m, &(p, w)| m.max(p.length()).max(w.abs()));
+    let lambda = [lo, hi]
+        .iter()
+        .fold(1.0_f64, |m, &tau| m.max((1.0 - tau).abs() + tau.abs()));
+    let exp = i32::try_from(d).map_err(|_| SolidError::sm_err(OP))?;
+    #[allow(clippy::cast_precision_loss)]
+    let err = d as f64 * gamma(4) * lambda.powi(exp) * size;
+    if err.is_finite() {
+        Ok((out, err))
+    } else {
+        Err(SolidError::invalid_input(
+            OP,
+            "the definition's rows are not finite past the section",
+        ))
     }
 }
 
@@ -442,7 +503,8 @@ fn pieces(pb: &ProceduralBlend, ld: usize) -> Result<Vec<Piece>> {
 /// # Errors
 ///
 /// `InvalidInput` where the net is not proved within the bound, or is not a net of its
-/// definition's stations (its degrees, a piece across a station or past the seeds, the
+/// definition's stations (its degrees, a piece across a station or past the seeds, a piece
+/// past the section whose rows' weights past it are not positive or whose section's weight vanishes, the
 /// seeds' stations differing, a foot crossing a face's knot line inside a span);
 /// `SM_ERR` for a support that is not a NURBS surface or is itself a blend by its
 /// definition (its definition is not enclosed yet); those of the station solves and the
@@ -550,15 +612,18 @@ fn recertify_in_frame(
             return Err(SolidError::sm_err(OP));
         };
         let room_s = |x: f64| map_rounding(d.map_a[0], d.map_b[0], (x - d.map_a[0]) / d.map_b[0]);
-        let room_t = |x: f64| map_rounding(d.map_a[1], d.map_b[1], (x - d.map_a[1]) / d.map_b[1]);
-        let inside = piece.s[0] >= a - room_s(a)
-            && piece.s[1] <= b + room_s(b)
-            && piece.t[0] >= -room_t(0.0)
-            && piece.t[1] <= 1.0 + room_t(1.0);
-        if !inside {
+        let along = piece.s[0] >= a - room_s(a) && piece.s[1] <= b + room_s(b);
+        if !along {
             return Err(SolidError::invalid_input(
                 OP,
                 "a piece of the net runs across a station of its definition",
+            ));
+        }
+        // (across, a piece may lie past the section's range: `beyond`)
+        if !(piece.t[0].is_finite() && piece.t[1].is_finite() && piece.t[0] < piece.t[1]) {
+            return Err(SolidError::invalid_input(
+                OP,
+                "a piece of the net has no range across the section",
             ));
         }
         span_of.push(span);
@@ -594,6 +659,14 @@ fn recertify_in_frame(
         let (homog, w) = net_form.span(a, &ra, b, &rb);
         let h = b.s - a.s;
         let mut delta = 0.0_f64;
+        // past the section's range [0, 1], where it has pieces: the continued section's
+        // growth over the rows (module docs); `reach` the farthest |2 t - 1| and `v_lo` the
+        // least weight of the rows there, `across` the t range of those pieces
+        let mut reach = 0.0_f64;
+        let mut v_lo = f64::INFINITY;
+        let mut across: Option<[f64; 2]> = None;
+        let room_lo = -map_rounding(d.map_a[1], d.map_b[1], (0.0 - d.map_a[1]) / d.map_b[1]);
+        let room_hi = 1.0 + map_rounding(d.map_a[1], d.map_b[1], (1.0 - d.map_a[1]) / d.map_b[1]);
         for (piece, _) in pieces.iter().zip(&span_of).filter(|(_, &sp)| sp == span) {
             // H on the piece: cut along s, then across
             let mut cut: Vec<Vec<Hpt>> = Vec::new();
@@ -608,14 +681,50 @@ fn recertify_in_frame(
                     .collect();
                 columns.push(sub_curve(&col, lo, hi));
             }
+            let beyond = piece.t[0] < room_lo || piece.t[1] > room_hi;
+            let mut rounding = 0.0_f64;
             for i in 0..4 {
                 let row: Vec<Hpt> = columns
                     .iter()
                     .map(|c| c.get(i).copied().unwrap_or((Vec3::ZERO, f64::NAN)))
                     .collect();
-                cut.push(sub_curve(&row, piece.t[0].max(0.0), piece.t[1].min(1.0)));
+                if beyond {
+                    let (x, e) = extrapolate_curve(&row, piece.t[0], piece.t[1])?;
+                    rounding = rounding.max(e);
+                    cut.push(x);
+                } else {
+                    cut.push(sub_curve(&row, piece.t[0].max(0.0), piece.t[1].min(1.0)));
+                }
             }
-            delta = delta.max(net_distance(&piece.net, &cut)?);
+            let mut dist = net_distance(&piece.net, &cut)?;
+            if beyond {
+                // the cut rows are off the exact ones by `rounding` in each homogeneous
+                // coordinate (two for a point's three): a point `N / W` moves by at most
+                // `(2 e + |P| e) / W_min`, `W` convex in the weights, `P` in the points
+                let flat: Vec<Hpt> = cut.iter().flatten().copied().collect();
+                let w_min = flat.iter().fold(f64::INFINITY, |m, q| m.min(q.1)) - rounding;
+                let reach_p = flat
+                    .iter()
+                    .fold(0.0_f64, |m, &(p, wq)| m.max(p.length() / wq));
+                if w_min.partial_cmp(&0.0) != Some(Ordering::Greater) {
+                    return Err(SolidError::invalid_input(
+                        OP,
+                        "a weight of the definition's rows past the section is not positive",
+                    ));
+                }
+                dist += rounding * (2.0 + reach_p) / w_min;
+                v_lo = v_lo.min(w_min);
+                reach = reach.max(
+                    (2.0 * piece.t[0] - 1.0)
+                        .abs()
+                        .max((2.0 * piece.t[1] - 1.0).abs()),
+                );
+                across = Some(match across {
+                    Some([x, y]) => [x.min(piece.t[0]), y.max(piece.t[1])],
+                    None => piece.t,
+                });
+            }
+            delta = delta.max(dist);
         }
         // the bound proved: the certificate's, the net's distance from these rows, and how
         // far these rows may be from the exact ones (the floor)
@@ -643,7 +752,16 @@ fn recertify_in_frame(
             law.as_ref(),
             if any_defs { Some(&mut defs) } else { None },
         )?;
-        let total = certified + delta + floor;
+        // the certificate holds on the section's [0, 1]; past it, the continued section's
+        // distance from the rows grows by Chebyshev's extremal property (module docs)
+        let growth = match across {
+            None => 1.0,
+            Some(ext) => {
+                let v_hi = w.iter().fold(0.0_f64, |m, &x| m.max(x));
+                section_growth(d, ld, reach, ext, [v_hi, v_lo], &vary)?
+            }
+        };
+        let total = certified * growth + delta + floor;
         if !matches!(
             total.partial_cmp(&bound),
             Some(Ordering::Less | Ordering::Equal)
@@ -657,6 +775,72 @@ fn recertify_in_frame(
     }
     let [lo, hi] = vary.w;
     Ok((achieved, (equal_area && lo <= hi).then_some([lo, hi])))
+}
+
+/// The growth, past the section's `[0, 1]` over `ext`, of a distance from the continued
+/// section proved on `[0, 1]` ([`certify`](gn_certify_span)): `T_m(x) (max W max V) /
+/// (min W min V)` of docs/definitions-and-certificates.md 6.4 and
+/// [`crate::surface::extend::blend`], `m` the sum of the section's degree and the rows'
+/// (both `ld - 1`), `x` the farthest `|2 t - 1|` (`reach`), `W` the section's weight and
+/// `V = [max, min]` the rows' over `[0, 1]` and over the part past it. The thumbweight's
+/// enclosure of a G^n section is the equal area one's proved `vary.w`.
+///
+/// # Errors
+///
+/// `ExtendRefused` where the section's weight vanishes past `[0, 1]`; `InvalidInput` for a
+/// thumbweight not enclosed or a weight of the rows not positive.
+fn section_growth(
+    d: &crate::surface::procedural_blend::BlendDefinition,
+    ld: usize,
+    reach: f64,
+    ext: [f64; 2],
+    [v_hi, v_lo]: [f64; 2],
+    vary: &super::certificate::GnVarying,
+) -> Result<f64> {
+    use crate::surface::extend::blend::{chebyshev, gn_weight_range};
+    let m = 2 * ld.saturating_sub(1);
+    let (w_hi, w_lo) = match d.order {
+        0 => (1.0, 1.0),
+        // (1 - 2 t (1 - t) (1 - c): 1 off (0, 1), above 1/2 on it)
+        1 => (
+            1.0,
+            if ext[0] < 1.0 && ext[1] > 0.0 {
+                0.5
+            } else {
+                1.0
+            },
+        ),
+        _ => {
+            let n = d.order as usize;
+            let w = if d.thumbweight == GN_THUMBWEIGHT_EQUAL_AREA {
+                vary.w
+            } else {
+                [d.thumbweight, d.thumbweight]
+            };
+            if w[0].partial_cmp(&w[1]) == Some(Ordering::Greater) || w[0].is_nan() {
+                return Err(SolidError::invalid_input(
+                    OP,
+                    "the thumbweight is not enclosed over the span",
+                ));
+            }
+            gn_weight_range(n, [0.0, 1.0], ext, w)?
+        }
+    };
+    if !(v_lo > 0.0 && v_hi.is_finite()) {
+        return Err(SolidError::invalid_input(
+            OP,
+            "a weight of the definition's rows past the section is not positive",
+        ));
+    }
+    let g = chebyshev(m, reach) * (w_hi * v_hi) / (w_lo * v_lo) * (1.0 + gamma(4 * m + 16));
+    if g.is_finite() {
+        Ok(g)
+    } else {
+        Err(SolidError::invalid_input(
+            OP,
+            "the continued section's growth past its range is not finite",
+        ))
+    }
 }
 
 /// The stations of a definition at `sigma`, its seeds' knots, where `needed`: each solved

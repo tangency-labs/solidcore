@@ -212,7 +212,12 @@ fn thumbweight(k: &Kernel, pb: &ProceduralBlend) -> Result<[f64; 2]> {
 /// `C` are bilinear in `(t, w)`, so their extremes on a box are at its corners. A corner of
 /// the extension's box where `B` or `C` is not positive is a weight that vanishes there:
 /// refused ([`super::ExtendRefusal::WeightVanishes`]).
-fn gn_weight_range(n: usize, src: [f64; 2], ext: [f64; 2], w: [f64; 2]) -> Result<(f64, f64)> {
+pub(crate) fn gn_weight_range(
+    n: usize,
+    src: [f64; 2],
+    ext: [f64; 2],
+    w: [f64; 2],
+) -> Result<(f64, f64)> {
     let exp = i32::try_from(n).map_err(|_| SolidError::sm_err(OP))?;
     let a = |t: f64| (1.0 - t).powi(exp + 1) + t.powi(exp + 1);
     let far = |[x, y]: [f64; 2]| {
@@ -271,7 +276,7 @@ fn gn_weight_range(n: usize, src: [f64; 2], ext: [f64; 2], w: [f64; 2]) -> Resul
 
 /// `T_m(x)` for `x >= 1` (`|x|` taken), by its recurrence (every term positive and
 /// increasing there), rounded up.
-fn chebyshev(m: usize, x: f64) -> f64 {
+pub(crate) fn chebyshev(m: usize, x: f64) -> f64 {
     let x = x.abs().max(1.0);
     let (mut prev, mut cur) = (1.0_f64, x);
     if m == 0 {
@@ -286,7 +291,7 @@ fn chebyshev(m: usize, x: f64) -> f64 {
 }
 
 /// The largest and least control weight of a net (1 for a polynomial one).
-fn weights(net: &Net) -> (f64, f64) {
+pub(crate) fn weights(net: &Net) -> (f64, f64) {
     let (mut hi, mut lo) = (0.0_f64, f64::INFINITY);
     for c in net.cpts().iter().flatten() {
         let w = if c.w == NOW { 1.0 } else { c.w };

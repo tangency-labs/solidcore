@@ -1980,7 +1980,7 @@ fn keeps(net: &Net, out: &Net, side: BoxSide) -> Result<bool> {
 
 mod analytic;
 mod ball;
-mod blend;
+pub(crate) mod blend;
 mod sides;
 pub use sides::{ExtendedSides, SideExtension};
 
