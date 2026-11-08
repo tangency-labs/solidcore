@@ -104,6 +104,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 name = "goldens"
 version = "0.1.0"
 dependencies = [
+ "goldens-data",
  "serde",
  "serde_json",
  "solidcore",
@@ -112,6 +113,10 @@ dependencies = [
  "step-import",
  "toml",
 ]
+
+[[package]]
+name = "goldens-data"
+version = "0.1.0"
 
 [[package]]
 name = "hashbrown"
@@ -287,6 +292,7 @@ checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
 name = "solidcore"
 version = "1.0.1"
 dependencies = [
+ "goldens-data",
  "serde",
  "serde_json",
  "thiserror",
@@ -473,6 +479,9 @@ dependencies = [
 [[package]]
 name = "xtask"
 version = "0.1.0"
+dependencies = [
+ "goldens-data",
+]
 
 [[package]]
 name = "zlib-rs"

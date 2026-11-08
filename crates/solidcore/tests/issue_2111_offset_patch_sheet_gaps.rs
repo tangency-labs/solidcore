@@ -30,10 +30,8 @@ use solidcore::topology::database_io::FileType;
 use solidcore::topology::topology::NotifyRecords;
 use solidcore::{Brep, EntityRef, Kernel};
 
-const SHEET: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../fixtures/topology.assert_valid/data/issue2111_patch_sheet.smb"
-);
+/// The operand, in the golden data.
+const SHEET: &str = "fixtures/topology.assert_valid/data/issue2111_patch_sheet.smb";
 
 /// The accuracy the offsets' areas are integrated at: they are compared to 1e-6 relative,
 /// and at 1e-7 each lands within 6e-8 relative of its value at 1e-8 (measured on these
@@ -58,7 +56,7 @@ fn offset_checked(d: f64, keep: bool) -> (BrepCheck, f64) {
 /// The kernel and the sheet read from its file, copied and offset by `d` (with
 /// `offset_edges_keep_source_tolerance` set to `keep`).
 fn offset(d: f64, keep: bool) -> (Kernel, Brep) {
-    let bytes = std::fs::read(SHEET).unwrap();
+    let bytes = goldens_data::read(SHEET).unwrap();
     let mut k = Kernel::default();
     k.fixes.offset_edges_keep_source_tolerance = keep;
     let mut read = Brep::new_with_infinite_region().unwrap();
@@ -151,7 +149,7 @@ fn updated_tolerances_at_a_half_have_nothing_to_grow() {
 /// The sheet read from its file, copied and offset by `d` with the given flags set
 /// before the offset.
 fn offset_with(d: f64, flags: &[&str]) -> (Kernel, Brep) {
-    let bytes = std::fs::read(SHEET).unwrap();
+    let bytes = goldens_data::read(SHEET).unwrap();
     let mut k = Kernel::default();
     for name in flags {
         *k.fixes.flag_mut(name).unwrap() = true;

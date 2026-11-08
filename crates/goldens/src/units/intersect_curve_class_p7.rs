@@ -1289,7 +1289,7 @@ mod tests {
     #[test]
     fn usage_fixtures_reach_their_branches() {
         let v: Value =
-            serde_json::from_str(include_str!("../../../../fixtures/intersect.curve_class_p7/usage.json")).unwrap();
+            serde_json::from_str(&crate::fixtures::test_data::read("fixtures/intersect.curve_class_p7/usage.json")).unwrap();
         let script = |name: &str| -> Script {
             let c = v["cases"].as_array().unwrap().iter().find(|c| c["name"] == name).unwrap();
             serde_json::from_value(c["inputs"].clone()).unwrap()

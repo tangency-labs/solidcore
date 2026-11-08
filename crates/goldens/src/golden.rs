@@ -56,9 +56,12 @@ pub const FORMAT: u64 = 1;
 /// Differences described per case (all are counted).
 const MAX_DETAILS: usize = 8;
 
-/// The goldens directory: `crates/goldens/expected`.
-pub fn default_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("expected")
+/// The goldens directory: the golden data's `expected/` ([`goldens_data::expected_dir`]).
+///
+/// # Errors
+/// [`HarnessError`] naming the fetch command when the golden data is missing.
+pub fn default_dir() -> Result<PathBuf, HarnessError> {
+    goldens_data::expected_dir().map_err(|e| HarnessError::new(e.to_string()))
 }
 
 /// The golden file of `unit` in `dir`.

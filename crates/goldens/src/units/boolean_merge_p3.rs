@@ -1210,10 +1210,7 @@ mod tests {
     /// Each nested fixture completes with its expected vertex count.
     #[test]
     fn nested_postfix_fixtures_complete() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/boolean.merge_p3/nested_postfix.json"
-        );
+        let path = crate::fixtures::data_root().unwrap().join("fixtures/boolean.merge_p3/nested_postfix.json");
         let text = std::fs::read_to_string(path).unwrap();
         let fixtures: Value = serde_json::from_str(&text).unwrap();
         for fixture in fixtures["cases"].as_array().unwrap() {
@@ -1239,10 +1236,7 @@ mod tests {
     /// surfaces next to B-reps are ignored (a real result).
     #[test]
     fn surface_operand_fixtures_end_as_expected() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/boolean.merge_p3/surface-operands.json"
-        );
+        let path = crate::fixtures::data_root().unwrap().join("fixtures/boolean.merge_p3/surface-operands.json");
         let text = std::fs::read_to_string(path).unwrap();
         let fixtures: Value = serde_json::from_str(&text).unwrap();
         for fixture in fixtures["cases"].as_array().unwrap() {

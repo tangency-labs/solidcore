@@ -28,7 +28,7 @@ class GoldenInventoryTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="golden inventory ")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.directory = self.root / "crates/goldens/expected"
+        self.directory = self.root / ".goldens/expected"
         self.directory.mkdir(parents=True)
         self.uid = "geom.fixture"
         self.rows = [{"case": "a_error", "error": "refused", "deferred": None},
@@ -106,7 +106,7 @@ class GoldenInventoryTests(unittest.TestCase):
     def test_missing_inventory_directory_refuses(self):
         """An omitted checkout directory must not become an empty publication."""
         with tempfile.TemporaryDirectory(prefix="missing golden inventory ") as empty:
-            missing = Path(empty) / "crates/goldens/expected"
+            missing = Path(empty) / ".goldens/expected"
             with self.assertRaises(FileNotFoundError) as error:
                 self.progress.load_inventory(Path(empty))
             self.assertIn(str(missing), str(error.exception))
@@ -164,7 +164,7 @@ class GoldenInventoryTests(unittest.TestCase):
         self.assertIn("Golden records", body)
         self.assertIn("Known-failure entries", body)
         self.assertIn("not a runtime result", body)
-        self.assertIn("/blob/" + "a" * 40 + "/crates/goldens/expected/", body)
+        self.assertIn("solidcore-goldens/blob/" + "a" * 40 + "/expected/", body)
         self.assertNotIn("<dt>Passed", body)
         self.assertNotIn("Max rel. error", body)
 

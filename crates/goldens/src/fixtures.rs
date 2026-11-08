@@ -47,15 +47,15 @@ pub fn upstream_test_file(root: &Path, rel: &str) -> Result<PathBuf, HarnessErro
     }
 }
 
-/// Resolves and checks a file under the repository's `fixtures/` directory (`rel` is
-/// relative to the repository root and starts with `fixtures/`).
-pub fn repo_fixture_file(root: &Path, rel: &str) -> Result<PathBuf, HarnessError> {
+/// Resolves and checks a fixture file of the golden data (`rel` is relative to the data root,
+/// [`goldens_data::root`], and starts with `fixtures/`).
+pub fn repo_fixture_file(rel: &str) -> Result<PathBuf, HarnessError> {
     if rel.split(['/', '\\']).any(|c| c == "..") || !rel.starts_with("fixtures/") {
         return Err(HarnessError::new(format!(
             "repo file `{rel}`: must be under `fixtures/` without `..`"
         )));
     }
-    let p = root.join(rel);
+    let p = data_root()?.join(rel);
     if p.is_file() {
         Ok(p)
     } else {
@@ -90,10 +90,31 @@ pub fn load_pts(path: &Path) -> Result<Vec<[f64; 3]>, HarnessError> {
     Ok(pts)
 }
 
-/// Loads every `*.json` in `fixtures/<unit>/`, sorted by file name. A missing
-/// directory yields no cases. Case names must be unique within the unit.
+/// The golden data's root ([`goldens_data::root`]), its error a harness error naming the
+/// fetch command.
+pub fn data_root() -> Result<PathBuf, HarnessError> {
+    goldens_data::root().map_err(|e| HarnessError::new(e.to_string()))
+}
+
+/// Golden data for the units' own tests.
+#[cfg(test)]
+pub(crate) mod test_data {
+    /// The text of `rel` (`fixtures/...`) in the golden data.
+    ///
+    /// # Panics
+    /// When the golden data is missing (naming the fetch command) or the file cannot be read.
+    pub(crate) fn read(rel: &str) -> String {
+        goldens_data::read_to_string(rel).unwrap_or_else(|e| panic!("{e}"))
+    }
+}
+
+/// Loads every `*.json` in the golden data's `fixtures/<unit>/`, sorted by file name; paths
+/// in `$upstream_file` and `$pts` resolve under `root` (the repository). A unit with no
+/// directory has no cases; golden data that is missing altogether is an error. Case names
+/// must be unique within the unit.
 pub fn load_fixture_dir(root: &Path, unit: &str) -> Result<Vec<Case>, HarnessError> {
-    let dir = root.join("fixtures").join(unit);
+    let data = data_root()?;
+    let dir = data.join("fixtures").join(unit);
     let Ok(rd) = fs::read_dir(&dir) else {
         return Ok(Vec::new());
     };
@@ -105,7 +126,7 @@ pub fn load_fixture_dir(root: &Path, unit: &str) -> Result<Vec<Case>, HarnessErr
     let mut cases: Vec<Case> = Vec::new();
     for f in files {
         let rel = f
-            .strip_prefix(root)
+            .strip_prefix(&data)
             .unwrap_or(&f)
             .to_string_lossy()
             .replace('\\', "/");
@@ -180,7 +201,7 @@ fn expand(root: &Path, v: Value) -> Result<Value, HarnessError> {
                     return Ok(Value::String(p.to_string_lossy().into_owned()));
                 }
                 if let Some(Value::String(rel)) = o.get("$repo_file") {
-                    let p = repo_fixture_file(root, rel)?;
+                    let p = repo_fixture_file(rel)?;
                     return Ok(Value::String(p.to_string_lossy().into_owned()));
                 }
             }
@@ -228,7 +249,13 @@ mod tests {
         let v = expand(&root, serde_json::json!({ "path": { "$repo_file": rel } })).unwrap();
         assert_eq!(
             v["path"],
-            Value::String(root.join(rel).to_string_lossy().into_owned())
+            Value::String(
+                data_root()
+                    .unwrap()
+                    .join(rel)
+                    .to_string_lossy()
+                    .into_owned()
+            )
         );
         for bad in [
             "fixtures/../Cargo.toml",

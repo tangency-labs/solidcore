@@ -222,7 +222,7 @@ fn available_fixture_bit_census() {
     }
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let json: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(root.join("fixtures/nurbs.b_spline_surface_n_lib_p2/cases.json"))
+        &goldens_data::read_to_string("fixtures/nurbs.b_spline_surface_n_lib_p2/cases.json")
             .unwrap(),
     )
     .unwrap();

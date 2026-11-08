@@ -286,8 +286,9 @@ fn write_issue_2174_operand() {
         surface_key: &|_: FaceId| ObjectKey(0),
     };
     let bytes = write_brep_to_file(&k, Some(&b), &env, true).unwrap();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let path =
-        root.join("fixtures/offset.offset_executive_p2/data/issue2174_cap_two_rim_edges.smb");
+    let path = goldens_data::path(
+        "fixtures/offset.offset_executive_p2/data/issue2174_cap_two_rim_edges.smb",
+    )
+    .unwrap();
     std::fs::write(&path, &bytes).unwrap();
 }

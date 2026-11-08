@@ -1945,7 +1945,7 @@ mod tests {
     /// Most fixture cases compare real values (a successful construction and op).
     #[test]
     fn fixtures_mostly_compare_values() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/surface.cone_p1/cases.json");
+        let path = crate::fixtures::data_root().unwrap().join("fixtures/surface.cone_p1/cases.json");
         let text = std::fs::read_to_string(path).expect("fixtures");
         let v: Value = serde_json::from_str(&text).expect("json");
         let cases = v["cases"].as_array().expect("cases");

@@ -152,7 +152,9 @@ fn path_of(i: &Inputs) -> Result<String, HarnessError> {
         if name.contains(['/', '\\']) {
             return Err(harness("fixture file names have no directories"));
         }
-        let p = repo_root().join("fixtures/topology.brep_p10").join(name);
+        let p = crate::fixtures::data_root()?
+            .join("fixtures/topology.brep_p10")
+            .join(name);
         return Ok(p.to_string_lossy().into_owned());
     }
     Ok(upstream_test_file(&repo_root(), &i.file)?

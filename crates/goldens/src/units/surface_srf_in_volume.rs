@@ -2310,7 +2310,7 @@ mod tests {
 
     #[test]
     fn exact_fixtures_compare_returned_geometry_and_nullness() {
-        let text = include_str!("../../../../fixtures/surface.srf_in_volume/exact_results.json");
+        let text = &crate::fixtures::test_data::read("fixtures/surface.srf_in_volume/exact_results.json");
         let fixtures: Value = serde_json::from_str(text).unwrap();
         let cases = fixtures["cases"].as_array().unwrap();
         assert_eq!(cases.len(), 16);

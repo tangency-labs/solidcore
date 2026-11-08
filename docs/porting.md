@@ -132,7 +132,7 @@ into `upstream/` (see README): it is the reading reference, and many cases read 
   an update is an addendum file. The old shared `plan/findings.md` and
   `plan/upstream-issues.md` were split into those directories; CI fails if either comes
   back. Two PRs that each add a file never conflict.
-  Goldens likewise are one file per unit (`crates/goldens/expected/<unit id>.jsonl`), and
+  Goldens likewise are one file per unit (`expected/<unit id>.jsonl` in solidcore-goldens), and
   SolidCraft cases one per issue (`fixtures/solidcraft/<issue>-<slug>.json`).
   The same goes for anything new you design: a registry or log is a directory of
   per-entry files that tools read in sorted order, never one file everybody appends to.

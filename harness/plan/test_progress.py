@@ -20,7 +20,7 @@ class CaseCountsTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = pathlib.Path(self.tmp.name)
         (self.root / "plan").mkdir()
-        (self.root / "crates/goldens/expected").mkdir(parents=True)
+        (self.root / ".goldens/expected").mkdir(parents=True)
         self.patch_root = mock.patch.object(progress, "ROOT", self.root)
         self.patch_root.start()
         self.addCleanup(self.patch_root.stop)
@@ -34,7 +34,7 @@ class CaseCountsTest(unittest.TestCase):
 
     def golden(self, uid, count):
         """Write a header followed by the requested number of stored records."""
-        path = self.root / f"crates/goldens/expected/{uid}.jsonl"
+        path = self.root / f".goldens/expected/{uid}.jsonl"
         rows = [{"unit": uid, "format": 1}, *[{"case": f"case{i:06d}"} for i in range(count)]]
         path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
         return path
@@ -112,7 +112,7 @@ class CaseCountsTest(unittest.TestCase):
     def test_missing_inventory_does_not_overwrite_existing_checklist(self):
         """An omitted golden directory fails before replacing a published checklist."""
         unit = self.unit("curve.example", "An earlier experiment had 41 cases.")
-        directory = self.root / "crates/goldens/expected"
+        directory = self.root / ".goldens/expected"
         directory.rename(directory.with_name("expected-away"))
         checklist = self.root / "plan/PROGRESS.md"
         checklist.write_text("existing checklist\n")

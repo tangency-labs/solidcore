@@ -7,7 +7,7 @@
 Standard library only (Python 3.11+ for tomllib). Every number comes from the repo:
 plan/units/*.toml, plan/PROGRESS.md (claims; generated, not committed), harness/callgraph/units.json (upstream
 line counts at the pin), scripts/upstream-pin.env (upstream version and commit),
-crates/goldens/expected/*.jsonl and known_failing.json (stored expectations, not runtime passes),
+the goldens (solidcore-goldens at goldens.pin: expected/*.jsonl and known_failing.json; stored expectations, not runtime passes),
 reports/solids/solids.json (not committed: CI's artifact, see scripts/fetch-solids.sh),
 reports/ssi-corpus.json, plan/upstream-issues/*.md, site/sprints.toml, the
 module file headers under crates/solidcore/src and git history (timeline). Output is
@@ -35,7 +35,7 @@ sys.dont_write_bytecode = True  # keep harness/plan clean
 sys.path.insert(0, str(ROOT / "harness/plan"))
 import progress  # noqa: E402  (reuse the checklist's counting logic)
 import units as plan_units  # noqa: E402  (the shared plan loader)
-from golden_inventory import load_inventory  # noqa: E402
+from golden_inventory import golden_pin, load_inventory  # noqa: E402
 
 REPO = os.environ.get("GITHUB_REPOSITORY", "tangency-labs/solidcore")
 REPO_URL = f"https://github.com/{REPO}"
@@ -186,11 +186,11 @@ def load_claims():
     return claims
 
 
-def golden_body(uid, info, head_sha):
+def golden_body(uid, info, goldens_sha):
     """Render stored expectations with exact source links, never measured CI passes."""
     if info is None:
         return '<p class="muted">No committed golden inventory yet.</p>'
-    source = f"{REPO_URL}/blob/{head_sha}/crates/goldens/expected"
+    source = f"https://github.com/tangency-labs/solidcore-goldens/blob/{goldens_sha}/expected"
     known = "".join(f'<li><code>{esc(name)}</code>: {inline(reason)}</li>'
                     for name, reason in sorted(info["known_failures"].items()))
     deferred = "".join(f'<li><code>{esc(unit)}</code>: {n}</li>'
@@ -209,7 +209,7 @@ A golden records what solidcore produced when blessed. Current results require t
 <p>Metadata counts describe fields in the stored records; they are not passes or live failures.</p>
 {('<h3>Recorded deferrals</h3><ul>' + deferred + '</ul>') if deferred else ''}
 {('<h3>Known failures (not blessed)</h3><ul>' + known + '</ul>') if known else ''}
-<p>Source at <code>{esc(head_sha[:9])}</code>:
+<p>solidcore-goldens at <code>{esc(goldens_sha[:9])}</code>:
 <a href="{source}/{esc(uid)}.jsonl">golden JSONL</a> ·
 <a href="{source}/known_failing.json">known-failure list</a>.</p>"""
 
@@ -1173,7 +1173,7 @@ for stored golden counts and recorded deferrals, not runtime passes.</p>
     body = f"""
 <h1>Units</h1>
 <p class="muted">{len(units)} port units from <code>plan/units/</code>. Cases come from
-<code>crates/goldens/expected/&lt;unit&gt;.jsonl</code>. These are stored expectations, not runtime
+<code>expected/&lt;unit&gt;.jsonl</code> of solidcore-goldens. These are stored expectations, not runtime
 passes or correctness proofs. Known failures are listed separately, not blessed. Status is the
 historical port plan; deferrals describe the recorded outputs. Click a column heading to sort.</p>
 <div class="filters" data-table="units">
@@ -1223,7 +1223,7 @@ historical port plan; deferrals describe the recorded outputs. Click a column he
             htable = ('<details><summary>Module file-header table ({} rows)</summary><div class="scroll"><table>'
                       '<thead><tr><th>Rust</th><th>Upstream</th></tr></thead><tbody>{}</tbody></table></div></details>').format(
                 len(hrows), "".join(f"<tr><td>{inline(r)}</td><td>{inline(p)}</td></tr>" for r, p in hrows))
-        diff = golden_body(uid, inventory.get(uid), head_sha)
+        diff = golden_body(uid, inventory.get(uid), golden_pin(ROOT))
         claim = f'<p>Claimed: {inline(u["claim"])}</p>' if u.get("claim") else ""
         srclink = (f'<a href="{REPO_URL}/blob/{head_sha}/{esc(src)}"><code>{esc(src)}</code></a>' if exists
                    else '<span class="muted">no single module (crate-wide unit)</span>' if "(" in src

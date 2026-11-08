@@ -132,9 +132,7 @@ fn set(values: &[f64]) -> BTreeSet<i64> {
 
 /// A crafted fixture of the `topology.brep_p10` difftest.
 fn fixture(name: &str) -> Vec<u8> {
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/topology.brep_p10");
-    std::fs::read(root.join(name)).unwrap()
+    goldens_data::read(&format!("fixtures/topology.brep_p10/{name}")).unwrap()
 }
 
 #[test]

@@ -33,7 +33,9 @@ import sys
 ROOT = os.getcwd()
 TEST = os.path.join(ROOT, "upstream/tests/prog_test/src/smAdvancedTest.cpp")
 FILES = os.path.join(ROOT, "upstream/TestFiles/pt_TestFiles")
-OUT = os.path.join(ROOT, "fixtures/surface.surface_p1/upstream_sil_adv.json")
+# the golden data (solidcore-goldens at goldens.pin; cargo xtask goldens-fetch)
+DATA = os.environ.get("SOLIDCORE_GOLDENS_DIR") or os.path.join(ROOT, ".goldens")
+OUT = os.path.join(DATA, "fixtures/surface.surface_p1/upstream_sil_adv.json")
 APPROX_TOL = 1.0e-3  # my_test_tsurf_silhouette(pBrep1, 1.0e-3, ...)
 ANG_TOL = 20.0 * math.pi / 180.0  # SM_DEG2RAD(20.0) in my_test_tsurf_silhouette
 

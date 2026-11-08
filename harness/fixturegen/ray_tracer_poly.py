@@ -30,7 +30,9 @@ import math
 import os
 
 UPSTREAM = "upstream/TestFiles/pt_TestFiles/Tess/Extrusion.pbp"
-OUT = "fixtures/intersect.ray_tracer/poly_breps.json"
+# the golden data (solidcore-goldens at goldens.pin; cargo xtask goldens-fetch)
+OUT = os.path.join(os.environ.get("SOLIDCORE_GOLDENS_DIR") or ".goldens",
+                   "fixtures/intersect.ray_tracer/poly_breps.json")
 SM_ZONE_TOL_3D = 1e-05  # as the existing ray tracer fixtures use it
 BIG = 1.0e20  # SM_BIG_DOUBLE
 

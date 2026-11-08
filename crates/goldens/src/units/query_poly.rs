@@ -1209,9 +1209,7 @@ mod owner_tests {
     use crate::case::{repo_root, CaseSource};
 
     fn owner_cases() -> Vec<Case> {
-        let file: Value = serde_json::from_str(include_str!(
-            "../../../../fixtures/query.poly/real_owners.json"
-        ))
+        let file: Value = serde_json::from_str(&crate::fixtures::test_data::read("fixtures/query.poly/real_owners.json"))
         .unwrap();
         file["cases"]
             .as_array()

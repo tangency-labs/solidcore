@@ -815,10 +815,7 @@ mod tests {
     fn circular_aggregate_queries_have_substantive_values() {
         use core::f64::consts::PI;
 
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/mass.integrator/circular_aggregate_queries.json"
-        );
+        let path = crate::fixtures::data_root().unwrap().join("fixtures/mass.integrator/circular_aggregate_queries.json");
         let text = std::fs::read_to_string(path).unwrap();
         let fixtures: Value = serde_json::from_str(&text).unwrap();
         let cases = fixtures["cases"].as_array().unwrap();

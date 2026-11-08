@@ -1290,10 +1290,7 @@ mod tests {
     /// Every fixture case builds its cone and compares real values.
     #[test]
     fn fixtures_compare_values() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/surface.cone_p2/cases.json"
-        );
+        let path = crate::fixtures::data_root().unwrap().join("fixtures/surface.cone_p2/cases.json");
         let text = std::fs::read_to_string(path).expect("fixtures");
         let v: Value = serde_json::from_str(&text).expect("json");
         let cases = v["cases"].as_array().expect("cases");
@@ -1314,9 +1311,7 @@ mod tests {
     /// existing opt-in independently of the unpatched C++ oracle.
     #[test]
     fn issue713_fixtures_exercise_both_behaviors() {
-        let fixtures: Value = serde_json::from_str(include_str!(
-            "../../../../fixtures/surface.cone_p2/issue713.json"
-        ))
+        let fixtures: Value = serde_json::from_str(&crate::fixtures::test_data::read("fixtures/surface.cone_p2/issue713.json"))
         .unwrap();
         let cases = fixtures["cases"].as_array().unwrap();
         assert_eq!(cases.len(), 24);

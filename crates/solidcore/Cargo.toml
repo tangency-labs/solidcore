@@ -25,6 +25,8 @@ thiserror.workspace = true
 
 [dev-dependencies]
 serde_json = { version = "1", features = ["float_roundtrip"] }
+# The golden data the tests that read fixtures use (cargo xtask goldens-fetch).
+goldens-data = { path = "../goldens-data" }
 
 [lints]
 workspace = true

@@ -100,11 +100,14 @@ rustflags = ["-C", "link-arg=-zstack-size=8388608"]   # 8 MiB, as a native main 
 ## Goldens
 
 Every unit's cases (`fixtures/<unit>/`, upstream's `TestFiles`, seeded generators) run on
-solidcore and are checked against the unit's golden, `crates/goldens/expected/<unit>.jsonl`:
-the outputs recorded when it was blessed. CI fails on any changed, added, missing or broken
-case. Many cases read upstream's test files, so clone `upstream/` first:
+solidcore and are checked against the unit's golden, `expected/<unit>.jsonl`: the outputs
+recorded when it was blessed. The goldens and the per-unit fixtures live in
+[tangency-labs/solidcore-goldens](https://github.com/tangency-labs/solidcore-goldens) at the sha
+in `goldens.pin` ([docs/goldens.md](docs/goldens.md)). CI fails on any changed, added, missing
+or broken case. Many cases read upstream's test files, so clone `upstream/` first:
 
 ```sh
+cargo xtask goldens-fetch          # the golden data at goldens.pin, into .goldens/
 git clone https://github.com/NVIDIA-Omniverse/usd-brep upstream
 git -C upstream checkout 3fd5b95   # v1.0.1; the pin is in scripts/upstream-pin.env
 cargo run --profile goldens -p goldens -- --all --goldens --jobs 0   # every unit (CI)

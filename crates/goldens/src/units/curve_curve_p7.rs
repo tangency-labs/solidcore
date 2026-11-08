@@ -1333,9 +1333,7 @@ mod tests {
     #[test]
     fn real_ellipse_fixture_discovery_wire_and_concrete_geometry() {
         let (case, op) = real_ellipse_fixture();
-        let file: Value = serde_json::from_str(include_str!(
-            "../../../../fixtures/curve.curve_p7/analytic-plane-classification.json"
-        ))
+        let file: Value = serde_json::from_str(&crate::fixtures::test_data::read("fixtures/curve.curve_p7/analytic-plane-classification.json"))
         .unwrap();
         assert_eq!(file["cases"].as_array().unwrap().len(), 1);
         assert_eq!(case.inputs, file["cases"][0]["inputs"]);

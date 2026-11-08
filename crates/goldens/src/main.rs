@@ -185,6 +185,14 @@ fn main() -> ExitCode {
     if args.tol.is_some() {
         return usage_error("--tol only applies to --ssi-corpus");
     }
+    // the units' fixtures and goldens: the golden data at the pin, or a loud stop
+    let data = match goldens::fixtures::data_root() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("goldens: {e}");
+            return ExitCode::from(2);
+        }
+    };
     let reg = registry();
     let ctx = CaseContext {
         root: root.clone(),
@@ -251,7 +259,7 @@ fn main() -> ExitCode {
             &fwd,
             jobs,
             &[report_dir.as_path()],
-            &root.join("fixtures"),
+            &data.join("fixtures"),
             times.as_deref(),
         );
     }
@@ -262,7 +270,7 @@ fn main() -> ExitCode {
     let dir = args
         .goldens_dir
         .clone()
-        .unwrap_or_else(goldens::golden::default_dir);
+        .unwrap_or_else(|| data.join("expected"));
     goldens_main(&wanted, &reg, &ctx, &opts, &dir, args.bless, args.reverse)
 }
 

@@ -5,14 +5,15 @@ use super::*;
 use crate::case::{repo_root, CaseSource};
 use crate::compare::compare;
 
-const NEW_FIXTURES: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../fixtures/geom.grid/native_cache.json"
-));
-const LEGACY_FIXTURES: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../fixtures/geom.grid/cases.json"
-));
+/// The golden data's `fixtures/geom.grid/native_cache.json`.
+fn new_fixtures() -> String {
+    crate::fixtures::test_data::read("fixtures/geom.grid/native_cache.json")
+}
+
+/// The golden data's `fixtures/geom.grid/cases.json`.
+fn legacy_fixtures() -> String {
+    crate::fixtures::test_data::read("fixtures/geom.grid/cases.json")
+}
 
 fn fixture(doc: &str, name: &str) -> Case {
     let v: Value = serde_json::from_str(doc).unwrap();
@@ -42,7 +43,7 @@ fn corpus_keeps_615_legacy_inputs_and_adds_six_explicit_cases() {
     };
     let cases = Runner.cases(&ctx).unwrap();
     assert_eq!(cases.len(), 621);
-    let old: Value = serde_json::from_str(LEGACY_FIXTURES).unwrap();
+    let old: Value = serde_json::from_str(&legacy_fixtures()).unwrap();
     let old = old["cases"].as_array().unwrap();
     assert_eq!(old.len(), 15);
     for c in old {
@@ -76,7 +77,7 @@ fn the_formerly_deferred_fixtures_run_real_surface_caches() {
         "raytracer_surface_hierarchy_expand",
         "surface_leaf_element",
     ] {
-        let case = fixture(LEGACY_FIXTURES, name);
+        let case = fixture(&legacy_fixtures(), name);
         let i: Inputs = case.parse().unwrap();
         assert!(i
             .ops
@@ -94,7 +95,7 @@ fn the_formerly_deferred_fixtures_run_real_surface_caches() {
 /// surface of the same numeric label.
 #[test]
 fn explicit_definition_does_not_resolve_an_opaque_label() {
-    let explicit: Inputs = fixture(NEW_FIXTURES, "native_affine_hierarchy_single")
+    let explicit: Inputs = fixture(&new_fixtures(), "native_affine_hierarchy_single")
         .parse()
         .unwrap();
     let mut i = explicit.clone();
@@ -114,7 +115,7 @@ fn explicit_definition_does_not_resolve_an_opaque_label() {
 
 #[test]
 fn explicit_cache_refuses_missing_owners_and_huge_span_counts() {
-    let good: Inputs = fixture(NEW_FIXTURES, "native_affine_hierarchy_single")
+    let good: Inputs = fixture(&new_fixtures(), "native_affine_hierarchy_single")
         .parse()
         .unwrap();
     run_rust(&good, &mut Stats::default()).unwrap();
@@ -146,7 +147,7 @@ fn explicit_cache_refuses_missing_owners_and_huge_span_counts() {
 
 #[test]
 fn native_cache_node_selection_is_checked_before_add_element() {
-    let mut i: Inputs = fixture(NEW_FIXTURES, "native_affine_cache_leaf_ordinal")
+    let mut i: Inputs = fixture(&new_fixtures(), "native_affine_cache_leaf_ordinal")
         .parse()
         .unwrap();
     if let Op::AddCachedLeaf { leaf, .. } = &mut i.ops[1] {
@@ -157,7 +158,7 @@ fn native_cache_node_selection_is_checked_before_add_element() {
 
 #[test]
 fn native_observer_detects_skipped_expansion_wrong_identity_and_corrupt_normal() {
-    let case = fixture(NEW_FIXTURES, "native_affine_identity_twins");
+    let case = fixture(&new_fixtures(), "native_affine_identity_twins");
     let i: Inputs = case.parse().unwrap();
     let rust = output(run_rust(&i, &mut Stats::default()).unwrap());
     let baseline = compare(&rust, &rust, &[]);

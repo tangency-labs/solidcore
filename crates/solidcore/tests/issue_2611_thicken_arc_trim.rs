@@ -348,10 +348,10 @@ fn write_issue_2611_operands() {
             surface_key: &|_: FaceId| ObjectKey(0),
         };
         let bytes = write_brep_to_file(&k, Some(&b), &env, true).unwrap();
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let path = root.join(format!(
+        let path = goldens_data::path(&format!(
             "fixtures/offset.offset_executive_p2/data/issue2611_half_pipe_arc_r{r}.smb"
-        ));
+        ))
+        .unwrap();
         std::fs::write(&path, &bytes).unwrap();
     }
 }

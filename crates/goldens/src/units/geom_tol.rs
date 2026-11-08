@@ -1089,9 +1089,7 @@ mod tests {
     use crate::case::CaseSource;
 
     fn volume_fixtures() -> Vec<Case> {
-        let file: Value = serde_json::from_str(include_str!(
-            "../../../../fixtures/geom.tol/bspline-volume-scaled-zero.json"
-        ))
+        let file: Value = serde_json::from_str(&crate::fixtures::test_data::read("fixtures/geom.tol/bspline-volume-scaled-zero.json"))
         .unwrap();
         file["cases"]
             .as_array()

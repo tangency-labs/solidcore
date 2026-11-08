@@ -67,7 +67,7 @@ const MAX_DEPTH: usize = 32;
 /// Repository directories of generated `.smb` case inputs other runners read, measured
 /// here too so a change in those runners' results that comes from the reader shows here
 /// (`offset.offset_executive_p2`'s `issue1528_plate_api_shell_2` shells
-/// `issue1528_plate.smb`). Their case names keep the repository-relative path.
+/// `issue1528_plate.smb`), in the golden data. Their case names keep the path relative to it.
 const REPO_MODEL_DIRS: [&str; 1] = ["fixtures/offset.offset_executive_p2/data"];
 /// The integer quantities of one B-rep's record, in order (the area and volume follow).
 const COUNTS: [&str; 7] = ["kind", "faces", "edges", "vertices", "loops", "shells", "check"];
@@ -670,7 +670,7 @@ impl UnitDiff for Runner {
         }
         for repo_dir in REPO_MODEL_DIRS {
             files.extend(
-                model_files(&ctx.root.join(repo_dir))
+                model_files(&crate::fixtures::data_root()?.join(repo_dir))
                     .into_iter()
                     .map(|(path, file)| (path, format!("{repo_dir}/{file}"))),
             );

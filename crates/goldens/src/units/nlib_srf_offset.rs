@@ -625,9 +625,7 @@ mod tests {
 
     #[test]
     fn issue471_conditioned_offsets_of_the_actual_drafted_rounds() {
-        let data: Value = serde_json::from_str(include_str!(
-            "../../../../fixtures/nlib.srf_offset/issue471.json"
-        ))
+        let data: Value = serde_json::from_str(&crate::fixtures::test_data::read("fixtures/nlib.srf_offset/issue471.json"))
         .unwrap();
         for case in data["cases"].as_array().unwrap() {
             let i: Inputs = serde_json::from_value(case["inputs"].clone()).unwrap();

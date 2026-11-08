@@ -2088,9 +2088,7 @@ mod tests {
     /// speed with a given second derivative among them, and the refusals.
     #[test]
     fn given_params_fixtures_are_the_pinned_interpolation() {
-        let fixtures: Value = serde_json::from_str(include_str!(
-            "../../../../fixtures/nurbs.b_spline_curve_n_lib/interp_given_params.json"
-        ))
+        let fixtures: Value = serde_json::from_str(&crate::fixtures::test_data::read("fixtures/nurbs.b_spline_curve_n_lib/interp_given_params.json"))
         .unwrap();
         let (mut built, mut refused) = (0, 0);
         for case in fixtures["cases"].as_array().unwrap() {

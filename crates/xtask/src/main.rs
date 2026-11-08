@@ -10,6 +10,12 @@
 //! `~/github/solidcore-wt`), this checkout's `bin/` and `reports/`, and the
 //! system temp dir. A root itself, the main checkout, and anything inside a
 //! `.git` directory are refused.
+//!
+//! `cargo xtask goldens-fetch [--check]` checks out the golden data at the pin,
+//! `goldens-pin <sha>` moves the pin, and `goldens-bless-pr` proposes a bless as a
+//! solidcore-goldens pull request ([`goldens`]).
+
+mod goldens;
 
 use std::env;
 use std::ffi::OsString;
@@ -21,6 +27,10 @@ use std::process::{Command, ExitCode};
 const USAGE: &str = "usage:
   cargo xtask rm <path>...            delete files or directory trees
   cargo xtask worktree-rm <dir>...    delete git worktrees, then `git worktree prune`
+  cargo xtask goldens-fetch [--check] the golden data at goldens.pin, into .goldens/
+  cargo xtask goldens-pin <sha>       pin solidcore-goldens <sha> (checked) and fetch it
+  cargo xtask goldens-bless-pr <branch> <title> <body-file>
+                                      the blessed .goldens/ as a solidcore-goldens pull request
   options: -n / --dry-run             print what would be deleted";
 
 fn main() -> ExitCode {
@@ -33,6 +43,33 @@ fn main() -> ExitCode {
     let result = match cmd.to_str() {
         Some("rm") => rm(&args, dry_run),
         Some("worktree-rm") => worktree_rm(&args, dry_run),
+        Some("goldens-pin") => {
+            let [sha] = args.as_slice() else {
+                eprintln!("{USAGE}");
+                return ExitCode::from(2);
+            };
+            goldens::pin(&sha.to_string_lossy())
+        }
+        Some("goldens-bless-pr") => {
+            let [branch, title, body] = args.as_slice() else {
+                eprintln!("{USAGE}");
+                return ExitCode::from(2);
+            };
+            goldens::bless_pr(
+                &branch.to_string_lossy(),
+                &title.to_string_lossy(),
+                Path::new(body),
+            )
+        }
+        Some("goldens-fetch") => {
+            let check = take_flag(&mut args, &["--check"]);
+            if args.is_empty() {
+                goldens::fetch(check)
+            } else {
+                eprintln!("{USAGE}");
+                return ExitCode::from(2);
+            }
+        }
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);

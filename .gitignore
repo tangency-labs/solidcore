@@ -12,6 +12,9 @@ target/
 .idea/
 .vscode/
 
+# Golden data at goldens.pin (cargo xtask goldens-fetch; tangency-labs/solidcore-goldens)
+/.goldens
+
 # Third-party test corpora (scripts/fetch-ssi-corpus.sh); never committed
 /corpus
 __pycache__/

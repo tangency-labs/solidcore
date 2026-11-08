@@ -90,8 +90,8 @@ fn write_issue_1036_skin_fixture() {
             },
         }));
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let path = root.join("fixtures/boolean.api_brep/issue_1036_coincident_skins.json");
+    let path =
+        goldens_data::path("fixtures/boolean.api_brep/issue_1036_coincident_skins.json").unwrap();
     let text = serde_json::to_string_pretty(&json!({ "cases": cases })).unwrap() + "\n";
     std::fs::write(&path, text).unwrap();
 }

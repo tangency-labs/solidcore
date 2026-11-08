@@ -1450,8 +1450,9 @@ mod tests {
     }
 
     fn poly_fixture_cases() -> Vec<(String, Inputs)> {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/intersect.ray_tracer/poly_breps.json");
+        let path = crate::fixtures::data_root()
+            .unwrap()
+            .join("fixtures/intersect.ray_tracer/poly_breps.json");
         let text = std::fs::read_to_string(path).unwrap();
         let v: Value = serde_json::from_str(&text).unwrap();
         v["cases"]

@@ -1,7 +1,7 @@
 # goldens — every unit's cases against their expected outputs
 
 `goldens` runs every case of every unit on solidcore and checks each output against the
-unit's **golden**, `expected/<unit>.jsonl`: the output solidcore produced for that case
+unit's **golden**, `expected/<unit>.jsonl` in the golden data: the output solidcore produced for that case
 when the golden was blessed. A unit passes when every case it produces is in its golden,
 every case in its golden is produced, no case breaks (a harness error or a panic) and
 every output agrees with the golden (below). CI's `goldens` job runs every unit on every
@@ -10,6 +10,12 @@ pull request.
 A golden proves that a result is unchanged, not that it is correct: correctness is proved
 by closed forms, geometric checks and invariants (`docs/definitions-and-certificates.md`).
 A pull request that changes a golden says why, with numbers and, for geometry, pictures.
+
+The goldens and the per-unit fixtures live in
+[tangency-labs/solidcore-goldens](https://github.com/tangency-labs/solidcore-goldens), checked
+out at the sha in `goldens.pin` into `.goldens/` by `cargo xtask goldens-fetch` (or found at
+`$SOLIDCORE_GOLDENS_DIR`; `crates/goldens-data` resolves it, and missing data is an error, never
+a skip). `fixtures/solidcraft/` stays in this repository.
 
 The cases come from upstream SMLib's tests re-expressed as data (`fixtures/<unit>/`),
 from upstream's `TestFiles` (read from the `upstream/` checkout, see
@@ -21,12 +27,13 @@ linked or run here.
 
 ```sh
 export CARGO_BUILD_JOBS=2                     # shared machine
+cargo xtask goldens-fetch                     # the golden data at goldens.pin, into .goldens/
 G="nice -n 10 cargo run --profile goldens -p goldens --"
 $G --list                                     # registered units and their case counts
 $G --unit nlib.knots --goldens                # one unit against its golden
 $G --unit 'nlib.*' --goldens                  # globs (`*`, `?`) over the registered units
 $G --all --goldens --jobs 0                   # every unit, one child process per core (CI)
-$G --unit nlib.knots --bless                  # rewrite the unit's golden from this run
+$G --unit nlib.knots --bless                  # rewrite the unit's golden (in .goldens/) from this run
 nice -n 10 cargo test -p goldens              # the harness's and the runners' own tests
 ```
 
@@ -71,11 +78,23 @@ blessed), `1` any failure, `2` usage or setup error.
   longer ones as per-block sums (`[sum, abs_sum, weighted_sum]` per 256 entries), so a
   change in any block, or entries swapped within one, shows.
 * **Blessing.** A change that moves a result on purpose blesses the units it moves
-  (`--unit <id> --bless`) and commits the golden with its reason: the commit message and
-  the pull request list the cases that changed with their old and new values, why the new
-  ones are right, and, for geometry, pictures before and after drawn from the same view.
-  A golden change without that justification is not reviewed. A bless never hides a
-  broken case: a unit with one is refused.
+  (`--unit <id> --bless`, which writes `.goldens/expected/`) and carries its reason: the
+  cases that changed with their old and new values, why the new ones are right, and, for
+  geometry, pictures before and after drawn from the same view. A golden change without
+  that justification is not reviewed. A bless never hides a broken case: a unit with one is
+  refused. The blessed data becomes a solidcore-goldens pull request, then a pin bump:
+
+  ```sh
+  cargo xtask goldens-bless-pr <branch> "<title>" <justification.md>
+  #   a branch of solidcore-goldens from the pin, one commit of every change in .goldens/,
+  #   pushed, and the pull request opened (gh) with the justification as its description
+  # ... once it merges, in the solidcore pull request that needs it:
+  cargo xtask goldens-pin <merge sha>          # checks the sha is there, writes goldens.pin, fetches
+  ```
+
+  The solidcore pull request repeats or links the justification. CI's `goldens-pin` job fails
+  a pin that is not on solidcore-goldens, so code never lands ahead of its data
+  ([docs/goldens.md](../../docs/goldens.md)).
 * **Known failures.** A case whose result is wrong is never blessed. It is listed in
   `expected/known_failing.json` (`{"<unit>": {"<case>": "<issue>: <what is wrong>"}}`)
   and has no golden line. It still runs, so a harness error or panic still fails, and
@@ -104,7 +123,7 @@ no shared edits:
 | file | what |
 |---|---|
 | `crates/goldens/src/units/foo_bar.rs` | `pub struct Runner;` implementing `UnitDiff` (registered by `build.rs`) |
-| `fixtures/foo.bar/*.json` | data cases (upstream tests re-expressed as data) |
+| `fixtures/foo.bar/*.json` (in solidcore-goldens) | data cases (upstream tests re-expressed as data) |
 
 ```rust
 //! Runner for unit `foo.bar`. Rust: solidcore::<path>.
@@ -168,12 +187,15 @@ Files load in name order; names must be unique per unit. Re-express upstream tes
 absolute path, and `{"$repo_file": "fixtures/<unit>/data/<file>"}` to a file generated
 for a case.
 
-Then write the unit's first golden and commit it with the runner:
+Write the fixtures under `.goldens/fixtures/foo.bar/`, then the unit's first golden; the
+data goes to solidcore-goldens and the runner to solidcore:
 
 ```sh
 nice -n 10 cargo run --profile goldens -p goldens -- --unit foo.bar --bless
 nice -n 10 cargo run --profile goldens -p goldens -- --unit foo.bar --goldens --reverse
-git add crates/goldens/src/units/foo_bar.rs fixtures/foo.bar crates/goldens/expected/foo.bar.jsonl
+cargo xtask goldens-bless-pr add-foo-bar "foo.bar: its cases and first golden" why.md
+git add crates/goldens/src/units/foo_bar.rs     # and, once that merges, goldens.pin:
+cargo xtask goldens-pin <merge sha>
 ```
 
 ## Hostile inputs (`tests/fuzz_corpus/`)

@@ -23,7 +23,9 @@ import sys
 ROOT = os.getcwd()
 TEST = os.path.join(ROOT, "upstream/tests/prog_test/src/smAdvancedTest.cpp")
 FILES = os.path.join(ROOT, "upstream/TestFiles/pt_TestFiles")
-OUT = os.path.join(ROOT, "fixtures/surface.surface_p2/ssi_adv.json")
+# the golden data (solidcore-goldens at goldens.pin; cargo xtask goldens-fetch)
+DATA = os.environ.get("SOLIDCORE_GOLDENS_DIR") or os.path.join(ROOT, ".goldens")
+OUT = os.path.join(DATA, "fixtures/surface.surface_p2/ssi_adv.json")
 APPROX_TOL = 1.0e-3  # my_test_one_ssi -> my_test_ssi(pBrep1, pBrep2, 1.0e-3, ...)
 
 

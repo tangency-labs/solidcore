@@ -44,6 +44,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/fetch-solids.sh || echo "no solids report; the Solids page will say so"
+      # .goldens/: the goldens the inventory reads (goldens.pin).
+      - name: Golden data
+        uses: ./.github/actions/goldens
       - name: Test checklist generator
         run: python3 -m unittest discover -s harness/plan -p 'test_*.py'
       - name: Generate checklist

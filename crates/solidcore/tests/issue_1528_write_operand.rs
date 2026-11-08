@@ -146,8 +146,7 @@ fn write_and_shell(k: &mut Kernel, b: &Brep, out: &str, label: &str) {
         surface_key: &|_: FaceId| ObjectKey(0),
     };
     let bytes = write_brep_to_file(k, Some(b), &env, true).unwrap();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let path = root.join(out);
+    let path = goldens_data::path(out).unwrap();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, &bytes).unwrap();
 

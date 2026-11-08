@@ -174,8 +174,8 @@ fn every_vendored_body_has_the_same_test_37_with_and_without_the_winding_hulls()
     let mut read = 0;
     for dir in [
         root.join("tests/data"),
-        root.join("../../fixtures/topology.assert_valid"),
-        root.join("../../fixtures/topology.brep_p10"),
+        goldens_data::path("fixtures/topology.assert_valid").unwrap(),
+        goldens_data::path("fixtures/topology.brep_p10").unwrap(),
     ] {
         for path in smb_files(&dir) {
             let bytes = std::fs::read(&path).unwrap();

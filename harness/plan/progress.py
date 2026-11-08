@@ -3,7 +3,7 @@
 
 The Pages workflow (.github/workflows/pages.yml) runs this on main and publishes the result
 on the site as PROGRESS.md; plan/PROGRESS.md is gitignored and never committed. Locally:
-    python3 harness/plan/progress.py          # from plan/units and crates/goldens/expected/
+    python3 harness/plan/progress.py          # from plan/units and the goldens (.goldens/expected/)
     python3 harness/plan/progress.py --prs    # also mark units with an open "port: <id>" PR
 Output is deterministic (no timestamps); plan statuses, claims and stored-record counts drive
 changes. A committed golden is an expectation, not proof of correctness or a current CI pass.
@@ -110,7 +110,7 @@ def main():
     out = [
         "# Port progress",
         "",
-        "Generated from `plan/units/*.toml` and `crates/goldens/expected/*.jsonl` by "
+        "Generated from `plan/units/*.toml` and solidcore-goldens' `expected/*.jsonl` by "
         "`harness/plan/progress.py`; do not edit by hand.",
         "",
         f"**{count['green'] + count['partial']} / {len(units)} units ported** "
@@ -120,7 +120,7 @@ def main():
         "",
         "Plan status is historical port progress, not a current CI result. Golden record counts "
         "describe stored expectations, not correctness or runtime passes. Known failures are listed "
-        "separately in `crates/goldens/expected/known_failing.json`.",
+        "separately in solidcore-goldens' `expected/known_failing.json`.",
         "",
         "Legend: ✅ green (port-plan status) · 🟡 partial (port-plan status; some code deferred) · "
         "🔨 claimed · ▶️ ready (all dependencies done) · ⏳ claimable, dependencies still missing · ⛔ blocked.",

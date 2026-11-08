@@ -169,7 +169,7 @@ fn path_of(i: &Inputs) -> Result<String, HarnessError> {
             {
                 return Err(harness("invalid local fixture path"));
             }
-            let path = crate::case::repo_root().join(path);
+            let path = crate::fixtures::data_root()?.join(path);
             if !path.is_file() {
                 return Err(harness("local fixture not found"));
             }

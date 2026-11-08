@@ -1,0 +1,11 @@
+[package]
+name = "goldens-data"
+description = "Where solidcore's goldens and per-unit fixtures live: tangency-labs/solidcore-goldens at the pinned sha (not published)."
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true

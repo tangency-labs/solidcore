@@ -767,9 +767,7 @@ mod tests {
     /// The fixtures cover successes and the input errors.
     #[test]
     fn high_derivs_params_fixtures_are_the_pinned_fit() {
-        let fixtures: Value = serde_json::from_str(include_str!(
-            "../../../../fixtures/nlib.crv_fit_p3/high_derivs_params.json"
-        ))
+        let fixtures: Value = serde_json::from_str(&crate::fixtures::test_data::read("fixtures/nlib.crv_fit_p3/high_derivs_params.json"))
         .unwrap();
         let mut statuses: BTreeMap<i64, usize> = BTreeMap::new();
         for case in fixtures["cases"].as_array().unwrap() {

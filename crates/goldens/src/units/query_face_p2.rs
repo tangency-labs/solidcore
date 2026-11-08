@@ -1234,7 +1234,9 @@ mod trim_cache_tests {
 
     #[test]
     fn trim_cache_fixtures_record_values_and_repeated_state() {
-        let file = crate::case::repo_root().join("fixtures/query.face_p2/trim_cache.json");
+        let file = crate::fixtures::data_root()
+            .unwrap()
+            .join("fixtures/query.face_p2/trim_cache.json");
         let fixtures: Value =
             serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
         for case in fixtures["cases"].as_array().unwrap() {

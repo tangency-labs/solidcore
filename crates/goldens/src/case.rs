@@ -87,9 +87,12 @@ pub struct CaseContext {
 }
 
 impl CaseContext {
-    /// `fixtures/<unit>/`.
-    pub fn fixture_dir(&self, unit: &str) -> PathBuf {
-        self.root.join("fixtures").join(unit)
+    /// The golden data's `fixtures/<unit>/` ([`goldens_data::fixtures_dir`]).
+    ///
+    /// # Errors
+    /// [`HarnessError`] naming the fetch command when the golden data is missing.
+    pub fn fixture_dir(&self, unit: &str) -> Result<PathBuf, HarnessError> {
+        Ok(crate::fixtures::data_root()?.join("fixtures").join(unit))
     }
 
     /// `upstream/TestFiles/pt_TestFiles/<rel>`, checked to exist.

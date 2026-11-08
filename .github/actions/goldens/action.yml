@@ -1,0 +1,22 @@
+name: Golden data
+description: >
+  Checks out tangency-labs/solidcore-goldens at the sha in goldens.pin into .goldens/: the
+  goldens (expected/) and the per-unit fixtures (fixtures/) the goldens and the workspace
+  tests read. Fails when the pinned sha is not on solidcore-goldens. The same checkout as
+  `cargo xtask goldens-fetch`, without building anything.
+runs:
+  using: composite
+  steps:
+    - name: Fetch the golden data at goldens.pin
+      shell: bash
+      run: |
+        sha=$(awk 'NR == 1 { print $1 }' goldens.pin)
+        case "$sha" in
+          [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
+          *) echo "goldens.pin: not a sha: '$sha'"; exit 1 ;;
+        esac
+        git init --quiet .goldens
+        git -C .goldens fetch --quiet --depth 1 https://github.com/tangency-labs/solidcore-goldens.git "$sha" \
+          || { echo "::error::goldens.pin $sha is not on tangency-labs/solidcore-goldens"; exit 1; }
+        git -C .goldens -c advice.detachedHead=false checkout --quiet --detach FETCH_HEAD
+        test "$(git -C .goldens rev-parse HEAD)" = "$sha"

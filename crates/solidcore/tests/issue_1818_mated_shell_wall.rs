@@ -264,7 +264,7 @@ fn mated_offsets_shell_the_circle_control() {
     }
 }
 
-/// The difftest operand (`offset.offset_executive_p2`, `issue1818.json`).
+/// The difftest operand (`offset.offset_executive_p2`, `issue1818.json`), in the golden data.
 const OUT: &str = "fixtures/offset.offset_executive_p2/data/issue1818_square_to_circle_loft.smb";
 
 fn named(e: solidcore::EntityRef, base: u64) -> solidcore::geom::object::ObjectRef {
@@ -311,8 +311,7 @@ fn write_issue_1818_operand() {
         surface_key: &|_: FaceId| ObjectKey(0),
     };
     let bytes = write_brep_to_file(&k, Some(&b), &env, true).unwrap();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let path = root.join(OUT);
+    let path = goldens_data::path(OUT).unwrap();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, &bytes).unwrap();
     let mut store2 = AttributeStore::new();

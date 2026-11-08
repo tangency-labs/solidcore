@@ -1555,9 +1555,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn sphere_natural_trim_fixture() -> Inputs {
-        let file: Value = serde_json::from_str(include_str!(
-            "../../../../fixtures/surface.surface_p6/sphere-natural-trim.json"
-        ))
+        let file: Value = serde_json::from_str(&crate::fixtures::test_data::read("fixtures/surface.surface_p6/sphere-natural-trim.json"))
         .unwrap();
         let cases = file["cases"].as_array().unwrap();
         assert_eq!(cases.len(), 1);

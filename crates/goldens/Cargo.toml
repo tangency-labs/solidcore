@@ -9,6 +9,8 @@ build = "build.rs"
 
 [dependencies]
 solidcore = { path = "../solidcore" }
+# Where the goldens and fixtures live (tangency-labs/solidcore-goldens at goldens.pin).
+goldens-data = { path = "../goldens-data" }
 # The `ssi` engine of --ssi-corpus (a surface/surface intersection of its own, not a port).
 ssi = { path = "../ssi" }
 # The `solidcore-ssi` engine of --ssi-corpus (`ssi` behind the port's inputs and output).

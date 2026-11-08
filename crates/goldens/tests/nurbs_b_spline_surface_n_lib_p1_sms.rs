@@ -253,7 +253,8 @@ fn available_fixture_bit_census_and_unchanged_reference_inventory() {
     let mut cases = 0;
     for name in ["cases.json", "coverage.json"] {
         let text = std::fs::read_to_string(
-            root.join("fixtures/nurbs.b_spline_surface_n_lib_p1")
+            goldens_data::path("fixtures/nurbs.b_spline_surface_n_lib_p1")
+                .unwrap()
                 .join(name),
         )
         .unwrap();

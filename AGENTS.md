@@ -132,17 +132,21 @@ request is green when they pass.
 
 **Goldens.** Every unit's cases (`fixtures/<unit>/`, upstream's `TestFiles`, each runner's
 seeded generator) run on solidcore in `crates/goldens`, and each output is checked against the
-unit's golden, `crates/goldens/expected/<unit>.jsonl`: what solidcore produced when the golden
-was blessed. A case fails when its output changed (integers, topology, status and deferrals
+unit's golden, `expected/<unit>.jsonl`: what solidcore produced when the golden was blessed.
+The goldens and the per-unit fixtures live in tangency-labs/solidcore-goldens at the sha in
+`goldens.pin`; `cargo xtask goldens-fetch` checks them out into `.goldens/`
+([docs/goldens.md](docs/goldens.md)). A case fails when its output changed (integers, topology, status and deferrals
 exactly; floats within `1e-9` relative, `|a-b| <= 1e-9 * max(|a|,|b|)`, plus an absolute floor
 only where the unit documents one per key in `abs_floors()`), when it is added or missing, and
 when it breaks (a harness error or a panic). Check with
 `cargo run --profile goldens -p goldens -- --unit <id> --goldens` (`--all --jobs 0` for every
 unit). A golden proves a result unchanged, not correct. When your change moves a result on
-purpose, bless the unit (`--unit <id> --bless`) and commit the golden with its justification:
-in the commit message and the pull request, the cases that changed with their old and new
-values, why the new ones are right, and pictures before and after for geometry. A golden
-change without that is not reviewed. Never loosen a tolerance or a floor to keep a golden.
+purpose, bless the unit (`--unit <id> --bless`, into `.goldens/`), open a pull request on
+solidcore-goldens with the golden and its justification (the cases that changed with their old
+and new values, why the new ones are right, and pictures before and after for geometry), and
+once it merges bump `goldens.pin` in your solidcore pull request to its sha, with the same
+justification. CI fails a pin that is not on solidcore-goldens. A golden change without that
+justification is not reviewed. Never loosen a tolerance or a floor to keep a golden.
 
 **The C++ is a reading reference.** `upstream/` is read for test inputs, expected values and
 known constructions (§4b). Nothing in this repository builds, links or runs it.

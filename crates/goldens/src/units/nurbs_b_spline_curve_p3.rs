@@ -1108,9 +1108,7 @@ mod tests {
     /// minimum radius is read (tests 13/14).
     #[test]
     fn zero_speed_end_fixtures_on_no_edge_ignore_the_fix() {
-        let fixtures: Value = serde_json::from_str(include_str!(
-            "../../../../fixtures/nurbs.b_spline_curve_p3/zero_speed_end.json"
-        ))
+        let fixtures: Value = serde_json::from_str(&crate::fixtures::test_data::read("fixtures/nurbs.b_spline_curve_p3/zero_speed_end.json"))
         .unwrap();
         let cases = fixtures["cases"].as_array().unwrap();
         assert!(cases.len() >= 8);

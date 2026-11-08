@@ -57,6 +57,15 @@ jobs:
       - run: scripts/ci/test-wasm-digest.sh
       - run: python3 -I scripts/ci/check_record_ids.py
 
+  # The pinned golden data exists on tangency-labs/solidcore-goldens (goldens.pin), on every
+  # PR: a pin bumped to a sha that is not there yet (its solidcore-goldens PR not merged)
+  # fails here.
+  goldens-pin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/goldens
+
   fmt:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
@@ -104,6 +113,9 @@ jobs:
       # upstream/ for the tests that read its TestFiles.
       - name: Upstream sources for the workspace tests
         uses: ./.github/actions/upstream
+      # .goldens/ for the tests that read the per-unit fixtures (goldens.pin).
+      - name: Golden data for the workspace tests
+        uses: ./.github/actions/goldens
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> bin"
@@ -253,7 +265,7 @@ jobs:
           command: check licenses bans sources
 
   # Every unit's cases, run on solidcore and checked against the unit's golden
-  # (crates/goldens/expected/<unit>.jsonl): a case whose output changed (beyond the 1e-9
+  # (expected/<unit>.jsonl in solidcore-goldens at goldens.pin): a case whose output changed (beyond the 1e-9
   # relative rule and the unit's documented floors), a case added or missing, and a case
   # that breaks (harness error or panic) all fail, each printed with its first
   # differences. A golden changes only with `--bless`, justified in the pull request.
@@ -267,6 +279,9 @@ jobs:
       # upstream/TestFiles: the .smb, .sms and point files many fixtures read.
       - name: Upstream sources (TestFiles)
         uses: ./.github/actions/upstream
+      # .goldens/: the goldens and the per-unit fixtures, at goldens.pin.
+      - name: Golden data
+        uses: ./.github/actions/goldens
       - uses: actions/download-artifact@v4
         with:
           name: check-binaries

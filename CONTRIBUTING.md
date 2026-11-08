@@ -61,16 +61,20 @@ case, replacing the code they supersede. This page is the short version;
 
 ## Goldens
 
-Every unit's cases are checked against its golden, `crates/goldens/expected/<unit>.jsonl`: the
-output solidcore produced for each case when the golden was blessed. CI fails on any case whose
+Every unit's cases are checked against its golden, `expected/<unit>.jsonl` in
+[tangency-labs/solidcore-goldens](https://github.com/tangency-labs/solidcore-goldens) at the sha
+in `goldens.pin` (`cargo xtask goldens-fetch` checks it out into `.goldens/`): the output
+solidcore produced for each case when the golden was blessed. CI fails on any case whose
 output changed, any case added or missing, and any case that breaks.
 
 - **Check:** `cargo run --profile goldens -p goldens -- --unit <id> --goldens` (`--all --jobs 0`
   for every unit, as CI runs it).
-- **Bless** a change you made on purpose: `... --unit <id> --bless`, then commit the golden with
-  its reason. The commit message and the pull request list the cases that changed with their
-  old and new values, say why the new ones are right, and show pictures before and after for
-  geometry. A golden change without that justification is not reviewed.
+- **Bless** a change you made on purpose: `... --unit <id> --bless` (it writes `.goldens/`), open
+  a pull request on solidcore-goldens with the golden and its reason, and once it merges bump
+  `goldens.pin` in your pull request ([docs/goldens.md](docs/goldens.md)). The pull requests list
+  the cases that changed with their old and new values, say why the new ones are right, and
+  show pictures before and after for geometry. A golden change without that justification is
+  not reviewed.
 - **A golden proves a result unchanged, not correct.** Correctness comes from closed forms,
   geometric checks and invariants. Never loosen a tolerance to keep a golden.
 - **The C++ is a reading reference.** `upstream/` is read for inputs, expected values and known

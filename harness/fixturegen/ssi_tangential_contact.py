@@ -29,7 +29,9 @@ import os
 from fractions import Fraction
 
 ROOT = os.getcwd()
-OUT = os.path.join(ROOT, "fixtures/surface.surface_p2/ssi_tangential_contact.json")
+# the golden data (solidcore-goldens at goldens.pin; cargo xtask goldens-fetch)
+DATA = os.environ.get("SOLIDCORE_GOLDENS_DIR") or os.path.join(ROOT, ".goldens")
+OUT = os.path.join(DATA, "fixtures/surface.surface_p2/ssi_tangential_contact.json")
 TOL = 1.0e-6  # the ssi corpus tolerance (#17)
 NOT_RATIONAL = -1.7976931348623157e308  # NOW: the control point carries no weight
 W = math.sqrt(0.5)

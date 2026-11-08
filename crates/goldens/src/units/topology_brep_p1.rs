@@ -2376,9 +2376,7 @@ mod cross_body_tests {
     use crate::compare::compare;
 
     fn transverse() -> Inputs {
-        let fixture: Value = serde_json::from_str(include_str!(
-            "../../../../fixtures/topology.brep_p1/cross_body.json"
-        ))
+        let fixture: Value = serde_json::from_str(&crate::fixtures::test_data::read("fixtures/topology.brep_p1/cross_body.json"))
         .unwrap();
         let case = fixture["cases"]
             .as_array()

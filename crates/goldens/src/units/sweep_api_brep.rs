@@ -1459,9 +1459,7 @@ mod tests {
 
     #[test]
     fn linear_geometry_and_analytic_controls() {
-        let data: Value = serde_json::from_str(include_str!(
-            "../../../../fixtures/sweep.api_brep/linear_geometry.json"
-        ))
+        let data: Value = serde_json::from_str(&crate::fixtures::test_data::read("fixtures/sweep.api_brep/linear_geometry.json"))
         .expect("fixture");
         let mut observations = Vec::new();
         for case in data["cases"].as_array().expect("cases") {

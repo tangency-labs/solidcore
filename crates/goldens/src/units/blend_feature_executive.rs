@@ -130,7 +130,7 @@ impl Default for Inputs {
 
 fn path(i: &Inputs) -> Result<String, HarnessError> {
     if i.file.starts_with("fixtures/") {
-        let p = crate::fixtures::repo_fixture_file(&crate::case::repo_root(), &i.file)?;
+        let p = crate::fixtures::repo_fixture_file(&i.file)?;
         return Ok(p.to_string_lossy().into_owned());
     }
     path_of(&BrepIn::File {

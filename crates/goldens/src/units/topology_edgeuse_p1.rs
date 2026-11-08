@@ -347,7 +347,7 @@ pub(crate) fn path_of(b: Option<&BrepIn>) -> Result<String, HarnessError> {
         Some(BrepIn::File { file, .. }) => {
             let root = crate::case::repo_root();
             let p = if file.starts_with("fixtures/") {
-                crate::fixtures::repo_fixture_file(&root, file)?
+                crate::fixtures::repo_fixture_file(file)?
             } else {
                 crate::fixtures::upstream_test_file(&root, file)?
             };

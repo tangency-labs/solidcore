@@ -975,9 +975,7 @@ mod tests {
 
     #[test]
     fn range_end_refinement_keeps_the_noncollapsed_tail() {
-        let fixtures: Value = serde_json::from_str(include_str!(
-            "../../../../fixtures/curve.curve_p8/edge.json"
-        ))
+        let fixtures: Value = serde_json::from_str(&crate::fixtures::test_data::read("fixtures/curve.curve_p8/edge.json"))
         .unwrap();
         let case = fixtures["cases"]
             .as_array()

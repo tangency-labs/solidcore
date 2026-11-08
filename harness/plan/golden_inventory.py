@@ -2,6 +2,7 @@
 
 import collections
 import json
+import os
 from pathlib import Path
 
 
@@ -13,15 +14,28 @@ def read_json(text, location):
         raise ValueError(f"{location}: invalid JSON") from exc
 
 
+def expected_dir(root):
+    """The goldens: $SOLIDCORE_GOLDENS_DIR/expected, else .goldens/expected at `root`
+    (tangency-labs/solidcore-goldens at goldens.pin, `cargo xtask goldens-fetch`)."""
+    data = os.environ.get("SOLIDCORE_GOLDENS_DIR")
+    return (Path(data) if data else Path(root) / ".goldens") / "expected"
+
+
+def golden_pin(root):
+    """The solidcore-goldens sha in `root`'s goldens.pin."""
+    return (Path(root) / "goldens.pin").read_text().split()[0]
+
+
 def load_inventory(root):
     """Return per-unit stored-record metadata and declared known-failure entries.
 
     No kernel runs here. Counts describe committed expectations, not correctness,
     current CI, or whether a declared known-failing case still exists at runtime.
     """
-    directory = Path(root) / "crates/goldens/expected"
+    directory = expected_dir(root)
     if not directory.exists():
-        raise FileNotFoundError(f"{directory}: golden inventory directory not found")
+        raise FileNotFoundError(
+            f"{directory}: golden inventory directory not found (cargo xtask goldens-fetch)")
     known_path = directory / "known_failing.json"
     known = read_json(known_path.read_text(), known_path) if known_path.exists() else {}
     if not isinstance(known, dict):

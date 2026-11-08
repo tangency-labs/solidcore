@@ -147,10 +147,8 @@ fn shell_open_at_y20_fails_as_upstream() {
 #[ignore = "prints the fixture's face index"]
 fn issue1528_plate_file_top_face_index() {
     let mut k = Kernel::default();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let bytes =
-        std::fs::read(root.join("fixtures/offset.offset_executive_p2/data/issue1528_plate.smb"))
-            .unwrap();
+        goldens_data::read("fixtures/offset.offset_executive_p2/data/issue1528_plate.smb").unwrap();
     let mut attributes = AttributeStore::new();
     let mut records = NotifyRecords::new();
     let fresh = Brep::new();
@@ -414,10 +412,8 @@ fn describe(k: &Kernel, index: Option<usize>, r: solidcore::Result<Brep>) -> Str
 #[test]
 #[ignore = "probe: #1795 Y20 in-memory body against its read-back"]
 fn issue_1795_y20_read_back() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let committed =
-        std::fs::read(root.join("fixtures/offset.offset_executive_p2/data/issue1528_plate.smb"))
-            .unwrap();
+        goldens_data::read("fixtures/offset.offset_executive_p2/data/issue1528_plate.smb").unwrap();
     for open in [Open::Y20, Open::Z27] {
         for cos in [false, true] {
             let tag = format!("open={open:?} cos={cos}");
