@@ -1280,6 +1280,111 @@ mod tests {
         let (k, mut b, v) = box_corner_off(4.0e-4, xsect.min(1.0e-5));
         assert_eq!(face_corner_to_move_to(&k, &mut b, v, xsect).unwrap(), None);
     }
+
+    /// The box corner's z = 0 face replaced by the plane x = -g with the x = 0 face's normal:
+    /// two parallel faces `g` apart at the vertex, which stands at (0, 0, e) with `tolerance`
+    /// while its edge curves still end at the origin.
+    fn parallel_corner(g: f64, e: f64, tolerance: f64) -> (Kernel, Brep, VertexId) {
+        use crate::geom::axis2_placement::Axis2Placement;
+        use crate::math::Point2;
+        use crate::nurbs::knots::Side;
+        use crate::surface::{plane::Plane, surface::Surface};
+        use crate::topology::{face::p2 as face, vertexuse};
+        let (k, mut b, v) = box_corner_off(0.0, tolerance);
+        let normal_of = |b: &Brep, f| {
+            let s = face::surface(b, f).unwrap().unwrap();
+            s.evaluate_normal(&k, Point2::new(0.0, 0.0), Side::Left, Side::Left)
+                .unwrap()
+        };
+        let faces = vertex::faces(&b, v).unwrap();
+        let along = |b: &Brep, axis: Vec3| {
+            faces
+                .iter()
+                .copied()
+                .find(|&f| normal_of(b, f).dot(axis).abs() > 0.5)
+                .unwrap()
+        };
+        let (fx, fz) = (along(&b, Vec3::X), along(&b, Vec3::Z));
+        // u along z and v along y: the normal is z x y = -x, the x = 0 face's, and a point
+        // above the corner (0, 0, e) is at u = e, as it was at x = e on the replaced plane
+        assert!(normal_of(&b, fx).distance(-Vec3::X) < 1e-12);
+        let frame = Axis2Placement::new(Vec3::new(-g, 0.0, 0.0), Vec3::Z, Vec3::Y);
+        b.face_mut(fz).unwrap().surface =
+            Some(Surface::from(Plane::create_canonical(&frame).unwrap()));
+        b.vertex_mut(v).unwrap().point = Vec3::new(0.0, 0.0, e);
+        for vu in vertex::vertexuses(&b, v).unwrap() {
+            vertexuse::init_vertex_face_gap(&mut b, vu).unwrap();
+        }
+        (k, b, v)
+    }
+
+    fn xsect_of(k: &Kernel, b: &Brep) -> f64 {
+        vertex::corner::xsect_tol_3d_of_brep(k, b)
+    }
+
+    #[test]
+    fn issue_3090_parallel_faces_a_corner_inside_the_bound_and_the_residual_is_moved_to() {
+        let (k, b, _) = box_corner_off(0.0, 1.0);
+        let g = 1.5 * xsect_of(&k, &b);
+        // the midpoint of the faces: moves g / 2, leaves g / 2 (< XSectTol3d) to each face
+        let (k, mut b, v) = parallel_corner(g, 0.0, 1.0e-3);
+        let xsect = xsect_of(&k, &b);
+        assert!(
+            vertex::corner::has_parallel_faces(&k, &mut b, v, None)
+                .unwrap()
+                .parallel
+        );
+        let at = face_corner_to_move_to(&k, &mut b, v, xsect)
+            .unwrap()
+            .unwrap();
+        assert!(at.distance(Vec3::new(-g / 2.0, 0.0, 0.0)) < 1e-12, "{at:?}");
+    }
+
+    #[test]
+    fn issue_3090_parallel_faces_a_corner_past_half_the_tolerance_is_left() {
+        let (k, b, _) = box_corner_off(0.0, 1.0);
+        let xsect = xsect_of(&k, &b);
+        let g = 1.5 * xsect;
+        // tolerance 1.2 xsect: past XSectTol3d, but the move g / 2 = 0.75 xsect is past half of it
+        // (the residual 0.75 xsect passes, so it is the bound that refuses)
+        let (k, mut b, v) = parallel_corner(g, 0.0, 1.2 * xsect);
+        assert!(
+            vertex::corner::has_parallel_faces(&k, &mut b, v, None)
+                .unwrap()
+                .parallel
+        );
+        assert_eq!(face_corner_to_move_to(&k, &mut b, v, xsect).unwrap(), None);
+    }
+
+    #[test]
+    fn issue_3090_parallel_faces_a_residual_past_the_intersection_tolerance_is_left() {
+        let (k, b, _) = box_corner_off(0.0, 1.0);
+        let xsect = xsect_of(&k, &b);
+        // faces 3 xsect apart: the midpoint is 1.5 xsect from each, well inside half of 1e-3
+        let (k, mut b, v) = parallel_corner(3.0 * xsect, 0.0, 1.0e-3);
+        assert!(
+            vertex::corner::has_parallel_faces(&k, &mut b, v, None)
+                .unwrap()
+                .parallel
+        );
+        assert_eq!(face_corner_to_move_to(&k, &mut b, v, xsect).unwrap(), None);
+    }
+
+    #[test]
+    fn issue_3090_a_corner_far_from_the_end_of_an_incident_edge_is_left() {
+        let (k, b, _) = box_corner_off(0.0, 1.0);
+        let xsect = xsect_of(&k, &b);
+        let g = 1.5 * xsect;
+        // the vertex stands e along the faces from where its edge curves end; the corner is
+        // g / 2 from it, inside half of 1e-3, and both face gaps pass, so only the edge gap
+        // (about e from the y and x edges) decides: 4e-4 is inside half the tolerance, 6e-4 past it
+        let (k, mut b, v) = parallel_corner(g, 4.0e-4, 1.0e-3);
+        assert!(face_corner_to_move_to(&k, &mut b, v, xsect)
+            .unwrap()
+            .is_some());
+        let (k, mut b, v) = parallel_corner(g, 6.0e-4, 1.0e-3);
+        assert_eq!(face_corner_to_move_to(&k, &mut b, v, xsect).unwrap(), None);
+    }
     #[test]
     fn cancellation_status_ignore_failure_preserves_control_errors() {
         for error in [
