@@ -7,8 +7,8 @@
 //! kind, by what it became; a number within [`ROUNDING`] of its size (relative, no floor) is
 //! counted as rounding, with its count and the largest.
 //!
-//! On the whole corpus (1,332 bodies, at #3187): 1,256 come back bit for bit, 36 within
-//! rounding (the largest 4.9e-16 relative), and 40 differ, each in exactly the classes
+//! On the whole corpus (1,332 bodies, at #3199): 1,260 come back bit for bit, 36 within
+//! rounding (the largest 4.9e-16 relative), and 36 differ, each in exactly the classes
 //! [`pinned`] lists for it.
 #![allow(
     clippy::unwrap_used,
@@ -389,30 +389,24 @@ fn pinned() -> BTreeMap<String, BTreeSet<String>> {
                 "surfaces/cov-ruled-cylinder-rim-tangent-to-the-top-is-a-flat-ring.json:b2",
             ],
         ),
-        // a label its form is not proved on goes as the form alone (#2540): cylinders whose
-        // frames are about 1e-14 rad off their forms (two of them at the rounding of a derived
-        // bound, #3185's thread)
+        // a label its form is not proved on goes as the form alone (#2540): the 2903 rim
+        // cylinders, whose frames are off their forms past the rounding `evaluates_as` derives
+        // (margins 1.14 and 1.28, tests/issue_3185_label_margins.rs)
         (
             label("cylinder -> rational_spline", &["radius"]),
             &[
-                "booleans/3456-deep-cut-through-drilled-taper-leaves-base.json:b94",
-                "crashes/2243-step-export-flanged-enclosure.json:b43",
                 "fillets/2903-original-rim-chamfer.json:b0",
                 "fillets/2903-original-rim-round.json:b0",
             ],
         ),
-        // tori whose frame and fitted sweep are about 1e-14 rad off their forms, rightly
-        // refused (#3185)
+        // a torus label whose frame is off its form's own first sweep row past the rounding
+        // `evaluates_as` derives (margin 1.60, tests/issue_3185_label_margins.rs)
         (
             label(
                 "torus -> rational_spline",
                 &["major_radius", "minor_radius"],
             ),
-            &[
-                "sweeps/3897-sweep-ring-along-a-short-arc-joined-to-a-collar.json:b6",
-                "sweeps/4280-circular-pattern-of-sweep-cut-groove-on-hub.json:b46",
-                "sweeps/4280-circular-pattern-of-sweep-cut-groove-on-hub.json:b85",
-            ],
+            &["sweeps/4280-circular-pattern-of-sweep-cut-groove-on-hub.json:b46"],
         ),
         // an extruded circle the flat hop left a spline, proved a cylinder
         (
@@ -584,7 +578,7 @@ fn parity(stride: usize) {
         );
         assert_eq!(
             (t.bodies, t.identical, t.rounding_only),
-            (1332, 1256, 36),
+            (1332, 1260, 36),
             "bodies, identical, within rounding"
         );
         // the largest rounding difference, relative (#3137: 4.885e-16)

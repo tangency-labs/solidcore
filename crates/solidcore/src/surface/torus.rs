@@ -1061,13 +1061,23 @@ impl Torus {
         let ref_frame = ref_iso.reference_frame.ok_or_else(missing)?;
         let other_frame = other_iso.reference_frame.ok_or_else(missing)?;
         let min_rad = other_iso.radius.ok_or_else(missing)?;
-        let sweep_ivl = ref_iso.angles.ok_or_else(missing)?;
         let common_point = other_iso.common_line_point.ok_or_else(missing)?;
         let common_vec = other_iso.common_line_vec.ok_or_else(missing)?;
 
         // get torus origin = MinorCircleCenter projected onto common line
         let torus_origin =
             common_point + common_vec.dot(other_frame.origin() - common_point) * common_vec;
+
+        // not upstream (#3199): the x axis and the sweep interval from the form's own first
+        // sweep row's ends about the axis (`sweep_frame`), not from `is_arc`'s fit of it
+        let Some((torus_x_axis, torus_y_axis, sweep_ivl)) = sweep_frame(
+            torus_origin,
+            ref_frame.z_axis(),
+            nurb_min_point,
+            sweep_row_end(test, &nurb_uv_domain, swap_uv)?,
+        ) else {
+            return Ok(None);
+        };
 
         // get torus orientation and size
         // not upstream (WR-501, #1470, opt-in; tangency-labs/smlib@6136a04): the major
@@ -1079,9 +1089,7 @@ impl Torus {
             other_frame.origin() - ref_frame.origin()
         };
         let maj_rad = major_vec.length();
-        let torus_x_axis = ref_frame.x_axis(); // the frame where all circles are parallel
-        let torus_y_axis = ref_frame.y_axis();
-        let torus_z_axis = ref_frame.z_axis();
+        let torus_z_axis = ref_frame.z_axis(); // the frame where all circles are parallel
 
         // torus must have positive radii
         if min_rad <= EFF_ZERO || maj_rad <= EFF_ZERO {
@@ -1294,7 +1302,6 @@ impl Torus {
         let mut ref_frame = ref_iso.reference_frame.ok_or_else(missing)?;
         let other_frame = other_iso.reference_frame.ok_or_else(missing)?;
         let min_rad = other_iso.radius.ok_or_else(missing)?;
-        let sweep_ivl = ref_iso.angles.ok_or_else(missing)?;
         let common_point = other_iso.common_line_point.ok_or_else(missing)?;
         let common_vec = other_iso.common_line_vec.ok_or_else(missing)?;
 
@@ -1302,8 +1309,18 @@ impl Torus {
         let torus_origin =
             common_point + common_vec.dot(other_frame.origin() - common_point) * common_vec;
 
+        // not upstream (#3199): the x axis and the sweep interval from the form's own first
+        // sweep row's ends about the axis (`sweep_frame`), not from `is_arc`'s fit of it
+        let (x_axis, y_axis, sweep_ivl) = sweep_frame(
+            torus_origin,
+            ref_frame.z_axis(),
+            nurb_min_point,
+            sweep_row_end(srf, &nurb_uv_domain, swap_uv)?,
+        )
+        .ok_or_else(|| SolidError::sm_err(OP_REBUILD))?;
+
         // Install the origin into pRefFrame.  // [B328]
-        let _ = ref_frame.set_canonical(torus_origin, ref_frame.x_axis(), ref_frame.y_axis());
+        let _ = ref_frame.set_canonical(torus_origin, x_axis, y_axis);
 
         // get torus orientation and size
         let major_vec = other_frame.origin() - ref_frame.origin();
@@ -1587,6 +1604,44 @@ impl Revolved for Torus {
 
 /// `SmTorus::CreateIsoParametricCurve` of the surface of revolution `rev` of a torus
 /// of `shape` (also called from the base class's rebuilds, where it is virtual).
+/// The form's point at the end of its first sweep row: the sweep's last parameter, the
+/// generator's first (the row `is_arc` reads first in [`test_for_iso_circles`]).
+fn sweep_row_end(srf: &BSplineSurface, domain: &Extent2d, swap_uv: bool) -> Result<Point3> {
+    srf.evaluate_point(if swap_uv {
+        domain.evaluate(0.0, 1.0)
+    } else {
+        domain.evaluate(1.0, 0.0)
+    })
+}
+
+/// Not upstream (#3199): a recognised torus's x axis, y axis and sweep interval (degrees) from
+/// its form's own first sweep row, `start` and `end` its two ends, about the axis through
+/// `origin` along the unit `z`: x the unit direction of `start` square to the axis (so the
+/// interval starts at 0), y `z x x`, and the interval's end the angle of `end` from x about z
+/// (`atan2` in that frame), a closed row (within `SM_EFF_ZERO_SQRT` of 0) at 360, as `is_arc`
+/// maps its end. `is_arc` fitted the row's circle through three samples, so on a short arc its
+/// centre, and with it the x axis and the end angle, was off the axis by its conditioning
+/// (1e-14 rad on #3185's grooves); the converter centres the sweep circle on the axis, so its
+/// ends and its inside now agree to rounding. `None` when `start` lies on the axis.
+fn sweep_frame(
+    origin: Point3,
+    z: Vec3,
+    start: Point3,
+    end: Point3,
+) -> Option<(Vec3, Vec3, Extent1d)> {
+    let s = start - origin;
+    let x = (s - s.dot(z) * z).unitize().ok()?;
+    let y = z.cross(x);
+    let e = end - origin;
+    let mut end_deg = e.dot(y).atan2(e.dot(x)) * 180.0 / PI;
+    if end_deg.abs() < EFF_ZERO_SQRT {
+        end_deg = 360.0;
+    } else if end_deg < 0.0 {
+        end_deg += 360.0;
+    }
+    Some((x, y, Extent1d::from_min_max(0.0, end_deg)))
+}
+
 fn iso_curve(
     rev: &SurfOfRevolution,
     shape: Shape,
