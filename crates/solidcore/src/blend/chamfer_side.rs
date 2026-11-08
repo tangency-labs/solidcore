@@ -81,6 +81,15 @@ pub fn faces_along(k: &Kernel, b: &mut Brep, e: EdgeId, dir: Vec3) -> Result<[(F
     Ok([(f0, n0.dot(dir)), (f1, n1.dot(dir))])
 }
 
+/// An upper bound on the widest wedge along an edge ([`widest_wedge_bound`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WedgeBound {
+    /// The bound, radians.
+    pub wedge: f64,
+    /// The pieces of the edge's parameter enclosed when the bound was taken.
+    pub pieces: usize,
+}
+
 /// The most pieces [`widest_wedge_bound`] splits an edge into. A piece's enclosure narrows in
 /// proportion to its length, so a bound that has not met its gap by then is taken as it is:
 /// still proved, only less tight.
@@ -200,6 +209,16 @@ fn side(k: &Kernel, b: &mut Brep, u: EdgeuseId, t: f64) -> Result<Side> {
         .surface
         .as_ref()
         .ok_or_else(|| invalid("a face of the edge has no surface"))?;
+    // an offset surface's normal is its base's at the same (u, v) (an offset is built only
+    // where it does not fold, so the direction is kept up to the sign the probe below reads):
+    // its base's net encloses it
+    let mut surface = surface;
+    for _ in 0..=crate::surface::offset_surface::MAX_SURFACE_NESTING {
+        match surface.kind() {
+            crate::surface::surface::SurfaceKind::OffsetSurface(o) => surface = o.base_surface(),
+            _ => break,
+        }
+    }
     let net = as_b_spline(k, surface)?.ok_or_else(|| invalid("a face of the edge has no net"))?;
     let net = Nurbs::of(&net)?;
     let domain = rec.uv_domain;
@@ -263,7 +282,7 @@ fn normals_cos_over(sides: &[Side; 2], t: Ivl) -> Result<Ivl> {
 /// [`SolidError::InvalidInput`] for an edge without a blend edge use or its mate, a trim curve
 /// that is no B-spline, a face with no net or one whose normal's side cannot be told; those of
 /// the enclosures.
-pub fn widest_wedge_bound(k: &Kernel, b: &mut Brep, e: EdgeId, gap: f64) -> Result<f64> {
+pub fn widest_wedge_bound(k: &Kernel, b: &mut Brep, e: EdgeId, gap: f64) -> Result<WedgeBound> {
     let u0 =
         edge::blend_edgeuse(k, b, e)?.ok_or_else(|| invalid("the edge has no blend edge use"))?;
     let u1 = eu1::radial(b, u0)?.ok_or_else(|| invalid("the edge lies on one face only"))?;
@@ -299,12 +318,12 @@ pub fn widest_wedge_bound(k: &Kernel, b: &mut Brep, e: EdgeId, gap: f64) -> Resu
         }
     }
     let top = pieces.iter().fold(f64::NEG_INFINITY, |t, p| t.max(p.hi));
-    // the wedge is pi less the normals' angle: acos(-c), rounded up; past 1 it is pi
-    let below_one = top < 1.0;
-    if !below_one {
-        return Ok(crate::math::PI);
-    }
-    Ok(round_up((-top).max(-1.0).acos()).min(crate::math::PI))
+    // the wedge is pi less the normals' angle: acos(-c), rounded up; a cosine enclosed at 1 or
+    // above (or not at all) is clamped to -1, a wedge of pi
+    Ok(WedgeBound {
+        wedge: round_up((-top).max(-1.0).acos()).min(crate::math::PI),
+        pieces: pieces.len(),
+    })
 }
 
 #[cfg(test)]
@@ -351,7 +370,49 @@ mod tests {
             .unwrap();
         // the binormals the trim curves are read with
         faces_along(&k, &mut b, e, Vec3::new(0.0, 0.0, 1.0)).unwrap();
-        let w = widest_wedge_bound(&k, &mut b, e, 1e-9).unwrap();
+        let w = widest_wedge_bound(&k, &mut b, e, 1e-9).unwrap().wedge;
+        let right = 0.5 * crate::math::PI;
+        assert!(w >= right && w - right < 2e-9, "{w}");
+    }
+
+    /// The box's top front edge.
+    fn box_top_front(k: &mut Kernel) -> (Brep, EdgeId) {
+        let b = create_box(k, Vec3::new(0.0, 0.0, 0.0), 1.0, 1.0, 1.0).unwrap();
+        let p = Vec3::new(0.5, 0.0, 1.0);
+        let e = b
+            .edge_list()
+            .iter()
+            .copied()
+            .find(|&e| edge_closest_point(k, &b, e, p).unwrap().closest.distance < 1e-12)
+            .unwrap();
+        (b, e)
+    }
+
+    /// A gap no enclosure meets: the pieces stop at the cap, and the bound stands, from above.
+    #[test]
+    fn a_gap_never_met_stops_at_the_cap_with_a_bound_from_above() {
+        let mut k = Kernel::default();
+        let (mut b, e) = box_top_front(&mut k);
+        faces_along(&k, &mut b, e, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let w = widest_wedge_bound(&k, &mut b, e, -1.0).unwrap();
+        assert!(w.pieces > MAX_WEDGE_PIECES, "{w:?}");
+        assert!(w.wedge >= 0.5 * crate::math::PI, "{w:?}");
+    }
+
+    /// A face whose surface is an offset surface is enclosed by its base's net: the top made
+    /// the offset by 0 of its own plane meets the front square, as before.
+    #[test]
+    fn an_offset_surface_face_is_enclosed_by_its_base() {
+        use crate::surface::offset_surface::OffsetSurface;
+        use crate::surface::surface::Surface;
+        let mut k = Kernel::default();
+        let (mut b, e) = box_top_front(&mut k);
+        let [(f0, l0), (f1, _)] = faces_along(&k, &mut b, e, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let top = if l0 > 0.5 { f0 } else { f1 };
+        let plane = b.face(top).unwrap().surface.clone().unwrap();
+        let offset = OffsetSurface::new(&k, 0.0, plane, true, 0).unwrap();
+        b.face_mut(top).unwrap().surface = Some(Surface::from(offset));
+        let w = widest_wedge_bound(&k, &mut b, e, 1e-9).unwrap().wedge;
         let right = 0.5 * crate::math::PI;
         assert!(w >= right && w - right < 2e-9, "{w}");
     }

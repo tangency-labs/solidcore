@@ -365,7 +365,7 @@ impl FilletSession<'_> {
                         let id = edges.get(other).copied().ok_or_else(invalid)?;
                         let w = match widest.get(other).copied().flatten() {
                             Some(w) => w,
-                            None => widest_wedge_bound(k, target, id, gap)?,
+                            None => widest_wedge_bound(k, target, id, gap)?.wedge,
                         };
                         if let Some(slot) = widest.get_mut(other) {
                             *slot = Some(w);
