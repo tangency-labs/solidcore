@@ -55,7 +55,12 @@
 //! are found apart from `corner_planes` (`corner_quadrics`); the
 //! fork's `SBSCALE` environment override of the rule is not taken; the executive's
 //! `CalcSetBackVert` is reached through [`SetbackSolvers`]; a failing call within a growth
-//! trial is that call's error, where the fork's trial counts it as not certified.
+//! trial is that call's error, where the fork's trial counts it as not certified. The
+//! corner's side of each blend's end section (`gather_ends`) is the side its edge runs on to
+//! the vertex there, from the edge's direction at the setback, not the end of its rails
+//! nearer the vertex as the fork's `gather` takes it: a round on an arc, extended past a far
+//! corner that does not blend, comes back round nearer the vertex than a long setback's end
+//! section (solidcore#2835).
 //!
 //! [`FilletCorner::setback`]: crate::blend::fillet_corner::p3::FilletCorner::setback
 
@@ -77,6 +82,7 @@ use crate::blend::fillet_geom::p1::{
     CornerLookup, FilStatus, FilletBrep, FilletCornerId, FilletEdgeType, FilletErrorType,
     FilletGeomId, FilletVertexType,
 };
+use crate::blend::fillet_geom::p2::set_back_frame;
 use crate::blend::fillet_geom::p4::set_edge_curve;
 use crate::blend::fillet_solver::p1::{FilletSolverType, FilletSurfaceGeneratorType};
 use crate::blend::fillet_solver::p5::is_concave_edge;
@@ -1436,7 +1442,10 @@ enum Gathered {
 
 /// The fork's `gather` in `BuildSetBackFill`: each blend at its end section (its surface,
 /// its rails' direction on it, the rail parameter of its setback vertex, and on which side
-/// the corner lies).
+/// the corner lies). The corner lies on the side of the end section that the blend's edge
+/// runs on to the vertex: the rail's direction there against the edge's at the setback (the
+/// frame `CalcSetBackVert` places the setback vertex in, `set_back_frame`), turned toward
+/// the vertex. Not the fork's end of the rails nearer the vertex (solidcore#2835).
 #[allow(clippy::too_many_arguments)]
 fn gather_ends(
     k: &Kernel,
@@ -1445,11 +1454,11 @@ fn gather_ends(
     corner: &FilletCorner,
     solvers: &dyn BallSolvers,
     faces: &[FaceId],
-    vpoint: Point3,
     tol: f64,
 ) -> Result<Gathered> {
     let nul = || SolidError::null_pointer(OP_FILL);
     let err = || SolidError::sm_err(OP_FILL);
+    let vtx = corner.vertex.ok_or_else(nul)?;
     let n = faces.len();
     let mut surfaces: Vec<Surface> = Vec::with_capacity(n);
     let mut sides: Vec<(SurfParamType, f64, bool)> = Vec::with_capacity(n);
@@ -1492,8 +1501,34 @@ fn gather_ends(
         }
         let end = dropped.parameter;
         let on_rail = rail_curve.evaluate_point(k, end)?;
-        let lo = rail_curve.evaluate_point(k, rail_ivl.min())?;
-        let hi = rail_curve.evaluate_point(k, rail_ivl.max())?;
+        // the corner's side of the end section: the side the blend's edge runs on to the
+        // vertex. Which end of the rails lies nearer the vertex does not tell it: a round on
+        // an arc, extended past a far corner that does not blend, comes back round toward the
+        // vertex, nearer it than the end section of a long setback.
+        let rail_dir = rail_curve
+            .evaluate(k, end, 1, true, false)?
+            .get(1)
+            .copied()
+            .ok_or_else(nul)?;
+        let e = eu1::edge(target, fs.edgeuse(0)?.ok_or_else(nul)?)?.ok_or_else(nul)?;
+        let (_, edge_dir) = set_back_frame(
+            k,
+            target,
+            e,
+            Some(vtx),
+            corner.set_back_dist_along(target, e)?,
+            OP_FILL,
+        )?;
+        let toward_vertex = if edge::start_vertex(target, e)? == Some(vtx) {
+            -edge_dir
+        } else {
+            edge_dir
+        };
+        let side = rail_dir.dot(toward_vertex);
+        if !side.is_finite() || side.abs() <= 0.0 {
+            // a rail square to its edge at the end section, or not finite
+            return Err(err());
+        }
         // the rails' direction: the one over the rails' interval whose iso-curve at the end
         // section passes through the rail there
         let dom = surface.natural_uv_domain_with_nurb(k)?;
@@ -1536,7 +1571,7 @@ fn gather_ends(
             ));
         }
         surfaces.push(surface);
-        sides.push((along, end, hi.distance(vpoint) < lo.distance(vpoint)));
+        sides.push((along, end, side > 0.0));
     }
     Ok(Gathered::Ends(surfaces, sides))
 }
@@ -1560,7 +1595,6 @@ struct Growth<'a> {
     k: &'a Kernel,
     target: &'a Brep,
     planes: &'a CornerPlanes,
-    vpoint: Point3,
     tol: f64,
     /// The setbacks it grows from (the rule's, or the one asked for).
     base: Vec<f64>,
@@ -1602,7 +1636,6 @@ impl Growth<'_> {
             corner,
             &*solvers,
             &self.planes.faces,
-            self.vpoint,
             self.tol,
         )? {
             Gathered::Ends(surfaces, sides) => Ok(Some((surfaces, sides))),
@@ -1755,23 +1788,14 @@ pub fn build_setback_fill<S: SetbackSolvers>(
     let Some((planes, curved)) = corner_faces(k, target, vtx, &all, &*solvers, tol, convex)? else {
         return Err(err());
     };
-    let vpoint = vertex::point(target, vtx)?;
 
     // each blend at its end section
-    let (mut surfaces, mut sides) = match gather_ends(
-        k,
-        target,
-        pseudo,
-        corner,
-        &*solvers,
-        &planes.faces,
-        vpoint,
-        tol,
-    )? {
-        Gathered::Ends(surfaces, sides) => (surfaces, sides),
-        Gathered::Refused(why) => return Ok(Err(SetbackRefusal::not_built(why))),
-        Gathered::Unplaced => return Err(err()),
-    };
+    let (mut surfaces, mut sides) =
+        match gather_ends(k, target, pseudo, corner, &*solvers, &planes.faces, tol)? {
+            Gathered::Ends(surfaces, sides) => (surfaces, sides),
+            Gathered::Refused(why) => return Ok(Err(SetbackRefusal::not_built(why))),
+            Gathered::Unplaced => return Err(err()),
+        };
     // A corner left open is the Setback's hole, not filled (the fork's ef57570). G1: its face
     // curves are the spring curves, in closed form whatever a fill's heights: no fill is made
     // (OpenSetBackSprings). G2: they come from the fill's least-energy interior, no closed
@@ -1816,7 +1840,6 @@ pub fn build_setback_fill<S: SetbackSolvers>(
                 k,
                 target,
                 planes: &planes,
-                vpoint,
                 tol,
                 base,
                 most,
