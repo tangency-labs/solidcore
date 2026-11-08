@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="612" height="792" viewBox="0 0 612 792">
+  <title>Untitled-1</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M0 0 L612 0 L612 792 L0 792 Z" fill="#ffffff"/>
+    <path d="M30 112 L390 112 L390 472 L30 472 Z" fill="#f0f0f0" stroke="#555555" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M150 232 C150 165.726 203.726 112 270 112 C336.274 112 390 165.726 390 232 C390 298.274 336.274 352 270 352 C203.726 352 150 298.274 150 232 Z" fill="none" stroke="#999999" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M132 232 C132 155.785 193.785 94 270 94 C346.215 94 408 155.785 408 232 C408 308.215 346.215 370 270 370 C193.785 370 132 308.215 132 232 Z" fill="none" stroke="#1f6fb2" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M390 163.9 C377.702 142.232 359.768 124.298 338.1 112" fill="none" stroke="#1f6fb2" stroke-width="3" stroke-miterlimit="10"/>
+    <path d="M386 232 C386 229.791 387.791 228 390 228 C392.209 228 394 229.791 394 232 C394 234.209 392.209 236 390 236 C387.791 236 386 234.209 386 232 Z" fill="#555555"/>
+    <path d="M266 112 C266 109.791 267.791 108 270 108 C272.209 108 274 109.791 274 112 C274 114.209 272.209 116 270 116 C267.791 116 266 114.209 266 112 Z" fill="#555555"/>
+    <path d="M386 164 C386 161.791 387.791 160 390 160 C392.209 160 394 161.791 394 164 C394 166.209 392.209 168 390 168 C387.791 168 386 166.209 386 164 Z" fill="#1f6fb2"/>
+    <path d="M334 112 C334 109.791 335.791 108 338 108 C340.209 108 342 109.791 342 112 C342 114.209 340.209 116 338 116 C335.791 116 334 114.209 334 112 Z" fill="#1f6fb2"/>
+    <path d="M386 300 C386 297.791 387.791 296 390 296 C392.209 296 394 297.791 394 300 C394 302.209 392.209 304 390 304 C387.791 304 386 302.209 386 300 Z" fill="#ffffff" stroke="#555555" stroke-width="1.5" stroke-miterlimit="10"/>
+    <path d="M198 112 C198 109.791 199.791 108 202 108 C204.209 108 206 109.791 206 112 C206 114.209 204.209 116 202 116 C199.791 116 198 114.209 198 112 Z" fill="#ffffff" stroke="#555555" stroke-width="1.5" stroke-miterlimit="10"/>
+    <text transform="matrix(1 0 0 1 30 40)" x="0" y="0" xml:space="preserve" font-family="Helvetica-Bold" font-size="20" fill="#000000"><tspan x="0" y="0">A round given a wider coaxial cylinder</tspan></text>
+    <text transform="matrix(1 0 0 1 30 62)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="12" fill="#000000"><tspan x="0" y="0">Plan view of the box corner at (10, 10). The r 2 round about (8, 8) is given r 2.3.</tspan></text>
+    <text transform="matrix(1 0 0 1 416 236)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="12" fill="#000000"><tspan x="0" y="0">old tangent edge (10, 8)</tspan></text>
+    <text transform="matrix(1 0 0 1 416 168)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="12" fill="#1f6fb2"><tspan x="0" y="0">mated vertex (10, 9.136)</tspan></text>
+    <text transform="matrix(1 0 0 1 416 304)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="12" fill="#000000"><tspan x="0" y="0">cut at y = 6.864</tspan></text>
+    <text transform="matrix(1 0 0 1 250 84)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="12" fill="#1f6fb2"><tspan x="0" y="0">mated vertex (9.136, 10)</tspan></text>
+    <text transform="matrix(1 0 0 1 110 100)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="12" fill="#000000"><tspan x="0" y="0">cut at x = 6.864</tspan></text>
+    <text transform="matrix(1 0 0 1 30 546)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="12" fill="#000000"><tspan x="0" y="0">The plane x = 10 cuts the cylinder at y = 8 ± 1.136. Only (10, 9.136) is on the corner&apos;s side.</tspan></text>
+    <text transform="matrix(1 0 0 1 30 600)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="12" fill="#000000"><tspan x="0" y="0">The arc&apos;s ends are taken from the cuts at 6.864: an arc across the circle&apos;s seam, so no edge.</tspan></text>
+    <text transform="matrix(1 0 0 1 30 564)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="12" fill="#000000"><tspan x="0" y="0">Today the tangent edge keeps its old line at (10, 8) and the merge grows</tspan></text>
+    <text transform="matrix(1 0 0 1 30 582)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="12" fill="#000000"><tspan x="0" y="0">its tolerance to 0.6, twice the 0.3 gap.</tspan></text>
+    <text transform="matrix(1 0 0 1 205 150)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="12" fill="#000000"><tspan x="0" y="0">old tangent edge (8, 10)</tspan></text>
+    <text transform="matrix(1 0 0 1 30 528)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="12" fill="#000000"><tspan x="0" y="0">Inner circle: the old round, r 2, tangent to x = 10 and y = 10. Outer circle: the new cylinder, r 2.3.</tspan></text>
+    <text transform="matrix(1 0 0 1 30 510)" x="0" y="0" xml:space="preserve" font-family="Helvetica" font-size="12" fill="#000000"><tspan x="0" y="0">Thick arc: the new round face, from the mated vertex (10, 9.136) to (9.136, 10).</tspan></text>
+  </g>
+</svg>
