@@ -443,8 +443,7 @@ impl core::fmt::Display for OffsetFailure {
                      cannot be checked: refused, the input unchanged",
                 ),
                 Unsoundness::NotManifoldSolid => f.write_str(
-                    "the offset's body is not a manifold solid, as its input was: \
-                     refused, the input unchanged",
+                    "the body built is not a manifold solid, as its input was: refused",
                 ),
                 Unsoundness::VolumeNotPositive => f.write_str(
                     "the local operation's body is a manifold solid whose volume is not \
