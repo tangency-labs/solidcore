@@ -6,11 +6,11 @@
 //!
 //! - The corpus labels #3137's parity run refused under the old constant `gamma(16 (p + q +
 //!   2)) size`, each pinned to its margin as measured under the derived bound: the three tori
-//!   of b6 and b85 (0.07 to 0.50) and two of the cylinders (0.70 and 0.84) stand: their frames'
-//!   offsets from their forms are within the rounding at their size; b46's torus (1.60) and
-//!   the 2903 rim cylinders (1.14 and 1.28) do not. Since #3199 the kernel's recognised sweep
-//!   frame is the form's own (its first row's ends), so a label is measured against the form,
-//!   not against a fit that shared the label's error.
+//!   of b6 and b85 (0.02 to 0.50) stand; b46's torus (1.69) and the four cylinders (b94 1.23,
+//!   b43 1.40, the 2903 rims 1.52 and 2.03) do not: their frames are off their forms past
+//!   the rounding at their size. Since #3199 the kernel's recognised sweep frame is the form's
+//!   own (its end meridians), so a label is measured against the form, not against a fit
+//!   that shared the label's error.
 //! - A torus the kernel makes at the groove's sizes stands on its own form, and the same label
 //!   turned about its axis by four times what the bound allows is refused.
 #![allow(
@@ -118,48 +118,48 @@ const CASES: &[(&str, &str, usize, f64, bool)] = &[
         "sweeps/3897-sweep-ring-along-a-short-arc-joined-to-a-collar",
         "b6",
         1,
-        0.0656,
+        0.0201,
         true,
     ),
     (
         "sweeps/4280-circular-pattern-of-sweep-cut-groove-on-hub",
         "b46",
         1,
-        1.6020,
+        1.6943,
         false,
     ),
     (
         "sweeps/4280-circular-pattern-of-sweep-cut-groove-on-hub",
         "b85",
         15,
-        0.4970,
+        0.4995,
         true,
     ),
     (
         "sweeps/4280-circular-pattern-of-sweep-cut-groove-on-hub",
         "b85",
         21,
-        0.4021,
+        0.4245,
         true,
     ),
     (
         "booleans/3456-deep-cut-through-drilled-taper-leaves-base",
         "b94",
         3,
-        0.6959,
-        true,
+        1.2339,
+        false,
     ),
     (
         "crashes/2243-step-export-flanged-enclosure",
         "b43",
         1,
-        0.8429,
-        true,
+        1.4008,
+        false,
     ),
-    ("fillets/2903-original-rim-chamfer", "b0", 1, 1.1393, false),
-    ("fillets/2903-original-rim-chamfer", "b0", 3, 1.2768, false),
-    ("fillets/2903-original-rim-round", "b0", 1, 1.1393, false),
-    ("fillets/2903-original-rim-round", "b0", 3, 1.2768, false),
+    ("fillets/2903-original-rim-chamfer", "b0", 1, 1.5243, false),
+    ("fillets/2903-original-rim-chamfer", "b0", 3, 2.0275, false),
+    ("fillets/2903-original-rim-round", "b0", 1, 1.5243, false),
+    ("fillets/2903-original-rim-round", "b0", 3, 2.0275, false),
 ];
 
 /// Each corpus label's margin, pinned to 1 % of what #3185 measured, on its side of 1, and

@@ -1073,8 +1073,8 @@ impl Torus {
         let Some((torus_x_axis, torus_y_axis, sweep_ivl)) = sweep_frame(
             torus_origin,
             ref_frame.z_axis(),
-            nurb_min_point,
-            sweep_row_end(test, &nurb_uv_domain, swap_uv)?,
+            fitted_sides(&ref_frame, ref_iso.angles.ok_or_else(missing)?),
+            meridians(test, swap_uv)?,
         ) else {
             return Ok(None);
         };
@@ -1314,8 +1314,8 @@ impl Torus {
         let (x_axis, y_axis, sweep_ivl) = sweep_frame(
             torus_origin,
             ref_frame.z_axis(),
-            nurb_min_point,
-            sweep_row_end(srf, &nurb_uv_domain, swap_uv)?,
+            fitted_sides(&ref_frame, ref_iso.angles.ok_or_else(missing)?),
+            meridians(srf, swap_uv)?,
         )
         .ok_or_else(|| SolidError::sm_err(OP_REBUILD))?;
 
@@ -1604,35 +1604,73 @@ impl Revolved for Torus {
 
 /// `SmTorus::CreateIsoParametricCurve` of the surface of revolution `rev` of a torus
 /// of `shape` (also called from the base class's rebuilds, where it is virtual).
-/// The form's point at the end of its first sweep row: the sweep's last parameter, the
-/// generator's first (the row `is_arc` reads first in [`test_for_iso_circles`]).
-fn sweep_row_end(srf: &BSplineSurface, domain: &Extent2d, swap_uv: bool) -> Result<Point3> {
-    srf.evaluate_point(if swap_uv {
-        domain.evaluate(0.0, 1.0)
-    } else {
-        domain.evaluate(1.0, 0.0)
-    })
+/// The control points, Euclidean, of the form's first and last meridians: the columns of its
+/// net at the sweep's two ends (the sweep is along u, or along v with `swap_uv`). A clamped
+/// end's column is that boundary curve's own control polygon, and a meridian lies in a plane
+/// through the axis, so every one of its control points has the meridian's angle about the
+/// axis.
+fn meridians(srf: &BSplineSurface, swap_uv: bool) -> Result<[Vec<Point3>; 2]> {
+    let nurb = srf
+        .gw_nurb()
+        .ok_or_else(|| SolidError::null_pointer(OP_NURB_TORUS))?;
+    let (n, m) = (nurb.n(), nurb.m());
+    let column = |end: bool| -> Result<Vec<Point3>> {
+        if swap_uv {
+            let j = if end { m } else { 0 };
+            (0..=n).map(|i| Ok(nurb.cpt(i, j)?.to_euclid())).collect()
+        } else {
+            let i = if end { n } else { 0 };
+            (0..=m).map(|j| Ok(nurb.cpt(i, j)?.to_euclid())).collect()
+        }
+    };
+    Ok([column(false)?, column(true)?])
+}
+
+/// The directions, about the axis, of the fitted first sweep row's ends (`is_arc`'s frame and
+/// angles): [`sweep_frame`] reads only their sides from them.
+fn fitted_sides(frame: &Axis2Placement, angles: Extent1d) -> [Vec3; 2] {
+    let at = |deg: f64| {
+        let a = deg * PI / 180.0;
+        a.cos() * frame.x_axis() + a.sin() * frame.y_axis()
+    };
+    [at(angles.min()), at(angles.max())]
 }
 
 /// Not upstream (#3199): a recognised torus's x axis, y axis and sweep interval (degrees) from
-/// its form's own first sweep row, `start` and `end` its two ends, about the axis through
-/// `origin` along the unit `z`: x the unit direction of `start` square to the axis (so the
-/// interval starts at 0), y `z x x`, and the interval's end the angle of `end` from x about z
-/// (`atan2` in that frame), a closed row (within `SM_EFF_ZERO_SQRT` of 0) at 360, as `is_arc`
-/// maps its end. `is_arc` fitted the row's circle through three samples, so on a short arc its
+/// its form's first and last meridians (`meridians`: their control points, exact data), about
+/// the axis through `origin` along the unit `z`. A meridian lies in a plane through the axis,
+/// so its control points share its angle on the side the tube's centre is on, and the
+/// opposite angle past the axis (a spindle torus's tube crosses it); `sides` (the fitted
+/// row's end directions, [`fitted_sides`]) says which side that is, and nothing else. Each
+/// meridian's angle is read at its control point farthest from the axis on that side: x is
+/// the first meridian's direction square to the axis (so the interval starts at 0), y `z x
+/// x`, and the interval's end the last meridian's angle from x about z (`atan2` in that
+/// frame), a closed sweep (within `SM_EFF_ZERO_SQRT` of 0) at 360, as `is_arc` maps its end.
+/// `is_arc` fitted the first sweep row's circle through three samples, so on a short arc its
 /// centre, and with it the x axis and the end angle, was off the axis by its conditioning
 /// (1e-14 rad on #3185's grooves); the converter centres the sweep circle on the axis, so its
-/// ends and its inside now agree to rounding. `None` when `start` lies on the axis.
+/// ends and its inside now agree to rounding. `None` when a meridian has no control point off
+/// the axis on its side.
 fn sweep_frame(
     origin: Point3,
     z: Vec3,
-    start: Point3,
-    end: Point3,
+    sides: [Vec3; 2],
+    [first, last]: [Vec<Point3>; 2],
 ) -> Option<(Vec3, Vec3, Extent1d)> {
-    let s = start - origin;
-    let x = (s - s.dot(z) * z).unitize().ok()?;
+    let radial = |p: &Point3| {
+        let s = *p - origin;
+        s - s.dot(z) * z
+    };
+    let farthest = |ps: &[Point3], side: Vec3| {
+        ps.iter()
+            .map(radial)
+            .filter(|r| r.dot(side) > 0.0)
+            .max_by(|a, b| a.length().total_cmp(&b.length()))
+    };
+    let [first_side, last_side] = sides;
+    let x = farthest(&first, first_side)?.unitize().ok()?;
     let y = z.cross(x);
-    let e = end - origin;
+    let e = farthest(&last, last_side)?;
     let mut end_deg = e.dot(y).atan2(e.dot(x)) * 180.0 / PI;
     if end_deg.abs() < EFF_ZERO_SQRT {
         end_deg = 360.0;

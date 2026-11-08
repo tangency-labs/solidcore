@@ -1377,10 +1377,10 @@ fn recognise(k: &Kernel, kind: SupportKind, form: &BSplineSurface) -> Result<Opt
 /// (#2588).
 ///
 /// What the bound forgives and what it tests (#3185): it forgives the rounding of both
-/// evaluations and of the generator's parameter conversion, and the sweep converter's own
-/// error, measured at the point in the converter's frame (below). It does not forgive the
+/// evaluations and of the two parameter conversions, nothing else. It does not forgive the
 /// label's frame turned about the axis against the converter's, its axis, origin or radii,
-/// nor the form's distance from the analytic surface: those are what the comparison proves.
+/// a form whose parameter is not the analytic surface's (a reparametrised arc), nor the
+/// form's distance from the analytic surface: those are what the comparison proves.
 ///
 /// `u` is the unit roundoff, `gamma_n = n u / (1 - n u)`. Stated assumption: the libm
 /// `sin`, `cos`, `tan` and `atan2` are within one ulp (relative `2 u`).
@@ -1409,14 +1409,14 @@ fn recognise(k: &Kernel, kind: SupportKind, form: &BSplineSurface) -> Result<Opt
 ///    plus `gamma_4 (size + |c|)` and `gamma_4 r |v|` of the angle's own rounding; a line
 ///    (cone) maps it affinely in 6 operations, `gamma_6 2 (|v0| + |v1|)` along the axis and
 ///    its slope, times `1 + |t|`; a B-spline generator's parameter is its NURBS's (none).
-/// 4. **The sweep's parameter**: the converter's angle `s` against the angle `s*` of the
-///    form's point `F` about the converter's own circle (centre `c`, axes `x`, `y`), measured
-///    here, `|s - s*|`, plus the rounding of measuring it, `(E_form + gamma_4 (|F| + |c|)) /
-///    rho + gamma_4 |s*|` (`rho` the point's distance from that circle's axis), times the
-///    STEP point's own distance from that axis (the lever; on the axis, any angle, `pi`
-///    times the lever). At the sweep's ends the
-///    converter returns its domain's ends, which recognition fits (`is_arc`, #3199); inside
-///    it inverts the point, and the measured term is rounding.
+/// 4. **The sweep's parameter**: the polar converter evaluates its circle's NURBS at the
+///    parameter (item 1's bound of that NURBS's own net, `E_polar`) and inverts the point by
+///    `atan2` about the circle's centre `c` in its frame: at the circle's radius `rc` the
+///    angle is off by `(E_polar + gamma_4 (rc + 2 |c|)) / rc`, plus `gamma_4 |s|` of the
+///    angle's own rounding and the degrees' period (`gamma_1 2 pi`), times the STEP point's
+///    distance from that axis (the lever). The converter's ends are its domain's, which
+///    recognition takes from the form's own end meridians (#3199), so they are the inverted
+///    ends to the same rounding.
 ///
 /// A surface of another kind, or a general surface of revolution whose generator is not a
 /// B-spline, has no bound here and is not proved.
@@ -1482,7 +1482,7 @@ struct Rounding {
     reach: f64,
     generator: Generator,
     /// The sweep converter's circle: centre, axes.
-    polar: (Vec3, Vec3, Vec3),
+    polar: (Vec3, Vec3, Vec3, f64, f64),
 }
 
 /// `|v|`'s largest coordinate.
@@ -1586,6 +1586,14 @@ impl Rounding {
         let Some(pc) = rev.polar_curve() else {
             return Ok(None);
         };
+        let e_polar = {
+            let pts = pc.base().control_points()?;
+            let psize = pts.iter().fold(0.0_f64, |m, c| {
+                let w = if c.w == NOW { 1.0 } else { c.w };
+                m.max((Vec3::new(c.x, c.y, c.z) * (1.0 / w)).length())
+            });
+            eval_bound(pts.iter().any(|c| c.w != NOW), pc.base().degree()?, psize)
+        };
         let origin = rev.position.origin();
         let reach = net
             .iter()
@@ -1600,6 +1608,8 @@ impl Rounding {
                 pc.position.origin(),
                 pc.position.x_axis(),
                 pc.position.y_axis(),
+                pc.radius_x,
+                e_polar,
             ),
         }))
     }
@@ -1648,24 +1658,18 @@ impl Rounding {
             ),
         };
         let e_step = 3.0_f64.sqrt() * coord;
-        // item 4: the converter's angle against the form point's, about its own circle
-        let (c, x, y) = self.polar;
+        // item 4: the polar converter's inversion of its own circle's point
+        let (c, x, y, rc, e_polar) = self.polar;
         let z = x.cross(y);
         let along = |v: Vec3| v - z * v.dot(z);
-        let fv = f - c;
-        let rho = along(fv).length();
         let lever = along(s - c).length();
-        let measured = rad(step.x) - fv.dot(y).atan2(fv.dot(x));
-        let measured = measured.rem_euclid(2.0 * PI);
-        let measured = measured.min(2.0 * PI - measured);
-        let star = fv.dot(y).atan2(fv.dot(x)).abs();
-        let sweep = if rho > 0.0 {
+        let sweep = if rc > 0.0 {
             lever
-                * (measured
-                    + (self.e_form + gamma(4) * (size_f + c.length())) / rho
-                    + gamma(4) * star)
+                * ((e_polar + gamma(4) * (rc + 2.0 * c.length())) / rc
+                    + gamma(4) * rad(step.x).abs()
+                    + gamma(1) * 2.0 * PI)
         } else {
-            // a point on the converter's axis has no angle: any, at the STEP point's lever
+            // a circle of no radius has no angle: any, at the STEP point's lever
             lever * PI
         };
         self.e_form + e_step + generator + sweep

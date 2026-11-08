@@ -7,8 +7,8 @@
 //! kind, by what it became; a number within [`ROUNDING`] of its size (relative, no floor) is
 //! counted as rounding, with its count and the largest.
 //!
-//! On the whole corpus (1,332 bodies, at #3199): 1,260 come back bit for bit, 36 within
-//! rounding (the largest 4.9e-16 relative), and 36 differ, each in exactly the classes
+//! On the whole corpus (1,332 bodies, at #3199): 1,258 come back bit for bit, 36 within
+//! rounding (the largest 4.9e-16 relative), and 38 differ, each in exactly the classes
 //! [`pinned`] lists for it.
 #![allow(
     clippy::unwrap_used,
@@ -389,18 +389,20 @@ fn pinned() -> BTreeMap<String, BTreeSet<String>> {
                 "surfaces/cov-ruled-cylinder-rim-tangent-to-the-top-is-a-flat-ring.json:b2",
             ],
         ),
-        // a label its form is not proved on goes as the form alone (#2540): the 2903 rim
-        // cylinders, whose frames are off their forms past the rounding `evaluates_as` derives
-        // (margins 1.14 and 1.28, tests/issue_3185_label_margins.rs)
+        // a label its form is not proved on goes as the form alone (#2540): cylinders whose
+        // frames are off their forms past the rounding `evaluates_as` derives (margins 1.23 to
+        // 2.03, tests/issue_3185_label_margins.rs)
         (
             label("cylinder -> rational_spline", &["radius"]),
             &[
+                "booleans/3456-deep-cut-through-drilled-taper-leaves-base.json:b94",
+                "crashes/2243-step-export-flanged-enclosure.json:b43",
                 "fillets/2903-original-rim-chamfer.json:b0",
                 "fillets/2903-original-rim-round.json:b0",
             ],
         ),
         // a torus label whose frame is off its form's own first sweep row past the rounding
-        // `evaluates_as` derives (margin 1.60, tests/issue_3185_label_margins.rs)
+        // `evaluates_as` derives (margin 1.69, tests/issue_3185_label_margins.rs)
         (
             label(
                 "torus -> rational_spline",
@@ -578,7 +580,7 @@ fn parity(stride: usize) {
         );
         assert_eq!(
             (t.bodies, t.identical, t.rounding_only),
-            (1332, 1260, 36),
+            (1332, 1258, 36),
             "bodies, identical, within rounding"
         );
         // the largest rounding difference, relative (#3137: 4.885e-16)
