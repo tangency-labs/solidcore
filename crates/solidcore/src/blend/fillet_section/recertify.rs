@@ -473,6 +473,58 @@ pub fn recertify_with_thumbweight(
     recertify_in_frame(k, &local, pb.bound(), frame_rounding(pb.net())?)
 }
 
+/// The equal area thumbweight's proved enclosure over the spans of `pb`'s definition its net
+/// covers along s (`None` for any other section), from the definition alone: the stations
+/// solved and each span certified as [`recertify_with_thumbweight`] does, in the round's
+/// own frame, but not the net against them. So it holds for a net the definition's own
+/// construction did not make, as an extension's past the section's feet (whose bound is
+/// grown from this one, `surface::extend::blend`).
+///
+/// # Errors
+///
+/// Those of the station solves and the certificate.
+pub(crate) fn definition_thumbweight(k: &Kernel, pb: &ProceduralBlend) -> Result<Option<[f64; 2]>> {
+    let d = pb.definition();
+    if !(d.order >= 2 && d.thumbweight == GN_THUMBWEIGHT_EQUAL_AREA) {
+        return Ok(None);
+    }
+    let sigma = d
+        .seeds
+        .first()
+        .ok_or_else(|| SolidError::sm_err(OP))?
+        .knots(None)?
+        .0;
+    // the net's s range: s is the net's u, or its v swapped
+    let dom = pb.net().natural_uv_domain();
+    let (a, b, swapped) = pb.definition_map();
+    let (p0, p1) = if swapped {
+        (dom.min().y, dom.max().y)
+    } else {
+        (dom.min().x, dom.max().x)
+    };
+    let (x0, x1) = (a[0] + b[0] * p0, a[0] + b[0] * p1);
+    let (s_lo, s_hi) = (x0.min(x1), x0.max(x1));
+    let spans = sigma
+        .len()
+        .checked_sub(1)
+        .ok_or_else(|| SolidError::sm_err(OP))?;
+    // the spans whose stations the net's range reaches into (its ends' own spans included)
+    let first = sigma
+        .iter()
+        .take(spans)
+        .rposition(|&x| x <= s_lo)
+        .unwrap_or(0);
+    let last = sigma
+        .iter()
+        .skip(1)
+        .position(|&x| x >= s_hi)
+        .unwrap_or_else(|| spans.saturating_sub(1))
+        .max(first);
+    let centre = frame_centre(pb.net())?;
+    let local = pb.translated(k, centre * -1.0)?;
+    Ok(spans_of_definition(k, &local, pb.bound(), Some((first, last)))?.5)
+}
+
 /// [`recertify_with_thumbweight`] of a blend already in its own frame, against `bound`,
 /// its net's distance from its rows taken as at least `shift` more.
 #[allow(clippy::too_many_lines)]
@@ -758,7 +810,7 @@ pub(crate) fn net_of_definition(
     pb: &ProceduralBlend,
     target: f64,
 ) -> Result<(BSplineSurface, f64)> {
-    let (ss, spans, certified, ld, _) = spans_of_definition(k, pb, target, None)?;
+    let (ss, spans, certified, ld, _, _) = spans_of_definition(k, pb, target, None)?;
     let net = net_of_spans(&ss, &spans, ld)?;
     let faces = pb.supports();
     let bound = certified
@@ -791,7 +843,8 @@ pub(crate) fn span_of_definition(
     first: usize,
     target: f64,
 ) -> Result<DefinitionSpan> {
-    let (_, mut spans, certified, ld, stations) = spans_of_definition(k, pb, target, Some(first))?;
+    let (_, mut spans, certified, ld, stations, _) =
+        spans_of_definition(k, pb, target, Some((first, first)))?;
     let (homog, weights) = spans.pop().ok_or_else(|| SolidError::sm_err(OP))?;
     Ok(DefinitionSpan {
         homog,
@@ -802,22 +855,25 @@ pub(crate) fn span_of_definition(
     })
 }
 
-/// The stations' s, the spans, the largest certificate, the width across and the stations.
+/// The stations' s, the spans, the largest certificate, the width across, the stations and
+/// the equal area thumbweight's proved enclosure over the spans (`None` for any other
+/// section).
 type SpansOfDefinition = (
     Vec<f64>,
     Vec<(Vec<Vec3>, Vec<f64>)>,
     f64,
     usize,
     Vec<GnStation>,
+    Option<[f64; 2]>,
 );
 
-/// The spans of a definition's net on its stations (all, or only the one from station
-/// `only`), each certified ([`SpansOfDefinition`]).
+/// The spans of a definition's net on its stations (all, or only those from station
+/// `only.0` to the one after `only.1`), each certified ([`SpansOfDefinition`]).
 fn spans_of_definition(
     k: &Kernel,
     pb: &ProceduralBlend,
     target: f64,
-    only: Option<usize>,
+    only: Option<(usize, usize)>,
 ) -> Result<SpansOfDefinition> {
     let d = pb.definition();
     let n = d.order as usize;
@@ -868,7 +924,7 @@ fn spans_of_definition(
         law: law.as_ref(),
     };
     let needed: Vec<bool> = (0..sigma.len())
-        .map(|j| only.is_none_or(|i| j == i || Some(j) == i.checked_add(1)))
+        .map(|j| only.is_none_or(|(first, last)| j >= first && j <= last.saturating_add(1)))
         .collect();
     let stations = definition_stations(k, &system, [seed0, seed1], &sigma, &needed)?;
     let solved: Vec<GnStation> = stations.into_iter().flatten().collect();
@@ -911,7 +967,9 @@ fn spans_of_definition(
         certified = certified.max(c);
     }
     let ss: Vec<f64> = solved.iter().map(|st| st.s).collect();
-    Ok((ss, spans, certified, ld, solved))
+    let [lo, hi] = vary.w;
+    let w = (equal_area && lo <= hi).then_some([lo, hi]);
+    Ok((ss, spans, certified, ld, solved, w))
 }
 
 /// -1, 0 or +1.

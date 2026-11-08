@@ -59,9 +59,9 @@
 //! Deviations: none (no upstream counterpart). No recursion.
 
 use super::{keeps, op_err, solve, Continuity, Extended, Local, Made, H, OP, REL};
-use crate::blend::fillet_section::recertify::recertify_with_thumbweight;
 use crate::blend::fillet_section::recertify::{
-    net_distance, precision_floor, span_of_definition, DefinitionSpan,
+    definition_thumbweight, net_distance, precision_floor, recertify_with_thumbweight,
+    span_of_definition, DefinitionSpan,
 };
 use crate::blend::fillet_section::section::{param, param_in, GN_THUMBWEIGHT_EQUAL_AREA};
 use crate::blend::fillet_section::station::GnStation;
@@ -189,19 +189,43 @@ pub(super) fn blend_extended(
 }
 
 /// The thumbweight of `pb`'s G^n section over its face, `[lo, hi]`: a constant one, or the
-/// equal area one's proved enclosure from its certificate's interval Newton roots
-/// ([`recertify_with_thumbweight`]).
+/// equal area one's proved enclosure from its certificate's interval Newton roots, from the
+/// definition alone ([`definition_thumbweight`]: the stations and spans the net covers, not
+/// the net, which past the section's feet is no net of the definition's own construction).
+/// A net on the section's own t range is re-certified against its definition first
+/// ([`recertify_with_thumbweight`]), a check, not where the enclosure comes from.
 fn thumbweight(k: &Kernel, pb: &ProceduralBlend) -> Result<[f64; 2]> {
     let tw = pb.definition().thumbweight;
     if tw != GN_THUMBWEIGHT_EQUAL_AREA {
         return Ok([tw, tw]);
     }
-    recertify_with_thumbweight(k, pb)?
-        .1
-        .ok_or(SolidError::Unsupported {
-            operation: OP,
-            reason: "the equal area thumbweight is not enclosed over the blend",
-        })
+    // a net on its section's own range is re-certified against its definition before it is
+    // extended across (a net past the feet was, on its own range, when its first side went)
+    if on_section(pb) {
+        recertify_with_thumbweight(k, pb)?;
+    }
+    let enclosure = definition_thumbweight(k, pb)?;
+    enclosure.ok_or(SolidError::Unsupported {
+        operation: OP,
+        reason: "the equal area thumbweight is not enclosed over the blend",
+    })
+}
+
+/// Whether `pb`'s net lies on its section's own t range `[0, 1]` (no side extended across
+/// it), to the rounding of the map's two operations.
+fn on_section(pb: &ProceduralBlend) -> bool {
+    let (a, b, swapped) = pb.definition_map();
+    let dom = pb.net().natural_uv_domain();
+    let (q0, q1) = if swapped {
+        (dom.min().x, dom.max().x)
+    } else {
+        (dom.min().y, dom.max().y)
+    };
+    let t = |q: f64| a[1] + b[1] * q;
+    let room = |q: f64| 4.0 * f64::EPSILON * (a[1].abs() + (b[1] * q).abs());
+    let (t0, t1) = (t(q0), t(q1));
+    let (lo, hi) = (t0.min(t1), t0.max(t1));
+    lo >= -room(q0).max(room(q1)) && hi <= 1.0 + room(q0).max(room(q1))
 }
 
 /// A G^n section's weight `W(t) = A(t) B(t)^n C(t)^n` (`A = (1 - t)^(n+1) + t^(n+1)`,
@@ -373,7 +397,7 @@ fn along(
             let span = match span_of_definition(k, &next, idx, target) {
                 Ok(span) if span.certified.is_finite() && feet_on(k, &next, &span)? => span,
                 Ok(_) | Err(SolidError::InvalidInput { .. } | SolidError::Upstream { .. }) => {
-                    return Ok(None)
+                    return Ok(None);
                 }
                 Err(e) => return Err(e),
             };
