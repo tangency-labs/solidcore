@@ -135,6 +135,10 @@ const LEAST_STEP_TRIES: usize = 8;
 /// Tangent (each step mirrors the whole piece, doubling it), `ceil(e / h)` for Curvature (one
 /// span of the last span's length `h` a step).
 const MAX_STEPS: usize = 4096;
+/// A budget on the halvings of one mirror step that reflects beside a knot: each halving moves
+/// the reflection by half the step, so a knot within the merge scale of two of them is a
+/// coincidence of the knots, not of the ask.
+const MAX_HALVINGS: usize = 8;
 
 /// How a surface continues past its side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1096,6 +1100,21 @@ impl Local {
         Err(op_err())
     }
 
+    /// Whether a mirror step of `e` reflects the end at a point within the knot fixup's merge
+    /// scale ([`Self::least_step`]'s `need`) of a knot of the piece, without being on it: the
+    /// mirror would then make a span of that scale between the knot's image and the new end,
+    /// which the fixup merges. Reflecting on a knot (or past the start, at it) is exact.
+    fn reflects_beside_a_knot(&self, e: f64) -> Result<bool> {
+        let a = self.start()?;
+        let b = self.end()?;
+        let refl = (b - e).max(a);
+        let need = EFF_ZERO_PARAM.max(scaled_zero2(&a, &(b + e)));
+        Ok(self
+            .knots
+            .iter()
+            .any(|&x| x < b && x != refl && (x - refl).abs() < need))
+    }
+
     /// The knot `back` places before the end's `p + 1` copies (`u_n` for 0).
     fn before_end(&self, back: usize) -> Result<f64> {
         self.knots
@@ -1362,6 +1381,21 @@ impl Local {
                     let rest = left - step;
                     if rest > 0.0 && rest < least && left >= 2.0 * least {
                         step = 0.5 * left;
+                    }
+                    // a step whose reflection point lies within the fixup's merge scale of a
+                    // knot, but not on it, makes a span the fixup merges (the extension's end
+                    // knot repeated past `p + 1`, #3093): the step is halved until it is not,
+                    // where the rest stays at least a least step
+                    let mut halvings = 0;
+                    while cur.reflects_beside_a_knot(step)? {
+                        halvings += 1;
+                        if halvings > MAX_HALVINGS || 0.5 * step < least {
+                            return Err(SolidError::Unsupported {
+                                operation: OP,
+                                reason: "a mirror step reflects beside a knot and cannot be split",
+                            });
+                        }
+                        step *= 0.5;
                     }
                     cur = cur.mirrored(step, how == Continuity::Curvature)?;
                     left -= step;

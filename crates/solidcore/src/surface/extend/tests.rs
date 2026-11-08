@@ -2683,6 +2683,42 @@ fn tangent_past_one_mirror_step_leaves_no_sliver_span() {
     );
 }
 
+/// (#3093) Tangent asked a little more than two full mirror steps of a degree 1 side: the second
+/// step's reflection point falls one ulp from the joint knot the first step left, and mirroring
+/// there made a span of 4e-16 that the knot fixup merges, leaving the end knot repeated past `p +
+/// 1` (a net the Bezier decomposition refuses). The step is split in two instead, so every span
+/// of the extension is at least a least step long, the end knot has `p + 1` copies and its value
+/// is the length asked.
+#[test]
+fn tangent_with_a_reflection_one_ulp_off_a_knot_leaves_no_sliver_span() {
+    let s = parabola();
+    let SurfaceKind::BSpline(b) = s.kind() else {
+        panic!()
+    };
+    let net = b.gw_nurb().unwrap().clone();
+    let source = Local::of(&net, BoxSide::VMax).unwrap();
+    let least = source.least_step().unwrap();
+    // two ranges and an ulp: the second step is 1 + 4.4e-16 long, its reflection 4.4e-16 off
+    // the knot 1 the first step left
+    let e = 2.0 * source.range().unwrap() + 2.0 * f64::EPSILON;
+    let g = source.extended(Continuity::Tangent, e).unwrap().unwrap();
+    let mut gaps = g
+        .knots
+        .windows(2)
+        .map(|w| w[1] - w[0])
+        .filter(|&gap| gap > 0.0);
+    assert!(gaps.all(|gap| gap >= least), "{:?}", g.knots);
+    let end = g.end().unwrap();
+    let copies = g.knots.iter().filter(|&&x| x == end).count();
+    assert_eq!(copies, g.p + 1, "{:?}", g.knots);
+    let asked = source.end().unwrap() + e;
+    assert!(
+        (end - asked).abs() <= 4.0 * f64::EPSILON * asked.abs(),
+        "{:?}",
+        g.knots
+    );
+}
+
 /// A ball patch's side is reported met only when its measured length is within the
 /// bisection's stop of the length it was solved to: one the bisection left short (out of
 /// tries) is not, nor one whose measure is too coarse to say; at the least step, a length
