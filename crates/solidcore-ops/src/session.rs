@@ -112,8 +112,14 @@ pub fn set_fixes<'a>(
 /// other threads name, so tests on parallel threads with different fixes share the one kernel
 /// without racing. A thread that never calls it runs with the process's ([`set_fixes`]).
 ///
+/// Not part of the API: it is public only so that this crate's integration tests, which are
+/// separate crates, can name their fixes per test. An application names its fixes once
+/// ([`set_fixes`]); a result that depends on the calling thread is not one an application
+/// should rely on.
+///
 /// # Errors
 /// As [`set_fixes`].
+#[doc(hidden)]
 pub fn set_thread_fixes<'a>(
     on: impl IntoIterator<Item = &'a str>,
 ) -> std::result::Result<(), FixesRefused> {
