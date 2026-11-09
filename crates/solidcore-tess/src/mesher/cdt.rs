@@ -5,19 +5,14 @@
 //! the facet angle, then Ruppert refinement for shape. Constraint edges are never split, so the
 //! boundary stays exactly the shared edge nodes.
 
-use std::cmp::Ordering;
+use crate::vec::VecExt as _;
 use std::collections::HashMap;
 
-use crate::vec::VecExt as _;
-use solidcore_record::Vec3;
+use solidcore::Vec3;
 
 use super::size::Turn;
-use super::{NoValue, UvMesh};
 use spade::handles::FixedVertexHandle;
-use spade::{
-    AngleLimit, ConstrainedDelaunayTriangulation, Point2, PositionInTriangulation,
-    RefinementParameters, Triangulation,
-};
+use spade::{AngleLimit, ConstrainedDelaunayTriangulation, Point2, PositionInTriangulation, RefinementParameters, Triangulation};
 
 type Cdt = ConstrainedDelaunayTriangulation<Point2<f64>>;
 
@@ -35,15 +30,14 @@ const SAG_ROUNDS: usize = 16;
 
 /// The surface, for refining where the triangles leave it.
 pub(crate) struct Sag<'a> {
-    /// Point and unit normal (when not degenerate) at (u, v); the error where the surface does
-    /// not evaluate.
-    pub eval: &'a dyn Fn(f64, f64) -> Result<(Vec3, Option<Vec3>), NoValue>,
+    /// Point and unit normal (when not degenerate) at (u, v).
+    pub eval: &'a dyn Fn(f64, f64) -> Option<(Vec3, Option<Vec3>)>,
     pub tol: f64,
     /// Longest triangle side (mm).
     pub h: f64,
     /// The facet angle, if any: corner normals turning more get a point in the middle.
     pub turn: Option<Turn>,
-    /// Scale of u and v in the triangulation (the surface's mean `|S_u|`, `|S_v|`).
+    /// Scale of u and v in the triangulation (the surface's mean |S_u|, |S_v|).
     pub scale: [f64; 2],
 }
 
@@ -65,43 +59,21 @@ pub(crate) struct Fill<'a> {
 
 /// Triangulate the region bounded by `loops` (ranges of `boundary`, each closed). Boundary
 /// vertices keep their indices; added points follow. Triangles are counter-clockwise in
-/// (u, v). `Ok(None)` when a loop cannot be kept as constraints (it crosses itself or another);
-/// the error where the sag refinement needs a point the surface does not evaluate at.
-pub(crate) fn triangulate(
-    boundary: &[[f64; 2]],
-    loops: &[std::ops::Range<usize>],
-    fill: Fill,
-) -> Result<Option<UvMesh>, NoValue> {
-    super::layout(|stopped| triangulate_in(boundary, loops, fill, stopped))
-}
-
-/// [`triangulate`]'s body: the sag refinement's error goes to `stopped`.
-fn triangulate_in(
-    boundary: &[[f64; 2]],
-    loops: &[std::ops::Range<usize>],
-    Fill {
-        seeds,
-        refine,
-        shape,
-        lenient,
-    }: Fill,
-    stopped: &mut Option<NoValue>,
-) -> Option<UvMesh> {
+/// (u, v). `None` when a loop cannot be kept as constraints (it crosses itself or another).
+pub(crate) fn triangulate(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>], fill: Fill) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
     if boundary.iter().flatten().any(|x| !x.is_finite()) {
         return None;
     }
-    let scale = match &refine {
+    let scale = match &fill.refine {
         Some((sag, _)) if sag.scale.iter().all(|k| k.is_finite() && *k > 0.0) => sag.scale,
         _ => [1.0, 1.0],
     };
     // spade refuses coordinates below about 1e-43 in magnitude (other than zero), which
     // projection leaves where a parameter is zero in exact arithmetic.
-    let to =
-        |p: &[f64; 2]| spade::mitigate_underflow(Point2::new(p[0] * scale[0], p[1] * scale[1]));
+    let to = |p: &[f64; 2]| spade::mitigate_underflow(Point2::new(p[0] * scale[0], p[1] * scale[1]));
     let from = |p: Point2<f64>| [p.x / scale[0], p.y / scale[1]];
     let mut cdt = Cdt::new();
     let mut index: HashMap<FixedVertexHandle, u32> = HashMap::new();
-    // Proven: capacity of allocated `boundary`'s length, its elements larger than a handle
     let mut handles: Vec<FixedVertexHandle> = Vec::with_capacity(boundary.len());
     for (i, p) in boundary.iter().enumerate() {
         let h = cdt.insert(to(p)).ok()?;
@@ -114,27 +86,19 @@ fn triangulate_in(
     for r in loops {
         let n = r.len();
         for k in 0..n {
-            sides.push((
-                *handles.get(r.start + k)?,
-                // Proven: n = r.len() > 0 inside `for k in 0..n`
-                *handles.get(r.start + (k + 1) % n)?,
-            ));
+            sides.push((*handles.get(r.start + k)?, *handles.get(r.start + (k + 1) % n)?));
         }
     }
     let slits = slits(&sides);
     for r in loops {
         let n = r.len();
         for k in 0..n {
-            let (a, b) = (
-                *handles.get(r.start + k)?,
-                // Proven: n = r.len() > 0 inside `for k in 0..n`
-                *handles.get(r.start + (k + 1) % n)?,
-            );
+            let (a, b) = (*handles.get(r.start + k)?, *handles.get(r.start + (k + 1) % n)?);
             if a == b || cdt.exists_constraint(a, b) {
                 continue;
             }
             if !cdt.can_add_constraint(a, b) {
-                if lenient {
+                if fill.lenient {
                     continue;
                 }
                 return None;
@@ -142,15 +106,15 @@ fn triangulate_in(
             cdt.add_constraint(a, b);
         }
     }
-    for s in seeds {
+    for s in fill.seeds {
         if s.iter().all(|x| x.is_finite()) {
             let _ = cdt.insert(to(s));
         }
     }
-    if let Some((sag, budget)) = &refine {
+    if let Some((sag, budget)) = &fill.refine {
         let constraints = cdt.num_constraints();
-        let added = super::stop(stopped, refine_sag(&mut cdt, sag, *budget, &from, &slits))?;
-        if shape {
+        let added = refine_sag(&mut cdt, sag, *budget, &from, &slits);
+        if fill.shape {
             let params = RefinementParameters::<f64>::new()
                 .keep_constraint_edges()
                 .exclude_outer_faces(true)
@@ -162,16 +126,7 @@ fn triangulate_in(
             // Shaping flips sides and adds points of its own; the triangles it leaves may
             // sag again (a long strip round a cylinder), so the sag is checked once more.
             if shaped > 0 {
-                super::stop(
-                    stopped,
-                    refine_sag(
-                        &mut cdt,
-                        sag,
-                        budget.saturating_sub(added + shaped),
-                        &from,
-                        &slits,
-                    ),
-                )?;
+                refine_sag(&mut cdt, sag, budget.saturating_sub(added + shaped), &from, &slits);
             }
         }
         // A split constraint would put a point on the boundary the neighbour does not have.
@@ -189,18 +144,18 @@ fn triangulate_in(
         let vs = face.vertices();
         let mut t = [0u32; 3];
         for (slot, v) in t.iter_mut().zip(vs) {
-            *slot = if let Some(&i) = index.get(&v.fix()) {
-                i
-            } else {
-                let i = u32::try_from(uv.len()).ok()?;
-                uv.push(from(v.position()));
-                index.insert(v.fix(), i);
-                i
+            *slot = match index.get(&v.fix()) {
+                Some(&i) => i,
+                None => {
+                    let i = u32::try_from(uv.len()).ok()?;
+                    uv.push(from(v.position()));
+                    index.insert(v.fix(), i);
+                    i
+                }
             };
         }
         tris.push(t);
     }
-    // Proven: `uv` starts as `boundary.to_vec()` and only grows
     let extra = uv.split_off(boundary.len());
     Some((extra, tris))
 }
@@ -211,15 +166,8 @@ fn triangulate_in(
 /// faces inside the boundary and outside the block (an odd number of constraints from the
 /// outside). Distances in the metric `scale`. Triangles counter-clockwise in (u, v), indices
 /// into `points`; `None` when a constraint cannot be kept (the staircase meets the boundary).
-pub(crate) fn band(
-    points: &[[f64; 2]],
-    n: usize,
-    loops: &[std::ops::Range<usize>],
-    stairs: &[(u32, u32)],
-    scale: [f64; 2],
-) -> Option<Vec<[u32; 3]>> {
-    let to =
-        |p: &[f64; 2]| spade::mitigate_underflow(Point2::new(p[0] * scale[0], p[1] * scale[1]));
+pub(crate) fn band(points: &[[f64; 2]], n: usize, loops: &[std::ops::Range<usize>], stairs: &[(u32, u32)], scale: [f64; 2]) -> Option<Vec<[u32; 3]>> {
+    let to = |p: &[f64; 2]| spade::mitigate_underflow(Point2::new(p[0] * scale[0], p[1] * scale[1]));
     let mut cdt = Cdt::new();
     let mut index: HashMap<FixedVertexHandle, u32> = HashMap::new();
     let mut handle: HashMap<u32, FixedVertexHandle> = HashMap::new();
@@ -241,11 +189,7 @@ pub(crate) fn band(
     for r in loops {
         let len = r.len();
         for k in 0..len {
-            let (a, b) = (
-                u32::try_from(r.start + k).ok()?,
-                // Proven: len = r.len() > 0 inside `for k in 0..len`
-                u32::try_from(r.start + (k + 1) % len).ok()?,
-            );
+            let (a, b) = (u32::try_from(r.start + k).ok()?, u32::try_from(r.start + (k + 1) % len).ok()?);
             if (a as usize) >= n || (b as usize) >= n {
                 return None;
             }
@@ -286,37 +230,28 @@ pub(crate) fn band(
 /// under the middle of every non-constraint side that sags more than the tolerance or is
 /// longer than [`LONG`] times `h`, until none does or `budget` points were added. Returns the points added.
 /// `slits`: constraint sides the loops run along both ways, inside the region on both sides.
-/// A point the check needs and the surface does not evaluate at is the error.
 fn refine_sag(
     cdt: &mut Cdt,
     sag: &Sag,
     budget: usize,
     from: &dyn Fn(Point2<f64>) -> [f64; 2],
     slits: &std::collections::HashSet<(FixedVertexHandle, FixedVertexHandle)>,
-) -> Result<usize, NoValue> {
+) -> usize {
     let mut added = 0;
-    let mut cache: HashMap<FixedVertexHandle, (Vec3, Option<Vec3>)> = HashMap::new();
+    let mut cache: HashMap<FixedVertexHandle, Option<(Vec3, Option<Vec3>)>> = HashMap::new();
     // The widest turn between two corner normals.
     let spread = |n: [Option<Vec3>; 3]| match n {
-        [Some(a), Some(b), Some(c)] => [(a, b), (b, c), (c, a)]
-            .iter()
-            // Proven: the clamp bounds are the constants -1.0 <= 1.0, neither NaN.
-            .map(|(x, y)| x.dot(*y).clamp(-1.0, 1.0).acos())
-            .fold(0.0, f64::max),
+        [Some(a), Some(b), Some(c)] => [(a, b), (b, c), (c, a)].iter().map(|(x, y)| x.dot(*y).clamp(-1.0, 1.0).acos()).fold(0.0, f64::max),
         _ => 0.0,
     };
     for _ in 0..SAG_ROUNDS {
         let mut todo: Vec<Point2<f64>> = Vec::new();
-        let mut at =
-            |h: FixedVertexHandle, p: Point2<f64>| -> Result<(Vec3, Option<Vec3>), NoValue> {
-                if let Some(&known) = cache.get(&h) {
-                    return Ok(known);
-                }
+        let mut at = |h: FixedVertexHandle, p: Point2<f64>| {
+            *cache.entry(h).or_insert_with(|| {
                 let q = from(p);
-                let known = (sag.eval)(q[0], q[1])?;
-                cache.insert(h, known);
-                Ok(known)
-            };
+                (sag.eval)(q[0], q[1])
+            })
+        };
         let region = region(cdt, slits);
         for face in cdt.inner_faces() {
             if !region.get(face.index()).copied().unwrap_or(false) {
@@ -324,24 +259,18 @@ fn refine_sag(
             }
             let vs = face.vertices();
             let ps = vs.map(|v| v.position());
-            let c = Point2::new(
-                (ps[0].x + ps[1].x + ps[2].x) / 3.0,
-                (ps[0].y + ps[1].y + ps[2].y) / 3.0,
-            );
-            let (a, na) = at(vs[0].fix(), ps[0])?;
-            let (b, nb) = at(vs[1].fix(), ps[1])?;
-            let (d, nd) = at(vs[2].fix(), ps[2])?;
-            // How far the surface lies from the triangle at `q`.
-            let gap = |q: Point2<f64>, chord: Vec3| -> Result<f64, NoValue> {
-                let uv = from(q);
-                Ok((sag.eval)(uv[0], uv[1])?.0.dist(chord))
+            let c = Point2::new((ps[0].x + ps[1].x + ps[2].x) / 3.0, (ps[0].y + ps[1].y + ps[2].y) / 3.0);
+            let (Some((a, na)), Some((b, nb)), Some((d, nd))) = (at(vs[0].fix(), ps[0]), at(vs[1].fix(), ps[1]), at(vs[2].fix(), ps[2])) else {
+                continue;
             };
-            let middle = gap(c, (a + b + d) * (1.0 / 3.0))?;
-            if middle > sag.tol
-                || sag
-                    .turn
-                    .is_some_and(|t| t.exceeds(spread([na, nb, nd]), middle))
-            {
+            // How far the surface lies from the triangle at `q`.
+            let gap = |q: Point2<f64>, chord: Vec3| {
+                let uv = from(q);
+                (sag.eval)(uv[0], uv[1]).map_or(0.0, |(s, _)| s.dist(chord))
+            };
+            let off = |q: Point2<f64>, chord: Vec3| gap(q, chord) > sag.tol;
+            let middle = gap(c, (a + b + d) * (1.0 / 3.0));
+            if middle > sag.tol || sag.turn.is_some_and(|t| t.exceeds(spread([na, nb, nd]), middle)) {
                 // A triangle's centroid is inside it, but for a sliver whose corners lie on one line
                 // to rounding: an ear on consecutive boundary nodes of a nearly straight stretch. Its
                 // centroid lies on the boundary chord, and inserting it there would split the
@@ -360,17 +289,13 @@ fn refine_sag(
                 }
                 continue;
             }
-            for (e, (pa, pb)) in face
-                .adjacent_edges()
-                .into_iter()
-                .zip([(a, b), (b, d), (d, a)])
-            {
+            for (e, (pa, pb)) in face.adjacent_edges().into_iter().zip([(a, b), (b, d), (d, a)]) {
                 if e.is_constraint_edge() {
                     continue;
                 }
                 let [p, q] = e.positions();
                 let m = Point2::new(0.5 * (p.x + q.x), 0.5 * (p.y + q.y));
-                if pa.dist(pb) > LONG * sag.h || gap(m, (pa + pb) * 0.5)? > sag.tol {
+                if pa.dist(pb) > LONG * sag.h || off(m, (pa + pb) * 0.5) {
                     todo.push(m);
                 }
             }
@@ -382,14 +307,13 @@ fn refine_sag(
         todo.dedup();
         for p in todo {
             if added >= budget {
-                return Ok(added);
+                return added;
             }
             // The boundary's nodes are its edges', shared with the neighbouring face: a point that
             // lands on the boundary (a sliver's middle on a nearly straight stretch, on the chord to
             // rounding) is no inner point, and inserting it would split the boundary.
             let p = spade::mitigate_underflow(p);
-            if matches!(cdt.locate(p), PositionInTriangulation::OnEdge(e) if cdt.is_constraint_edge(e.as_undirected()))
-            {
+            if matches!(cdt.locate(p), PositionInTriangulation::OnEdge(e) if cdt.is_constraint_edge(e.as_undirected())) {
                 continue;
             }
             if cdt.insert(p).is_ok() {
@@ -397,50 +321,30 @@ fn refine_sag(
             }
         }
     }
-    Ok(added)
+    added
 }
 
 /// The sides a boundary runs along an even number of times (a slit: out along a line and back),
 /// each as its vertices in index order: the region lies on both sides of them.
-fn slits(
-    sides: &[(FixedVertexHandle, FixedVertexHandle)],
-) -> std::collections::HashSet<(FixedVertexHandle, FixedVertexHandle)> {
+fn slits(sides: &[(FixedVertexHandle, FixedVertexHandle)]) -> std::collections::HashSet<(FixedVertexHandle, FixedVertexHandle)> {
     let mut runs: HashMap<(FixedVertexHandle, FixedVertexHandle), usize> = HashMap::new();
     for &(a, b) in sides {
         if a != b {
-            *runs
-                .entry(if a.index() < b.index() {
-                    (a, b)
-                } else {
-                    (b, a)
-                })
-                .or_insert(0) += 1;
+            *runs.entry(if a.index() < b.index() { (a, b) } else { (b, a) }).or_insert(0) += 1;
         }
     }
-    runs.into_iter()
-        // Proven: the divisor is the constant 2, not zero.
-        .filter(|(_, n)| n % 2 == 0)
-        .map(|(e, _)| e)
-        .collect()
+    runs.into_iter().filter(|(_, n)| n % 2 == 0).map(|(e, _)| e).collect()
 }
 
 /// Per face (by index): inside the region the constraint loops bound. A flood fill from the
 /// outer face that flips parity each time it crosses a constraint edge (holes are out), but for
 /// the sides in `slits` (run along both ways, the region on both sides), linear in the number of
 /// triangles.
-fn region(
-    cdt: &Cdt,
-    slits: &std::collections::HashSet<(FixedVertexHandle, FixedVertexHandle)>,
-) -> Vec<bool> {
+fn region(cdt: &Cdt, slits: &std::collections::HashSet<(FixedVertexHandle, FixedVertexHandle)>) -> Vec<bool> {
     use spade::handles::{FixedFaceHandle, InnerTag};
     let counts = |e: spade::handles::DirectedEdgeHandle<'_, _, _, _, _>| {
         let [a, b] = e.vertices().map(|v| v.fix());
-        e.is_constraint_edge()
-            && !slits.contains(&if a.index() < b.index() {
-                (a, b)
-            } else {
-                (b, a)
-            })
+        e.is_constraint_edge() && !slits.contains(&if a.index() < b.index() { (a, b) } else { (b, a) })
     };
     let mut parity: Vec<Option<bool>> = vec![None; cdt.num_all_faces()];
     let mut todo: Vec<(FixedFaceHandle<InnerTag>, bool)> = Vec::new();
@@ -470,12 +374,7 @@ fn region(
 /// side `step` in each parameter (rows `step[1]·√3/2` apart, every other row shifted half a
 /// step), keeping the points inside the region bounded by the loops (even–odd, so holes are
 /// out) and at least [`CLEARANCE`] of a side from the boundary in the metric `scale`.
-pub(crate) fn lattice(
-    bbox: [(f64, f64); 2],
-    step: [f64; 2],
-    polys: &[&[[f64; 2]]],
-    scale: [f64; 2],
-) -> Vec<[f64; 2]> {
+pub(crate) fn lattice(bbox: [(f64, f64); 2], step: [f64; 2], polys: &[&[[f64; 2]]], scale: [f64; 2]) -> Vec<[f64; 2]> {
     let mut out = Vec::new();
     scan(bbox, step, polys, scale, &mut |q| {
         out.push(q);
@@ -488,12 +387,7 @@ pub(crate) fn lattice(
 /// clear of its boundary. A face narrower than the side everywhere (a thin strip) has none.
 /// `true` too when the lattice is more than [`MAX_SEEDS`] points (or the box or step is not
 /// finite), which [`lattice`] does not look through.
-pub(crate) fn has_room(
-    bbox: [(f64, f64); 2],
-    step: [f64; 2],
-    polys: &[&[[f64; 2]]],
-    scale: [f64; 2],
-) -> bool {
+pub(crate) fn has_room(bbox: [(f64, f64); 2], step: [f64; 2], polys: &[&[[f64; 2]]], scale: [f64; 2]) -> bool {
     let mut found = false;
     let scanned = scan(bbox, step, polys, scale, &mut |_| {
         found = true;
@@ -504,29 +398,13 @@ pub(crate) fn has_room(
 
 /// Visit the points of [`lattice`] in turn until `visit` returns `false`. Returns whether the
 /// lattice was looked through (it is not when it is too large or ill-formed).
-fn scan(
-    bbox: [(f64, f64); 2],
-    step: [f64; 2],
-    polys: &[&[[f64; 2]]],
-    scale: [f64; 2],
-    visit: &mut dyn FnMut([f64; 2]) -> bool,
-) -> bool {
-    if !step.iter().all(|s| s.is_finite() && *s > 0.0)
-        || !bbox
-            .iter()
-            .all(|(a, b)| a.is_finite() && b.is_finite() && b > a)
-    {
+fn scan(bbox: [(f64, f64); 2], step: [f64; 2], polys: &[&[[f64; 2]]], scale: [f64; 2], visit: &mut dyn FnMut([f64; 2]) -> bool) -> bool {
+    if !step.iter().all(|s| s.is_finite() && *s > 0.0) || !bbox.iter().all(|(a, b)| a.is_finite() && b.is_finite() && b > a) {
         return false;
     }
     let row = step[1] * 3f64.sqrt() * 0.5;
-    let (rows, cols) = (
-        ((bbox[1].1 - bbox[1].0) / row).ceil(),
-        ((bbox[0].1 - bbox[0].0) / step[0]).ceil(),
-    );
-    if !matches!(
-        (rows * cols).partial_cmp(&(MAX_SEEDS as f64)),
-        Some(Ordering::Less | Ordering::Equal)
-    ) {
+    let (rows, cols) = (((bbox[1].1 - bbox[1].0) / row).ceil(), ((bbox[0].1 - bbox[0].0) / step[0]).ceil());
+    if !(rows * cols <= MAX_SEEDS as f64) {
         return false;
     }
     let near = Clearance::new(polys, scale, CLEARANCE * step[0] * scale[0]);
@@ -537,26 +415,17 @@ fn scan(
         for poly in polys {
             let n = poly.len();
             for k in 0..n {
-                // Proven: n = poly.len() > 0 inside `for k in 0..n`
-                let (Some(a), Some(b)) = (poly.get(k), poly.get((k + 1) % n)) else {
-                    continue;
-                };
+                let (Some(a), Some(b)) = (poly.get(k), poly.get((k + 1) % n)) else { continue };
                 if (a[1] > v) != (b[1] > v) {
                     xs.push(a[0] + (v - a[1]) * (b[0] - a[0]) / (b[1] - a[1]));
                 }
             }
         }
         xs.sort_by(f64::total_cmp);
-        // Proven: the divisor is the constant 2, not zero.
         let shift = if j % 2 == 1 { 0.5 * step[0] } else { 0.0 };
         for i in 0..=cols as usize {
             let u = bbox[0].0 + shift + step[0] * i as f64;
-            if u < bbox[0].1
-                // Proven: the divisor is the constant 2, not zero.
-                && xs.partition_point(|x| *x < u) % 2 == 1
-                && !near.within([u, v])
-                && !visit([u, v])
-            {
+            if u < bbox[0].1 && xs.partition_point(|x| *x < u) % 2 == 1 && !near.within([u, v]) && !visit([u, v]) {
                 return true;
             }
         }
@@ -564,63 +433,28 @@ fn scan(
     true
 }
 
-/// Whether `q` lies inside the region the loops `polys` bound, by the even–odd rule [`scan`]
-/// keeps lattice seeds by: an odd number of loop sides cross the line through `q` along u
-/// before it.
-pub(crate) fn inside(polys: &[&[[f64; 2]]], q: [f64; 2]) -> bool {
-    let [u, v] = q;
-    let mut before = 0usize;
-    for poly in polys {
-        let n = poly.len();
-        for k in 0..n {
-            // Proven: n = poly.len() > 0 inside `for k in 0..n`
-            let (Some(a), Some(b)) = (poly.get(k), poly.get((k + 1) % n)) else {
-                continue;
-            };
-            if (a[1] > v) != (b[1] > v) && a[0] + (v - a[1]) * (b[0] - a[0]) / (b[1] - a[1]) < u {
-                before += 1;
-            }
-        }
-    }
-    // Proven: the divisor is the constant 2, not zero.
-    before % 2 == 1
-}
-
 /// Most lattice seeds of one face.
 const MAX_SEEDS: usize = 200_000;
-
-/// A boundary segment's two ends, in the scaled parameters.
-type ScaledSide = ([f64; 2], [f64; 2]);
 
 /// Boundary segments bucketed on a square grid (cell = the clearance), for "is this point
 /// within the clearance of the boundary" in constant time per point.
 struct Clearance {
-    cells: HashMap<(i64, i64), Vec<ScaledSide>>,
+    cells: HashMap<(i64, i64), Vec<([f64; 2], [f64; 2])>>,
     scale: [f64; 2],
     r: f64,
 }
 
 impl Clearance {
     fn new(polys: &[&[[f64; 2]]], scale: [f64; 2], r: f64) -> Clearance {
-        let mut cells: HashMap<(i64, i64), Vec<ScaledSide>> = HashMap::new();
+        let mut cells: HashMap<(i64, i64), Vec<([f64; 2], [f64; 2])>> = HashMap::new();
         if !(r.is_finite() && r > 0.0) {
-            return Clearance {
-                cells,
-                scale,
-                r: 0.0,
-            };
+            return Clearance { cells, scale, r: 0.0 };
         }
         for poly in polys {
             let n = poly.len();
             for k in 0..n {
-                // Proven: n = poly.len() > 0 inside `for k in 0..n`
-                let (Some(a), Some(b)) = (poly.get(k), poly.get((k + 1) % n)) else {
-                    continue;
-                };
-                let (a, b) = (
-                    [a[0] * scale[0], a[1] * scale[1]],
-                    [b[0] * scale[0], b[1] * scale[1]],
-                );
+                let (Some(a), Some(b)) = (poly.get(k), poly.get((k + 1) % n)) else { continue };
+                let (a, b) = ([a[0] * scale[0], a[1] * scale[1]], [b[0] * scale[0], b[1] * scale[1]]);
                 let cell = |x: f64| (x / r).floor() as i64;
                 let (x0, x1) = (cell(a[0].min(b[0])), cell(a[0].max(b[0])));
                 let (y0, y1) = (cell(a[1].min(b[1])), cell(a[1].max(b[1])));
@@ -644,19 +478,11 @@ impl Clearance {
             return false;
         }
         let p = [p[0] * self.scale[0], p[1] * self.scale[1]];
-        let (cx, cy) = (
-            (p[0] / self.r).floor() as i64,
-            (p[1] / self.r).floor() as i64,
-        );
+        let (cx, cy) = ((p[0] / self.r).floor() as i64, (p[1] / self.r).floor() as i64);
         for x in cx - 1..=cx + 1 {
             for y in cy - 1..=cy + 1 {
-                let Some(segs) = self.cells.get(&(x, y)) else {
-                    continue;
-                };
-                if segs
-                    .iter()
-                    .any(|(a, b)| dist_to_segment(p, *a, *b) < self.r)
-                {
+                let Some(segs) = self.cells.get(&(x, y)) else { continue };
+                if segs.iter().any(|(a, b)| dist_to_segment(p, *a, *b) < self.r) {
                     return true;
                 }
             }
@@ -668,12 +494,7 @@ impl Clearance {
 fn dist_to_segment(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
     let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
     let l2 = dx * dx + dy * dy;
-    let t = if l2 > 0.0 {
-        // Proven: the clamp bounds are the constants 0.0 <= 1.0, neither NaN.
-        (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
+    let t = if l2 > 0.0 { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2).clamp(0.0, 1.0) } else { 0.0 };
     (p[0] - a[0] - t * dx).hypot(p[1] - a[1] - t * dy)
 }
 
@@ -695,29 +516,11 @@ mod tests {
         let mut b = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
         b.extend([[0.4, 0.4], [0.4, 0.6], [0.6, 0.6], [0.6, 0.4]]);
         let loops = [0..4, 4..8];
-        let flat = |u: f64, v: f64| Ok((Vec3::new(u, v, 0.0), Some(Vec3::Z)));
+        let flat = |u: f64, v: f64| Some((Vec3::new(u, v, 0.0), Some(Vec3::Z)));
         for refine in [false, true] {
-            let refine = refine.then_some((
-                Sag {
-                    eval: &flat,
-                    tol: 1e-3,
-                    h: 0.1,
-                    turn: None,
-                    scale: [2.0, 1.0],
-                },
-                2000,
-            ));
+            let refine = refine.then_some((Sag { eval: &flat, tol: 1e-3, h: 0.1, turn: None, scale: [2.0, 1.0] }, 2000));
             let label = refine.is_some();
-            let Ok(Some((extra, tris))) = triangulate(
-                &b,
-                &loops,
-                Fill {
-                    seeds: &[[0.2, 0.2], [0.5, 0.5]],
-                    refine,
-                    shape: true,
-                    lenient: false,
-                },
-            ) else {
+            let Some((extra, tris)) = triangulate(&b, &loops, Fill { seeds: &[[0.2, 0.2], [0.5, 0.5]], refine, shape: true, lenient: false }) else {
                 panic!("meshes")
             };
             let mut uv = b.clone();
@@ -728,15 +531,8 @@ mod tests {
                 for k in r.clone() {
                     let next = if k + 1 == r.end { r.start } else { k + 1 };
                     let (p, q) = (k as u32, next as u32);
-                    let uses = tris
-                        .iter()
-                        .filter(|t| {
-                            (0..3).any(|e| {
-                                (t[e] == p && t[(e + 1) % 3] == q)
-                                    || (t[e] == q && t[(e + 1) % 3] == p)
-                            })
-                        })
-                        .count();
+                    let uses =
+                        tris.iter().filter(|t| (0..3).any(|e| (t[e] == p && t[(e + 1) % 3] == q) || (t[e] == q && t[(e + 1) % 3] == p))).count();
                     assert_eq!(uses, 1, "segment {p}-{q}");
                 }
             }
@@ -747,30 +543,9 @@ mod tests {
     fn crossing_loops_are_refused_unless_lenient() {
         let b = [[0.0, 0.0], [1.0, 1.0], [1.0, 0.0], [0.0, 1.0]];
         let whole = std::slice::from_ref(&(0..4));
-        assert_eq!(
-            triangulate(
-                &b,
-                whole,
-                Fill {
-                    seeds: &[],
-                    refine: None,
-                    shape: false,
-                    lenient: false
-                }
-            ),
-            Ok(None)
-        );
+        assert!(triangulate(&b, whole, Fill { seeds: &[], refine: None, shape: false, lenient: false }).is_none());
         // Lenient, the crossing side is left out and what the rest encloses is filled.
-        let Ok(Some((_, tris))) = triangulate(
-            &b,
-            whole,
-            Fill {
-                seeds: &[],
-                refine: None,
-                shape: false,
-                lenient: true,
-            },
-        ) else {
+        let Some((_, tris)) = triangulate(&b, whole, Fill { seeds: &[], refine: None, shape: false, lenient: true }) else {
             panic!("a lenient fill")
         };
         assert!(!tris.is_empty());
@@ -780,32 +555,16 @@ mod tests {
     fn lattice_seeds_are_equilateral_and_clear_of_the_boundary() {
         let outer = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
         let hole = [[4.0, 4.0], [4.0, 6.0], [6.0, 6.0], [6.0, 4.0]];
-        let seeds = lattice(
-            [(0.0, 10.0), (0.0, 10.0)],
-            [1.0, 1.0],
-            &[&outer, &hole],
-            [1.0, 1.0],
-        );
+        let seeds = lattice([(0.0, 10.0), (0.0, 10.0)], [1.0, 1.0], &[&outer, &hole], [1.0, 1.0]);
         assert!(!seeds.is_empty());
         for p in &seeds {
-            let clear = |poly: &[[f64; 2]]| {
-                (0..4).all(|k| dist_to_segment(*p, poly[k], poly[(k + 1) % 4]) >= 0.5)
-            };
+            let clear = |poly: &[[f64; 2]]| (0..4).all(|k| dist_to_segment(*p, poly[k], poly[(k + 1) % 4]) >= 0.5);
             assert!(clear(&outer) && clear(&hole), "{p:?}");
         }
         // Nearest neighbours one side apart, six of them in the open.
-        let near = |p: [f64; 2]| {
-            seeds
-                .iter()
-                .filter(|q| ((q[0] - p[0]).hypot(q[1] - p[1]) - 1.0).abs() < 1e-9)
-                .count()
-        };
+        let near = |p: [f64; 2]| seeds.iter().filter(|q| ((q[0] - p[0]).hypot(q[1] - p[1]) - 1.0).abs() < 1e-9).count();
         assert!(seeds.iter().any(|p| near(*p) == 6));
-        assert!(seeds.iter().all(|p| {
-            seeds
-                .iter()
-                .all(|q| p == q || (q[0] - p[0]).hypot(q[1] - p[1]) > 1.0 - 1e-9)
-        }));
+        assert!(seeds.iter().all(|p| seeds.iter().all(|q| p == q || (q[0] - p[0]).hypot(q[1] - p[1]) > 1.0 - 1e-9)));
     }
 
     #[test]
@@ -813,18 +572,7 @@ mod tests {
         // A parameter that is zero in exact arithmetic, left at 1e-300 by projection.
         let b = [[1e-300, 0.0], [1.0, -1e-310], [1.0, 1.0], [0.0, 1.0]];
         let whole = std::slice::from_ref(&(0..4));
-        let Ok(Some((extra, tris))) = triangulate(
-            &b,
-            whole,
-            Fill {
-                seeds: &[],
-                refine: None,
-                shape: false,
-                lenient: false,
-            },
-        ) else {
-            panic!("meshes")
-        };
+        let Some((extra, tris)) = triangulate(&b, whole, Fill { seeds: &[], refine: None, shape: false, lenient: false }) else { panic!("meshes") };
         assert!(extra.is_empty());
         assert_eq!(tris.len(), 2);
     }
