@@ -163,6 +163,7 @@ pub struct WorkCounters {
     loops_classified: Cell<u64>,
     wall_body_copies: Cell<u64>,
     proto_edge_intersections: Cell<u64>,
+    shell_traversal_faces: Cell<u64>,
     face_extreme_control_points: Cell<u64>,
     feet_tm_coefficients: Cell<u64>,
     mass_iso_evaluations: Cell<u64>,
@@ -207,6 +208,15 @@ impl WorkCounters {
     #[must_use]
     pub fn proto_edge_intersections(&self) -> u64 {
         self.proto_edge_intersections.get()
+    }
+
+    /// Faces marked by shell traversals (`SmTopologyTraverser::ShellTraversal`): each
+    /// face a walk over what a shell joins to a vertex reaches. Deleting a face starts
+    /// one to learn whether the face's vertices are still joined to the shell. Not the
+    /// fork's.
+    #[must_use]
+    pub fn shell_traversal_faces(&self) -> u64 {
+        self.shell_traversal_faces.get()
     }
 
     /// Control points of the B-spline nets the trimmed-face tight box's directed solves
@@ -303,6 +313,7 @@ impl WorkCounters {
         self.loops_classified.set(0);
         self.wall_body_copies.set(0);
         self.proto_edge_intersections.set(0);
+        self.shell_traversal_faces.set(0);
         self.face_extreme_control_points.set(0);
         self.feet_tm_coefficients.set(0);
         self.mass_iso_evaluations.set(0);
@@ -336,6 +347,12 @@ impl WorkCounters {
     pub(crate) fn add_proto_edge_intersection(&self) {
         self.proto_edge_intersections
             .set(self.proto_edge_intersections.get().saturating_add(1));
+    }
+
+    /// Counts one face marked by a shell traversal.
+    pub(crate) fn add_shell_traversal_face(&self) {
+        self.shell_traversal_faces
+            .set(self.shell_traversal_faces.get().saturating_add(1));
     }
 
     /// Counts the control points of the net one trimmed-face extreme solve ran on.
@@ -1670,9 +1687,10 @@ mod tests {
                 w.proto_edge_intersections(),
                 w.loop_walks(),
                 w.ball_certified_roots(),
+                w.shell_traversal_faces(),
             )
         };
-        assert_eq!(counts(w), (0, 0, 0, 0, 0, 0));
+        assert_eq!(counts(w), (0, 0, 0, 0, 0, 0, 0));
         w.add_face_pair();
         w.add_face_pair();
         w.add_loop_classified();
@@ -1682,11 +1700,12 @@ mod tests {
         w.add_loop_walk();
         w.add_loop_walk();
         w.add_ball_certified_root();
-        assert_eq!(counts(w), (2, 1, 1, 1, 3, 1));
+        w.add_shell_traversal_face();
+        assert_eq!(counts(w), (2, 1, 1, 1, 3, 1, 1));
         // each kernel counts its own work
         assert_eq!(Kernel::default().work_counters.face_pairs(), 0);
         w.reset();
-        assert_eq!(counts(w), (0, 0, 0, 0, 0, 0));
+        assert_eq!(counts(w), (0, 0, 0, 0, 0, 0, 0));
     }
 
     #[test]

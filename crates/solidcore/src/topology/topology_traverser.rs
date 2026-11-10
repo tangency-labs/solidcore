@@ -538,6 +538,7 @@ fn shell_connectivity(
             let f = required(b.faceuse(fu)?.face)?;
             if !marks.is_marked(k, Entity::Face(f), mark) {
                 marks.mark(k, Entity::Face(f), mark);
+                k.work_counters.add_shell_traversal_face();
                 propagate.push(fu);
             }
         }
