@@ -1,8 +1,10 @@
 //! ISO 10303-21 writer for the neutral [`step_import::Model`].
 //!
 //! The writer emits one `MANIFOLD_SOLID_BREP` per manifold body (one closed shell,
-//! planar faces, line edges) and one `FACETED_BREP` per faceted body, together with a
-//! complete AP203 product structure and unit context. Unsupported geometry is rejected
+//! planar faces, line edges), one `FACETED_BREP` per faceted body and one
+//! `SHELL_BASED_SURFACE_MODEL` per shell model (a sheet body, whose one shell may be
+//! open), together with a complete AP203 product structure and unit context. Each kind
+//! goes into its own shape representation. Unsupported geometry is rejected
 //! with an [`ExportError`] instead of being silently approximated.
 //!
 //! # Shared entities
@@ -698,6 +700,13 @@ fn write_pcurve_edge(
 
 type EdgePcurves = BTreeMap<usize, Vec<(u64, Vec<[f64; 2]>)>>;
 
+/// Writes `body`'s single shell as a `CLOSED_SHELL` (or, with `allow_open`, an
+/// `OPEN_SHELL`) over its `ADVANCED_FACE`s, and returns the shell's id.
+///
+/// `pcurves` supplies the surface-space trim curves the faces refer to; it may be
+/// empty. Errors if the body does not have exactly one shell, or if that shell is
+/// open and `allow_open` is false — the importer accepts multi-shell bodies, so
+/// the first case is a writer limitation rather than a malformed model.
 fn shell(
     entities: &mut Entities,
     body: &Body,
@@ -706,7 +715,7 @@ fn shell(
 ) -> Result<u64, ExportError> {
     if body.shells.len() != 1 {
         return Err(ExportError::new(format!(
-            "body #{} has {} shells; step-export supports one closed shell",
+            "body #{} has {} shells; step-export writes one shell per body",
             body.step_id,
             body.shells.len()
         )));
@@ -1223,6 +1232,13 @@ enum WriteMode {
     FacetedDisplay,
 }
 
+/// Renders `model` as an ISO 10303-21 exchange file.
+///
+/// `mode` picks the writer each body goes through: [`WriteMode::Auto`] follows
+/// [`Body::kind`] and groups the bodies into one shape representation per kind, while
+/// the faceted modes force every body through one writer. `metadata` supplies the
+/// header fields and the optional layer, colour and material, which are attached to
+/// every shape the file ended up carrying.
 fn write_inner(
     model: &Model,
     metadata: &ExportMetadata,
@@ -1345,9 +1361,14 @@ fn write_inner(
         ));
     }
 
+    // Every shape the file carries, whichever representation it ended up in: the
+    // presentation data below is attached to these and to nothing else.
     let mut body_ids = manifold_ids.clone();
     body_ids.extend(faceted_ids.iter().copied());
-    if let Some(layer) = metadata.layer.as_deref() {
+    body_ids.extend(shell_model_ids.iter().copied());
+    // `assigned_items` is SET[1:?]; a model with no shapes gets no assignment.
+    let layer = metadata.layer.as_deref().filter(|_| !body_ids.is_empty());
+    if let Some(layer) = layer {
         entities.add(format!(
             "PRESENTATION_LAYER_ASSIGNMENT({},'',({}))",
             quoted(layer),
@@ -2222,7 +2243,9 @@ mod tests {
         let text = write_with_metadata(&model, &metadata).expect("write shell model");
         let shell_model = entity_id(&text, "SHELL_BASED_SURFACE_MODEL");
         assert!(
-            text.contains(&format!("PRESENTATION_LAYER_ASSIGNMENT('Sheets','',(#{shell_model}))")),
+            text.contains(&format!(
+                "PRESENTATION_LAYER_ASSIGNMENT('Sheets','',(#{shell_model}))"
+            )),
             "the layer must be assigned to the shell model, and the item set is SET[1:?]: {text}"
         );
         let style = entity_id(&text, "PRESENTATION_STYLE_ASSIGNMENT");
