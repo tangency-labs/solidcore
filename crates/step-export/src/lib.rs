@@ -702,6 +702,7 @@ fn shell(
     entities: &mut Entities,
     body: &Body,
     pcurves: &BTreeMap<PcurveKey, Vec<Vec<[f64; 2]>>>,
+    allow_open: bool,
 ) -> Result<u64, ExportError> {
     if body.shells.len() != 1 {
         return Err(ExportError::new(format!(
@@ -714,7 +715,7 @@ fn shell(
         .shells
         .first()
         .ok_or_else(|| ExportError::new(format!("body #{} has no shells", body.step_id)))?;
-    if !step_shell.closed {
+    if !step_shell.closed && !allow_open {
         return Err(ExportError::new(format!(
             "body #{} has an open shell; step-export writes closed solids",
             body.step_id
@@ -846,7 +847,12 @@ fn shell(
         .map(|id| format!("#{id}"))
         .collect::<Vec<_>>()
         .join(",");
-    Ok(entities.add(format!("CLOSED_SHELL('',({refs}))")))
+    let kind = if step_shell.closed {
+        "CLOSED_SHELL"
+    } else {
+        "OPEN_SHELL"
+    };
+    Ok(entities.add(format!("{kind}('',({refs}))")))
 }
 
 fn write_edge(
@@ -1268,22 +1274,31 @@ fn write_inner(
 
     let mut manifold_ids = Vec::new();
     let mut faceted_ids = Vec::new();
+    let mut shell_model_ids = Vec::new();
     for body in &model.bodies {
         match mode {
             WriteMode::Auto => match body.kind {
                 BodyKind::ManifoldSolid => {
-                    let shell_id = shell(&mut entities, body, &model.pcurves)?;
+                    let shell_id = shell(&mut entities, body, &model.pcurves, false)?;
                     let name = body.name.as_deref().unwrap_or("");
                     manifold_ids.push(
                         entities.add(format!("MANIFOLD_SOLID_BREP({},#{shell_id})", quoted(name))),
                     );
                 }
+                BodyKind::ShellModel => {
+                    let shell_id = shell(&mut entities, body, &model.pcurves, true)?;
+                    let name = body.name.as_deref().unwrap_or("");
+                    shell_model_ids.push(entities.add(format!(
+                        "SHELL_BASED_SURFACE_MODEL({},(#{shell_id}))",
+                        quoted(name)
+                    )));
+                }
                 BodyKind::Faceted => {
                     faceted_ids.push(faceted_shell(&mut entities, body, FacetedMode::Strict)?);
                 }
-                other => {
+                other @ BodyKind::SolidWithVoids => {
                     return Err(ExportError::new(format!(
-                        "body #{} is {:?}; step-export writes MANIFOLD_SOLID_BREP and FACETED_BREP",
+                        "body #{} is {:?}; step-export writes MANIFOLD_SOLID_BREP, FACETED_BREP and SHELL_BASED_SURFACE_MODEL",
                         body.step_id, other
                     )));
                 }
@@ -1296,7 +1311,7 @@ fn write_inner(
             }
         }
     }
-    if manifold_ids.is_empty() && faceted_ids.is_empty() {
+    if manifold_ids.is_empty() && faceted_ids.is_empty() && shell_model_ids.is_empty() {
         return Err(ExportError::new("model has no bodies"));
     }
 
@@ -1314,6 +1329,13 @@ fn write_inner(
             "FACETED_BREP_SHAPE_REPRESENTATION({},({}),#{context})",
             quoted(representation_name),
             refs(&faceted_ids)
+        )));
+    }
+    if !shell_model_ids.is_empty() {
+        representations.push(entities.add(format!(
+            "MANIFOLD_SURFACE_SHAPE_REPRESENTATION({},({}),#{context})",
+            quoted(representation_name),
+            refs(&shell_model_ids)
         )));
     }
     let shape = entities.add(format!("PRODUCT_DEFINITION_SHAPE('','',#{definition})"));
@@ -2168,7 +2190,10 @@ mod tests {
         assert_eq!(file.bodies.len(), 1);
         assert_eq!(file.bodies[0].kind, BodyKind::ShellModel);
         assert_eq!(file.bodies[0].shells.len(), 1);
-        assert!(!file.bodies[0].shells[0].closed, "shell must round-trip as open");
+        assert!(
+            !file.bodies[0].shells[0].closed,
+            "shell must round-trip as open"
+        );
         assert_eq!(file.bodies[0].faces.len(), 1);
         assert_eq!(file.bodies[0].vertices.len(), 3);
     }
