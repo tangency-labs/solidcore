@@ -2198,6 +2198,41 @@ mod tests {
         assert_eq!(file.bodies[0].vertices.len(), 3);
     }
 
+    /// `#id` of the first entity of `name` in a written file.
+    fn entity_id(text: &str, name: &str) -> u64 {
+        for line in text.lines() {
+            let Some((id, row)) = line.split_once('=') else {
+                continue;
+            };
+            if row.starts_with(name) {
+                return id.trim_start_matches('#').parse().expect("entity id");
+            }
+        }
+        panic!("no {name} in {text}");
+    }
+
+    #[test]
+    fn shell_models_carry_presentation_assignments() {
+        let mut model = triangle();
+        model.bodies[0].kind = BodyKind::ShellModel;
+        model.bodies[0].shells[0].closed = false;
+        let metadata = ExportMetadata::new()
+            .with_layer("Sheets")
+            .with_color([0.125, 0.5, 0.75]);
+        let text = write_with_metadata(&model, &metadata).expect("write shell model");
+        let shell_model = entity_id(&text, "SHELL_BASED_SURFACE_MODEL");
+        assert!(
+            text.contains(&format!("PRESENTATION_LAYER_ASSIGNMENT('Sheets','',(#{shell_model}))")),
+            "the layer must be assigned to the shell model, and the item set is SET[1:?]: {text}"
+        );
+        let style = entity_id(&text, "PRESENTATION_STYLE_ASSIGNMENT");
+        assert!(
+            text.contains(&format!("STYLED_ITEM('',(#{style}),#{shell_model})")),
+            "the colour must be styled onto the shell model: {text}"
+        );
+        reimport(&text);
+    }
+
     #[test]
     fn rejects_non_finite_emitted_numbers() {
         let values = [f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
