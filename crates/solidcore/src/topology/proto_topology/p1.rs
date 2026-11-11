@@ -878,6 +878,8 @@ mod tests {
             .remove_coincident_no_edge_proto_vertex(&k, &geo, pe, v3)
             .unwrap());
         assert_eq!(m.proto_vertices(), &[v3]);
+        // each of the two ran its point solve
+        assert_eq!(k.work_counters.proto_vertex_point_solves(), 2);
     }
 
     /// tangency-labs/solidcore#848 (WR-73): with the opt-in, a proto vertex the proto

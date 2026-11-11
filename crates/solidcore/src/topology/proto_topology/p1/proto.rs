@@ -3789,6 +3789,7 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
             handle: Some(CurveHandle(crv.natural_interval())),
             ..GlobalPointSolveOptions::default()
         };
+        k.work_counters.add_proto_vertex_point_solve();
         let sols = ignored(crv.global_point_solve(
             k,
             &crv_ivl,
