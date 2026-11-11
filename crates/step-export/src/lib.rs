@@ -2159,6 +2159,21 @@ mod tests {
     }
 
     #[test]
+    fn shell_model_round_trips_as_an_open_shell() {
+        let mut model = triangle();
+        model.bodies[0].kind = BodyKind::ShellModel;
+        model.bodies[0].shells[0].closed = false;
+        let text = write(&model).expect("write open shell model");
+        let file = reimport(&text);
+        assert_eq!(file.bodies.len(), 1);
+        assert_eq!(file.bodies[0].kind, BodyKind::ShellModel);
+        assert_eq!(file.bodies[0].shells.len(), 1);
+        assert!(!file.bodies[0].shells[0].closed, "shell must round-trip as open");
+        assert_eq!(file.bodies[0].faces.len(), 1);
+        assert_eq!(file.bodies[0].vertices.len(), 3);
+    }
+
+    #[test]
     fn rejects_non_finite_emitted_numbers() {
         let values = [f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
         let mut accepted = Vec::new();
