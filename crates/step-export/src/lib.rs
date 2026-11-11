@@ -721,6 +721,8 @@ type EdgePcurves = BTreeMap<usize, Vec<(u64, Vec<[f64; 2]>)>>;
 /// `ORIENTED_CLOSED_SHELL` (orientation `.F.`). A `MANIFOLD_SOLID_BREP` has exactly one
 /// shell, the outer; a `BREP_WITH_VOIDS` has the outer and at least one void. Faces,
 /// edges and vertices are written once for the body and shared by its shells.
+/// A [`BodyKind::ShellModel`] body has exactly one shell, which may be open; it is
+/// written as an `OPEN_SHELL` then, for a `SHELL_BASED_SURFACE_MODEL`.
 fn solid_shells(
     entities: &mut Entities,
     body: &Body,
@@ -748,7 +750,7 @@ fn solid_shells(
             body.step_id
         )));
     }
-    if body.shells.iter().any(|shell| !shell.closed) {
+    if body.kind != BodyKind::ShellModel && body.shells.iter().any(|shell| !shell.closed) {
         return Err(ExportError::new(format!(
             "body #{} has an open shell; step-export writes closed solids",
             body.step_id
@@ -883,11 +885,16 @@ fn solid_shells(
             .map(|id| format!("#{id}"))
             .collect::<Vec<_>>()
             .join(",");
-        let closed = entities.add(format!("CLOSED_SHELL('',({refs}))"));
-        shell_ids.push(if step_shell.orientation {
-            closed
+        let kind = if step_shell.closed {
+            "CLOSED_SHELL"
         } else {
-            entities.add(format!("ORIENTED_CLOSED_SHELL('',*,#{closed},.F.)"))
+            "OPEN_SHELL"
+        };
+        let shell = entities.add(format!("{kind}('',({refs}))"));
+        shell_ids.push(if step_shell.orientation {
+            shell
+        } else {
+            entities.add(format!("ORIENTED_{kind}('',*,#{shell},.F.)"))
         });
     }
     Ok(shell_ids)
@@ -1312,6 +1319,7 @@ fn write_inner(
 
     let mut manifold_ids = Vec::new();
     let mut faceted_ids = Vec::new();
+    let mut shell_model_ids = Vec::new();
     for body in &model.bodies {
         match mode {
             WriteMode::Auto => match body.kind {
@@ -1337,15 +1345,23 @@ fn write_inner(
                     };
                     manifold_ids.push(entities.add(item));
                 }
+                BodyKind::ShellModel => {
+                    let shells = solid_shells(&mut entities, body, &model.pcurves)?;
+                    let [shell_id] = shells.as_slice() else {
+                        return Err(ExportError::new(format!(
+                            "body #{} is a shell model with {} shells; step-export writes one",
+                            body.step_id,
+                            shells.len()
+                        )));
+                    };
+                    let name = body.name.as_deref().unwrap_or("");
+                    shell_model_ids.push(entities.add(format!(
+                        "SHELL_BASED_SURFACE_MODEL({},(#{shell_id}))",
+                        quoted(name)
+                    )));
+                }
                 BodyKind::Faceted => {
                     faceted_ids.push(faceted_shell(&mut entities, body, FacetedMode::Strict)?);
-                }
-                BodyKind::ShellModel => {
-                    return Err(ExportError::new(format!(
-                        "body #{} is a shell model; step-export writes MANIFOLD_SOLID_BREP, \
-                         BREP_WITH_VOIDS and FACETED_BREP",
-                        body.step_id
-                    )));
                 }
             },
             WriteMode::Faceted => {
@@ -1356,7 +1372,7 @@ fn write_inner(
             }
         }
     }
-    if manifold_ids.is_empty() && faceted_ids.is_empty() {
+    if manifold_ids.is_empty() && faceted_ids.is_empty() && shell_model_ids.is_empty() {
         return Err(ExportError::new("model has no bodies"));
     }
 
@@ -1374,6 +1390,13 @@ fn write_inner(
             "FACETED_BREP_SHAPE_REPRESENTATION({},({}),#{context})",
             quoted(representation_name),
             refs(&faceted_ids)
+        )));
+    }
+    if !shell_model_ids.is_empty() {
+        representations.push(entities.add(format!(
+            "MANIFOLD_SURFACE_SHAPE_REPRESENTATION({},({}),#{context})",
+            quoted(representation_name),
+            refs(&shell_model_ids)
         )));
     }
     let shape = entities.add(format!("PRODUCT_DEFINITION_SHAPE('','',#{definition})"));
@@ -2227,7 +2250,10 @@ mod tests {
         assert_eq!(file.bodies.len(), 1);
         assert_eq!(file.bodies[0].kind, BodyKind::ShellModel);
         assert_eq!(file.bodies[0].shells.len(), 1);
-        assert!(!file.bodies[0].shells[0].closed, "shell must round-trip as open");
+        assert!(
+            !file.bodies[0].shells[0].closed,
+            "shell must round-trip as open"
+        );
         assert_eq!(file.bodies[0].faces.len(), 1);
         assert_eq!(file.bodies[0].vertices.len(), 3);
     }
