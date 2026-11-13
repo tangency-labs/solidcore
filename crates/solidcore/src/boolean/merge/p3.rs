@@ -848,7 +848,6 @@ fn stitch_and_orient(
             allow_spine_edges,
             faces_to_swap: faces_to_swap.map(|faces| faces.clone()),
             just_unify: just_unify.map(|value| *value),
-            one_solid: false,
         },
     )
 }

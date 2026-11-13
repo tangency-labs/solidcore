@@ -252,7 +252,6 @@ fn rust_record(k: &mut Kernel, b: &mut Brep, i: &Inputs) -> SolidResult<Vec<f64>
                 allow_spine_edges: i.allow_spine_edges,
                 faces_to_swap: None,
                 just_unify: (i.mode != 0).then_some(i.flag),
-                one_solid: false,
             },
         ))?],
         11 => {

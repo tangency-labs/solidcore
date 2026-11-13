@@ -2663,10 +2663,6 @@ pub struct StitchAndOrientOptions {
     pub faces_to_swap: Option<Vec<FaceId>>,
     /// Overrides the lamina-count-based decision when present, including `Some(false)`.
     pub just_unify: Option<bool>,
-    /// The faces close at most one shell (a solid primitive's): the stitch searches for
-    /// the infinite region once, at its end, and not also at the glue that closes the
-    /// shell ([`crate::heal::stitch::p1::Stitch::one_solid`]). Not upstream.
-    pub one_solid: bool,
 }
 
 impl Default for StitchAndOrientOptions {
@@ -2676,7 +2672,6 @@ impl Default for StitchAndOrientOptions {
             allow_spine_edges: false,
             faces_to_swap: None,
             just_unify: None,
-            one_solid: false,
         }
     }
 }
@@ -2726,6 +2721,36 @@ pub fn stitch_and_orient_with_identity(
     options: &StitchAndOrientOptions,
     identity: Option<crate::query::brep::BrepIdentity<'_>>,
 ) -> Result<()> {
+    stitch_and_orient_searching(k, b, options, identity, false)
+}
+
+/// [`stitch_and_orient_with_identity`] of faces that close at most one shell, in a B-rep
+/// that held nothing else: the stitch searches for the infinite region once, at its end,
+/// and not also at the glue that closes the shell
+/// ([`crate::heal::stitch::p1::Stitch::one_solid`]). Not upstream. The caller answers for
+/// the premise, which is why this is not an option of [`StitchAndOrientOptions`]: a
+/// B-rep that already holds a face, a wire or a loose vertex has shells the closing
+/// glue's search places, and they would be left where they are.
+///
+/// # Errors
+///
+/// Those of [`stitch_and_orient`].
+pub(crate) fn stitch_and_orient_one_solid(
+    k: &mut Kernel,
+    b: &mut Brep,
+    options: &StitchAndOrientOptions,
+    identity: Option<crate::query::brep::BrepIdentity<'_>>,
+) -> Result<()> {
+    stitch_and_orient_searching(k, b, options, identity, true)
+}
+
+fn stitch_and_orient_searching(
+    k: &mut Kernel,
+    b: &mut Brep,
+    options: &StitchAndOrientOptions,
+    identity: Option<crate::query::brep::BrepIdentity<'_>>,
+    one_solid: bool,
+) -> Result<()> {
     k.check_cancelled(OP)?;
     let mut lamina = 0;
     let mut tolerance = initial_stitch_tolerance(b.tolerance(), options.stitch_tolerance);
@@ -2737,7 +2762,7 @@ pub fn stitch_and_orient_with_identity(
             options.allow_spine_edges,
             &mut lamina,
             identity,
-            options.one_solid,
+            one_solid,
         ),
         k.fixes.brep_edit_statuses_pass_on,
     )?)?;
@@ -2755,7 +2780,7 @@ pub fn stitch_and_orient_with_identity(
                 options.allow_spine_edges,
                 &mut lamina,
                 identity,
-                options.one_solid,
+                one_solid,
             ),
             k.fixes.brep_edit_statuses_pass_on,
         )?)?;

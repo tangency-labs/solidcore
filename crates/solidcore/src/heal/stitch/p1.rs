@@ -925,7 +925,7 @@ pub struct Stitch<'c> {
     /// that closes it: that glue splits the region and leaves the search for the infinite
     /// region to the stitch's end (`do_region_nesting`), which searches the same B-rep
     /// and whose answer is the one kept. Not upstream, whose closing glue searches too.
-    pub one_solid: bool,
+    pub(crate) one_solid: bool,
     /// Validate pointers after stitching in validating builds (`m_bValidateResult`).
     pub validate_result: bool,
     /// Don't signal an error and quit when two edges fail to glue
@@ -2540,7 +2540,6 @@ fn stitch_and_orient(
             allow_spine_edges,
             faces_to_swap: faces_to_swap.map(<[FaceId]>::to_vec),
             just_unify,
-            one_solid: false,
         },
     )
 }

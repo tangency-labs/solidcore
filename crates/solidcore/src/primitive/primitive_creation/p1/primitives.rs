@@ -165,7 +165,7 @@ fn stitch_with_keys(
 /// says the B-rep was empty before the solid's faces were made ([`is_empty`]).
 ///
 /// The stitch searches for the infinite region once, at its end
-/// ([`StitchAndOrientOptions::one_solid`](crate::topology::brep::p5::StitchAndOrientOptions)),
+/// ([`stitch_and_orient_one_solid`](crate::topology::brep::p5::stitch_and_orient_one_solid)),
 /// when the faces are those of one solid met as built:
 /// - they are alone in the B-rep, which held nothing but its one empty region: faces
 ///   already there make shells of their own, and a stitch that closes two shells orders
@@ -264,20 +264,20 @@ fn stitch_faces_of(
     one_solid: bool,
 ) -> Result<()> {
     use crate::query::brep::BrepIdentity;
-    use crate::topology::brep::p5::{stitch_and_orient_with_identity, StitchAndOrientOptions};
+    use crate::topology::brep::p5::{
+        stitch_and_orient_one_solid, stitch_and_orient_with_identity, StitchAndOrientOptions,
+    };
     let keys = |object| crate::topology::brep::p2::caller_cache_key(key_of, object);
-    stitch_and_orient_with_identity(
-        k,
-        b,
-        &StitchAndOrientOptions {
-            one_solid,
-            ..StitchAndOrientOptions::default()
-        },
-        Some(BrepIdentity {
-            keys: &keys,
-            ..BrepIdentity::default()
-        }),
-    )
+    let identity = Some(BrepIdentity {
+        keys: &keys,
+        ..BrepIdentity::default()
+    });
+    let options = StitchAndOrientOptions::default();
+    if one_solid {
+        stitch_and_orient_one_solid(k, b, &options, identity)
+    } else {
+        stitch_and_orient_with_identity(k, b, &options, identity)
+    }
 }
 
 /// `CreatePlanarFaceWith3DCurves`; `None` when the curves bound no face.
