@@ -2663,6 +2663,10 @@ pub struct StitchAndOrientOptions {
     pub faces_to_swap: Option<Vec<FaceId>>,
     /// Overrides the lamina-count-based decision when present, including `Some(false)`.
     pub just_unify: Option<bool>,
+    /// The faces close at most one shell (a solid primitive's): the stitch searches for
+    /// the infinite region once, at its end, and not also at the glue that closes the
+    /// shell ([`crate::heal::stitch::p1::Stitch::one_solid`]). Not upstream.
+    pub one_solid: bool,
 }
 
 impl Default for StitchAndOrientOptions {
@@ -2672,6 +2676,7 @@ impl Default for StitchAndOrientOptions {
             allow_spine_edges: false,
             faces_to_swap: None,
             just_unify: None,
+            one_solid: false,
         }
     }
 }
@@ -2732,6 +2737,7 @@ pub fn stitch_and_orient_with_identity(
             options.allow_spine_edges,
             &mut lamina,
             identity,
+            options.one_solid,
         ),
         k.fixes.brep_edit_statuses_pass_on,
     )?)?;
@@ -2749,6 +2755,7 @@ pub fn stitch_and_orient_with_identity(
                 options.allow_spine_edges,
                 &mut lamina,
                 identity,
+                options.one_solid,
             ),
             k.fixes.brep_edit_statuses_pass_on,
         )?)?;
@@ -2871,15 +2878,26 @@ fn stitch_faces(
     allow_spine: bool,
     lamina: &mut usize,
     identity: Option<crate::query::brep::BrepIdentity<'_>>,
+    one_solid: bool,
 ) -> Result<()> {
-    let out = crate::topology::brep::p4::stitch_faces_with_identity(
-        k,
-        b,
-        tolerance,
-        None,
-        allow_spine,
-        identity,
-    )?;
+    let out = if one_solid {
+        crate::topology::brep::p4::stitch_one_solid_with_identity(
+            k,
+            b,
+            tolerance,
+            allow_spine,
+            identity,
+        )?
+    } else {
+        crate::topology::brep::p4::stitch_faces_with_identity(
+            k,
+            b,
+            tolerance,
+            None,
+            allow_spine,
+            identity,
+        )?
+    };
     *lamina = usize::try_from(out.lamina_edges)
         .map_err(|_| SolidError::invalid_input(OP, "lamina edge count"))?;
     Ok(())
@@ -3672,6 +3690,7 @@ mod tests {
                 false,
                 &mut lamina,
                 None,
+                false,
             );
             let r = stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default());
             let box_error = |r: &Result<()>| {

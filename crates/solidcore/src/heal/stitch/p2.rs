@@ -1238,6 +1238,8 @@ impl Stitch<'_> {
                         orientation,
                         dist_to_curve,
                         self.do_region_nesting,
+                        // one solid: this stitch's end searches, after its last glue
+                        !self.one_solid,
                         delete,
                         None, // header default pInsideFaceuses = NULL
                     ) {
