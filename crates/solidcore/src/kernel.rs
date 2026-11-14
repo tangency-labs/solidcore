@@ -164,6 +164,7 @@ pub struct WorkCounters {
     wall_body_copies: Cell<u64>,
     proto_edge_intersections: Cell<u64>,
     shell_traversal_faces: Cell<u64>,
+    proto_vertex_point_solves: Cell<u64>,
     face_extreme_control_points: Cell<u64>,
     feet_tm_coefficients: Cell<u64>,
     mass_iso_evaluations: Cell<u64>,
@@ -217,6 +218,15 @@ impl WorkCounters {
     #[must_use]
     pub fn shell_traversal_faces(&self) -> u64 {
         self.shell_traversal_faces.get()
+    }
+
+    /// Point solves a boolean ran to learn whether a proto vertex lies on a proto edge
+    /// (`RemoveCoincidentNoEdgeProtoVertex`): each solve of a proto vertex's position
+    /// against a proto edge's curve. A proto vertex found on a proto edge is removed
+    /// only when it has no proto edges of its own. Not the fork's.
+    #[must_use]
+    pub fn proto_vertex_point_solves(&self) -> u64 {
+        self.proto_vertex_point_solves.get()
     }
 
     /// Control points of the B-spline nets the trimmed-face tight box's directed solves
@@ -314,6 +324,7 @@ impl WorkCounters {
         self.wall_body_copies.set(0);
         self.proto_edge_intersections.set(0);
         self.shell_traversal_faces.set(0);
+        self.proto_vertex_point_solves.set(0);
         self.face_extreme_control_points.set(0);
         self.feet_tm_coefficients.set(0);
         self.mass_iso_evaluations.set(0);
@@ -353,6 +364,12 @@ impl WorkCounters {
     pub(crate) fn add_shell_traversal_face(&self) {
         self.shell_traversal_faces
             .set(self.shell_traversal_faces.get().saturating_add(1));
+    }
+
+    /// Counts one point solve of a proto vertex against a proto edge.
+    pub(crate) fn add_proto_vertex_point_solve(&self) {
+        self.proto_vertex_point_solves
+            .set(self.proto_vertex_point_solves.get().saturating_add(1));
     }
 
     /// Counts the control points of the net one trimmed-face extreme solve ran on.
@@ -1636,9 +1653,10 @@ mod tests {
                 w.loop_walks(),
                 w.ball_certified_roots(),
                 w.shell_traversal_faces(),
+                w.proto_vertex_point_solves(),
             )
         };
-        assert_eq!(counts(w), (0, 0, 0, 0, 0, 0, 0));
+        assert_eq!(counts(w), (0, 0, 0, 0, 0, 0, 0, 0));
         w.add_face_pair();
         w.add_face_pair();
         w.add_loop_classified();
@@ -1649,11 +1667,12 @@ mod tests {
         w.add_loop_walk();
         w.add_ball_certified_root();
         w.add_shell_traversal_face();
-        assert_eq!(counts(w), (2, 1, 1, 1, 3, 1, 1));
+        w.add_proto_vertex_point_solve();
+        assert_eq!(counts(w), (2, 1, 1, 1, 3, 1, 1, 1));
         // each kernel counts its own work
         assert_eq!(Kernel::default().work_counters.face_pairs(), 0);
         w.reset();
-        assert_eq!(counts(w), (0, 0, 0, 0, 0, 0, 0));
+        assert_eq!(counts(w), (0, 0, 0, 0, 0, 0, 0, 0));
     }
 
     #[test]
