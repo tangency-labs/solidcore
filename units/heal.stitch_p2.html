@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>heal.stitch_p2 · solidcore</title>
+<meta name="description" content="heal.stitch_p2 · solidcore">
+<meta name="theme-color" content="#141413">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="solidcore">
+<meta property="og:url" content="https://tangency-labs.github.io/solidcore/units/heal.stitch_p2.html">
+<meta property="og:title" content="heal.stitch_p2 · solidcore">
+<meta property="og:description" content="heal.stitch_p2 · solidcore">
+<meta property="og:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:type" content="image/png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="heal.stitch_p2 · solidcore">
+<meta name="twitter:description" content="heal.stitch_p2 · solidcore">
+<meta name="twitter:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="../index.html"><img src="../assets/logo.svg" alt="" width="28" height="28">solidcore</a>
+<nav><a href="../index.html">Overview</a><a href="../units/index.html" aria-current="page">Units</a><a href="../graph.html">Graph</a><a href="../solids.html">Solids</a><a href="../cases.html">Cases</a><a href="../sprints/index.html">Sprints</a><a href="../issues.html">Upstream issues</a><a href="../ssi.html">SSI corpus</a><a href="https://tangency-labs.github.io/solidcore-viewer/">Model viewer</a><a href="https://github.com/tangency-labs/solidcore">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+
+<p class="crumbs"><a href="index.html">Units</a> / <a href="../areas/heal.html">heal</a></p>
+<h1><code>heal.stitch_p2</code> <span class="badge s-green">green</span></h1>
+<dl class="facts">
+<div><dt>Layer</dt><dd>50</dd></div>
+<div><dt>Upstream lines</dt><dd>1,906</dd></div>
+<div><dt>Functions</dt><dd>5</dd></div>
+<div><dt>Rust module</dt><dd><code>heal::stitch::p2</code></dd></div>
+</dl>
+
+<h2>Status history</h2>
+<div class="steps" role="img" aria-label="Status history: todo from 2026-10-12, then partial from 2026-10-19, then green from 2026-10-23"><i class="st-todo" style="width:26.43%" title="todo from 2026-10-12"></i><i class="st-partial" style="width:13.90%" title="partial from 2026-10-19"></i><i class="st-green" style="width:59.67%" title="green from 2026-10-23"></i></div><div class="steps-axis small"><span>Oct 12</span><span>Nov 08</span></div><ol class="steplist"><li><time datetime="2026-10-12T18:49:09Z" data-ts="1791830949">2026-10-12 18:49 UTC</time> <span class="badge s-todo">todo</span> <span class=muted>1,906 lines</span></li><li><time datetime="2026-10-19T20:39:33Z" data-ts="1792442373">2026-10-19 20:39 UTC</time> <span class="badge s-partial">partial</span> <span class=muted>1,906 lines</span></li><li><time datetime="2026-10-23T13:59:55Z" data-ts="1792763995">2026-10-23 13:59 UTC</time> <span class="badge s-green">green</span> <span class=muted>1,906 lines</span></li></ol>
+<p>Source: <a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/solidcore/src/heal/stitch/p2.rs"><code>crates/solidcore/src/heal/stitch/p2.rs</code></a></p>
+<p>Upstream: <a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmStitch.cpp"><code>source/SMLib/src/SmStitch.cpp</code></a></p>
+<h2>Port-plan notes</h2>
+<p class="muted">These notes preserve historical port measurements and limitations, not current CI results.</p>
+<p class="notes">5 fns; largest: SmStitch::DoStitching, SmStitch::StitchVertexPairs, SmStitch::SplitEdgesWithVertices, SmStitch::StitchIntoSolid; unit-SCC #22 (220 units); 179 upstream test entry points reach this unit; PARTIAL (PR #205, co-port with heal.stitch_p1 #196): difftest 556 cases (540 constructed fixtures on unstitched sheets and boxes + 16 generated), 316 pass bit-identical (max_rel_err 0), 0 failed, 1 both-errored (the HANG-33 guard case: -3 on both sides, no values), 240 deferred (topology.brep_p2 119: SmBrep::Notify, first call of DoStitching; topology.brep_p5 92: GlueVertices; query.brep 15: SmBrep::CalculateBoundingBox; topology.brep_p9 14: MakeVertexSplitEdge). Passes by success path: SplitEdgesWithVertices 124 (drops and far/close outcomes, no split), one-list StitchVertexPairs 112 (86 without coincident pair, 26 with pairs evaluated but not glued) + 13 empty/null lists + 13 SM_ERR (no B-rep), StitchIntoShell 53 (loop never runs, max_tol &lt;= 0) + 1 HANG-33 guard case (both sides -3). No passing case for DoStitching or StitchIntoSolid. Wired p1's UNPORTED(heal.stitch_p2) API stubs and offset.offset_executive_p1's two in PiecewiseMerge (probe_piecewise_empty moves on to query.brep). fuzz 2000 FUZZ-PASS (crashes 0). Upstream issues: HANG-33, HANG-24, UB-178, UB-197, WR-186, WR-187 Re-run in PR #149 (review 5578349117 round, merged with main through fb58ea76; topology.brep_p2's UNPORTED stubs wired): 556 cases, 332 pass, 0 fail, 224 deferred (query.brep 121, topology.brep_p1 92, intersect.curve_class_p2 11); 2 Notify deferrals pass, the rest relabel. UPDATE (PR #204, topology.brep_p3): the UNPORTED(topology.brep_p3) SmBrep::DeleteFace stub is wired to topology::brep::p3::delete_face through brep::p3::with_kernel_callbacks (as stitch p1's squeeze_edge_to; pOptDeletedEdgesVertices reset first, as SmBrep.cpp:7088); squeeze_edge_to calls pass the kernel. Report unchanged (556 cases, 332 pass, 0 fail, 224 deferred). UPDATE (PR #526): find_and_set_infinite_region calls topology.brep_p5 (wired to FindInfiniteRegion). 556 cases, 368 pass, 0 fail, 188 deferred; the 10 FindInfiniteRegion deferrals now stop at geom.tol SmTol::GetZoneTol3d(const SmObject*). GREEN (2026-10-23, PR #600): difftest PASS heal.stitch_p2 cases=556 passed=556 failed=0 deferred=0 max_rel_err=0e0 with_values=555 no_values=1 vacuous=0; the former 188 heal.stitch_p2 deferrals (PR #526 count, incl. 10 at geom.tol SmTol::GetZoneTol3d(const SmObject*)) no longer occur on main 38b0745b3 (the GetZoneTol3d ones likely by #541, topology solver zone tol); 1 both-errored case (HANG-33 guard, no_values=1) counts as agreement; local rerun and CI run 39935703236 agree. PARTIAL (2026-10-27, PR #1297): the runner's digest now also carries the topology (shell count, per-edge end vertices/tolerance/interval/use count, per-face loops as edge/orientation sequences); fixtures/heal.stitch_p2/coverage.json adds 283 cases (T-junction sheets with slivers, SplitEdgesWithVertices on an editable B-rep (the Split op's new editing flag, as SmMerge/SqueezeFace call it), unstitched cubes with a split face, candidate lists, squeeze, the SmBrep::StitchFaces flags on 31 Solids/*.smb files; file B-reps run their C++ op in a fresh process; Solids/fillet_ts.smb excluded, its read heals through UB-255). difftest heal.stitch_p2 cases=839 passed=826 failed=0 deferred=0 known_mismatch=13: cov_cube2/4/5 DoStitching and cov_cube_gap_at_edge_tol_nest, whose region nesting raises different edge/vertex tolerances while the same B-reps agree with nesting off (plan/findings/heal.stitch_p2--region-nesting-ray-fire-raises-other-edge-tolerances.md). GREEN (2026-10-27, PR #1306, stacked on #1297): the runner records the import's arena naming on the B-rep (Brep::use_arena_naming), so the nested glue's region split (SplitClosed -&gt; FindAndSetInfiniteRegion -&gt; SmShell::RayFire), which names geometry under the stitch's notification identities, resolves the curve owners instead of failing every shell ray with an internal owner-lookup error; the former known mismatches now pass and are removed. difftest heal.stitch_p2 cases=839 passed=839 failed=0 deferred=0 (plan/findings/heal.stitch_p2--region-nesting-ray-fire-raises-other-edge-tolerances--addendum-2026-10-27-resolved.md).</p>
+<h2>Goldens</h2>
+
+<p class="muted">This is committed inventory, not a runtime result or a correctness proof.
+A golden records what solidcore produced when blessed. Current results require the
+<a href="https://github.com/tangency-labs/solidcore/actions/workflows/ci.yml">canonical CI gate</a>, not these counts.</p>
+<dl class="facts">
+<div><dt>Golden records</dt><dd>841</dd></div>
+<div><dt>Stored error outcomes</dt><dd>1</dd></div>
+<div><dt>Stored deferrals</dt><dd>0</dd></div>
+<div><dt>Stored harness rejections</dt><dd>0</dd></div>
+<div><dt>Known-failure entries</dt><dd>0</dd></div>
+</dl>
+<p>Metadata counts describe fields in the stored records; they are not passes or live failures.</p>
+
+
+<p>Source at <code>bbfa3b092</code>:
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/heal.stitch_p2.jsonl">golden JSONL</a> ·
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/known_failing.json">known-failure list</a>.</p>
+<h2>Dependencies</h2>
+<p><strong>Depends on:</strong> <a class="chip" href="curve.curve_p2.html">curve.curve_p2 <span class="badge s-green">green</span></a> <a class="chip" href="curve.curve_p6.html">curve.curve_p6 <span class="badge s-green">green</span></a> <a class="chip" href="geom.extent1d.html">geom.extent1d <span class="badge s-green">green</span></a> <a class="chip" href="geom.extent3d.html">geom.extent3d <span class="badge s-green">green</span></a> <a class="chip" href="geom.object.html">geom.object <span class="badge s-green">green</span></a> <a class="chip" href="geom.tol.html">geom.tol <span class="badge s-green">green</span></a> <a class="chip" href="geom.tree.html">geom.tree <span class="badge s-green">green</span></a> <a class="chip" href="geom.vector3d.html">geom.vector3d <span class="badge s-green">green</span></a> <a class="chip" href="heal.stitch_p1.html">heal.stitch_p1 <span class="badge s-green">green</span></a> <a class="chip" href="topology.brep_p1.html">topology.brep_p1 <span class="badge s-green">green</span></a> <a class="chip" href="topology.edge.html">topology.edge <span class="badge s-green">green</span></a> <a class="chip" href="topology.face_p3.html">topology.face_p3 <span class="badge s-green">green</span></a> <a class="chip" href="topology.vertex.html">topology.vertex <span class="badge s-green">green</span></a></p>
+<p><strong>Soft dependencies:</strong> <a class="chip" href="geom.context.html">geom.context <span class="badge s-green">green</span></a> <a class="chip" href="query.brep.html">query.brep <span class="badge s-green">green</span></a> <a class="chip" href="topology.brep_p2.html">topology.brep_p2 <span class="badge s-green">green</span></a> <a class="chip" href="topology.brep_p3.html">topology.brep_p3 <span class="badge s-partial">partial</span></a> <a class="chip" href="topology.brep_p5.html">topology.brep_p5 <span class="badge s-green">green</span></a> <a class="chip" href="topology.brep_p7.html">topology.brep_p7 <span class="badge s-green">green</span></a></p>
+<p><strong>Dependents:</strong> <a class="chip" href="topology.brep_constructor.html">topology.brep_constructor <span class="badge s-green">green</span></a></p>
+<p><strong>Soft dependents:</strong> <a class="chip" href="blend.fillet_executive_p3.html">blend.fillet_executive_p3 <span class="badge s-partial">partial</span></a> <a class="chip" href="boolean.merge_p2.html">boolean.merge_p2 <span class="badge s-green">green</span></a> <a class="chip" href="offset.offset_executive_p1.html">offset.offset_executive_p1 <span class="badge s-partial">partial</span></a> <a class="chip" href="offset.offset_executive_p2.html">offset.offset_executive_p2 <span class="badge s-partial">partial</span></a> <a class="chip" href="primitive.primitive_creation_p3.html">primitive.primitive_creation_p3 <span class="badge s-green">green</span></a> <a class="chip" href="sweep.topology_sweep.html">sweep.topology_sweep <span class="badge s-green">green</span></a></p>
+<h2>Upstream functions</h2>
+<div class="scroll"><table class="sortable"><thead><tr><th data-sort="text">Upstream function</th><th data-sort="text">Defined at</th><th data-sort="num">Lines</th><th data-sort="text">Rust (from the file header)</th></tr></thead><tbody><tr><td><code>SmStitch::DoStitching</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmStitch.cpp#L1086">SmStitch.cpp:1086</a></td><td class=num>1264</td><td>[<code>Stitch::do_stitching</code>], [<code>Stitching</code>], [<code>MinGapRequest</code>]</td></tr><tr><td><code>SmStitch::StitchIntoSolid</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmStitch.cpp#L2659">SmStitch.cpp:2659</a></td><td class=num>65</td><td>[<code>stitch_into_solid</code>]</td></tr><tr><td><code>SmStitch::StitchIntoShell</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmStitch.cpp#L2734">SmStitch.cpp:2734</a></td><td class=num>62</td><td>[<code>stitch_into_shell</code>]</td></tr><tr><td><code>SmStitch::StitchVertexPairs</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmStitch.cpp#L2827">SmStitch.cpp:2827</a></td><td class=num>385</td><td>[<code>Stitch::stitch_vertex_list</code>], [<code>VertexList</code>]</td></tr><tr><td><code>SmStitch::SplitEdgesWithVertices</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmStitch.cpp#L3777">SmStitch.cpp:3777</a></td><td class=num>130</td><td>[<code>Stitch::split_edges_with_vertices</code>], [<code>SplitEdges</code>]</td></tr></tbody></table></div>
+<details><summary>Module file-header table (6 rows)</summary><div class="scroll"><table><thead><tr><th>Rust</th><th>Upstream</th></tr></thead><tbody><tr><td>[<code>Stitch::do_stitching</code>], [<code>Stitching</code>], [<code>MinGapRequest</code>]</td><td><code>SmStitch::DoStitching</code></td></tr><tr><td>[<code>stitch_into_solid</code>]</td><td><code>SmStitch::StitchIntoSolid</code> (static)</td></tr><tr><td>[<code>solid_stitch_start</code>]</td><td><code>SmStitch::StitchIntoSolid</code> (its first lines)</td></tr><tr><td>[<code>stitch_into_shell</code>]</td><td><code>SmStitch::StitchIntoShell</code> (static)</td></tr><tr><td>[<code>Stitch::stitch_vertex_list</code>], [<code>VertexList</code>]</td><td><code>SmStitch::StitchVertexPairs</code> (one-list overload)</td></tr><tr><td>[<code>Stitch::split_edges_with_vertices</code>], [<code>SplitEdges</code>]</td><td><code>SmStitch::SplitEdgesWithVertices</code></td></tr></tbody></table></div></details>
+<h2>Upstream tests reaching this unit</h2>
+<p class="tests"><code>prog_test:my_test_single_periodic_vertexuse</code>, <code>SM_API_test:TestSmAdvancedStitch</code>, <code>SM_API_test:TestSmEdgeCurveOwnership</code>, <code>SM_API_test:TestSmGetClosestPoint</code>, <code>SM_API_test:TestSmGetEdges</code>, <code>SM_API_test:TestSmGetFaces</code></p>
+
+</main>
+<footer class="wrap">Generated from <a href="https://github.com/tangency-labs/solidcore/tree/bbfa3b09294ef65febb9b3688b735e9090aef9e1"><code>bbfa3b09</code></a>
+(2026-11-14T12:32:47Z) by <code>site/build.py</code>; upstream reference <a href="https://github.com/NVIDIA-Omniverse/usd-brep/tree/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5">usd-brep v1.0.1 (<code>3fd5b95</code>)</a>.
+Apache-2.0. Not affiliated with or endorsed by NVIDIA.</footer>
+<script src="../assets/app.js"></script>
+</body>
+</html>

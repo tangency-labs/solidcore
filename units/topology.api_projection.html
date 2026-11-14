@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>topology.api_projection · solidcore</title>
+<meta name="description" content="topology.api_projection · solidcore">
+<meta name="theme-color" content="#141413">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="solidcore">
+<meta property="og:url" content="https://tangency-labs.github.io/solidcore/units/topology.api_projection.html">
+<meta property="og:title" content="topology.api_projection · solidcore">
+<meta property="og:description" content="topology.api_projection · solidcore">
+<meta property="og:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:type" content="image/png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="topology.api_projection · solidcore">
+<meta name="twitter:description" content="topology.api_projection · solidcore">
+<meta name="twitter:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="../index.html"><img src="../assets/logo.svg" alt="" width="28" height="28">solidcore</a>
+<nav><a href="../index.html">Overview</a><a href="../units/index.html" aria-current="page">Units</a><a href="../graph.html">Graph</a><a href="../solids.html">Solids</a><a href="../cases.html">Cases</a><a href="../sprints/index.html">Sprints</a><a href="../issues.html">Upstream issues</a><a href="../ssi.html">SSI corpus</a><a href="https://tangency-labs.github.io/solidcore-viewer/">Model viewer</a><a href="https://github.com/tangency-labs/solidcore">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+
+<p class="crumbs"><a href="index.html">Units</a> / <a href="../areas/topology.html">topology</a></p>
+<h1><code>topology.api_projection</code> <span class="badge s-partial">partial</span></h1>
+<dl class="facts">
+<div><dt>Layer</dt><dd>59</dd></div>
+<div><dt>Upstream lines</dt><dd>330</dd></div>
+<div><dt>Functions</dt><dd>0</dd></div>
+<div><dt>Rust module</dt><dd><code>topology::api_projection</code></dd></div>
+</dl>
+
+<h2>Status history</h2>
+<div class="steps" role="img" aria-label="Status history: green from 2026-10-30, then partial from 2026-11-04"><i class="st-none" style="width:65.26%" title="not in the plan yet"></i><i class="st-green" style="width:21.01%" title="green from 2026-10-30"></i><i class="st-partial" style="width:13.73%" title="partial from 2026-11-04"></i></div><div class="steps-axis small"><span>Oct 12</span><span>Nov 08</span></div><ol class="steplist"><li><time datetime="2026-10-30T06:15:26Z" data-ts="1793340926">2026-10-30 06:15 UTC</time> <span class="badge s-green">green</span> <span class=muted>330 lines</span></li><li><time datetime="2026-11-04T21:19:18Z" data-ts="1793827158">2026-11-04 21:19 UTC</time> <span class="badge s-partial">partial</span> <span class=muted>330 lines</span></li></ol>
+<p>Source: <a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/solidcore/src/topology/api_projection.rs"><code>crates/solidcore/src/topology/api_projection.rs</code></a></p>
+<p>Upstream: <a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SM_API/src/SmApiBrep.cpp"><code>source/SM_API/src/SmApiBrep.cpp</code></a>, <a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SM_API/src/SmApiCurves.cpp"><code>source/SM_API/src/SmApiCurves.cpp</code></a>, <a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmCrvOnSurf.cpp"><code>source/SMLib/src/SmCrvOnSurf.cpp</code></a></p>
+<h2>Port-plan notes</h2>
+<p class="muted">These notes preserve historical port measurements and limitations, not current CI results.</p>
+<p class="notes">[2026-11-04 (#2400): PARTIAL, 5 known mismatches: the blend corner is the default and the old corner code is deleted, so these cases no longer agree with C++ v1.0.1's pinned corner (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md)] NOT IN callgraph/units.json: SmApiProjectBrepOntoPlane (SmApiBrep.cpp:775), SmApiCreateSilhouetteCurves (SmApiBrep.cpp:985), SmApiProjectCurve(SmBrep*, ..) (SmApiBrep.cpp:1070) and SmApiProjectCurve(const SmBSplineCurve*, const SmSurface*, ..) (SmApiCurves.cpp:1108) (SM_API gap table S3), with the unowned SmCurve::CreatePlaneProjection dispatch and SmCrvOnSurf::CreatePlaneProjection kept beside them (private in topology::api_projection). Rust: topology::api_projection::{project_brep_onto_plane, create_silhouette_curves, project_curve_onto_brep, project_curve_onto_surface}; the output slots are topology::api_files::add_curve_output_slots (SmApiAddCurveOutputSlots), compared here through its two callers. Difftest topology.api_projection: 32 fixture cases (SM_API_test TestSmProjectBrepOntoPlane, TestSmCreateSilhouetteCurves, TestSmProjectCurve, TestSmProjectCurveToSurface, TestSmLiftUVCurve: null and zero-length inputs, non-unit normals, appends to arrays holding entries, a projection missing the body) plus generated cases. Status set when the difftest gate has run.</p>
+<h2>Goldens</h2>
+
+<p class="muted">This is committed inventory, not a runtime result or a correctness proof.
+A golden records what solidcore produced when blessed. Current results require the
+<a href="https://github.com/tangency-labs/solidcore/actions/workflows/ci.yml">canonical CI gate</a>, not these counts.</p>
+<dl class="facts">
+<div><dt>Golden records</dt><dd>48</dd></div>
+<div><dt>Stored error outcomes</dt><dd>0</dd></div>
+<div><dt>Stored deferrals</dt><dd>0</dd></div>
+<div><dt>Stored harness rejections</dt><dd>1</dd></div>
+<div><dt>Known-failure entries</dt><dd>0</dd></div>
+</dl>
+<p>Metadata counts describe fields in the stored records; they are not passes or live failures.</p>
+
+
+<p>Source at <code>bbfa3b092</code>:
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/topology.api_projection.jsonl">golden JSONL</a> ·
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/known_failing.json">known-failure list</a>.</p>
+<h2>Dependencies</h2>
+<p><strong>Depends on:</strong> <a class="chip" href="blend.hcr.html">blend.hcr <span class="badge s-green">green</span></a> <a class="chip" href="intersect.surface_drop_lib_p1.html">intersect.surface_drop_lib_p1 <span class="badge s-partial">partial</span></a> <a class="chip" href="nurbs.b_spline_curve_p1.html">nurbs.b_spline_curve_p1 <span class="badge s-green">green</span></a> <a class="chip" href="surface.surface_p11.html">surface.surface_p11 <span class="badge s-green">green</span></a> <a class="chip" href="topology.api_files.html">topology.api_files <span class="badge s-partial">partial</span></a> <a class="chip" href="topology.brep_p1.html">topology.brep_p1 <span class="badge s-green">green</span></a></p>
+<p><strong>Soft dependencies:</strong> <span class="muted">none</span></p>
+<p><strong>Dependents:</strong> <span class="muted">none</span></p>
+<p><strong>Soft dependents:</strong> <span class="muted">none</span></p>
+<h2>Upstream functions</h2>
+<p class="muted">No upstream functions listed in <code>harness/callgraph/units.json</code>.</p>
+<details><summary>Module file-header table (6 rows)</summary><div class="scroll"><table><thead><tr><th>Rust</th><th>Upstream</th></tr></thead><tbody><tr><td>[<code>project_brep_onto_plane</code>]</td><td><code>SmApiProjectBrepOntoPlane</code></td></tr><tr><td>[<code>create_silhouette_curves</code>]</td><td><code>SmApiCreateSilhouetteCurves</code></td></tr><tr><td>[<code>project_curve_onto_brep</code>]</td><td><code>SmApiProjectCurve(SmBrep*, SmBSplineCurve*, ..)</code></td></tr><tr><td>[<code>project_curve_onto_surface</code>], [<code>SurfaceProjection</code>]</td><td><code>SmApiProjectCurve(const SmBSplineCurve*, const SmSurface*, ..)</code></td></tr><tr><td><code>plane_projection</code> (private)</td><td><code>SmCurve::CreatePlaneProjection</code> (virtual dispatch: the <code>SmBSplineCurve</code> override, <code>SM_ERR</code> otherwise)</td></tr><tr><td><code>crv_on_surf_plane_projection</code> (private)</td><td><code>SmCrvOnSurf::CreatePlaneProjection</code></td></tr></tbody></table></div></details>
+<h2>Upstream tests reaching this unit</h2>
+<p class="tests"><code>tests/SM_API_test/src/TestSmBrep.cpp:TestSmProjectBrepOntoPlane</code>, <code>tests/SM_API_test/src/TestSmBrep.cpp:TestSmCreateSilhouetteCurves</code>, <code>tests/SM_API_test/src/TestSmBrep.cpp:TestSmProjectCurve</code>, <code>tests/SM_API_test/src/TestSmCurves.cpp:TestSmProjectCurveToSurface</code>, <code>tests/SM_API_test/src/TestSmCurves.cpp:TestSmLiftUVCurve</code></p>
+
+</main>
+<footer class="wrap">Generated from <a href="https://github.com/tangency-labs/solidcore/tree/bbfa3b09294ef65febb9b3688b735e9090aef9e1"><code>bbfa3b09</code></a>
+(2026-11-14T12:32:47Z) by <code>site/build.py</code>; upstream reference <a href="https://github.com/NVIDIA-Omniverse/usd-brep/tree/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5">usd-brep v1.0.1 (<code>3fd5b95</code>)</a>.
+Apache-2.0. Not affiliated with or endorsed by NVIDIA.</footer>
+<script src="../assets/app.js"></script>
+</body>
+</html>

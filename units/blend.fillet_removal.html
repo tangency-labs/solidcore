@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>blend.fillet_removal · solidcore</title>
+<meta name="description" content="blend.fillet_removal · solidcore">
+<meta name="theme-color" content="#141413">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="solidcore">
+<meta property="og:url" content="https://tangency-labs.github.io/solidcore/units/blend.fillet_removal.html">
+<meta property="og:title" content="blend.fillet_removal · solidcore">
+<meta property="og:description" content="blend.fillet_removal · solidcore">
+<meta property="og:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:type" content="image/png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="blend.fillet_removal · solidcore">
+<meta name="twitter:description" content="blend.fillet_removal · solidcore">
+<meta name="twitter:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="../index.html"><img src="../assets/logo.svg" alt="" width="28" height="28">solidcore</a>
+<nav><a href="../index.html">Overview</a><a href="../units/index.html" aria-current="page">Units</a><a href="../graph.html">Graph</a><a href="../solids.html">Solids</a><a href="../cases.html">Cases</a><a href="../sprints/index.html">Sprints</a><a href="../issues.html">Upstream issues</a><a href="../ssi.html">SSI corpus</a><a href="https://tangency-labs.github.io/solidcore-viewer/">Model viewer</a><a href="https://github.com/tangency-labs/solidcore">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+
+<p class="crumbs"><a href="index.html">Units</a> / <a href="../areas/blend.html">blend</a></p>
+<h1><code>blend.fillet_removal</code> <span class="badge s-green">green</span></h1>
+<dl class="facts">
+<div><dt>Layer</dt><dd>62</dd></div>
+<div><dt>Upstream lines</dt><dd>1,757</dd></div>
+<div><dt>Functions</dt><dd>0</dd></div>
+<div><dt>Rust module</dt><dd><code>blend::fillet_removal</code></dd></div>
+</dl>
+
+<h2>Status history</h2>
+<div class="steps" role="img" aria-label="Status history: green from 2026-10-31"><i class="st-none" style="width:68.04%" title="not in the plan yet"></i><i class="st-green" style="width:31.96%" title="green from 2026-10-31"></i></div><div class="steps-axis small"><span>Oct 12</span><span>Nov 08</span></div><ol class="steplist"><li><time datetime="2026-10-31T00:07:25Z" data-ts="1793405245">2026-10-31 00:07 UTC</time> <span class="badge s-green">green</span> <span class=muted>1,757 lines</span></li></ol>
+<p>Source: <a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/solidcore/src/blend/fillet_removal.rs"><code>crates/solidcore/src/blend/fillet_removal.rs</code></a></p>
+<p>Upstream: <a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmFilletRemoval.cpp"><code>source/SMLib/src/SmFilletRemoval.cpp</code></a>, <a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/inc/SmFilletRemoval.h"><code>source/SMLib/inc/SmFilletRemoval.h</code></a></p>
+<h2>Port-plan notes</h2>
+<p class="muted">These notes preserve historical port measurements and limitations, not current CI results.</p>
+<p class="notes">GREEN: difftest 170 cases, 170 pass, 0 deferred, max_rel_err 3e-16 (every face of 18 upstream fillet solids; non-fillet faces compare the refusal). New unit (step 1 of #1060, the fork's SmOffsetFaces): SmFilletRemoval, SmFilletCornerInfo, SmFaceRemoval::MoveVtxAndEdgeToAdjacentFace, SmBrep::DeleteFilletFace (SmFilletRemoval.cpp). No upstream test reaches it except through SmApiRemoveFillet (TestSmCircularFillet), which also needs SmFace::IdentifyFillet and SmFeatureExecutive (unported; SmApiRemoveFillet follows IdentifyFillet). CO-PORTED in blend.fillet_removal (PR #1821): SmEdge::SetTrimCurve, SmBrep::GlueEdges, SmSurface::UpdateAnalyticalDomain (dispatch) -&gt; crate::blend::fillet_removal. CO-PORTED in blend.fillet_removal (PR #1821): SmEdge::Replace3DCurve -&gt; crate::topology::edge::replace_3d_curve (shared with offset_geometry_creation's SmBrep::ReplaceCurve). CO-PORTED in blend.fillet_removal (PR #1821): SmPlane::UpdateAnalyticalDomain, the plane's mutable SmBSplineSurface part -&gt; crate::surface::plane::p1::Plane::{update_analytical_domain, base_mut}. CO-PORTED in blend.fillet_removal (PR #1821): SmEdge::ValidateGeometry(bFixTolerances) -&gt; crate::topology::brep::validation::pointers::validate_geometry (check_edge_geometry its FALSE case). Shared: blend::fillet_corner::p3::join_with and topology::brep::p7::edge_remove made pub(crate).</p>
+<h2>Goldens</h2>
+
+<p class="muted">This is committed inventory, not a runtime result or a correctness proof.
+A golden records what solidcore produced when blessed. Current results require the
+<a href="https://github.com/tangency-labs/solidcore/actions/workflows/ci.yml">canonical CI gate</a>, not these counts.</p>
+<dl class="facts">
+<div><dt>Golden records</dt><dd>170</dd></div>
+<div><dt>Stored error outcomes</dt><dd>0</dd></div>
+<div><dt>Stored deferrals</dt><dd>0</dd></div>
+<div><dt>Stored harness rejections</dt><dd>0</dd></div>
+<div><dt>Known-failure entries</dt><dd>0</dd></div>
+</dl>
+<p>Metadata counts describe fields in the stored records; they are not passes or live failures.</p>
+
+
+<p>Source at <code>bbfa3b092</code>:
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/blend.fillet_removal.jsonl">golden JSONL</a> ·
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/known_failing.json">known-failure list</a>.</p>
+<h2>Dependencies</h2>
+<p><strong>Depends on:</strong> <a class="chip" href="curve.curve_p2.html">curve.curve_p2 <span class="badge s-green">green</span></a> <a class="chip" href="curve.curve_p6.html">curve.curve_p6 <span class="badge s-green">green</span></a> <a class="chip" href="nurbs.b_spline_curve_n_lib.html">nurbs.b_spline_curve_n_lib <span class="badge s-green">green</span></a> <a class="chip" href="nurbs.b_spline_curve_p3.html">nurbs.b_spline_curve_p3 <span class="badge s-green">green</span></a> <a class="chip" href="nurbs.b_spline_surface_n_lib_p1.html">nurbs.b_spline_surface_n_lib_p1 <span class="badge s-green">green</span></a> <a class="chip" href="surface.surface_p2.html">surface.surface_p2 <span class="badge s-partial">partial</span></a> <a class="chip" href="surface.surface_p3.html">surface.surface_p3 <span class="badge s-green">green</span></a> <a class="chip" href="topology.brep_p2.html">topology.brep_p2 <span class="badge s-green">green</span></a> <a class="chip" href="topology.brep_p3.html">topology.brep_p3 <span class="badge s-partial">partial</span></a> <a class="chip" href="topology.brep_p4.html">topology.brep_p4 <span class="badge s-green">green</span></a> <a class="chip" href="topology.brep_p5.html">topology.brep_p5 <span class="badge s-green">green</span></a> <a class="chip" href="topology.edge.html">topology.edge <span class="badge s-green">green</span></a> <a class="chip" href="topology.edgeuse_p1.html">topology.edgeuse_p1 <span class="badge s-green">green</span></a> <a class="chip" href="topology.face_p4.html">topology.face_p4 <span class="badge s-green">green</span></a> <a class="chip" href="topology.vertex.html">topology.vertex <span class="badge s-green">green</span></a> <a class="chip" href="topology.vertexuse.html">topology.vertexuse <span class="badge s-green">green</span></a></p>
+<p><strong>Soft dependencies:</strong> <a class="chip" href="blend.fillet_corner_p3.html">blend.fillet_corner_p3 <span class="badge s-partial">partial</span></a> <a class="chip" href="surface.surf_of_extrusion_p1.html">surface.surf_of_extrusion_p1 <span class="badge s-green">green</span></a> <a class="chip" href="surface.surf_of_revolution_p3.html">surface.surf_of_revolution_p3 <span class="badge s-green">green</span></a> <a class="chip" href="topology.brep_p7.html">topology.brep_p7 <span class="badge s-green">green</span></a></p>
+<p><strong>Dependents:</strong> <span class="muted">none</span></p>
+<p><strong>Soft dependents:</strong> <span class="muted">none</span></p>
+<h2>Upstream functions</h2>
+<p class="muted">No upstream functions listed in <code>harness/callgraph/units.json</code>.</p>
+<details><summary>Module file-header table (16 rows)</summary><div class="scroll"><table><thead><tr><th>Rust</th><th>Upstream</th></tr></thead><tbody><tr><td>[<code>delete_fillet_face</code>]</td><td><code>SmBrep::DeleteFilletFace</code></td></tr><tr><td>[<code>FilletRemoval</code>]</td><td><code>SmFilletRemoval</code></td></tr><tr><td>[<code>FilletRemoval::new</code>]</td><td><code>SmFilletRemoval::SmFilletRemoval</code></td></tr><tr><td>[<code>FilletRemoval::remove_face</code>]</td><td><code>SmFilletRemoval::RemoveFace</code></td></tr><tr><td><code>collect_fillet_topology</code> (private)</td><td><code>SmFilletRemoval::CollectFilletTopology</code></td></tr><tr><td><code>calc_new_corner_vertices</code> (private)</td><td><code>SmFilletRemoval::CalcNewCornerVertices</code></td></tr><tr><td><code>find_side_edge_extensions</code> (private)</td><td><code>SmFilletRemoval::FindSideEdgeExtensions</code></td></tr><tr><td><code>intersect_tangent_surfaces</code> (private)</td><td><code>SmFilletRemoval::IntersectTangentSurfaces</code></td></tr><tr><td><code>do_removal</code> (private)</td><td><code>SmFilletRemoval::DoRemoval</code></td></tr><tr><td>[<code>FilletCornerInfo</code>]</td><td><code>SmFilletCornerInfo</code></td></tr><tr><td>[<code>move_vtx_and_edge_to_adjacent_face</code>]</td><td><code>SmFaceRemoval::MoveVtxAndEdgeToAdjacentFace</code></td></tr><tr><td>[<code>set_trim_curve</code>]</td><td><code>SmEdge::SetTrimCurve</code></td></tr><tr><td><code>topology::edge::replace_3d_curve</code> (shared)</td><td><code>SmEdge::Replace3DCurve</code></td></tr><tr><td>[<code>glue_edges</code>]</td><td><code>SmBrep::GlueEdges</code></td></tr><tr><td>[<code>update_analytical_domain</code>]</td><td><code>SmSurface::UpdateAnalyticalDomain</code> (virtual)</td></tr><tr><td>[<code>FilletRemoval::set_exact_only</code>], [<code>FilletRemoval::not_exact</code>], [<code>FilletRemoval::sharp_edge</code>]</td><td>the fork's <code>SetExactOnly</code>, <code>NotExact</code>, <code>GetSharpEdge</code> (WR-606, not upstream)</td></tr></tbody></table></div></details>
+<h2>Upstream tests reaching this unit</h2>
+<p class="tests"><code>SM_API_test:TestSmCircularFillet</code></p>
+
+</main>
+<footer class="wrap">Generated from <a href="https://github.com/tangency-labs/solidcore/tree/bbfa3b09294ef65febb9b3688b735e9090aef9e1"><code>bbfa3b09</code></a>
+(2026-11-14T12:32:47Z) by <code>site/build.py</code>; upstream reference <a href="https://github.com/NVIDIA-Omniverse/usd-brep/tree/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5">usd-brep v1.0.1 (<code>3fd5b95</code>)</a>.
+Apache-2.0. Not affiliated with or endorsed by NVIDIA.</footer>
+<script src="../assets/app.js"></script>
+</body>
+</html>

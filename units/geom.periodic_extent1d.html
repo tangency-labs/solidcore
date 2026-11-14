@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>geom.periodic_extent1d · solidcore</title>
+<meta name="description" content="geom.periodic_extent1d · solidcore">
+<meta name="theme-color" content="#141413">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="solidcore">
+<meta property="og:url" content="https://tangency-labs.github.io/solidcore/units/geom.periodic_extent1d.html">
+<meta property="og:title" content="geom.periodic_extent1d · solidcore">
+<meta property="og:description" content="geom.periodic_extent1d · solidcore">
+<meta property="og:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:type" content="image/png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="geom.periodic_extent1d · solidcore">
+<meta name="twitter:description" content="geom.periodic_extent1d · solidcore">
+<meta name="twitter:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="../index.html"><img src="../assets/logo.svg" alt="" width="28" height="28">solidcore</a>
+<nav><a href="../index.html">Overview</a><a href="../units/index.html" aria-current="page">Units</a><a href="../graph.html">Graph</a><a href="../solids.html">Solids</a><a href="../cases.html">Cases</a><a href="../sprints/index.html">Sprints</a><a href="../issues.html">Upstream issues</a><a href="../ssi.html">SSI corpus</a><a href="https://tangency-labs.github.io/solidcore-viewer/">Model viewer</a><a href="https://github.com/tangency-labs/solidcore">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+
+<p class="crumbs"><a href="index.html">Units</a> / <a href="../areas/geom.html">geom</a></p>
+<h1><code>geom.periodic_extent1d</code> <span class="badge s-green">green</span></h1>
+<dl class="facts">
+<div><dt>Layer</dt><dd>2</dd></div>
+<div><dt>Upstream lines</dt><dd>406</dd></div>
+<div><dt>Functions</dt><dd>17</dd></div>
+<div><dt>Rust module</dt><dd><code>geom::periodic_extent1d</code></dd></div>
+</dl>
+
+<h2>Status history</h2>
+<div class="steps" role="img" aria-label="Status history: todo from 2026-10-12, then green from 2026-10-13"><i class="st-todo" style="width:0.84%" title="todo from 2026-10-12"></i><i class="st-green" style="width:99.16%" title="green from 2026-10-13"></i></div><div class="steps-axis small"><span>Oct 12</span><span>Nov 08</span></div><ol class="steplist"><li><time datetime="2026-10-12T18:49:09Z" data-ts="1791830949">2026-10-12 18:49 UTC</time> <span class="badge s-todo">todo</span> <span class=muted>406 lines</span></li><li><time datetime="2026-10-13T00:12:46Z" data-ts="1791850366">2026-10-13 00:12 UTC</time> <span class="badge s-green">green</span> <span class=muted>406 lines</span></li></ol>
+<p>Source: <a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/solidcore/src/geom/periodic_extent1d.rs"><code>crates/solidcore/src/geom/periodic_extent1d.rs</code></a></p>
+<p>Upstream: <a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/inc/SmPeriodicExtent1d.h"><code>source/SMLib/inc/SmPeriodicExtent1d.h</code></a>, <a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmPeriodicExtent1d.cpp"><code>source/SMLib/src/SmPeriodicExtent1d.cpp</code></a></p>
+<h2>Port-plan notes</h2>
+<p class="muted">These notes preserve historical port measurements and limitations, not current CI results.</p>
+<p class="notes">green: 4054 difftest cases (54 fixture + 4000 generated), 0 deferred, all bit-identical; 17 fns; largest: SmPeriodicExtent1d::AddInterval, SmPeriodicExtent1d::IsContainedBy, SmPeriodicExtent1d::SetMinMax, SmPeriodicExtent1d::AreDisjoint; unit-SCC #22 (220 units); 100 upstream test entry points reach this unit</p>
+<h2>Goldens</h2>
+
+<p class="muted">This is committed inventory, not a runtime result or a correctness proof.
+A golden records what solidcore produced when blessed. Current results require the
+<a href="https://github.com/tangency-labs/solidcore/actions/workflows/ci.yml">canonical CI gate</a>, not these counts.</p>
+<dl class="facts">
+<div><dt>Golden records</dt><dd>4,054</dd></div>
+<div><dt>Stored error outcomes</dt><dd>0</dd></div>
+<div><dt>Stored deferrals</dt><dd>0</dd></div>
+<div><dt>Stored harness rejections</dt><dd>0</dd></div>
+<div><dt>Known-failure entries</dt><dd>0</dd></div>
+</dl>
+<p>Metadata counts describe fields in the stored records; they are not passes or live failures.</p>
+
+
+<p>Source at <code>bbfa3b092</code>:
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/geom.periodic_extent1d.jsonl">golden JSONL</a> ·
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/known_failing.json">known-failure list</a>.</p>
+<h2>Dependencies</h2>
+<p><strong>Depends on:</strong> <a class="chip" href="geom.tol.html">geom.tol <span class="badge s-green">green</span></a></p>
+<p><strong>Soft dependencies:</strong> <span class="muted">none</span></p>
+<p><strong>Dependents:</strong> <a class="chip" href="topology.face_p1.html">topology.face_p1 <span class="badge s-green">green</span></a></p>
+<p><strong>Soft dependents:</strong> <a class="chip" href="intersect.curve_class_p4.html">intersect.curve_class_p4 <span class="badge s-green">green</span></a></p>
+<h2>Upstream functions</h2>
+<div class="scroll"><table class="sortable"><thead><tr><th data-sort="text">Upstream function</th><th data-sort="text">Defined at</th><th data-sort="num">Lines</th><th data-sort="text">Rust (from the file header)</th></tr></thead><tbody><tr><td><code>SmPeriodicExtent1d::~SmPeriodicExtent1d</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/inc/SmPeriodicExtent1d.h#L103">SmPeriodicExtent1d.h:103</a></td><td class=num>1</td><td><code>Clone</code>/<code>Copy</code>, drop</td></tr><tr><td><code>SmPeriodicExtent1d::GetPeriod</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/inc/SmPeriodicExtent1d.h#L121">SmPeriodicExtent1d.h:121</a></td><td class=num>1</td><td>[<code>PeriodicExtent1d::period</code>]</td></tr><tr><td><code>SmPeriodicExtent1d::SetFullPeriod</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/inc/SmPeriodicExtent1d.h#L125">SmPeriodicExtent1d.h:125</a></td><td class=num>1</td><td>[<code>PeriodicExtent1d::set_full_period</code>]</td></tr><tr><td><code>SmPeriodicExtent1d::IsEmpty</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/inc/SmPeriodicExtent1d.h#L131">SmPeriodicExtent1d.h:131</a></td><td class=num>1</td><td>[<code>PeriodicExtent1d::is_empty</code>]</td></tr><tr><td><code>SmPeriodicExtent1d::IsFullPeriod</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/inc/SmPeriodicExtent1d.h#L134">SmPeriodicExtent1d.h:134</a></td><td class=num>1</td><td>[<code>PeriodicExtent1d::is_full_period</code>]</td></tr><tr><td><code>SmPeriodicExtent1d::CrossesSeam</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/inc/SmPeriodicExtent1d.h#L135">SmPeriodicExtent1d.h:135</a></td><td class=num>1</td><td>[<code>PeriodicExtent1d::crosses_seam</code>]</td></tr><tr><td><code>SmPeriodicExtent1d::MapValue</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/inc/SmPeriodicExtent1d.h#L147">SmPeriodicExtent1d.h:147</a></td><td class=num>1</td><td>[<code>PeriodicExtent1d::map_value</code>]</td></tr><tr><td><code>SmPeriodicExtent1d::SmPeriodicExtent1d</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmPeriodicExtent1d.cpp#L20">SmPeriodicExtent1d.cpp:20</a></td><td class=num>9</td><td>[<code>PeriodicExtent1d</code>]</td></tr><tr><td><code>SmPeriodicExtent1d::SmPeriodicExtent1d</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmPeriodicExtent1d.cpp#L77">SmPeriodicExtent1d.cpp:77</a></td><td class=num>9</td><td>[<code>PeriodicExtent1d</code>]</td></tr><tr><td><code>SmPeriodicExtent1d::Compliment</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmPeriodicExtent1d.cpp#L146">SmPeriodicExtent1d.cpp:146</a></td><td class=num>30</td><td>[<code>PeriodicExtent1d::complement</code>]</td></tr><tr><td><code>SmPeriodicExtent1d::AddInterval</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmPeriodicExtent1d.cpp#L262">SmPeriodicExtent1d.cpp:262</a></td><td class=num>120</td><td>[<code>PeriodicExtent1d::add_interval</code>]</td></tr><tr><td><code>SmPeriodicExtent1d::ContainsValue</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmPeriodicExtent1d.cpp#L390">SmPeriodicExtent1d.cpp:390</a></td><td class=num>22</td><td>[<code>PeriodicExtent1d::contains_value</code>]</td></tr><tr><td><code>SmPeriodicExtent1d::SetMinMax</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmPeriodicExtent1d.cpp#L512">SmPeriodicExtent1d.cpp:512</a></td><td class=num>67</td><td>[<code>PeriodicExtent1d::set_min_max</code>]</td></tr><tr><td><code>SmPeriodicExtent1d::IsContainedBy</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmPeriodicExtent1d.cpp#L586">SmPeriodicExtent1d.cpp:586</a></td><td class=num>73</td><td>[<code>PeriodicExtent1d::is_contained_by</code>]</td></tr><tr><td><code>SmPeriodicExtent1d::AreDisjoint</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmPeriodicExtent1d.cpp#L666">SmPeriodicExtent1d.cpp:666</a></td><td class=num>34</td><td>[<code>PeriodicExtent1d::are_disjoint</code>]</td></tr><tr><td><code>SmPeriodicExtent1d::GetMid</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmPeriodicExtent1d.cpp#L1153">SmPeriodicExtent1d.cpp:1153</a></td><td class=num>14</td><td>[<code>PeriodicExtent1d::mid</code>]</td></tr><tr><td><code>SmPeriodicExtent1d::NormalizeValue</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmPeriodicExtent1d.cpp#L1320">SmPeriodicExtent1d.cpp:1320</a></td><td class=num>21</td><td>[<code>PeriodicExtent1d::normalize_value</code>]</td></tr></tbody></table></div>
+<details><summary>Module file-header table (20 rows)</summary><div class="scroll"><table><thead><tr><th>Rust</th><th>Upstream</th></tr></thead><tbody><tr><td>[<code>PeriodicExtent1d</code>]</td><td><code>SmPeriodicExtent1d</code></td></tr><tr><td>[<code>PeriodicExtent1d::full</code>]</td><td><code>SmPeriodicExtent1d(double dPeriod)</code></td></tr><tr><td><code>Clone</code>/<code>Copy</code>, drop</td><td>copy constructor, <code>~SmPeriodicExtent1d</code></td></tr><tr><td>[<code>PeriodicExtent1d::from_parts</code>]</td><td>direct member initialisation (no upstream fn)</td></tr><tr><td>[<code>PeriodicExtent1d::min</code>], [<code>PeriodicExtent1d::max</code>]</td><td><code>GetMin</code>, <code>GetMax</code></td></tr><tr><td>[<code>PeriodicExtent1d::period</code>]</td><td><code>GetPeriod</code></td></tr><tr><td>[<code>PeriodicExtent1d::set_full_period</code>]</td><td><code>SetFullPeriod</code></td></tr><tr><td>[<code>PeriodicExtent1d::is_empty</code>]</td><td><code>IsEmpty</code></td></tr><tr><td>[<code>PeriodicExtent1d::is_full_period</code>]</td><td><code>IsFullPeriod</code>, <code>GetFullPeriod</code></td></tr><tr><td>[<code>PeriodicExtent1d::crosses_seam</code>]</td><td><code>CrossesSeam</code></td></tr><tr><td>[<code>PeriodicExtent1d::map_value</code>]</td><td><code>MapValue</code></td></tr><tr><td>[<code>PeriodicExtent1d::normalize_value</code>]</td><td><code>NormalizeValue</code></td></tr><tr><td>[<code>PeriodicExtent1d::complement</code>]</td><td><code>Compliment</code></td></tr><tr><td>[<code>PeriodicExtent1d::add_interval</code>]</td><td><code>AddInterval</code></td></tr><tr><td>[<code>PeriodicExtent1d::contains_value</code>]</td><td><code>ContainsValue</code></td></tr><tr><td>[<code>PeriodicExtent1d::set_min_max</code>]</td><td><code>SetMinMax</code></td></tr><tr><td>[<code>PeriodicExtent1d::is_contained_by</code>]</td><td><code>IsContainedBy</code></td></tr><tr><td>[<code>PeriodicExtent1d::are_disjoint</code>]</td><td><code>AreDisjoint</code></td></tr><tr><td>[<code>PeriodicExtent1d::mid</code>]</td><td><code>GetMid</code></td></tr><tr><td><code>is_contained</code> (private)</td><td><code>SM_IS_CONTAINED</code> macro (<code>SmMath.h</code>)</td></tr></tbody></table></div></details>
+<h2>Upstream tests reaching this unit</h2>
+<p class="tests"><code>prog_test:my_test_trimming_tools</code>, <code>SM_API_test:TestSmTrimSurfaceWith3dCurves</code>, <code>prog_test:my_test_closed_sphere_properties</code>, <code>prog_test:my_test_squeeze_edge_tracks_removal</code>, <code>prog_test:my_test_missing_poles_refreshes_all_faces</code>, <code>SM_API_test:TestSmHealBrep</code></p>
+
+</main>
+<footer class="wrap">Generated from <a href="https://github.com/tangency-labs/solidcore/tree/bbfa3b09294ef65febb9b3688b735e9090aef9e1"><code>bbfa3b09</code></a>
+(2026-11-14T12:32:47Z) by <code>site/build.py</code>; upstream reference <a href="https://github.com/NVIDIA-Omniverse/usd-brep/tree/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5">usd-brep v1.0.1 (<code>3fd5b95</code>)</a>.
+Apache-2.0. Not affiliated with or endorsed by NVIDIA.</footer>
+<script src="../assets/app.js"></script>
+</body>
+</html>

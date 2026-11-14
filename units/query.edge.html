@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>query.edge · solidcore</title>
+<meta name="description" content="query.edge · solidcore">
+<meta name="theme-color" content="#141413">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="solidcore">
+<meta property="og:url" content="https://tangency-labs.github.io/solidcore/units/query.edge.html">
+<meta property="og:title" content="query.edge · solidcore">
+<meta property="og:description" content="query.edge · solidcore">
+<meta property="og:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:type" content="image/png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="query.edge · solidcore">
+<meta name="twitter:description" content="query.edge · solidcore">
+<meta name="twitter:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="../index.html"><img src="../assets/logo.svg" alt="" width="28" height="28">solidcore</a>
+<nav><a href="../index.html">Overview</a><a href="../units/index.html" aria-current="page">Units</a><a href="../graph.html">Graph</a><a href="../solids.html">Solids</a><a href="../cases.html">Cases</a><a href="../sprints/index.html">Sprints</a><a href="../issues.html">Upstream issues</a><a href="../ssi.html">SSI corpus</a><a href="https://tangency-labs.github.io/solidcore-viewer/">Model viewer</a><a href="https://github.com/tangency-labs/solidcore">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+
+<p class="crumbs"><a href="index.html">Units</a> / <a href="../areas/query.html">query</a></p>
+<h1><code>query.edge</code> <span class="badge s-green">green</span></h1>
+<dl class="facts">
+<div><dt>Layer</dt><dd>41</dd></div>
+<div><dt>Upstream lines</dt><dd>1,025</dd></div>
+<div><dt>Functions</dt><dd>5</dd></div>
+<div><dt>Rust module</dt><dd><code>query::edge</code></dd></div>
+</dl>
+
+<h2>Status history</h2>
+<div class="steps" role="img" aria-label="Status history: todo from 2026-10-12, then partial from 2026-10-15, then green from 2026-10-23"><i class="st-todo" style="width:10.07%" title="todo from 2026-10-12"></i><i class="st-partial" style="width:28.58%" title="partial from 2026-10-15"></i><i class="st-green" style="width:61.35%" title="green from 2026-10-23"></i></div><div class="steps-axis small"><span>Oct 12</span><span>Nov 08</span></div><ol class="steplist"><li><time datetime="2026-10-12T18:49:09Z" data-ts="1791830949">2026-10-12 18:49 UTC</time> <span class="badge s-todo">todo</span> <span class=muted>1,025 lines</span></li><li><time datetime="2026-10-15T11:32:40Z" data-ts="1792063960">2026-10-15 11:32 UTC</time> <span class="badge s-partial">partial</span> <span class=muted>1,025 lines</span></li><li><time datetime="2026-10-23T03:14:00Z" data-ts="1792725240">2026-10-23 03:14 UTC</time> <span class="badge s-green">green</span> <span class=muted>1,025 lines</span></li></ol>
+<p>Source: <a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/solidcore/src/query/edge.rs"><code>crates/solidcore/src/query/edge.rs</code></a></p>
+<p>Upstream: <a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmEdge.cpp"><code>source/SMLib/src/SmEdge.cpp</code></a></p>
+<h2>Port-plan notes</h2>
+<p class="muted">These notes preserve historical port measurements and limitations, not current CI results.</p>
+<p class="notes">5 fns; largest: SmEdge::RadialSectorClassify, SmEdge::RadialSectorOfCurveClassify, SmEdge::CalculateBoundingBox, SmEdge::CalculateTightBoundingBox; unit-SCC #22 (220 units); 317 upstream test entry points reach this unit; PORTED (PR #89): difftest 1368 cases (768 fixtures + 600 generated), 1190 pass, 178 deferred (topology.edgeuse_p2 SmEdgeuse::EvaluateBinormalStepOff 178), 0 fail, max_rel_err 0; curve.curve_p9 CalculateTightBoundingBox wired at merge; the radial sector classifications stay deferred: the query::edge step-off stub keeps upstream's in-place out-params on failure, and topology::edgeuse::p2::evaluate_binormal_step_off still defers to topology.edgeuse_p3 (EvaluateBinormal) PR #163 adds radial_sector_classify_between for independent operand arenas, avoiding aliasing of equal local ids. Cross-operand C++ cases live in fixtures/boolean.merge_p1/review.json; full step-off paths remain deferred to topology.edgeuse_p2. [topology.edgeuse_p3 wired (PR #117): SmEdge::RadialSectorClassify and RadialSectorOfCurveClassify now call SmEdgeuse::EvaluateBinormalStepOff (topology.edgeuse_p2; both take &amp;mut Brep). 1368 cases, 1316 pass, 0 failed, 52 deferred (intersect.surface_drop_lib_p3 52). The two cases that disagreed when first wired (gen0091, gen0261) were a harness gap, not the port: the shim exported SmPlane faces as B-spline surfaces, so the Rust side saw no plane (<code>bAllPlanes</code>, <code>IsKindOf(SmPlane_TYPE)</code>) and ended the classification differently; the shim now exports the whole plane (<code>1 O X Y su sv umin vmin umax vmax</code>) like sc_edgeuse_graph.h, so those faces take the plane paths (28 more cases defer on the global point solve instead of passing on a B-spline stand-in)] GREEN (promoted by intersect.surface_drop_lib_p3, PR #463): 1368 cases, 1368 pass, 0 deferred, 0 failed, max_rel_err 0.</p>
+<h2>Goldens</h2>
+
+<p class="muted">This is committed inventory, not a runtime result or a correctness proof.
+A golden records what solidcore produced when blessed. Current results require the
+<a href="https://github.com/tangency-labs/solidcore/actions/workflows/ci.yml">canonical CI gate</a>, not these counts.</p>
+<dl class="facts">
+<div><dt>Golden records</dt><dd>1,368</dd></div>
+<div><dt>Stored error outcomes</dt><dd>0</dd></div>
+<div><dt>Stored deferrals</dt><dd>0</dd></div>
+<div><dt>Stored harness rejections</dt><dd>0</dd></div>
+<div><dt>Known-failure entries</dt><dd>0</dd></div>
+</dl>
+<p>Metadata counts describe fields in the stored records; they are not passes or live failures.</p>
+
+
+<p>Source at <code>bbfa3b092</code>:
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/query.edge.jsonl">golden JSONL</a> ·
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/known_failing.json">known-failure list</a>.</p>
+<h2>Dependencies</h2>
+<p><strong>Depends on:</strong> <a class="chip" href="curve.curve_p2.html">curve.curve_p2 <span class="badge s-green">green</span></a> <a class="chip" href="geom.extent1d.html">geom.extent1d <span class="badge s-green">green</span></a> <a class="chip" href="geom.extent3d.html">geom.extent3d <span class="badge s-green">green</span></a> <a class="chip" href="geom.solution_array.html">geom.solution_array <span class="badge s-green">green</span></a> <a class="chip" href="geom.vector3d.html">geom.vector3d <span class="badge s-green">green</span></a> <a class="chip" href="topology.edge.html">topology.edge <span class="badge s-green">green</span></a> <a class="chip" href="topology.edgeuse_p1.html">topology.edgeuse_p1 <span class="badge s-green">green</span></a></p>
+<p><strong>Soft dependencies:</strong> <a class="chip" href="curve.curve_p1.html">curve.curve_p1 <span class="badge s-green">green</span></a> <a class="chip" href="curve.curve_p6.html">curve.curve_p6 <span class="badge s-green">green</span></a> <a class="chip" href="curve.curve_p9.html">curve.curve_p9 <span class="badge s-green">green</span></a> <a class="chip" href="geom.polar_box.html">geom.polar_box <span class="badge s-green">green</span></a> <a class="chip" href="geom.pseudo_box.html">geom.pseudo_box <span class="badge s-green">green</span></a> <a class="chip" href="geom.tol.html">geom.tol <span class="badge s-green">green</span></a> <a class="chip" href="surface.surface_p2.html">surface.surface_p2 <span class="badge s-partial">partial</span></a> <a class="chip" href="topology.edgeuse_p2.html">topology.edgeuse_p2 <span class="badge s-green">green</span></a> <a class="chip" href="topology.face_p2.html">topology.face_p2 <span class="badge s-partial">partial</span></a> <a class="chip" href="topology.vertex.html">topology.vertex <span class="badge s-green">green</span></a></p>
+<p><strong>Dependents:</strong> <a class="chip" href="query.api_queries.html">query.api_queries <span class="badge s-green">green</span></a></p>
+<p><strong>Soft dependents:</strong> <a class="chip" href="boolean.merge_p2.html">boolean.merge_p2 <span class="badge s-green">green</span></a> <a class="chip" href="boolean.topology_intersector_p1.html">boolean.topology_intersector_p1 <span class="badge s-green">green</span></a> <a class="chip" href="boolean.topology_intersector_p2.html">boolean.topology_intersector_p2 <span class="badge s-green">green</span></a> <a class="chip" href="offset.offset_geometry_creation.html">offset.offset_geometry_creation <span class="badge s-partial">partial</span></a> <a class="chip" href="query.brep.html">query.brep <span class="badge s-green">green</span></a> <a class="chip" href="query.face_p1.html">query.face_p1 <span class="badge s-green">green</span></a> <a class="chip" href="query.face_p3.html">query.face_p3 <span class="badge s-green">green</span></a></p>
+<h2>Upstream functions</h2>
+<div class="scroll"><table class="sortable"><thead><tr><th data-sort="text">Upstream function</th><th data-sort="text">Defined at</th><th data-sort="num">Lines</th><th data-sort="text">Rust (from the file header)</th></tr></thead><tbody><tr><td><code>SmEdge::CalculateBoundingBox</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmEdge.cpp#L237">SmEdge.cpp:237</a></td><td class=num>50</td><td>[<code>calculate_bounding_box</code>]</td></tr><tr><td><code>SmEdge::CalculateTightBoundingBox</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmEdge.cpp#L306">SmEdge.cpp:306</a></td><td class=num>41</td><td>[<code>calculate_tight_bounding_box</code>]</td></tr><tr><td><code>SmEdge::ClosestPoint</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmEdge.cpp#L432">SmEdge.cpp:432</a></td><td class=num>38</td><td>[<code>closest_point</code>], [<code>ClosestPoint</code>]</td></tr><tr><td><code>SmEdge::RadialSectorClassify</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmEdge.cpp#L1050">SmEdge.cpp:1050</a></td><td class=num>678</td><td>[<code>radial_sector_classify</code>], [<code>radial_sector_classify_between</code>], [<code>RadialSectorClass</code>]</td></tr><tr><td><code>SmEdge::RadialSectorOfCurveClassify</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmEdge.cpp#L2030">SmEdge.cpp:2030</a></td><td class=num>218</td><td>[<code>radial_sector_of_curve_classify</code>], [<code>CurveSectorClass</code>]</td></tr></tbody></table></div>
+<details><summary>Module file-header table (9 rows)</summary><div class="scroll"><table><thead><tr><th>Rust</th><th>Upstream</th></tr></thead><tbody><tr><td>[<code>calculate_bounding_box</code>]</td><td><code>SmEdge::CalculateBoundingBox</code></td></tr><tr><td>[<code>calculate_tight_bounding_box</code>]</td><td><code>SmEdge::CalculateTightBoundingBox</code></td></tr><tr><td>[<code>closest_point</code>], [<code>ClosestPoint</code>]</td><td><code>SmEdge::ClosestPoint</code></td></tr><tr><td>[<code>closest_point_to_ray</code>], [<code>RayClosestPoint</code>]</td><td>(none: the edge point nearest a ray)</td></tr><tr><td>[<code>radial_sector_classify</code>], [<code>radial_sector_classify_between</code>], [<code>RadialSectorClass</code>]</td><td><code>SmEdge::RadialSectorClassify</code></td></tr><tr><td>[<code>radial_sector_of_curve_classify</code>], [<code>CurveSectorClass</code>]</td><td><code>SmEdge::RadialSectorOfCurveClassify</code></td></tr><tr><td>[<code>edge_vertices</code>]</td><td><code>SmEdge::GetVertices(SmTArray&amp;, ULONG*)</code> (CO-PORTED, <code>topology.edge</code>)</td></tr><tr><td>[<code>edge_faces</code>]</td><td><code>SmEdge::GetFaces</code> (CO-PORTED, <code>topology.edge</code>)</td></tr><tr><td><code>evaluate_binormal_step_off</code> (private)</td><td><code>SmEdgeuse::EvaluateBinormalStepOff</code> (<code>topology.edgeuse_p2</code>, [<code>evaluate_binormal_step_off_into</code>])</td></tr></tbody></table></div></details>
+<h2>Upstream tests reaching this unit</h2>
+<p class="tests"><code>prog_test:my_test_surface_closest_point</code>, <code>prog_test:my_test_drop_point</code>, <code>prog_test:my_test_matrix</code>, <code>prog_test:my_test_reversed_line_join</code>, <code>SM_API_test:TestSmCreateRectangle</code>, <code>SM_API_test:TestSmCreateRegularPolygon</code></p>
+
+</main>
+<footer class="wrap">Generated from <a href="https://github.com/tangency-labs/solidcore/tree/bbfa3b09294ef65febb9b3688b735e9090aef9e1"><code>bbfa3b09</code></a>
+(2026-11-14T12:32:47Z) by <code>site/build.py</code>; upstream reference <a href="https://github.com/NVIDIA-Omniverse/usd-brep/tree/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5">usd-brep v1.0.1 (<code>3fd5b95</code>)</a>.
+Apache-2.0. Not affiliated with or endorsed by NVIDIA.</footer>
+<script src="../assets/app.js"></script>
+</body>
+</html>

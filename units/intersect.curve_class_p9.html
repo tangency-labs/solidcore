@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>intersect.curve_class_p9 · solidcore</title>
+<meta name="description" content="intersect.curve_class_p9 · solidcore">
+<meta name="theme-color" content="#141413">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="solidcore">
+<meta property="og:url" content="https://tangency-labs.github.io/solidcore/units/intersect.curve_class_p9.html">
+<meta property="og:title" content="intersect.curve_class_p9 · solidcore">
+<meta property="og:description" content="intersect.curve_class_p9 · solidcore">
+<meta property="og:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:type" content="image/png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="intersect.curve_class_p9 · solidcore">
+<meta name="twitter:description" content="intersect.curve_class_p9 · solidcore">
+<meta name="twitter:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="../index.html"><img src="../assets/logo.svg" alt="" width="28" height="28">solidcore</a>
+<nav><a href="../index.html">Overview</a><a href="../units/index.html" aria-current="page">Units</a><a href="../graph.html">Graph</a><a href="../solids.html">Solids</a><a href="../cases.html">Cases</a><a href="../sprints/index.html">Sprints</a><a href="../issues.html">Upstream issues</a><a href="../ssi.html">SSI corpus</a><a href="https://tangency-labs.github.io/solidcore-viewer/">Model viewer</a><a href="https://github.com/tangency-labs/solidcore">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+
+<p class="crumbs"><a href="index.html">Units</a> / <a href="../areas/intersect.html">intersect</a></p>
+<h1><code>intersect.curve_class_p9</code> <span class="badge s-green">green</span></h1>
+<dl class="facts">
+<div><dt>Layer</dt><dd>37</dd></div>
+<div><dt>Upstream lines</dt><dd>1,220</dd></div>
+<div><dt>Functions</dt><dd>2</dd></div>
+<div><dt>Rust module</dt><dd><code>intersect::curve_class::p9</code></dd></div>
+</dl>
+
+<h2>Status history</h2>
+<div class="steps" role="img" aria-label="Status history: todo from 2026-10-12, then partial from 2026-10-17, then green from 2026-10-24"><i class="st-todo" style="width:15.91%" title="todo from 2026-10-12"></i><i class="st-partial" style="width:26.07%" title="partial from 2026-10-17"></i><i class="st-green" style="width:58.02%" title="green from 2026-10-24"></i></div><div class="steps-axis small"><span>Oct 12</span><span>Nov 08</span></div><ol class="steplist"><li><time datetime="2026-10-12T18:49:09Z" data-ts="1791830949">2026-10-12 18:49 UTC</time> <span class="badge s-todo">todo</span> <span class=muted>1,220 lines</span></li><li><time datetime="2026-10-17T01:02:45Z" data-ts="1792198965">2026-10-17 01:02 UTC</time> <span class="badge s-partial">partial</span> <span class=muted>1,220 lines</span></li><li><time datetime="2026-10-24T00:37:43Z" data-ts="1792802263">2026-10-24 00:37 UTC</time> <span class="badge s-green">green</span> <span class=muted>1,220 lines</span></li></ol>
+<p>Source: <a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/solidcore/src/intersect/curve_class/p9.rs"><code>crates/solidcore/src/intersect/curve_class/p9.rs</code></a></p>
+<p>Upstream: <a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmCurveClass.cpp"><code>source/SMLib/src/SmCurveClass.cpp</code></a></p>
+<h2>Port-plan notes</h2>
+<p class="muted">These notes preserve historical port measurements and limitations, not current CI results.</p>
+<p class="notes">PR #1408 (2026-10-28): the primary GlobalCurveIntersect tree in IntersectEdges now uses the actual target edge zone tolerance, without geometry copies, earlier cache construction or public API changes; an absent override preserves any recorded curve-owner context. Added19 named real Hermite wire-target cases, retaining all438 prior inputs and generator draws. Before the fix17/18 passed: hermite_target_three_crossings_scale1e7_tight differed at deviation out[40] (CPP1.1641532182693481e-10, Rust5.820766091346741e-11). After:19/19 pass with values and zero relative error; full unit457 cases,455 value passes,2 existing rejections,0 failures/deferred; curve.curve_p8 3068/3068 pass with values, zero relative error; sensitivity19/19. Closed nonconstant Hermite targets are accepted and compared. Scope is the primary intersection tree: coincidence/range-combining/contact-drop caches and classification-source owner discovery are not changed or claimed complete. main CI e33985411 (2026-10-23): PASS intersect.curve_class_p9 cases=438 passed=436 failed=0 deferred=0 rejected=2. After intersect.curve_class_p2 (PR #85) merged and the fuzz fix (cache recipe UVs from ComputeUVPoint with the cache attached and the face point test off): 438 cases, 287 pass, 0 fail, 149 deferred (topology.edge 115, curve.crv_on_surf 24, intersect.curve_class_p2 10), 2 rejected. PARTIAL (PR #151; review rerun at numerical checkpoint df4756ac): 425 Linux differential cases (41 fixtures + 384 generated), 226 pass, 197 deferred (intersect.curve_class_p2 163, curve.crv_on_surf 24, intersect.curve_class_p4 10), 2 native setup rejections, zero failures, max_rel_err 0, no floors. FindUVNodes uses upstream FALSE pole default; collapsed/v-split caches and positive endpoint classification are covered. Required topology handles share ClassGeometry with landed part 5; both query back-edges call real p9 methods. Interior partition insertion and earlier query ReSet remain deferred; uncached edge-loop UV reaches topology.edgeuse_p3. Nonzero edge/face gap integration has a Rust threshold regression only. No open dependency PR is bundled. Final PR checks validate later ignored-UV-status and exact pole-predicate follow-ups. Op 1 state 2 (cache flagged modified) runs with the shim Brep in edit mode so the cache is used as given: with editing off SmCacheMgrTSrf rebuilds it first (cache units), which fails on a loopless face (fuzz regression). See plan/findings.md for coverage and seed handoff. 2 fns; largest: SmCurveClassification::IntersectTSBound, SmCurveClassification::IntersectEdges; cycle back-edges (call into later units; stub or co-port): topology.edge(5), topology.edgeuse_p1(4), topology.face_p2(3), topology.loopuse(2), topology.topology(2), topology.vertexuse(2), heal.gap(1), topology.edgeuse_p3(1), topology.vertex(1); unit-SCC #22 (220 units); 317 upstream test entry points reach this unit UPDATE 2026-10-23 (branch claude/edge-handles): the runner's IntersectEdges target edges are real wire edges of a Rust B-rep built as the shim builds them (create_wire_edge_from_curve over the edge curve or the shared source line, edge::set_tolerance(zone, false, true)), resolved through ClassGeometry::topology_entity: PARTIAL intersect.curve_class_p9 cases=438 passed=435 failed=0 deferred=1 max_rel_err=0e0 with_values=435 no_values=0 vacuous=0 rejected=2 blocked_by=topology.edge(1) (was 115 topology.edge deferrals; the remaining one is a rectangle loop edge of trim_rectangle_crossing, which has no Rust B-rep face). UPDATE 2026-10-23 (PR #667): wire edges of the rectangle boundary loop are created in the runner's Brep and recorded in wire_edges, resolving the trim_rectangle_crossing deferral: PASS intersect.curve_class_p9 cases=438 passed=436 failed=0 deferred=0 max_rel_err=0e0 with_values=436 no_values=0 vacuous=0 rejected=2. GREEN.</p>
+<h2>Goldens</h2>
+
+<p class="muted">This is committed inventory, not a runtime result or a correctness proof.
+A golden records what solidcore produced when blessed. Current results require the
+<a href="https://github.com/tangency-labs/solidcore/actions/workflows/ci.yml">canonical CI gate</a>, not these counts.</p>
+<dl class="facts">
+<div><dt>Golden records</dt><dd>457</dd></div>
+<div><dt>Stored error outcomes</dt><dd>0</dd></div>
+<div><dt>Stored deferrals</dt><dd>0</dd></div>
+<div><dt>Stored harness rejections</dt><dd>0</dd></div>
+<div><dt>Known-failure entries</dt><dd>0</dd></div>
+</dl>
+<p>Metadata counts describe fields in the stored records; they are not passes or live failures.</p>
+
+
+<p>Source at <code>bbfa3b092</code>:
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/intersect.curve_class_p9.jsonl">golden JSONL</a> ·
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/known_failing.json">known-failure list</a>.</p>
+<h2>Dependencies</h2>
+<p><strong>Depends on:</strong> <a class="chip" href="curve.crv_on_surf.html">curve.crv_on_surf <span class="badge s-green">green</span></a> <a class="chip" href="geom.extent1d.html">geom.extent1d <span class="badge s-green">green</span></a> <a class="chip" href="geom.object.html">geom.object <span class="badge s-green">green</span></a> <a class="chip" href="geom.solution_array.html">geom.solution_array <span class="badge s-green">green</span></a> <a class="chip" href="geom.tol.html">geom.tol <span class="badge s-green">green</span></a> <a class="chip" href="geom.vector3d.html">geom.vector3d <span class="badge s-green">green</span></a> <a class="chip" href="intersect.curve_class_p1.html">intersect.curve_class_p1 <span class="badge s-green">green</span></a> <a class="chip" href="intersect.curve_class_p3.html">intersect.curve_class_p3 <span class="badge s-green">green</span></a> <a class="chip" href="intersect.curve_class_p5.html">intersect.curve_class_p5 <span class="badge s-green">green</span></a> <a class="chip" href="intersect.point_class.html">intersect.point_class <span class="badge s-green">green</span></a> <a class="chip" href="surface.surface_p2.html">surface.surface_p2 <span class="badge s-partial">partial</span></a></p>
+<p><strong>Soft dependencies:</strong> <a class="chip" href="curve.curve_cache.html">curve.curve_cache <span class="badge s-green">green</span></a> <a class="chip" href="curve.curve_p2.html">curve.curve_p2 <span class="badge s-green">green</span></a> <a class="chip" href="curve.curve_p6.html">curve.curve_p6 <span class="badge s-green">green</span></a> <a class="chip" href="curve.curve_p8.html">curve.curve_p8 <span class="badge s-green">green</span></a> <a class="chip" href="geom.a_object.html">geom.a_object <span class="badge s-green">green</span></a> <a class="chip" href="geom.context.html">geom.context <span class="badge s-green">green</span></a> <a class="chip" href="geom.extent2d.html">geom.extent2d <span class="badge s-green">green</span></a> <a class="chip" href="geom.tree.html">geom.tree <span class="badge s-green">green</span></a> <a class="chip" href="geom.vector2d.html">geom.vector2d <span class="badge s-green">green</span></a> <a class="chip" href="nurbs.b_spline_curve_p1.html">nurbs.b_spline_curve_p1 <span class="badge s-green">green</span></a> <a class="chip" href="surface.surface_cache_p1.html">surface.surface_cache_p1 <span class="badge s-green">green</span></a> <a class="chip" href="surface.surface_cache_p3.html">surface.surface_cache_p3 <span class="badge s-green">green</span></a> <a class="chip" href="surface.surface_p5.html">surface.surface_p5 <span class="badge s-green">green</span></a></p>
+<p><strong>Dependents:</strong> <span class="muted">none</span></p>
+<p><strong>Soft dependents:</strong> <a class="chip" href="query.face_p2.html">query.face_p2 <span class="badge s-green">green</span></a></p>
+<h2>Upstream functions</h2>
+<div class="scroll"><table class="sortable"><thead><tr><th data-sort="text">Upstream function</th><th data-sort="text">Defined at</th><th data-sort="num">Lines</th><th data-sort="text">Rust (from the file header)</th></tr></thead><tbody><tr><td><code>SmCurveClassification::IntersectEdges</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmCurveClass.cpp#L15425">SmCurveClass.cpp:15425</a></td><td class=num>523</td><td>[<code>CurveClassification::intersect_edges</code>]</td></tr><tr><td><code>SmCurveClassification::IntersectTSBound</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmCurveClass.cpp#L15979">SmCurveClass.cpp:15979</a></td><td class=num>697</td><td>[<code>CurveClassification::intersect_ts_bound</code>]</td></tr></tbody></table></div>
+<details><summary>Module file-header table (3 rows)</summary><div class="scroll"><table><thead><tr><th>Rust</th><th>Upstream</th></tr></thead><tbody><tr><td>[<code>CurveClassification::intersect_edges</code>]</td><td><code>SmCurveClassification::IntersectEdges</code></td></tr><tr><td>[<code>CurveClassification::intersect_edges_mut</code>]</td><td><code>SmCurveClassification::IntersectEdges</code> over a mutable adapter</td></tr><tr><td>[<code>CurveClassification::intersect_ts_bound</code>]</td><td><code>SmCurveClassification::IntersectTSBound</code></td></tr></tbody></table></div></details>
+<h2>Upstream tests reaching this unit</h2>
+<p class="tests"><code>prog_test:my_test_surface_closest_point</code>, <code>prog_test:my_test_drop_point</code>, <code>prog_test:my_test_matrix</code>, <code>prog_test:my_test_reversed_line_join</code>, <code>SM_API_test:TestSmCreateRectangle</code>, <code>SM_API_test:TestSmCreateRegularPolygon</code></p>
+
+</main>
+<footer class="wrap">Generated from <a href="https://github.com/tangency-labs/solidcore/tree/bbfa3b09294ef65febb9b3688b735e9090aef9e1"><code>bbfa3b09</code></a>
+(2026-11-14T12:32:47Z) by <code>site/build.py</code>; upstream reference <a href="https://github.com/NVIDIA-Omniverse/usd-brep/tree/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5">usd-brep v1.0.1 (<code>3fd5b95</code>)</a>.
+Apache-2.0. Not affiliated with or endorsed by NVIDIA.</footer>
+<script src="../assets/app.js"></script>
+</body>
+</html>

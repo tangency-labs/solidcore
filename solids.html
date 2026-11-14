@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solids · solidcore</title>
+<meta name="description" content="Which solids solidcore builds in pure Rust, and what blocks the rest.">
+<meta name="theme-color" content="#141413">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="solidcore">
+<meta property="og:url" content="https://tangency-labs.github.io/solidcore/solids.html">
+<meta property="og:title" content="Solids · solidcore">
+<meta property="og:description" content="Which solids solidcore builds in pure Rust, and what blocks the rest.">
+<meta property="og:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:type" content="image/png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Solids · solidcore">
+<meta name="twitter:description" content="Which solids solidcore builds in pure Rust, and what blocks the rest.">
+<meta name="twitter:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">solidcore</a>
+<nav><a href="index.html">Overview</a><a href="units/index.html">Units</a><a href="graph.html">Graph</a><a href="solids.html" aria-current="page">Solids</a><a href="cases.html">Cases</a><a href="sprints/index.html">Sprints</a><a href="issues.html">Upstream issues</a><a href="ssi.html">SSI corpus</a><a href="https://tangency-labs.github.io/solidcore-viewer/">Model viewer</a><a href="https://github.com/tangency-labs/solidcore">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+<h1>Solids</h1>
+<p class="muted">This page preserves the available primitives report, not the current golden gate's
+execution results. The <code>primitives</code> example
+(<a href="https://github.com/tangency-labs/solidcore/tree/main/crates/solidcore/examples/primitives"><code>crates/solidcore/examples/primitives</code></a>)
+builds each primitive through the public API in pure Rust and checks that it is a closed manifold solid with the
+analytic Euler-Poincare characteristic, volume, area and bounding box (relative tolerance
+1e-09). A primitive that stops at code not ported yet names the
+unit and upstream symbol it is blocked on.</p>
+<section class="kpis">
+<div class="tile big"><div class="k">Solids (primitives)</div><div class="v">9 / 9</div>
+<div class="sub">pass every check; 9 / 9 build</div></div>
+<div class="tile"><div class="k">build</div><div class="v">9</div><div class="sub">of 9 primitives</div></div>
+<div class="tile"><div class="k">pass</div><div class="v">9</div><div class="sub">of 9 primitives</div></div>
+<div class="tile"><div class="k">not built</div><div class="v">0</div><div class="sub">build stops at an error</div></div>
+</section>
+<p><strong>Solids: 9/9 build, 9/9 pass.</strong>
+</p>
+<h2>Primitives</h2>
+<p class="muted">From the available <a href="reports/solids.json"><code>reports/solids.json</code></a>,
+not a current CI verdict. Each check shows the recorded value, the analytic one and the relative error; a check
+that could not be measured says so. Hover a failed check for its message.</p>
+<div class="scroll"><table><thead><tr><th>Primitive</th><th>Status</th><th>Blocker</th><th>Closed manifold</th><th>Euler</th><th>F, E, V</th><th>Volume</th><th>Area</th><th>Bounding box</th></tr></thead>
+<tbody><tr><td>box 5x10x20</td><td><span class="badge s-green">passes</span></td><td><span class="muted">none</span></td><td><span class="v v-PASS">PASS</span> yes<div class="small">expected yes</div></td><td><span class="v v-PASS">PASS</span> 2<div class="small">expected 2</div></td><td><span class="v v-PASS">PASS</span> (6, 12, 8)<div class="small">expected (6, 12, 8)</div></td><td><span class="v v-PASS">PASS</span> 1000<div class="small">expected 1000; rel. err 1.14e-16</div></td><td><span class="v v-PASS">PASS</span> 700<div class="small">expected 700; rel. err 0.00e+00</div></td><td><span class="v v-PASS">PASS</span> (0, 0, 0) – (5, 10, 20)<div class="small">expected (0, 0, 0) – (5, 10, 20); rel. err 0.00e+00</div></td></tr><tr><td>cylinder r5 h20</td><td><span class="badge s-green">passes</span></td><td><span class="muted">none</span></td><td><span class="v v-PASS">PASS</span> yes<div class="small">expected yes</div></td><td><span class="v v-PASS">PASS</span> 2<div class="small">expected 2</div></td><td><span class="muted">–</span></td><td><span class="v v-PASS">PASS</span> 1570.796327<div class="small">expected 1570.796327; rel. err 4.89e-14</div></td><td><span class="v v-PASS">PASS</span> 785.3981634<div class="small">expected 785.3981634; rel. err 4.02e-14</div></td><td><span class="v v-PASS">PASS</span> (-5, -5, 0) – (5, 5, 20)<div class="small">expected (-5, -5, 0) – (5, 5, 20); rel. err 0.00e+00</div></td></tr><tr><td>cone r5-&gt;2 h20</td><td><span class="badge s-green">passes</span></td><td><span class="muted">none</span></td><td><span class="v v-PASS">PASS</span> yes<div class="small">expected yes</div></td><td><span class="v v-PASS">PASS</span> 2<div class="small">expected 2</div></td><td><span class="muted">–</span></td><td><span class="v v-PASS">PASS</span> 816.8140899<div class="small">expected 816.8140899; rel. err 7.24e-15</div></td><td><span class="v v-PASS">PASS</span> 535.8496431<div class="small">expected 535.8496431; rel. err 4.46e-14</div></td><td><span class="v v-PASS">PASS</span> (-5, -5, 0) – (5, 5, 20)<div class="small">expected (-5, -5, 0) – (5, 5, 20); rel. err 0.00e+00</div></td></tr><tr><td>pyramid 5 h20</td><td><span class="badge s-green">passes</span></td><td><span class="muted">none</span></td><td><span class="v v-PASS">PASS</span> yes<div class="small">expected yes</div></td><td><span class="v v-PASS">PASS</span> 2<div class="small">expected 2</div></td><td><span class="v v-PASS">PASS</span> (5, 8, 5)<div class="small">expected (5, 8, 5)</div></td><td><span class="v v-PASS">PASS</span> 166.6666667<div class="small">expected 166.6666667; rel. err 8.53e-16</div></td><td><span class="v v-PASS">PASS</span> 226.5564437<div class="small">expected 226.5564437; rel. err 7.53e-16</div></td><td><span class="v v-PASS">PASS</span> (-2.5, -2.5, 0) – (2.5, 2.5, 20)<div class="small">expected (-2.5, -2.5, 0) – (2.5, 2.5, 20); rel. err 1.67e-16</div></td></tr><tr><td>sphere r3</td><td><span class="badge s-green">passes</span></td><td><span class="muted">none</span></td><td><span class="v v-PASS">PASS</span> yes<div class="small">expected yes</div></td><td><span class="v v-PASS">PASS</span> 2<div class="small">expected 2</div></td><td><span class="muted">–</span></td><td><span class="v v-PASS">PASS</span> 113.0973355<div class="small">expected 113.0973355; rel. err 5.46e-13</div></td><td><span class="v v-PASS">PASS</span> 113.0973355<div class="small">expected 113.0973355; rel. err 1.04e-13</div></td><td><span class="v v-PASS">PASS</span> (-2, -5, -2.5) – (4, 1, 3.5)<div class="small">expected (-2, -5, -2.5) – (4, 1, 3.5); rel. err 8.55e-17</div></td></tr><tr><td>sphere r3 (no pole)</td><td><span class="badge s-green">passes</span></td><td><span class="muted">none</span></td><td><span class="v v-PASS">PASS</span> yes<div class="small">expected yes</div></td><td><span class="v v-PASS">PASS</span> 2<div class="small">expected 2</div></td><td><span class="muted">–</span></td><td><span class="v v-PASS">PASS</span> 113.0973355<div class="small">expected 113.0973355; rel. err 2.48e-11</div></td><td><span class="v v-PASS">PASS</span> 113.0973355<div class="small">expected 113.0973355; rel. err 2.84e-11</div></td><td><span class="v v-PASS">PASS</span> (-2, -5, -2.5) – (4, 1, 3.5)<div class="small">expected (-2, -5, -2.5) – (4, 1, 3.5); rel. err 0.00e+00</div></td></tr><tr><td>partial sphere r3 0..90</td><td><span class="badge s-green">passes</span></td><td><span class="muted">none</span></td><td><span class="v v-PASS">PASS</span> yes<div class="small">expected yes</div></td><td><span class="v v-PASS">PASS</span> 2<div class="small">expected 2</div></td><td><span class="muted">–</span></td><td><span class="v v-PASS">PASS</span> 28.27433388<div class="small">expected 28.27433388; rel. err 2.54e-13</div></td><td><span class="v v-PASS">PASS</span> 56.54866776<div class="small">expected 56.54866776; rel. err 1.35e-13</div></td><td><span class="v v-PASS">PASS</span> (1, -2, -2.5) – (4, 1, 3.5)<div class="small">expected (1, -2, -2.5) – (4, 1, 3.5); rel. err 0.00e+00</div></td></tr><tr><td>torus R5 r1.5</td><td><span class="badge s-green">passes</span></td><td><span class="muted">none</span></td><td><span class="v v-PASS">PASS</span> yes<div class="small">expected yes</div></td><td><span class="v v-PASS">PASS</span> 0<div class="small">expected 0</div></td><td><span class="muted">–</span></td><td><span class="v v-PASS">PASS</span> 222.066099<div class="small">expected 222.066099; rel. err 1.06e-13</div></td><td><span class="v v-PASS">PASS</span> 296.088132<div class="small">expected 296.088132; rel. err 8.98e-14</div></td><td><span class="v v-PASS">PASS</span> (-6.5, -5.5, -2.5) – (6.5, 7.5, 0.5)<div class="small">expected (-6.5, -5.5, -2.5) – (6.5, 7.5, 0.5); rel. err 5.96e-18</div></td></tr><tr><td>partial torus R5 r1.5 0..90</td><td><span class="badge s-green">passes</span></td><td><span class="muted">none</span></td><td><span class="v v-PASS">PASS</span> yes<div class="small">expected yes</div></td><td><span class="v v-PASS">PASS</span> 2<div class="small">expected 2</div></td><td><span class="muted">–</span></td><td><span class="v v-PASS">PASS</span> 55.51652476<div class="small">expected 55.51652476; rel. err 1.15e-13</div></td><td><span class="v v-PASS">PASS</span> 88.15919995<div class="small">expected 88.15919995; rel. err 1.48e-14</div></td><td><span class="v v-PASS">PASS</span> (-2.042717741e-15, 1, -2.5) – (6.5, 7.5, 0.5)<div class="small">expected (0, 1, -2.5) – (6.5, 7.5, 0.5); rel. err 2.11e-16</div></td></tr></tbody></table></div>
+<h2 id="corpus">Corpus (real models)</h2>
+<p class="warn">Placeholder: pass rate TBD, waiting on the choice of a corpus of real models.</p>
+<p class="muted">Each model will be read, its mass properties computed, and the result compared with the
+reference: per model the JSON's <code>corpus.models[]</code> records <code>name</code>, <code>source</code>,
+<code>built</code>, <code>pass</code>, <code>blocker</code>, and <code>expected</code> vs <code>actual</code>
+<code>volume</code>, <code>area</code> and <code>center_of_mass</code> with their <code>rel_err</code>.</p>
+
+</main>
+<footer class="wrap">Generated from <a href="https://github.com/tangency-labs/solidcore/tree/bbfa3b09294ef65febb9b3688b735e9090aef9e1"><code>bbfa3b09</code></a>
+(2026-11-14T12:32:47Z) by <code>site/build.py</code>; upstream reference <a href="https://github.com/NVIDIA-Omniverse/usd-brep/tree/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5">usd-brep v1.0.1 (<code>3fd5b95</code>)</a>.
+Apache-2.0. Not affiliated with or endorsed by NVIDIA.</footer>
+<script src="assets/app.js"></script>
+</body>
+</html>

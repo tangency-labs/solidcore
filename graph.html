@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dependency graph · solidcore</title>
+<meta name="description" content="Port units of solidcore and their dependencies, by status.">
+<meta name="theme-color" content="#141413">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="solidcore">
+<meta property="og:url" content="https://tangency-labs.github.io/solidcore/graph.html">
+<meta property="og:title" content="Dependency graph · solidcore">
+<meta property="og:description" content="Port units of solidcore and their dependencies, by status.">
+<meta property="og:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:type" content="image/png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Dependency graph · solidcore">
+<meta name="twitter:description" content="Port units of solidcore and their dependencies, by status.">
+<meta name="twitter:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">solidcore</a>
+<nav><a href="index.html">Overview</a><a href="units/index.html">Units</a><a href="graph.html" aria-current="page">Graph</a><a href="solids.html">Solids</a><a href="cases.html">Cases</a><a href="sprints/index.html">Sprints</a><a href="issues.html">Upstream issues</a><a href="ssi.html">SSI corpus</a><a href="https://tangency-labs.github.io/solidcore-viewer/">Model viewer</a><a href="https://github.com/tangency-labs/solidcore">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+
+<h1>Dependency graph</h1>
+<p class="muted">282 units and their 2,782 <code>depends_on</code> edges from
+<code>plan/units/</code> (soft dependencies are not drawn). Units cluster by module, and dependency
+edges pull related modules together. Data: <a href="assets/graph.json"><code>assets/graph.json</code></a>.</p>
+<section class="kpis"><div class="tile"><div class="k"><i class="gsw done"></i>done</div><div class="v">281</div><div class="sub">green or partial</div></div><div class="tile"><div class="k"><i class="gsw ready"></i>ready</div><div class="v">0</div><div class="sub">todo, every dependency done</div></div><div class="tile"><div class="k"><i class="gsw claimed"></i>claimed</div><div class="v">0</div><div class="sub">todo with an open port: PR (0 with every dependency done)</div></div><div class="tile"><div class="k"><i class="gsw waiting"></i>waiting</div><div class="v">0</div><div class="sub">todo, a dependency not done</div></div><div class="tile"><div class="k"><i class="gsw blocked"></i>blocked</div><div class="v">1</div><div class="sub">see notes</div></div></section>
+<div class="graphui" hidden>
+<div class="filters">
+<label>Search <input type="search" id="g-search" placeholder="unit id"></label>
+<label>Module <select id="g-area"><option value="">all</option><option value="geom">geom</option><option value="nurbs">nurbs</option><option value="curve">curve</option><option value="surface">surface</option><option value="topology">topology</option><option value="intersect">intersect</option><option value="primitive">primitive</option><option value="query">query</option><option value="mass">mass</option><option value="sweep">sweep</option><option value="heal">heal</option><option value="offset">offset</option><option value="boolean">boolean</option><option value="blend">blend</option><option value="(crate-wide)">(crate-wide)</option></select></label>
+<span class="count small">Scroll or pinch to zoom, drag to pan. Click a unit for its dependencies and dependents.</span>
+</div>
+<div class="legend">
+<span><i class="gsw done"></i>green</span><span><i class="gsw partial"></i>partial</span>
+<span><i class="gsw todo"></i>todo</span><span><i class="gsw ready"></i>every dependency done (ready)</span>
+<span><i class="gsw claimed"></i>claimed (open PR)</span>
+<span><i class="gsw up"></i>dependency of selection</span><span><i class="gsw down"></i>dependent of selection</span>
+</div>
+<div class="graphbox"><svg id="graph" role="img" aria-labelledby="graph-title"><title id="graph-title">Port units and
+their dependencies</title></svg><div class="tip" hidden></div></div>
+<div id="g-info" class="ginfo" aria-live="polite"><p class="muted">No unit selected.</p></div>
+</div>
+<noscript><p class="muted">The interactive graph needs JavaScript; the lists below have the same data.</p></noscript>
+<h2>Ready to claim</h2>
+<p class="muted">Todo units whose hard dependencies are all green or partial, most-blocking first. Claim one
+with a draft PR titled <code>port: &lt;unit id&gt;</code> (<a href="https://github.com/tangency-labs/solidcore/blob/main/AGENTS.md">how</a>).</p>
+<p class="muted">None right now.</p>
+<h2>Most-blocking unfinished units</h2>
+<p class="muted">Units not yet green or partial, by how many unfinished units depend on them (directly or not).</p>
+<div class="scroll"><table class="sortable"><thead><tr><th data-sort="text">Unit</th><th data-sort="text">Status</th><th data-sort="num">Lines</th><th data-sort="num">Blocked by</th><th data-sort="num">Blocking</th></tr></thead><tbody><tr><td><a href="units/blend.feature_executive.html"><code>blend.feature_executive</code></a></td><td><span class="badge s-blocked">blocked</span></td><td class=num>3,005</td><td class=num>0</td><td class=num>0</td></tr></tbody></table></div>
+
+</main>
+<footer class="wrap">Generated from <a href="https://github.com/tangency-labs/solidcore/tree/bbfa3b09294ef65febb9b3688b735e9090aef9e1"><code>bbfa3b09</code></a>
+(2026-11-14T12:32:47Z) by <code>site/build.py</code>; upstream reference <a href="https://github.com/NVIDIA-Omniverse/usd-brep/tree/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5">usd-brep v1.0.1 (<code>3fd5b95</code>)</a>.
+Apache-2.0. Not affiliated with or endorsed by NVIDIA.</footer>
+<script src="assets/app.js"></script>
+<script src="assets/vendor/d3-force.bundle.min.js"></script>
+<script src="assets/graph.js"></script>
+</body>
+</html>

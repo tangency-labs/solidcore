@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>blend.feature_executive · solidcore</title>
+<meta name="description" content="blend.feature_executive · solidcore">
+<meta name="theme-color" content="#141413">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="solidcore">
+<meta property="og:url" content="https://tangency-labs.github.io/solidcore/units/blend.feature_executive.html">
+<meta property="og:title" content="blend.feature_executive · solidcore">
+<meta property="og:description" content="blend.feature_executive · solidcore">
+<meta property="og:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:type" content="image/png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="blend.feature_executive · solidcore">
+<meta name="twitter:description" content="blend.feature_executive · solidcore">
+<meta name="twitter:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="../index.html"><img src="../assets/logo.svg" alt="" width="28" height="28">solidcore</a>
+<nav><a href="../index.html">Overview</a><a href="../units/index.html" aria-current="page">Units</a><a href="../graph.html">Graph</a><a href="../solids.html">Solids</a><a href="../cases.html">Cases</a><a href="../sprints/index.html">Sprints</a><a href="../issues.html">Upstream issues</a><a href="../ssi.html">SSI corpus</a><a href="https://tangency-labs.github.io/solidcore-viewer/">Model viewer</a><a href="https://github.com/tangency-labs/solidcore">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+
+<p class="crumbs"><a href="index.html">Units</a> / <a href="../areas/blend.html">blend</a></p>
+<h1><code>blend.feature_executive</code> <span class="badge s-blocked">blocked</span></h1>
+<dl class="facts">
+<div><dt>Layer</dt><dd>62</dd></div>
+<div><dt>Upstream lines</dt><dd>3,005</dd></div>
+<div><dt>Functions</dt><dd>0</dd></div>
+<div><dt>Rust module</dt><dd><code>blend::feature_executive</code></dd></div>
+</dl>
+
+<h2>Status history</h2>
+<div class="steps" role="img" aria-label="Status history: blocked from 2026-10-31"><i class="st-none" style="width:68.81%" title="not in the plan yet"></i><i class="st-blocked" style="width:31.19%" title="blocked from 2026-10-31"></i></div><div class="steps-axis small"><span>Oct 12</span><span>Nov 08</span></div><ol class="steplist"><li><time datetime="2026-10-31T05:03:32Z" data-ts="1793423012">2026-10-31 05:03 UTC</time> <span class="badge s-blocked">blocked</span> <span class=muted>3,005 lines</span></li></ol>
+<p>Source: <a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/solidcore/src/blend/feature_executive.rs"><code>crates/solidcore/src/blend/feature_executive.rs</code></a></p>
+<p>Upstream: <a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmFeatureExecutive.cpp"><code>source/SMLib/src/SmFeatureExecutive.cpp</code></a>, <a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/inc/SmFeatureExecutive.h"><code>source/SMLib/inc/SmFeatureExecutive.h</code></a></p>
+<h2>Port-plan notes</h2>
+<p class="muted">These notes preserve historical port measurements and limitations, not current CI results.</p>
+<p class="notes">PR #1851, #1908, #1934. Blocked: 3 generated cases disagree with the C++ in ExtSurfaceRebuild patches (plan/findings/blend.feature_executive--ext-surface-patch-faces-differ.md; 5 more were the UB-242 stop at imprints without a vertex sector, fixed in #1934: plan/findings/blend.feature_executive--ext-surface-patch-faces-differ--addendum-2026-10-31-no-vertex-sector.md); the 21 prog_test smFeatureTest cases pass. #1908 carries attributes through the PartitionFeature and RestoreFeature copies; attributes_add_by_faces_extrusion still fails (the feature patch path does not carry yet: plan/findings/blend.feature_executive--ext-surface-patch-faces-differ--addendum-2026-10-31-attributes.md). Cases: 148 (21 upstream, 127 generated); 125 pass, 4 fail, 19 rejected (C++ crashes and hangs: plan/upstream-issues/UB-278--extsurfacerebuild-null-extended-surface.md, UB-279--dodefeature-again-reads-stitched-loop-edges.md, UB-280--extsurfacerebuild-xor-crash.md, UB-277--restorefeatures-removes-wrong-entry-keeps-deleted-feature.md, HANG-52--defeature-extension-runs-past-a-minute.md), 0 deferred. Not ported: Draw/Dump, NSidedPatchRebuild (unreachable), RebuildBrepAll (#if 0). Follow-up: SmApiRemoveFillet / sm_DefeatureFillets after blend.identify_fillet (#1844).</p>
+<h2>Goldens</h2>
+
+<p class="muted">This is committed inventory, not a runtime result or a correctness proof.
+A golden records what solidcore produced when blessed. Current results require the
+<a href="https://github.com/tangency-labs/solidcore/actions/workflows/ci.yml">canonical CI gate</a>, not these counts.</p>
+<dl class="facts">
+<div><dt>Golden records</dt><dd>149</dd></div>
+<div><dt>Stored error outcomes</dt><dd>0</dd></div>
+<div><dt>Stored deferrals</dt><dd>0</dd></div>
+<div><dt>Stored harness rejections</dt><dd>0</dd></div>
+<div><dt>Known-failure entries</dt><dd>0</dd></div>
+</dl>
+<p>Metadata counts describe fields in the stored records; they are not passes or live failures.</p>
+
+
+<p>Source at <code>bbfa3b092</code>:
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/blend.feature_executive.jsonl">golden JSONL</a> ·
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/known_failing.json">known-failure list</a>.</p>
+<h2>Dependencies</h2>
+<p><strong>Depends on:</strong> <a class="chip" href="boolean.merge_p3.html">boolean.merge_p3 <span class="badge s-green">green</span></a> <a class="chip" href="boolean.merge_p4.html">boolean.merge_p4 <span class="badge s-green">green</span></a> <a class="chip" href="curve.curve_p4.html">curve.curve_p4 <span class="badge s-green">green</span></a> <a class="chip" href="curve.curve_p6.html">curve.curve_p6 <span class="badge s-green">green</span></a> <a class="chip" href="intersect.curve_class_p3.html">intersect.curve_class_p3 <span class="badge s-green">green</span></a> <a class="chip" href="query.face_p1.html">query.face_p1 <span class="badge s-green">green</span></a> <a class="chip" href="surface.surface_p2.html">surface.surface_p2 <span class="badge s-partial">partial</span></a> <a class="chip" href="topology.brep_p1.html">topology.brep_p1 <span class="badge s-green">green</span></a> <a class="chip" href="topology.brep_p3.html">topology.brep_p3 <span class="badge s-partial">partial</span></a> <a class="chip" href="topology.brep_p4.html">topology.brep_p4 <span class="badge s-green">green</span></a> <a class="chip" href="topology.brep_p5.html">topology.brep_p5 <span class="badge s-green">green</span></a> <a class="chip" href="topology.brep_p7.html">topology.brep_p7 <span class="badge s-green">green</span></a> <a class="chip" href="topology.brep_p8.html">topology.brep_p8 <span class="badge s-green">green</span></a> <a class="chip" href="topology.edge.html">topology.edge <span class="badge s-green">green</span></a> <a class="chip" href="topology.face_p1.html">topology.face_p1 <span class="badge s-green">green</span></a> <a class="chip" href="topology.face_p2.html">topology.face_p2 <span class="badge s-partial">partial</span></a> <a class="chip" href="topology.face_p3.html">topology.face_p3 <span class="badge s-green">green</span></a> <a class="chip" href="topology.face_p4.html">topology.face_p4 <span class="badge s-green">green</span></a> <a class="chip" href="topology.loopuse.html">topology.loopuse <span class="badge s-green">green</span></a> <a class="chip" href="topology.topology_traverser.html">topology.topology_traverser <span class="badge s-green">green</span></a> <a class="chip" href="topology.vertex.html">topology.vertex <span class="badge s-green">green</span></a></p>
+<p><strong>Soft dependencies:</strong> <span class="muted">none</span></p>
+<p><strong>Dependents:</strong> <span class="muted">none</span></p>
+<p><strong>Soft dependents:</strong> <span class="muted">none</span></p>
+<h2>Upstream functions</h2>
+<p class="muted">No upstream functions listed in <code>harness/callgraph/units.json</code>.</p>
+<details><summary>Module file-header table (33 rows)</summary><div class="scroll"><table><thead><tr><th>Rust</th><th>Upstream</th></tr></thead><tbody><tr><td>[<code>RebuildBrepType</code>]</td><td><code>SmRebuildBrepType</code></td></tr><tr><td>[<code>FeatureLoop</code>]</td><td><code>SmFeatureLoop</code></td></tr><tr><td>[<code>FeatureLoop::new</code>]</td><td><code>SmFeatureLoop::SmFeatureLoop</code></td></tr><tr><td>[<code>FeatureLoop::unique_patches</code>]</td><td><code>SmFeatureLoop::GetUniquePatches</code></td></tr><tr><td>[<code>FeatureLoop::index_in_feature</code>]</td><td><code>SmFeatureLoop::GetIndexInFeature</code></td></tr><tr><td>[<code>Feature</code>]</td><td><code>SmFeature</code></td></tr><tr><td>[<code>Feature::set_base_ext_dist</code>] (and the other setters)</td><td><code>SmFeature::SetBaseExtDist</code>, <code>SetFeatureExtDist</code>, <code>SetBaseRBType</code>, <code>SetFeatureRBType</code> (both overloads each)</td></tr><tr><td><code>collect_faces</code> (private)</td><td><code>SmFeature::CollectFaces</code></td></tr><tr><td><code>collect_feature_loop_edges</code> (private)</td><td><code>SmFeature::CollectFeatureLoopEdges</code></td></tr><tr><td><code>partition_feature</code> (private)</td><td><code>SmFeature::PartitionFeature</code></td></tr><tr><td><code>build_patches</code> (private)</td><td><code>SmFeature::BuildPatches</code></td></tr><tr><td><code>build_patch</code> (private)</td><td><code>SmFeature::BuildPatch</code></td></tr><tr><td><code>apply_patches</code> (private)</td><td><code>SmFeature::ApplyPatches</code></td></tr><tr><td><code>restore_feature</code> (private)</td><td><code>SmFeature::RestoreFeature</code></td></tr><tr><td><code>join_patches</code> (private)</td><td><code>SmFeature::JoinPatches</code></td></tr><tr><td>[<code>FeatureExecutive</code>]</td><td><code>SmFeatureExecutive</code></td></tr><tr><td>[<code>FeatureExecutive::new</code>]</td><td><code>SmFeatureExecutive::SmFeatureExecutive</code></td></tr><tr><td>[<code>FeatureExecutive::add_feature_with_loops</code>]</td><td><code>SmFeatureExecutive::AddFeature(SmFace*, SmTArray&lt;SmFeatureLoop*&gt;&amp;)</code></td></tr><tr><td>[<code>FeatureExecutive::add_feature_with_edges</code>]</td><td><code>SmFeatureExecutive::AddFeature(SmFace*, SmTArray&lt;SmEdge*&gt;&amp;, ..)</code></td></tr><tr><td>[<code>FeatureExecutive::add_feature</code>]</td><td><code>SmFeatureExecutive::AddFeature(SmTArray&lt;SmFace*&gt;&amp;, ..)</code></td></tr><tr><td><code>add_feature_internal</code> (private)</td><td><code>SmFeatureExecutive::AddFeatureInternal</code></td></tr><tr><td>[<code>FeatureExecutive::do_defeature</code>]</td><td><code>SmFeatureExecutive::DoDefeature</code></td></tr><tr><td>[<code>FeatureExecutive::restore_features</code>]</td><td><code>SmFeatureExecutive::RestoreFeatures</code></td></tr><tr><td>[<code>defeature_and_rebuild_with_edges</code>], [<code>defeature_and_rebuild</code>]</td><td><code>SmFeatureExecutive::DefeatureAndRebuild</code> (both overloads)</td></tr><tr><td>[<code>FeatureExecutive::feature_breps</code>], [<code>FeatureExecutive::features</code>], [<code>FeatureExecutive::base_brep</code>]</td><td><code>GetFeatureBreps</code>, <code>GetFeatures</code>, <code>GetBaseBrep</code></td></tr><tr><td>[<code>FeatureExecutive::set_base_ext_dist</code>] (and the other setters)</td><td><code>SmFeatureExecutive::SetBaseExtDist</code>, <code>SetFeatureExtDist</code>, <code>SetBaseRBType</code>, <code>SetFeatureRBType</code></td></tr><tr><td><code>validate_patch</code> (private)</td><td><code>SmFeatureExecutive::ValidatePatch</code></td></tr><tr><td><code>rebuild_brep</code> (private)</td><td><code>SmFeatureExecutive::RebuildBrep</code></td></tr><tr><td><code>planar_cap_rebuild</code> (private)</td><td><code>SmFeatureExecutive::PlanarCapRebuild</code></td></tr><tr><td><code>ext_surface_rebuild</code> (private)</td><td><code>SmFeatureExecutive::ExtSurfaceRebuild</code></td></tr><tr><td><code>trim_patches</code> (private)</td><td><code>sm_TrimPatches</code></td></tr><tr><td>[<code>fix_edge_chain_list</code>]</td><td><code>SmTopologyTraverser::FixEdgeChainList</code> (CO-PORTED)</td></tr><tr><td>[<code>edge_number_in_brep</code>]</td><td><code>SmEdge::GetEdgeNumberInBrep</code> (CO-PORTED)</td></tr></tbody></table></div></details>
+<h2>Upstream tests reaching this unit</h2>
+<p class="tests"><code>prog_test:my_test_rebuild_fillets</code>, <code>prog_test:my_test_add_by_faces</code>, <code>prog_test:my_test_multi_feature</code>, <code>prog_test:my_test_multi_feature_adv</code>, <code>prog_test:my_test_multi_rebuilds</code>, <code>prog_test:my_test_extended_surface</code></p>
+
+</main>
+<footer class="wrap">Generated from <a href="https://github.com/tangency-labs/solidcore/tree/bbfa3b09294ef65febb9b3688b735e9090aef9e1"><code>bbfa3b09</code></a>
+(2026-11-14T12:32:47Z) by <code>site/build.py</code>; upstream reference <a href="https://github.com/NVIDIA-Omniverse/usd-brep/tree/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5">usd-brep v1.0.1 (<code>3fd5b95</code>)</a>.
+Apache-2.0. Not affiliated with or endorsed by NVIDIA.</footer>
+<script src="../assets/app.js"></script>
+</body>
+</html>

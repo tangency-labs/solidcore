@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>audit.recursion · solidcore</title>
+<meta name="description" content="audit.recursion · solidcore">
+<meta name="theme-color" content="#141413">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="solidcore">
+<meta property="og:url" content="https://tangency-labs.github.io/solidcore/units/audit.recursion.html">
+<meta property="og:title" content="audit.recursion · solidcore">
+<meta property="og:description" content="audit.recursion · solidcore">
+<meta property="og:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:type" content="image/png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="audit.recursion · solidcore">
+<meta name="twitter:description" content="audit.recursion · solidcore">
+<meta name="twitter:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="../index.html"><img src="../assets/logo.svg" alt="" width="28" height="28">solidcore</a>
+<nav><a href="../index.html">Overview</a><a href="../units/index.html" aria-current="page">Units</a><a href="../graph.html">Graph</a><a href="../solids.html">Solids</a><a href="../cases.html">Cases</a><a href="../sprints/index.html">Sprints</a><a href="../issues.html">Upstream issues</a><a href="../ssi.html">SSI corpus</a><a href="https://tangency-labs.github.io/solidcore-viewer/">Model viewer</a><a href="https://github.com/tangency-labs/solidcore">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+
+<p class="crumbs"><a href="index.html">Units</a> / <a href="../areas/crate-wide.html">(crate-wide)</a></p>
+<h1><code>audit.recursion</code> <span class="badge s-green">green</span></h1>
+<dl class="facts">
+<div><dt>Layer</dt><dd>65</dd></div>
+<div><dt>Upstream lines</dt><dd>0</dd></div>
+<div><dt>Functions</dt><dd>0</dd></div>
+<div><dt>Rust module</dt><dd><code>(crate-wide)</code></dd></div>
+</dl>
+
+<h2>Status history</h2>
+<div class="steps" role="img" aria-label="Status history: todo from 2026-10-13, then green from 2026-10-23"><i class="st-none" style="width:1.67%" title="not in the plan yet"></i><i class="st-todo" style="width:36.98%" title="todo from 2026-10-13"></i><i class="st-green" style="width:61.35%" title="green from 2026-10-23"></i></div><div class="steps-axis small"><span>Oct 12</span><span>Nov 08</span></div><ol class="steplist"><li><time datetime="2026-10-13T05:33:53Z" data-ts="1791869633">2026-10-13 05:33 UTC</time> <span class="badge s-todo">todo</span> <span class=muted>0 lines</span></li><li><time datetime="2026-10-23T03:14:00Z" data-ts="1792725240">2026-10-23 03:14 UTC</time> <span class="badge s-green">green</span> <span class=muted>0 lines</span></li></ol>
+<p>Source: <span class="muted">no single module (crate-wide unit)</span></p>
+<p>Upstream: <span class="muted">none</span></p>
+<h2>Port-plan notes</h2>
+<p class="muted">These notes preserve historical port measurements and limitations, not current CI results.</p>
+<p class="notes">GREEN for the merged snapshot through main ed6d93d8 audited in PR #273, with every unit green or partial (final re-audits: #541 topology-solver face point classification, which does not re-enter the solver, and #572 offset face-cache solves, no new recursion; before that 21 PRs incl. #441 topology.brep_p4, #463 intersect.surface_drop_lib_p3, #244 blend.fillet_executive_p3, #280 topology.brep_p7 and #554 CrvOnSurf over any surface, whose surface child the shared walker now follows, and main's depth-aware volume transform append, moved to the shared bound; before that 18 PRs incl. #466 blend.fillet_solver_p2, #531 fillet batch, #535 topology.brep_p6 closure split and main's evaluation-copy walker, now one shared bound; before that #522, #523, #517; before that 24 more PRs incl. #208 blend.fillet_solver_p5, #211 boolean.topology_intersector_p3, #490 SurfaceKind::SurfOfExtrusion and #514 MAX_SOLVE_BRANCHES, kept alongside the depth counter; before that 22 PRs; incl. #439 blend.fillet_standard_solver_p2, #236 blend.fillet_solver_p3, #213 primitive.primitive_creation_p1, #242 blend.fillet_geom_p3, topology.brep_p3/p8, #436 SurfaceKind::Sphere/Torus and #462 per-unit plan; before that 19 PRs incl. #201 offset.offset_executive_p2, #247/#264 blend.fillet_geom_p6/p5, #329 query.brep, #222 sweep.topology_sweep, #233/#250 primitive.primitive_creation_p3/p2 and #308, which lowered read nesting to 32; earlier: re-audited after #282, #284-#287, #289, #291, #293, #298, #229 boolean.merge_p2, #239 topology.face_p4, and the 31 PRs through 7e3f324e incl. #267 blend.fillet_executive_p2, #363 topology.brep_p6, #281/#317 co-ports, #313 surface dispatch with SurfaceKind::Cone: no new unbounded recursion); the remaining open PRs (#563, #178, #270) add no units and need the same review when they land; not a standalone port/runner. Geometry ownership depth bounded at 32 (= MAX_READ_NESTING since #308) across Curve/Surface/Volume, solver traversal at MAX_SOLVE_DEPTH = 1000 tree levels (checked up front in solve_it) plus a per-call counter allowing 1001 nested calls, spatial rebuild at 1 and tessellation build re-entry rejected. Review closes ProjectedCurve::set_canonical and CompositeCurve segment-mutation bypasses. Follow-up review of 77 changed kernel files and eight newly ported units found no new unbounded recursion path. Local merged-tree tests: 1554 solidcore, 31 difftest and float-roundtrip integration passing. CI at e8520b7c passed all checks, including C++-feature clippy and difftest: 228 units, 114 passed, 114 partial, 0 failed (run 39362924279). Current selection: 236 port runners (114 green, 122 partial); new-head C++ validation in PR checks. Pre-merge 222-unit summaries matched baseline, not complete numeric reports; no standalone audit cases/deferred count. All direct dependencies are green or partial. Future ports and deferred paths need follow-up review. Native guards and wasm compile check do not measure worst-case wasm runtime stack use. Source-only delta review for PR #835 of the fillet/heal/topology wave 2ca17d8e9..f1ac1f4c1 (44 changed kernel files): no new input-driven recursion or unbounded mutual re-entry; the new session/classification/finalization stages iterate executive-owned vectors and arenas, stitch uses an explicit marked face stack, and the existing MAX_MATE_DEPTH bound and lent-context nested-edit refusal still cover the wired callers. This does not re-certify the crate, change status or measure wasm stack use; follow-ups are the smooth-sequence collector progress contract and the stage-loop no-append invariant. See plan/findings.md (audit.recursion: source review of the fillet/heal/topology wave). Re-audited after main's 92454ca6..4427b2fa7 advance (273 merged PRs, 215 kernel files, 112 recursion/loop/reader-signal files, all triaged, PR #1204): no bound changed in the range (the 64-&gt;32 nesting reductions predate it), three new recursive paths, all bounded (refine_cci_to_surfaces: MAX_REFINE_RECURSION = 5, explicit counter, single tail call; glue_with_notification_identity: one re-entry; has_seam_problem_mut &lt;-&gt; FaceProps::set_props_stage2_with: depth 2 because prop_stage is set to Stage2A before the seam callback, an ordering invariant with no counter); an LLVM-IR call-graph cross-check of both ends (370 -&gt; 394 recursive SCCs; all 43 new or grown ones traced: new instantiations of existing bounds, the same healing cycle through with_editing_enabled under MAX_TARGET_UPDATE_DEPTH, writer depth + 1 at every nesting site, and nested-geometry cycles that descend owned geometry under the unchanged check_geometry_nesting sites) found no unbounded path; the three new memos (NurbMemo, BoundaryMemoEntry, CurveMemoEntry) hold geometry outside check_geometry_nesting and add a constant number of levels (argued, not tested; open question Q5), the S1 writer threads an explicit depth (check_depth -&gt; InvalidInput past MAX_GEOMETRY_NESTING) and the S1 part reader recurses only through Curve::read_from_db's own nesting with checked file counts; see plan/findings/audit.recursion--re-audit-through-main-4427b2fa7-pr-1204.md.</p>
+<h2>Goldens</h2>
+<p class="muted">No committed golden inventory yet.</p>
+<h2>Dependencies</h2>
+<p><strong>Depends on:</strong> <a class="chip" href="blend.fillet_corner_p2.html">blend.fillet_corner_p2 <span class="badge s-partial">partial</span></a> <a class="chip" href="blend.fillet_corner_p3.html">blend.fillet_corner_p3 <span class="badge s-partial">partial</span></a> <a class="chip" href="blend.hcr.html">blend.hcr <span class="badge s-green">green</span></a> <a class="chip" href="boolean.api_brep.html">boolean.api_brep <span class="badge s-partial">partial</span></a> <a class="chip" href="heal.heal_data_p3.html">heal.heal_data_p3 <span class="badge s-green">green</span></a> <a class="chip" href="intersect.curve_class_p8.html">intersect.curve_class_p8 <span class="badge s-green">green</span></a> <a class="chip" href="intersect.surface_drop_curve.html">intersect.surface_drop_curve <span class="badge s-green">green</span></a> <a class="chip" href="intersect.surface_intersector_p5.html">intersect.surface_intersector_p5 <span class="badge s-green">green</span></a> <a class="chip" href="intersect.surface_silhouette.html">intersect.surface_silhouette <span class="badge s-green">green</span></a> <a class="chip" href="mass.integrator.html">mass.integrator <span class="badge s-partial">partial</span></a> <a class="chip" href="offset.offset_executive_p2.html">offset.offset_executive_p2 <span class="badge s-partial">partial</span></a> <a class="chip" href="primitive.api_curves.html">primitive.api_curves <span class="badge s-green">green</span></a> <a class="chip" href="primitive.api_primitives.html">primitive.api_primitives <span class="badge s-green">green</span></a> <a class="chip" href="query.api_queries.html">query.api_queries <span class="badge s-green">green</span></a> <a class="chip" href="query.tess.html">query.tess <span class="badge s-green">green</span></a> <a class="chip" href="surface.b_spline_volume_n_lib.html">surface.b_spline_volume_n_lib <span class="badge s-green">green</span></a> <a class="chip" href="surface.cone_p3.html">surface.cone_p3 <span class="badge s-green">green</span></a> <a class="chip" href="surface.srf_in_volume.html">surface.srf_in_volume <span class="badge s-green">green</span></a> <a class="chip" href="surface.surf_of_extrusion_p2.html">surface.surf_of_extrusion_p2 <span class="badge s-green">green</span></a> <a class="chip" href="surface.surface_point_solve_p3.html">surface.surface_point_solve_p3 <span class="badge s-green">green</span></a> <a class="chip" href="sweep.api_brep.html">sweep.api_brep <span class="badge s-partial">partial</span></a> <a class="chip" href="sweep.api_surfaces.html">sweep.api_surfaces <span class="badge s-green">green</span></a></p>
+<p><strong>Soft dependencies:</strong> <span class="muted">none</span></p>
+<p><strong>Dependents:</strong> <span class="muted">none</span></p>
+<p><strong>Soft dependents:</strong> <span class="muted">none</span></p>
+<h2>Upstream functions</h2>
+<p class="muted">No upstream functions listed in <code>harness/callgraph/units.json</code>.</p>
+
+<h2>Upstream tests reaching this unit</h2>
+<p class="tests"><span class="muted">none</span></p>
+
+</main>
+<footer class="wrap">Generated from <a href="https://github.com/tangency-labs/solidcore/tree/bbfa3b09294ef65febb9b3688b735e9090aef9e1"><code>bbfa3b09</code></a>
+(2026-11-14T12:32:47Z) by <code>site/build.py</code>; upstream reference <a href="https://github.com/NVIDIA-Omniverse/usd-brep/tree/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5">usd-brep v1.0.1 (<code>3fd5b95</code>)</a>.
+Apache-2.0. Not affiliated with or endorsed by NVIDIA.</footer>
+<script src="../assets/app.js"></script>
+</body>
+</html>

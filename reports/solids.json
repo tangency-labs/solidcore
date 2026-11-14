@@ -1,0 +1,1047 @@
+{
+ "corpus": {
+  "models": [],
+  "note": "waiting on the choice of a corpus of real models",
+  "status": "pending"
+ },
+ "primitives": [
+  {
+   "analytic": {
+    "area": 700.0,
+    "bbox": {
+     "max": [
+      5.0,
+      10.0,
+      20.0
+     ],
+     "min": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "counts": [
+     6,
+     12,
+     8
+    ],
+    "euler": 2,
+    "volume": 1000.0
+   },
+   "blocker": null,
+   "built": true,
+   "checks": [
+    {
+     "actual": true,
+     "expected": true,
+     "message": "",
+     "name": "manifold",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 2,
+     "expected": 2,
+     "message": "",
+     "name": "euler",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": [
+      6,
+      12,
+      8
+     ],
+     "expected": [
+      6,
+      12,
+      8
+     ],
+     "message": "",
+     "name": "counts",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 999.9999999999999,
+     "expected": 1000.0,
+     "message": "",
+     "name": "volume",
+     "pass": true,
+     "rel_err": 1.1368683772161603e-16
+    },
+    {
+     "actual": 700.0,
+     "expected": 700.0,
+     "message": "",
+     "name": "area",
+     "pass": true,
+     "rel_err": 0.0
+    },
+    {
+     "actual": {
+      "max": [
+       5.0,
+       10.0,
+       20.0
+      ],
+      "min": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "expected": {
+      "max": [
+       5.0,
+       10.0,
+       20.0
+      ],
+      "min": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "message": "",
+     "name": "bbox",
+     "pass": true,
+     "rel_err": 0.0
+    }
+   ],
+   "error": null,
+   "measured": {
+    "area": 700.0,
+    "bbox": {
+     "max": [
+      5.0,
+      10.0,
+      20.0
+     ],
+     "min": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "edges": 12,
+    "faces": 6,
+    "loops": 6,
+    "manifold_solid": true,
+    "vertices": 8,
+    "volume": 999.9999999999999
+   },
+   "name": "box 5x10x20",
+   "pass": true
+  },
+  {
+   "analytic": {
+    "area": 785.3981633974483,
+    "bbox": {
+     "max": [
+      5.0,
+      5.0,
+      20.0
+     ],
+     "min": [
+      -5.0,
+      -5.0,
+      0.0
+     ]
+    },
+    "counts": null,
+    "euler": 2,
+    "volume": 1570.7963267948967
+   },
+   "blocker": null,
+   "built": true,
+   "checks": [
+    {
+     "actual": true,
+     "expected": true,
+     "message": "",
+     "name": "manifold",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 2,
+     "expected": 2,
+     "message": "",
+     "name": "euler",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 1570.7963267948198,
+     "expected": 1570.7963267948967,
+     "message": "",
+     "name": "volume",
+     "pass": true,
+     "rel_err": 4.892569519603114e-14
+    },
+    {
+     "actual": 785.39816339748,
+     "expected": 785.3981633974483,
+     "message": "",
+     "name": "area",
+     "pass": true,
+     "rel_err": 4.0240660545848096e-14
+    },
+    {
+     "actual": {
+      "max": [
+       5.0,
+       5.0,
+       20.0
+      ],
+      "min": [
+       -5.0,
+       -5.0,
+       0.0
+      ]
+     },
+     "expected": {
+      "max": [
+       5.0,
+       5.0,
+       20.0
+      ],
+      "min": [
+       -5.0,
+       -5.0,
+       0.0
+      ]
+     },
+     "message": "",
+     "name": "bbox",
+     "pass": true,
+     "rel_err": 0.0
+    }
+   ],
+   "error": null,
+   "measured": {
+    "area": 785.39816339748,
+    "bbox": {
+     "max": [
+      5.0,
+      5.0,
+      20.0
+     ],
+     "min": [
+      -5.0,
+      -5.0,
+      0.0
+     ]
+    },
+    "edges": 3,
+    "faces": 3,
+    "loops": 3,
+    "manifold_solid": true,
+    "vertices": 2,
+    "volume": 1570.7963267948198
+   },
+   "name": "cylinder r5 h20",
+   "pass": true
+  },
+  {
+   "analytic": {
+    "area": 535.8496431198263,
+    "bbox": {
+     "max": [
+      5.0,
+      5.0,
+      20.0
+     ],
+     "min": [
+      -5.0,
+      -5.0,
+      0.0
+     ]
+    },
+    "counts": null,
+    "euler": 2,
+    "volume": 816.8140899333463
+   },
+   "blocker": null,
+   "built": true,
+   "checks": [
+    {
+     "actual": true,
+     "expected": true,
+     "message": "",
+     "name": "manifold",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 2,
+     "expected": 2,
+     "message": "",
+     "name": "euler",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 816.8140899333404,
+     "expected": 816.8140899333463,
+     "message": "",
+     "name": "volume",
+     "pass": true,
+     "rel_err": 7.237528875152536e-15
+    },
+    {
+     "actual": 535.8496431198502,
+     "expected": 535.8496431198263,
+     "message": "",
+     "name": "area",
+     "pass": true,
+     "rel_err": 4.4553983058640625e-14
+    },
+    {
+     "actual": {
+      "max": [
+       5.0,
+       5.0,
+       20.0
+      ],
+      "min": [
+       -5.0,
+       -5.0,
+       0.0
+      ]
+     },
+     "expected": {
+      "max": [
+       5.0,
+       5.0,
+       20.0
+      ],
+      "min": [
+       -5.0,
+       -5.0,
+       0.0
+      ]
+     },
+     "message": "",
+     "name": "bbox",
+     "pass": true,
+     "rel_err": 0.0
+    }
+   ],
+   "error": null,
+   "measured": {
+    "area": 535.8496431198502,
+    "bbox": {
+     "max": [
+      5.0,
+      5.0,
+      20.0
+     ],
+     "min": [
+      -5.0,
+      -5.0,
+      0.0
+     ]
+    },
+    "edges": 3,
+    "faces": 3,
+    "loops": 3,
+    "manifold_solid": true,
+    "vertices": 2,
+    "volume": 816.8140899333404
+   },
+   "name": "cone r5->2 h20",
+   "pass": true
+  },
+  {
+   "analytic": {
+    "area": 226.55644370746373,
+    "bbox": {
+     "max": [
+      2.5,
+      2.5,
+      20.0
+     ],
+     "min": [
+      -2.5,
+      -2.5,
+      0.0
+     ]
+    },
+    "counts": [
+     5,
+     8,
+     5
+    ],
+    "euler": 2,
+    "volume": 166.66666666666666
+   },
+   "blocker": null,
+   "built": true,
+   "checks": [
+    {
+     "actual": true,
+     "expected": true,
+     "message": "",
+     "name": "manifold",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 2,
+     "expected": 2,
+     "message": "",
+     "name": "euler",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": [
+      5,
+      8,
+      5
+     ],
+     "expected": [
+      5,
+      8,
+      5
+     ],
+     "message": "",
+     "name": "counts",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 166.6666666666668,
+     "expected": 166.66666666666666,
+     "message": "",
+     "name": "volume",
+     "pass": true,
+     "rel_err": 8.526512829121203e-16
+    },
+    {
+     "actual": 226.5564437074639,
+     "expected": 226.55644370746373,
+     "message": "",
+     "name": "area",
+     "pass": true,
+     "rel_err": 7.527053911678526e-16
+    },
+    {
+     "actual": {
+      "max": [
+       2.5,
+       2.5,
+       20.000000000000004
+      ],
+      "min": [
+       -2.5,
+       -2.5,
+       0.0
+      ]
+     },
+     "expected": {
+      "max": [
+       2.5,
+       2.5,
+       20.0
+      ],
+      "min": [
+       -2.5,
+       -2.5,
+       0.0
+      ]
+     },
+     "message": "",
+     "name": "bbox",
+     "pass": true,
+     "rel_err": 1.6747652892626934e-16
+    }
+   ],
+   "error": null,
+   "measured": {
+    "area": 226.5564437074639,
+    "bbox": {
+     "max": [
+      2.5,
+      2.5,
+      20.000000000000004
+     ],
+     "min": [
+      -2.5,
+      -2.5,
+      0.0
+     ]
+    },
+    "edges": 8,
+    "faces": 5,
+    "loops": 5,
+    "manifold_solid": true,
+    "vertices": 5,
+    "volume": 166.6666666666668
+   },
+   "name": "pyramid 5 h20",
+   "pass": true
+  },
+  {
+   "analytic": {
+    "area": 113.09733552923255,
+    "bbox": {
+     "max": [
+      4.0,
+      1.0,
+      3.5
+     ],
+     "min": [
+      -2.0,
+      -5.0,
+      -2.5
+     ]
+    },
+    "counts": null,
+    "euler": 2,
+    "volume": 113.09733552923255
+   },
+   "blocker": null,
+   "built": true,
+   "checks": [
+    {
+     "actual": true,
+     "expected": true,
+     "message": "",
+     "name": "manifold",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 2,
+     "expected": 2,
+     "message": "",
+     "name": "euler",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 113.09733552929428,
+     "expected": 113.09733552923255,
+     "message": "",
+     "name": "volume",
+     "pass": true,
+     "rel_err": 5.458303026677538e-13
+    },
+    {
+     "actual": 113.09733552924429,
+     "expected": 113.09733552923255,
+     "message": "",
+     "name": "area",
+     "pass": true,
+     "rel_err": 1.0378817449437491e-13
+    },
+    {
+     "actual": {
+      "max": [
+       4.0,
+       1.0,
+       3.5
+      ],
+      "min": [
+       -2.0,
+       -5.000000000000001,
+       -2.5
+      ]
+     },
+     "expected": {
+      "max": [
+       4.0,
+       1.0,
+       3.5
+      ],
+      "min": [
+       -2.0,
+       -5.0,
+       -2.5
+      ]
+     },
+     "message": "",
+     "name": "bbox",
+     "pass": true,
+     "rel_err": 8.546500828371396e-17
+    }
+   ],
+   "error": null,
+   "measured": {
+    "area": 113.09733552924429,
+    "bbox": {
+     "max": [
+      4.0,
+      1.0,
+      3.5
+     ],
+     "min": [
+      -2.0,
+      -5.000000000000001,
+      -2.5
+     ]
+    },
+    "edges": 1,
+    "faces": 1,
+    "loops": 1,
+    "manifold_solid": true,
+    "vertices": 2,
+    "volume": 113.09733552929428
+   },
+   "name": "sphere r3",
+   "pass": true
+  },
+  {
+   "analytic": {
+    "area": 113.09733552923255,
+    "bbox": {
+     "max": [
+      4.0,
+      1.0,
+      3.5
+     ],
+     "min": [
+      -2.0,
+      -5.0,
+      -2.5
+     ]
+    },
+    "counts": null,
+    "euler": 2,
+    "volume": 113.09733552923255
+   },
+   "blocker": null,
+   "built": true,
+   "checks": [
+    {
+     "actual": true,
+     "expected": true,
+     "message": "",
+     "name": "manifold",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 2,
+     "expected": 2,
+     "message": "",
+     "name": "euler",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 113.09733552642948,
+     "expected": 113.09733552923255,
+     "message": "",
+     "name": "volume",
+     "pass": true,
+     "rel_err": 2.478464119956532e-11
+    },
+    {
+     "actual": 113.09733552602324,
+     "expected": 113.09733552923255,
+     "message": "",
+     "name": "area",
+     "pass": true,
+     "rel_err": 2.837651620694571e-11
+    },
+    {
+     "actual": {
+      "max": [
+       4.0,
+       1.0,
+       3.5
+      ],
+      "min": [
+       -2.0,
+       -5.0,
+       -2.5
+      ]
+     },
+     "expected": {
+      "max": [
+       4.0,
+       1.0,
+       3.5
+      ],
+      "min": [
+       -2.0,
+       -5.0,
+       -2.5
+      ]
+     },
+     "message": "",
+     "name": "bbox",
+     "pass": true,
+     "rel_err": 0.0
+    }
+   ],
+   "error": null,
+   "measured": {
+    "area": 113.09733552602324,
+    "bbox": {
+     "max": [
+      4.0,
+      1.0,
+      3.5
+     ],
+     "min": [
+      -2.0,
+      -5.0,
+      -2.5
+     ]
+    },
+    "edges": 6,
+    "faces": 4,
+    "loops": 4,
+    "manifold_solid": true,
+    "vertices": 4,
+    "volume": 113.09733552642948
+   },
+   "name": "sphere r3 (no pole)",
+   "pass": true
+  },
+  {
+   "analytic": {
+    "area": 56.548667764616276,
+    "bbox": {
+     "max": [
+      4.0,
+      1.0,
+      3.5
+     ],
+     "min": [
+      1.0,
+      -2.0,
+      -2.5
+     ]
+    },
+    "counts": null,
+    "euler": 2,
+    "volume": 28.274333882308138
+   },
+   "blocker": null,
+   "built": true,
+   "checks": [
+    {
+     "actual": true,
+     "expected": true,
+     "message": "",
+     "name": "manifold",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 2,
+     "expected": 2,
+     "message": "",
+     "name": "euler",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 28.274333882300947,
+     "expected": 28.274333882308138,
+     "message": "",
+     "name": "volume",
+     "pass": true,
+     "rel_err": 2.5431872297410997e-13
+    },
+    {
+     "actual": 56.548667764608666,
+     "expected": 56.548667764616276,
+     "message": "",
+     "name": "area",
+     "pass": true,
+     "rel_err": 1.3457280252236747e-13
+    },
+    {
+     "actual": {
+      "max": [
+       4.0,
+       1.0,
+       3.5
+      ],
+      "min": [
+       1.0,
+       -2.0,
+       -2.5
+      ]
+     },
+     "expected": {
+      "max": [
+       4.0,
+       1.0,
+       3.5
+      ],
+      "min": [
+       1.0,
+       -2.0,
+       -2.5
+      ]
+     },
+     "message": "",
+     "name": "bbox",
+     "pass": true,
+     "rel_err": 0.0
+    }
+   ],
+   "error": null,
+   "measured": {
+    "area": 56.548667764608666,
+    "bbox": {
+     "max": [
+      4.0,
+      1.0,
+      3.5
+     ],
+     "min": [
+      1.0,
+      -2.0,
+      -2.5
+     ]
+    },
+    "edges": 3,
+    "faces": 3,
+    "loops": 3,
+    "manifold_solid": true,
+    "vertices": 2,
+    "volume": 28.274333882300947
+   },
+   "name": "partial sphere r3 0..90",
+   "pass": true
+  },
+  {
+   "analytic": {
+    "area": 296.08813203268073,
+    "bbox": {
+     "max": [
+      6.5,
+      7.5,
+      0.5
+     ],
+     "min": [
+      -6.5,
+      -5.5,
+      -2.5
+     ]
+    },
+    "counts": null,
+    "euler": 0,
+    "volume": 222.06609902451055
+   },
+   "blocker": null,
+   "built": true,
+   "checks": [
+    {
+     "actual": true,
+     "expected": true,
+     "message": "",
+     "name": "manifold",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 0,
+     "expected": 0,
+     "message": "",
+     "name": "euler",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 222.06609902453405,
+     "expected": 222.06609902451055,
+     "message": "",
+     "name": "volume",
+     "pass": true,
+     "rel_err": 1.0584575404438377e-13
+    },
+    {
+     "actual": 296.08813203270734,
+     "expected": 296.08813203268073,
+     "message": "",
+     "name": "area",
+     "pass": true,
+     "rel_err": 8.984730270756639e-14
+    },
+    {
+     "actual": {
+      "max": [
+       6.5,
+       7.5,
+       0.5000000000000001
+      ],
+      "min": [
+       -6.5,
+       -5.5,
+       -2.5
+      ]
+     },
+     "expected": {
+      "max": [
+       6.5,
+       7.5,
+       0.5
+      ],
+      "min": [
+       -6.5,
+       -5.5,
+       -2.5
+      ]
+     },
+     "message": "",
+     "name": "bbox",
+     "pass": true,
+     "rel_err": 5.959989469672899e-18
+    }
+   ],
+   "error": null,
+   "measured": {
+    "area": 296.08813203270734,
+    "bbox": {
+     "max": [
+      6.5,
+      7.5,
+      0.5000000000000001
+     ],
+     "min": [
+      -6.5,
+      -5.5,
+      -2.5
+     ]
+    },
+    "edges": 2,
+    "faces": 1,
+    "loops": 1,
+    "manifold_solid": true,
+    "vertices": 1,
+    "volume": 222.06609902453405
+   },
+   "name": "torus R5 r1.5",
+   "pass": true
+  },
+  {
+   "analytic": {
+    "area": 88.15919994932425,
+    "bbox": {
+     "max": [
+      6.5,
+      7.5,
+      0.5
+     ],
+     "min": [
+      0.0,
+      1.0,
+      -2.5
+     ]
+    },
+    "counts": null,
+    "euler": 2,
+    "volume": 55.51652475612764
+   },
+   "blocker": null,
+   "built": true,
+   "checks": [
+    {
+     "actual": true,
+     "expected": true,
+     "message": "",
+     "name": "manifold",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 2,
+     "expected": 2,
+     "message": "",
+     "name": "euler",
+     "pass": true,
+     "rel_err": null
+    },
+    {
+     "actual": 55.516524756134,
+     "expected": 55.51652475612764,
+     "message": "",
+     "name": "volume",
+     "pass": true,
+     "rel_err": 1.1454891157161243e-13
+    },
+    {
+     "actual": 88.15919994932555,
+     "expected": 88.15919994932425,
+     "message": "",
+     "name": "area",
+     "pass": true,
+     "rel_err": 1.4829973894387703e-14
+    },
+    {
+     "actual": {
+      "max": [
+       6.5,
+       7.499999999999999,
+       0.5
+      ],
+      "min": [
+       -2.042717740617887e-15,
+       1.0,
+       -2.5
+      ]
+     },
+     "expected": {
+      "max": [
+       6.5,
+       7.5,
+       0.5
+      ],
+      "min": [
+       0.0,
+       1.0,
+       -2.5
+      ]
+     },
+     "message": "",
+     "name": "bbox",
+     "pass": true,
+     "rel_err": 2.1125283956158958e-16
+    }
+   ],
+   "error": null,
+   "measured": {
+    "area": 88.15919994932555,
+    "bbox": {
+     "max": [
+      6.5,
+      7.499999999999999,
+      0.5
+     ],
+     "min": [
+      -2.042717740617887e-15,
+      1.0,
+      -2.5
+     ]
+    },
+    "edges": 3,
+    "faces": 3,
+    "loops": 3,
+    "manifold_solid": true,
+    "vertices": 2,
+    "volume": 55.516524756134
+   },
+   "name": "partial torus R5 r1.5 0..90",
+   "pass": true
+  }
+ ],
+ "rel_tol": 1e-09,
+ "schema": 1,
+ "source": "crates/solidcore/examples/primitives",
+ "summary": {
+  "built": 9,
+  "passed": 9,
+  "total": 9
+ }
+}

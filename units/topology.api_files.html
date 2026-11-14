@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>topology.api_files · solidcore</title>
+<meta name="description" content="topology.api_files · solidcore">
+<meta name="theme-color" content="#141413">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="solidcore">
+<meta property="og:url" content="https://tangency-labs.github.io/solidcore/units/topology.api_files.html">
+<meta property="og:title" content="topology.api_files · solidcore">
+<meta property="og:description" content="topology.api_files · solidcore">
+<meta property="og:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:type" content="image/png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="topology.api_files · solidcore">
+<meta name="twitter:description" content="topology.api_files · solidcore">
+<meta name="twitter:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="../index.html"><img src="../assets/logo.svg" alt="" width="28" height="28">solidcore</a>
+<nav><a href="../index.html">Overview</a><a href="../units/index.html" aria-current="page">Units</a><a href="../graph.html">Graph</a><a href="../solids.html">Solids</a><a href="../cases.html">Cases</a><a href="../sprints/index.html">Sprints</a><a href="../issues.html">Upstream issues</a><a href="../ssi.html">SSI corpus</a><a href="https://tangency-labs.github.io/solidcore-viewer/">Model viewer</a><a href="https://github.com/tangency-labs/solidcore">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+
+<p class="crumbs"><a href="index.html">Units</a> / <a href="../areas/topology.html">topology</a></p>
+<h1><code>topology.api_files</code> <span class="badge s-partial">partial</span></h1>
+<dl class="facts">
+<div><dt>Layer</dt><dd>49</dd></div>
+<div><dt>Upstream lines</dt><dd>132</dd></div>
+<div><dt>Functions</dt><dd>0</dd></div>
+<div><dt>Rust module</dt><dd><code>topology::api_files</code></dd></div>
+</dl>
+
+<h2>Status history</h2>
+<div class="steps" role="img" aria-label="Status history: green from 2026-10-30, then partial from 2026-11-04"><i class="st-none" style="width:64.58%" title="not in the plan yet"></i><i class="st-green" style="width:21.69%" title="green from 2026-10-30"></i><i class="st-partial" style="width:13.73%" title="partial from 2026-11-04"></i></div><div class="steps-axis small"><span>Oct 12</span><span>Nov 08</span></div><ol class="steplist"><li><time datetime="2026-10-30T01:54:11Z" data-ts="1793325251">2026-10-30 01:54 UTC</time> <span class="badge s-green">green</span> <span class=muted>132 lines</span></li><li><time datetime="2026-11-04T21:19:18Z" data-ts="1793827158">2026-11-04 21:19 UTC</time> <span class="badge s-partial">partial</span> <span class=muted>132 lines</span></li></ol>
+<p>Source: <a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/solidcore/src/topology/api_files.rs"><code>crates/solidcore/src/topology/api_files.rs</code></a></p>
+<p>Upstream: <a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SM_API/src/SmApiImportExport.cpp"><code>source/SM_API/src/SmApiImportExport.cpp</code></a>, <a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SM_API/src/SmApiBrep.cpp"><code>source/SM_API/src/SmApiBrep.cpp</code></a></p>
+<h2>Port-plan notes</h2>
+<p class="muted">These notes preserve historical port measurements and limitations, not current CI results.</p>
+<p class="notes">[2026-11-04 (#2400): PARTIAL, 2 known mismatches: the blend corner is the default and the old corner code is deleted, so these cases no longer agree with C++ v1.0.1's pinned corner (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md)] NOT IN callgraph/units.json: SmApiReadBrepFromFile (SmApiImportExport.cpp:12), SmApiReadPartFromFile (SmApiImportExport.cpp:61), SmApiTurnToNurbs (SmApiBrep.cpp:2630) and the file-static SmApiAddCurveOutputSlots (SmApiBrep.cpp:46) are listed in harness/callgraph/unused_functions.txt (SM_API gap table batch 4). Rust: topology::api_files::{read_brep_from_file, read_part_from_file, turn_to_nurbs, add_curve_output_slots}; topology::brep::p5::turn_to_nurbs_plain (the plain SmBrep::TurnToNURBS entry point Transform already used). Difftest topology.api_files: 77 fixture cases (SM_API_test TestSmImportExport ASCII and binary round trips, TestSmErrorCodes null arguments, TestSmRemoveFilletNurbsPlanes' filleted box, the 15 topology.brep_p7 read files with and without UV trim rebuild, 8 part files with and without prefilled outputs) plus generated cases. SmApiAddCurveOutputSlots is file static (no C++ entry point a shim can call without compiling SmApiBrep.cpp into it); its callers SmApiProjectCurve / SmApiCreateSilhouetteCurves are unported, so it is covered by unit tests only until they land. TurnToNURBS reaches its analytic branches through SM_API_test TestSmBrepCopyRepresentation's bodies (SmApiCreateCylinder(o,3,8), Cone(o,3,1,8), Sphere(o,3), Torus(o,5,1), and the box with face 0 replaced by its CopyAnalyticAsNurb); the 15 read files are pure B-spline (the already-NURBS no-op). Unreached: its SmOffsetSurface branch (ApproximateOffsetSurface and CreateExtendedSurface) and its SmCrvOnSurf edge-curve lift (no constructed body has either). Records compare the UV trim curves (per edge use: type, interval, three samples) and support/primitive_record.h's append (edge use and trim counts), so read_brep with and without rebuild and TurnToNURBS's trim handling are compared beyond topology. A binary read of an ASCII test file (read_disk_ascii_file_as_binary) is a memory-safety crash in SmBrepData::ReadFromDB (held record); the FFI guard rejects binary reads of the text test files, so the case is recorded as rejected. The test crates/difftest/tests/api_files_binary_text.rs reads every upstream .smb and .smp as binary through the wrappers and requires an error without a panic or an abort; the binary success path is compared through the round trips. Status set when the difftest gate has run. SM_API batch S2 (fixer-7, 2026-10-29): SmApiWriteBrepToFile added (topology::api_files::write_brep_to_file over topology::brep_data_write::write_brep_to_file, SmBrep::WriteToFile with bNewFile TRUE, bWriteAsBSplines FALSE); its written file is compared byte for byte (op write_bytes: shim entry sc_topology_api_files_write, FFI write, ASCII and binary, SM_API primitives and the 12 topology.brep_mirror B-rep files), fixtures/topology.api_files/write_bytes.json (42, incl. TestSmImportExport's box) and 200 write_bytes cases from their own seeds; the round trip (op 4) is unchanged. Gate counts: to be filled from the builder's run.</p>
+<h2>Goldens</h2>
+
+<p class="muted">This is committed inventory, not a runtime result or a correctness proof.
+A golden records what solidcore produced when blessed. Current results require the
+<a href="https://github.com/tangency-labs/solidcore/actions/workflows/ci.yml">canonical CI gate</a>, not these counts.</p>
+<dl class="facts">
+<div><dt>Golden records</dt><dd>339</dd></div>
+<div><dt>Stored error outcomes</dt><dd>0</dd></div>
+<div><dt>Stored deferrals</dt><dd>0</dd></div>
+<div><dt>Stored harness rejections</dt><dd>0</dd></div>
+<div><dt>Known-failure entries</dt><dd>0</dd></div>
+</dl>
+<p>Metadata counts describe fields in the stored records; they are not passes or live failures.</p>
+
+
+<p>Source at <code>bbfa3b092</code>:
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/topology.api_files.jsonl">golden JSONL</a> ·
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/known_failing.json">known-failure list</a>.</p>
+<h2>Dependencies</h2>
+<p><strong>Depends on:</strong> <a class="chip" href="topology.brep_data.html">topology.brep_data <span class="badge s-green">green</span></a> <a class="chip" href="topology.brep_p3.html">topology.brep_p3 <span class="badge s-partial">partial</span></a> <a class="chip" href="topology.brep_p5.html">topology.brep_p5 <span class="badge s-green">green</span></a> <a class="chip" href="topology.brep_p7.html">topology.brep_p7 <span class="badge s-green">green</span></a></p>
+<p><strong>Soft dependencies:</strong> <span class="muted">none</span></p>
+<p><strong>Dependents:</strong> <a class="chip" href="topology.api_projection.html">topology.api_projection <span class="badge s-partial">partial</span></a></p>
+<p><strong>Soft dependents:</strong> <span class="muted">none</span></p>
+<h2>Upstream functions</h2>
+<p class="muted">No upstream functions listed in <code>harness/callgraph/units.json</code>.</p>
+<details><summary>Module file-header table (5 rows)</summary><div class="scroll"><table><thead><tr><th>Rust</th><th>Upstream</th></tr></thead><tbody><tr><td>[<code>read_brep_from_file</code>]</td><td><code>SmApiReadBrepFromFile</code></td></tr><tr><td>[<code>read_part_from_file</code>]</td><td><code>SmApiReadPartFromFile</code></td></tr><tr><td>[<code>write_brep_to_file</code>]</td><td><code>SmApiWriteBrepToFile</code></td></tr><tr><td>[<code>turn_to_nurbs</code>]</td><td><code>SmApiTurnToNurbs</code></td></tr><tr><td>[<code>add_curve_output_slots</code>]</td><td><code>SmApiAddCurveOutputSlots</code> (file static)</td></tr></tbody></table></div></details>
+<h2>Upstream tests reaching this unit</h2>
+<p class="tests"><code>tests/SM_API_test/src/TestSmImportExport.cpp:TestSmImportExport</code>, <code>tests/SM_API_test/src/TestSmErrorCodes.cpp:TestSmErrorCodes</code>, <code>tests/SM_API_test/src/TestSmFillets.cpp:TestSmRemoveFilletNurbsPlanes</code></p>
+
+</main>
+<footer class="wrap">Generated from <a href="https://github.com/tangency-labs/solidcore/tree/bbfa3b09294ef65febb9b3688b735e9090aef9e1"><code>bbfa3b09</code></a>
+(2026-11-14T12:32:47Z) by <code>site/build.py</code>; upstream reference <a href="https://github.com/NVIDIA-Omniverse/usd-brep/tree/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5">usd-brep v1.0.1 (<code>3fd5b95</code>)</a>.
+Apache-2.0. Not affiliated with or endorsed by NVIDIA.</footer>
+<script src="../assets/app.js"></script>
+</body>
+</html>

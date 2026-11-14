@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>surface.cone_p3 · solidcore</title>
+<meta name="description" content="surface.cone_p3 · solidcore">
+<meta name="theme-color" content="#141413">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="solidcore">
+<meta property="og:url" content="https://tangency-labs.github.io/solidcore/units/surface.cone_p3.html">
+<meta property="og:title" content="surface.cone_p3 · solidcore">
+<meta property="og:description" content="surface.cone_p3 · solidcore">
+<meta property="og:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:type" content="image/png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="surface.cone_p3 · solidcore">
+<meta name="twitter:description" content="surface.cone_p3 · solidcore">
+<meta name="twitter:image" content="https://tangency-labs.github.io/solidcore/assets/og-image.png">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="../index.html"><img src="../assets/logo.svg" alt="" width="28" height="28">solidcore</a>
+<nav><a href="../index.html">Overview</a><a href="../units/index.html" aria-current="page">Units</a><a href="../graph.html">Graph</a><a href="../solids.html">Solids</a><a href="../cases.html">Cases</a><a href="../sprints/index.html">Sprints</a><a href="../issues.html">Upstream issues</a><a href="../ssi.html">SSI corpus</a><a href="https://tangency-labs.github.io/solidcore-viewer/">Model viewer</a><a href="https://github.com/tangency-labs/solidcore">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+
+<p class="crumbs"><a href="index.html">Units</a> / <a href="../areas/surface.html">surface</a></p>
+<h1><code>surface.cone_p3</code> <span class="badge s-green">green</span></h1>
+<dl class="facts">
+<div><dt>Layer</dt><dd>29</dd></div>
+<div><dt>Upstream lines</dt><dd>1,940</dd></div>
+<div><dt>Functions</dt><dd>4</dd></div>
+<div><dt>Rust module</dt><dd><code>surface::cone::p3</code></dd></div>
+</dl>
+
+<h2>Status history</h2>
+<div class="steps" role="img" aria-label="Status history: todo from 2026-10-12, then partial from 2026-10-16, then green from 2026-10-23"><i class="st-todo" style="width:13.38%" title="todo from 2026-10-12"></i><i class="st-partial" style="width:26.95%" title="partial from 2026-10-16"></i><i class="st-green" style="width:59.67%" title="green from 2026-10-23"></i></div><div class="steps-axis small"><span>Oct 12</span><span>Nov 08</span></div><ol class="steplist"><li><time datetime="2026-10-12T18:49:09Z" data-ts="1791830949">2026-10-12 18:49 UTC</time> <span class="badge s-todo">todo</span> <span class=muted>1,939 lines</span></li><li><time datetime="2026-10-16T08:47:17Z" data-ts="1792140437">2026-10-16 08:47 UTC</time> <span class="badge s-partial">partial</span> <span class=muted>1,939 lines</span></li><li><time datetime="2026-10-23T13:59:55Z" data-ts="1792763995">2026-10-23 13:59 UTC</time> <span class="badge s-green">green</span> <span class=muted>1,939 lines</span></li></ol>
+<p>Source: <a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/solidcore/src/surface/cone/p3.rs"><code>crates/solidcore/src/surface/cone/p3.rs</code></a></p>
+<p>Upstream: <a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmCone.cpp"><code>source/SMLib/src/SmCone.cpp</code></a></p>
+<h2>Port-plan notes</h2>
+<p class="muted">These notes preserve historical port measurements and limitations, not current CI results.</p>
+<p class="notes">GREEN (PR #735, 2026-10-28, pinned SMLib 1.0.1 default): PASS surface.cone_p3 cases=1490 passed=1490 failed=0 deferred=0 max_rel_err=0e0 with_values=1474 no_values=16 vacuous=0. Retains all 1442 exact-base cases and adds 48 axial-domain fixtures; SENSITIVE 1490/1490. Kernel::fixes.cone_parallel_line_domains is an independent default-off correction for WR-259, completing the gap left by the midpoint option. Six analytic regressions and a below-midpoint overlapping-hole Boolean test verify corrected geometry independently; default native parity is unchanged. Full 261-unit sweep: 260 green, 1 existing partial, 0 failed; exact-base artifact ratchet: 0 units regressed. Evidence: plan/findings/surface.cone_p3--requested-axial-domains-735.md. Previous evidence: GREEN (2026-10-23, back-edges wired): PASS surface.cone_p3 cases=1436 passed=1436 failed=0 deferred=0 max_rel_err=0e0 with_values=1420 no_values=16 vacuous=0. Wired UNPORTED(surface.surface_p2): the coincident-cylinder boundary calls of IntersectWithCone now run Surface::intersect_surface_boundaries (on the caller's Surfaces via Cone::global_surface_intersect_on from the common dispatch, else on bare Surface copies), 30 cases; the runner's GlobalSurfaceIntersect ops go through Surface::global_surface_intersect (cone special cases, else base SmSurface::GlobalSurfaceIntersect), 5 cases. Fix needed for the 30: Surface::create_iso_boundaries now returns the typed iso curves (SmLine/SmEllipse as CreateIsoParametricCurve builds them, not their B-spline bases), so IntersectSurfaceBoundaries copies/trims lines and circles as upstream; surface.surface_p9 (779 pass, 42 deferred, unchanged) and surface.surface_p11 (806/806) re-run. PARTIAL (PR #292 / issue #276, UB-154 guard): Linux difftest 1436 cases, 1401 pass (1386 with values, 15 native-guard rejection assertions), 0 failed, 35 deferred (surface.surface_p2 35), max_rel_err 0, no absolute floors; --perturb SENSITIVE 1401/1401; 10,000-case fuzz FUZZ-PASS differs=0 (rejected=4251 malformed=2934 ran=2815). The shim replays IntersectWithCone / IntersectWithPlane up to the two seam-line smgu_LinePlaneIntersect calls of sm_GetEllipseTrimIntervals and refuses an input iff one fails (upstream then reads the uninitialised dParam); fixtures ub154.json: 7 rejections (issue fuzz00656, fuzz09540, zero-height and 0.99e-12 seams) and 13 neighbours just inside validity compared (1.13e-12 seams, axes 1.1e-6 rad apart, planes 3e-8 rad from the axis). Earlier: PARTIAL (PR #226 / issue #207; trim-domain status follow-up): Linux difftest 1416 cases, 1381 pass (1373 with values, 8 native-guard rejection assertions, Rust executed but not compared), 0 failed, 35 deferred (surface.surface_p2 typed Cone adapter 35; surface.cone_p2 wired by PR #153), max_rel_err 0, no absolute floors. Eight preserved status-1006 fuzz cases and four reduced plane intersections now pass after the GetHeight fix; two plane cases return circles. Three global fuzz cases and two valid-axis global neighbors explicitly defer on the existing general Cone adapter. The FFI accepts cone angles only within the documented [-360, 360]: far angles make native evaluation wrap one turn per iteration (HANG-1) and polar set-up never ends near 9.2e18 (HANG-23; Rust stops with NotConverged after 2^20 turns). 72 angle_bounds cases compare cones at both limits with every flag. A 10,000-case fuzz passes with no timeouts. The native guard intercepts only an attempted STEP-to-NURBS conversion with a null polar circle (UB-179), preserving defined early exits and non-null converters. Earlier evidence: PARTIAL (PR #131): 1308 difftest cases (108 fixtures + 1200 generated), 1187 pass bit-identical, 0 failed, 121 deferred (surface.cone_p2 91: sm_GetEllipseTrimIntervals; surface.surface_p2 30: Cone/Cylinder SurfaceKind adapter for the merged IntersectSurfaceBoundaries), max_rel_err 0, no absolute floors; 10108-case stress run clean (9048 pass, 1060 deferred), all 1187 default perturbations detected. Review follow-up adds optional/zero/negative/system-default tolerance fixtures, 320 native dispatch combinations and 14 constructor probes; native FFI tests are validated locally, separately from the unchanged CI workflow. Maintainer review: UB-123 documented; boundary bundles checked before duplicate removal; general fallback resets outputs. Global dispatch retains original arguments through a typed general-intersector callback until SurfaceKind can hold cones; sphere/shared Surface dispatch remains a documented gap (issue #76). 4 fns; largest: SmCone::IntersectWithPlane, SmCone::IntersectWithCone, sm_AddEllipseIntervalsTrimmedToTwoCones, SmCone::GlobalSurfaceIntersect; cycle back-edges (call into later units; stub or co-port): surface.surf_of_extrusion_p2(1), surface.surface_p11(1); unit-SCC #22 (220 units); 144 upstream test entry points reach this unit. Fuzz follow-up: reversed angle ranges snap/compare against the raw start/end angles as SmCone.cpp:3385-3390 (fixture fuzz_reversed_angle_range); IntersectWithCone ignores the ConvertUVFromSTEPToNURBS status (SmCone.cpp:2966-2967), now mirrored for a Y axis that unitizes to zero (upstream-issues WR-159; fixtures fuzz_axis_overflow_zero_y, _trimmed, _swapped). 1312 difftest cases (112 fixtures + 1200 generated), 1191 pass, 0 failed, 121 deferred [surface.cone_p2 wired (PR #153): 1312 cases, 1282 pass, 0 failed, 30 deferred (surface.surface_p2 30); --perturb SENSITIVE 1282/1282]</p>
+<h2>Goldens</h2>
+
+<p class="muted">This is committed inventory, not a runtime result or a correctness proof.
+A golden records what solidcore produced when blessed. Current results require the
+<a href="https://github.com/tangency-labs/solidcore/actions/workflows/ci.yml">canonical CI gate</a>, not these counts.</p>
+<dl class="facts">
+<div><dt>Golden records</dt><dd>1,490</dd></div>
+<div><dt>Stored error outcomes</dt><dd>16</dd></div>
+<div><dt>Stored deferrals</dt><dd>0</dd></div>
+<div><dt>Stored harness rejections</dt><dd>0</dd></div>
+<div><dt>Known-failure entries</dt><dd>0</dd></div>
+</dl>
+<p>Metadata counts describe fields in the stored records; they are not passes or live failures.</p>
+
+
+<p>Source at <code>bbfa3b092</code>:
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/surface.cone_p3.jsonl">golden JSONL</a> ·
+<a href="https://github.com/tangency-labs/solidcore/blob/bbfa3b09294ef65febb9b3688b735e9090aef9e1/crates/goldens/expected/known_failing.json">known-failure list</a>.</p>
+<h2>Dependencies</h2>
+<p><strong>Depends on:</strong> <a class="chip" href="curve.curve_p2.html">curve.curve_p2 <span class="badge s-green">green</span></a> <a class="chip" href="geom.axis2_placement.html">geom.axis2_placement <span class="badge s-green">green</span></a> <a class="chip" href="geom.extent1d.html">geom.extent1d <span class="badge s-green">green</span></a> <a class="chip" href="geom.extent2d.html">geom.extent2d <span class="badge s-green">green</span></a> <a class="chip" href="geom.extent3d.html">geom.extent3d <span class="badge s-green">green</span></a> <a class="chip" href="geom.geom_utility_p1.html">geom.geom_utility_p1 <span class="badge s-green">green</span></a> <a class="chip" href="geom.tol.html">geom.tol <span class="badge s-green">green</span></a> <a class="chip" href="geom.vector3d.html">geom.vector3d <span class="badge s-green">green</span></a> <a class="chip" href="nurbs.b_spline_curve_p1.html">nurbs.b_spline_curve_p1 <span class="badge s-green">green</span></a> <a class="chip" href="nurbs.b_spline_surface_p1.html">nurbs.b_spline_surface_p1 <span class="badge s-green">green</span></a> <a class="chip" href="surface.cone_p1.html">surface.cone_p1 <span class="badge s-green">green</span></a> <a class="chip" href="surface.cone_p2.html">surface.cone_p2 <span class="badge s-green">green</span></a> <a class="chip" href="surface.surf_of_revolution_p1.html">surface.surf_of_revolution_p1 <span class="badge s-green">green</span></a> <a class="chip" href="surface.surf_of_revolution_p3.html">surface.surf_of_revolution_p3 <span class="badge s-green">green</span></a> <a class="chip" href="surface.surface_p2.html">surface.surface_p2 <span class="badge s-partial">partial</span></a></p>
+<p><strong>Soft dependencies:</strong> <a class="chip" href="curve.curve_p4.html">curve.curve_p4 <span class="badge s-green">green</span></a> <a class="chip" href="curve.ellipse_p1.html">curve.ellipse_p1 <span class="badge s-green">green</span></a> <a class="chip" href="curve.ellipse_p2.html">curve.ellipse_p2 <span class="badge s-green">green</span></a> <a class="chip" href="curve.line.html">curve.line <span class="badge s-green">green</span></a> <a class="chip" href="geom.geom_utility_p2.html">geom.geom_utility_p2 <span class="badge s-green">green</span></a> <a class="chip" href="geom.vector2d.html">geom.vector2d <span class="badge s-green">green</span></a> <a class="chip" href="nurbs.b_spline_curve_p2.html">nurbs.b_spline_curve_p2 <span class="badge s-green">green</span></a> <a class="chip" href="surface.plane_p1.html">surface.plane_p1 <span class="badge s-partial">partial</span></a> <a class="chip" href="surface.plane_p2.html">surface.plane_p2 <span class="badge s-green">green</span></a> <a class="chip" href="surface.sphere.html">surface.sphere <span class="badge s-green">green</span></a></p>
+<p><strong>Dependents:</strong> <a class="chip" href="audit.recursion.html">audit.recursion <span class="badge s-green">green</span></a></p>
+<p><strong>Soft dependents:</strong> <span class="muted">none</span></p>
+<h2>Upstream functions</h2>
+<div class="scroll"><table class="sortable"><thead><tr><th data-sort="text">Upstream function</th><th data-sort="text">Defined at</th><th data-sort="num">Lines</th><th data-sort="text">Rust (from the file header)</th></tr></thead><tbody><tr><td><code>SmCone::GlobalSurfaceIntersect</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmCone.cpp#L2335">SmCone.cpp:2335</a></td><td class=num>111</td><td>[<code>Cone::global_surface_intersect_with</code>]</td></tr><tr><td><code>SmCone::IntersectWithCone</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmCone.cpp#L2605">SmCone.cpp:2605</a></td><td class=num>609</td><td>[<code>Cone::intersect_with_cone</code>]</td></tr><tr><td><code>SmCone::IntersectWithPlane</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmCone.cpp#L3220">SmCone.cpp:3220</a></td><td class=num>1077</td><td>[<code>Cone::intersect_with_plane</code>]</td></tr><tr><td><code>sm_AddEllipseIntervalsTrimmedToTwoCones</code></td><td><a href="https://github.com/NVIDIA-Omniverse/usd-brep/blob/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5/source/SMLib/src/SmCone.cpp#L5669">SmCone.cpp:5669</a></td><td class=num>143</td><td><code>add_ellipse_intervals_trimmed_to_two_cones</code></td></tr></tbody></table></div>
+<details><summary>Module file-header table (4 rows)</summary><div class="scroll"><table><thead><tr><th>Rust</th><th>Upstream</th></tr></thead><tbody><tr><td>[<code>Cone::intersect_with_plane</code>]</td><td><code>SmCone::IntersectWithPlane</code></td></tr><tr><td>[<code>Cone::intersect_with_cone</code>]</td><td><code>SmCone::IntersectWithCone</code></td></tr><tr><td>[<code>Cone::global_surface_intersect_with</code>]</td><td><code>SmCone::GlobalSurfaceIntersect</code></td></tr><tr><td><code>add_ellipse_intervals_trimmed_to_two_cones</code></td><td><code>sm_AddEllipseIntervalsTrimmedToTwoCones</code></td></tr></tbody></table></div></details>
+<h2>Upstream tests reaching this unit</h2>
+<p class="tests"><code>prog_test:my_test_surface_interface</code>, <code>prog_test:my_test_ssi</code>, <code>prog_test:my_test_tsurf_section</code>, <code>prog_test:my_test_planar_section</code>, <code>prog_test:my_test_section</code>, <code>prog_test:my_test_edge_geometry_repairs</code>, <code>pt_TestFiles/shovel.srf</code></p>
+
+</main>
+<footer class="wrap">Generated from <a href="https://github.com/tangency-labs/solidcore/tree/bbfa3b09294ef65febb9b3688b735e9090aef9e1"><code>bbfa3b09</code></a>
+(2026-11-14T12:32:47Z) by <code>site/build.py</code>; upstream reference <a href="https://github.com/NVIDIA-Omniverse/usd-brep/tree/3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5">usd-brep v1.0.1 (<code>3fd5b95</code>)</a>.
+Apache-2.0. Not affiliated with or endorsed by NVIDIA.</footer>
+<script src="../assets/app.js"></script>
+</body>
+</html>
