@@ -519,10 +519,13 @@ fn the_offset_refusals_are_typed() {
         super::status(up(SM_ERR_OFFSET_WALLS_TOUCH), &none),
         Error::WallsTouch
     );
-    assert!(matches!(
+    assert_eq!(
         super::status(up(SM_ERR_OFFSET_EDGE_VANISHES), &none),
-        Error::Unsupported(_)
-    ));
+        Error::OffsetRefused {
+            face: None,
+            why: crate::OffsetRefusal::EdgeVanishes,
+        }
+    );
     // the kernel's typed offset refusals (solidcore#2615)
     let refused = |o| Failure::new("test", o).into_error();
     assert_eq!(
@@ -548,7 +551,7 @@ fn the_offset_refusals_are_typed() {
         ),
         Error::WallsTouch
     );
-    assert!(matches!(
+    assert_eq!(
         super::status(
             refused(OffsetFailure::EdgeVanishes {
                 edge: None,
@@ -556,8 +559,11 @@ fn the_offset_refusals_are_typed() {
             }),
             &none,
         ),
-        Error::Unsupported(_)
-    ));
+        Error::OffsetRefused {
+            face: None,
+            why: crate::OffsetRefusal::EdgeVanishes,
+        }
+    );
     // an unresolved crossing says how it crosses (#14783), no longer a bare status
     assert_eq!(
         super::status(
@@ -786,10 +792,13 @@ fn an_unnamed_offset_refusal_keeps_the_kernels_words() {
         super::by_kind(solidcore::error::ErrorKind::OffsetFolds),
         Some(Error::WallFolds { largest: None })
     );
-    assert!(matches!(
+    assert_eq!(
         super::by_kind(solidcore::error::ErrorKind::OffsetEdgeVanishes),
-        Some(Error::Unsupported(_))
-    ));
+        Some(Error::OffsetRefused {
+            face: None,
+            why: crate::OffsetRefusal::EdgeVanishes,
+        })
+    );
     assert_eq!(super::by_kind(o.kind()), None);
     let e = Error::OffsetRefused { face: Some(2), why };
     assert_eq!(

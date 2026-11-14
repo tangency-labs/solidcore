@@ -39,9 +39,6 @@ use crate::{Error, OffsetRefusal, RecordEntity, Result, Unsoundness};
 /// The largest offset distance or wall the operations take.
 const MAX_DISTANCE: f64 = 1e6;
 
-/// What [`Error::Unsupported`] says for an offset that moves a vertex past an edge's other end.
-const EDGE_VANISHES: &str = "a vertex moved past the other end of an edge";
-
 /// An offset's kernel error as the operation's: its offset refusal where it is one
 /// ([`typed`]), else as [`crate::error::status`].
 fn status(e: SolidError, index: &dyn Fn(EntityRef) -> Option<RecordEntity>) -> Error {
@@ -68,20 +65,24 @@ fn typed(e: &SolidError, index: &dyn Fn(EntityRef) -> Option<RecordEntity>) -> O
 
 /// The operation's error for an offset refusal of `kind` that has one of its own: walls that
 /// touch ([`Error::WallsTouch`]), a wall that folds ([`Error::WallFolds`], no largest wall
-/// named), a vertex moved past an edge's other end ([`Error::Unsupported`]).
+/// named), a vertex moved past an edge's other end ([`Error::OffsetRefused`] with
+/// [`OffsetRefusal::EdgeVanishes`], no face named).
 fn by_kind(kind: ErrorKind) -> Option<Error> {
     match kind {
         ErrorKind::OffsetWallsTouch => Some(Error::WallsTouch),
         ErrorKind::OffsetFolds => Some(Error::WallFolds { largest: None }),
-        ErrorKind::OffsetEdgeVanishes => Some(Error::Unsupported(EDGE_VANISHES)),
+        ErrorKind::OffsetEdgeVanishes => Some(Error::OffsetRefused {
+            face: None,
+            why: OffsetRefusal::EdgeVanishes,
+        }),
         _ => None,
     }
 }
 
 /// The kernel's offset refusal `o` as the operation's error: walls that touch
 /// ([`Error::WallsTouch`]), a wall whose face's offset folds ([`Error::WallFolds`], with the
-/// largest wall the kernel names), a vertex moved past an edge's other end
-/// ([`Error::Unsupported`]), and every other reason as [`Error::OffsetRefused`] (#14783): why,
+/// largest wall the kernel names), and every other reason as [`Error::OffsetRefused`] (#14783,
+/// a vertex moved past an edge's other end among them, #13989): why,
 /// and the face the failure is about (`entity`, the reason's own unless the kernel set another)
 /// through `index` (`None` where it names none, or one `index` does not find), and a body that
 /// fails what its input did not with the entity its check names through `index` too
@@ -104,7 +105,7 @@ fn offset_refused(
             }
         }
         OffsetFailure::WallsTouch { .. } => return Error::WallsTouch,
-        OffsetFailure::EdgeVanishes { .. } => return Error::Unsupported(EDGE_VANISHES),
+        OffsetFailure::EdgeVanishes { .. } => OffsetRefusal::EdgeVanishes,
         // (the kernel's fold kind also covers an offset not certified regular, which is no
         // fold: its own reason, #14783)
         OffsetFailure::NotCertified { distance, .. } => OffsetRefusal::NotCertified { distance },
