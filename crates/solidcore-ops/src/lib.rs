@@ -38,6 +38,7 @@ pub mod blend_surface;
 pub mod body;
 pub mod boolean;
 pub mod cancel;
+pub mod cap;
 pub mod cell_grid;
 pub mod check;
 pub mod contact;
