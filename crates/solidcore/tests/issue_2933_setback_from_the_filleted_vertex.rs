@@ -181,12 +181,13 @@ fn the_patch_meets_the_rounds_tangentially_within_tolerance() {
     assert!(tol <= 4.0e-5 * (1.0 + 1e-9), "edge tolerance {tol}");
 }
 
-/// With the rounds as their definitions, the six patch faces
+/// With the rounds as their definitions (`fillet_round_as_definition`), the six patch faces
 /// are the Setback's fill: each keeps the Setback's definition (`procedural_blend`), which the
 /// N x N patch has not.
 #[test]
 fn with_round_definitions_the_six_patches_are_the_setback_fill() {
-    let k = Kernel::default();
+    let mut k = Kernel::default();
+    k.fixes.fillet_round_as_definition = true;
     let (_, b) = build_with(k);
     let setback = b
         .face_list()

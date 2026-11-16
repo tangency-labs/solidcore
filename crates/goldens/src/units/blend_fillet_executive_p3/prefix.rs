@@ -246,7 +246,6 @@ pub(super) fn run(
     selected: &[EdgeId],
     input: &RealSolid,
     before: &[f64],
-    certificates: Option<&mut Vec<super::Certificate>>,
 ) -> SolidResult<Vec<f64>> {
     if matches!(
         input.checkpoint,
@@ -579,9 +578,6 @@ pub(super) fn run(
         section(&mut out, &flags);
     }
     if input.checkpoint.code() >= 7 {
-        if let Some(certificates) = certificates {
-            *certificates = generated_geometry::certificates(k, &session)?;
-        }
         let (state, values) = generated_geometry::snapshot(k, &session)?;
         section(&mut out, &state);
         section(&mut out, &values);

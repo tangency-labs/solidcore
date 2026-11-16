@@ -768,8 +768,9 @@ mod tests {
         use crate::geom::global_solver::{SolutionRequested, SolverOperation};
         use crate::geom::solution_array::OperandObject;
         let requested = Extent1d::from_min_max(-12.067776972579878, 65.71806952381752);
-        {
-            let kernel = Kernel::default();
+        for pass_on in [false, true] {
+            let mut kernel = Kernel::default();
+            kernel.fixes.query_statuses_pass_on = pass_on;
             let curve = original_ellipse(&kernel);
             let handle = OperandObject::Curve(0, curve.natural_interval());
             for scale in [1.0, 2.0] {

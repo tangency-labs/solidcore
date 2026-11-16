@@ -280,31 +280,8 @@ pub(super) fn detailed_face(
     domain: Extent2d,
     notifications: &mut NotifyEnv<'_>,
 ) -> Result<FaceId> {
-    detailed_face_with_owners(
-        k,
-        b,
-        region,
-        boundary,
-        surface,
-        domain,
-        notifications,
-        &mut Vec::new(),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn detailed_face_with_owners(
-    k: &mut Kernel,
-    b: &mut Brep,
-    region: Option<RegionId>,
-    boundary: crate::topology::face::p2::FaceCurves,
-    surface: Surface,
-    domain: Extent2d,
-    notifications: &mut NotifyEnv<'_>,
-    owners: &mut Vec<Option<crate::topology::EdgeId>>,
-) -> Result<FaceId> {
     use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
-    use crate::topology::brep::p7::{make_face_with_curve_owners, FaceCurvesInput};
+    use crate::topology::brep::p7::{make_face_with_curves, FaceCurvesInput};
     let loops = boundary
         .curve_loops
         .into_iter()
@@ -327,7 +304,7 @@ pub(super) fn detailed_face_with_owners(
         loop_points: boundary.loop_points,
     };
     let key_of = notifications.key_of;
-    make_face_with_curve_owners(
+    make_face_with_curves(
         k,
         b,
         region,
@@ -337,7 +314,6 @@ pub(super) fn detailed_face_with_owners(
         OrientType::Same,
         None,
         &|face| key_of(crate::error::EntityRef::Face(face)),
-        owners,
         notifications,
     )?
     .face
@@ -946,10 +922,10 @@ impl PrimitiveCreation {
                         tolerance * 2.0,
                         Some(&other_domain),
                     )?;
-                    // Not upstream (WR-536): b's faces are rebuilt on copies of the first
-                    // surface below: one it does not cover would carry edges far off its
-                    // surface. Upstream ignores the failed cover.
-                    if !covered {
+                    // Not upstream (WR-536, opt-in): b's faces are rebuilt on copies of
+                    // the first surface below: one it does not cover would carry edges
+                    // far off its surface
+                    if k.fixes.boolean2d_plane_covers_far_faces && !covered {
                         return Err(SolidError::primitive(
                             op,
                             crate::error::primitive::PrimitiveFailure::PlaneCannotCover,
@@ -971,8 +947,8 @@ impl PrimitiveCreation {
                 for face in faces {
                     let covered =
                         cover_face_surface(k, brep, *face, &first_surface, tolerance * 2.0, None)?;
-                    // (WR-536) a plane that cannot be grown to cover the first face
-                    if !covered {
+                    // (WR-536, opt-in) a plane that cannot be grown to cover the first face
+                    if k.fixes.boolean2d_plane_covers_far_faces && !covered {
                         return Err(SolidError::primitive(
                             op,
                             crate::error::primitive::PrimitiveFailure::PlaneCannotCover,
@@ -1056,9 +1032,12 @@ fn cover_face_surface(
     brep.sync_face_surface_tolerance(face)?;
     let r = r?;
     if r.remove_uv_trim_curves_of.is_some() {
-        // (passed on: the fork's `SER` in CoverCoincidentSurface, WR-663,
-        // tangency-labs/smlib 21dcf69)
-        crate::topology::face::p1::remove_uv_trim_curves(brep, face)?;
+        // (passed on with the opt-in fix: the fork's `SER` in CoverCoincidentSurface,
+        // WR-663, tangency-labs/smlib 21dcf69)
+        ignore_or_pass_on(
+            crate::topology::face::p1::remove_uv_trim_curves(brep, face),
+            k.fixes.query_statuses_pass_on,
+        )?;
     }
     Ok(r.success)
 }
@@ -1498,7 +1477,7 @@ pub fn analytic_rotational_sweep(
     use crate::curve::line::Line;
     use crate::geom::geom_utility::p1::{line_closest_point, line_point_distance};
     use crate::geom::solution_array::SolutionType;
-    use crate::math::EFF_ZERO_SQRT;
+    use crate::math::{Vec3, EFF_ZERO_SQRT};
     let op = "primitive::primitive_creation::p1::analytic_rotational_sweep";
     // fork c8f6a31 (WR-662): AdjustSTEPUVDomain, GlobalCurveIntersect and
     // ComputeCrvsNormal are SER.
@@ -1671,11 +1650,11 @@ pub fn analytic_rotational_sweep(
             }
             let (major, param) = line_point_distance(axis_base, axis, frame.origin());
             let origin = axis_base + axis * param;
-            let (normal, status) = crate::curve::curve::p3::compute_crvs_normal_written(
-                k,
-                core::slice::from_ref(curve),
-            )?;
-            crate::error::status_passed_on(status, p)?;
+            let normal = ignored_or_pass_on(
+                crate::curve::curve::p3::compute_crvs_normal(k, core::slice::from_ref(curve)),
+                p,
+            )?
+            .unwrap_or(Vec3::UNDEF);
             let frame = Axis2Placement::new(origin, normal, normal.cross(axis));
             if let Some(torus) = ignored(Torus::create_canonical(
                 k,

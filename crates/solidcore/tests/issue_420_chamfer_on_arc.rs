@@ -91,7 +91,9 @@ use solidcore::SolidError;
 
 /// The section generator and rounds (and chamfers) as their definitions.
 fn definition_kernel() -> Kernel {
-    Kernel::default()
+    let mut k = Kernel::default();
+    k.fixes.fillet_round_as_definition = true;
+    k
 }
 
 /// A cylinder of radius 5 and height 10 on the origin, its top rim chamfered by `size`:

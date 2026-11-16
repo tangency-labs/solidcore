@@ -14,9 +14,6 @@
     clippy::indexing_slicing
 )] // test helpers
 
-#[path = "support/volume_leak.rs"]
-mod volume_leak;
-
 use solidcore::boolean::api_brep::boolean_difference;
 use solidcore::curve::curve::Curve;
 use solidcore::geom::assert_array::labels;
@@ -111,33 +108,13 @@ fn wr_450_box_minus_rational_cylinder_is_valid_only_with_the_fix() {
         let block = create_box(&mut k, Point3::new(-14.0, 0.0, -14.0), 28.0, 20.0, 28.0).unwrap();
         let mut r = boolean_difference(&mut k, block, cylinder).unwrap();
 
-        // six faces either way; the closed-form volume with the fix. Without it the body is
-        // invalid (below): its edges carry tolerances up to 0.78 to cover trims that point
-        // off them, so its volume is defined only up to its tolerance volume (faces' area
-        // times tolerance, the edges' tubes and the vertices' balls; #16735: the volume
-        // closed onto the edges is 8502.78, 1.2e-3 over the closed form; until then the
-        // integrator took the trims' 8492.58). It is held to the closed form within that.
+        // the same body either way: six faces and the closed-form volume
         assert_eq!(r.face_list().len(), 6, "fix {fix}");
         let got = volume(&k, &mut r);
-        if fix {
-            assert!(
-                (got - want).abs() <= 1e-6 * want,
-                "fix {fix}: volume {got}, closed form {want}"
-            );
-        } else {
-            let slack = volume_leak::tolerance_volume(&k, &mut r);
-            eprintln!(
-                "fix {fix}: volume {got} - closed form {want} = {:.3e}, tolerance volume \
-                 {slack:.3e}",
-                got - want
-            );
-            assert!(
-                (got - want).abs() <= slack,
-                "fix {fix}: volume {got}, closed form {want}: {:.3e} past the tolerance \
-                 volume {slack:.3e}",
-                (got - want).abs()
-            );
-        }
+        assert!(
+            (got - want).abs() <= 1e-6 * want,
+            "fix {fix}: volume {got}, closed form {want}"
+        );
 
         let worst_edge = r
             .edge_list()

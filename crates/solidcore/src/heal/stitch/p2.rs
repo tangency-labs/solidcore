@@ -486,7 +486,10 @@ impl Stitch<'_> {
                 // when face is a lamina sliver
                 if face_is_lamina(b, f)? && face_is_degenerate(k, b, f, true, Some(zone_tol))? {
                     // delete Face and its boundary edges and vertices from the Brep
-                    self.edit_delete_face(k, b, f, true, true, None, None)?;
+                    ignore_status(crate::error::passed_on(
+                        self.edit_delete_face(k, b, f, true, true, None, None),
+                        k.fixes.brep_edit_statuses_pass_on,
+                    )?)?;
                 }
             }
         }
@@ -580,10 +583,12 @@ impl Stitch<'_> {
 
             // Check for Vertices coincident with Edges if asked.
             if self.split_edges_with_vertices {
-                // get modified Brep Bounding box (status not checked upstream; passed on
-                // here, WR-658)
-                let brep_bbox =
-                    qbrep::calculate_bounding_box(k, &mut *b, BoundingBoxOptions::default())?;
+                // get modified Brep Bounding box (status not checked)
+                let brep_bbox = ignored(crate::error::passed_on(
+                    qbrep::calculate_bounding_box(k, &mut *b, BoundingBoxOptions::default()),
+                    k.fixes.brep_edit_statuses_pass_on,
+                )?)?
+                .unwrap_or_default();
 
                 // build modified Brep Edge spatial tree (lNumPerNode only sizes the
                 // memory blocks)
@@ -1577,31 +1582,40 @@ impl Stitch<'_> {
                     let mid = (vertex::point(b, v)? + vertex::point(b, new_v)?) * 0.5;
                     self.edit_set_point(k, b, v, mid)?;
 
-                    // (status not checked upstream; passed on here, WR-658)
-                    self.edit_glue_vertices(k, b, v, new_v, None)?;
+                    // (status not checked)
+                    ignore_status(crate::error::passed_on(
+                        self.edit_glue_vertices(k, b, v, new_v, None),
+                        k.fixes.brep_edit_statuses_pass_on,
+                    )?)?;
                     out.processed.push(v);
                     set_none(verts, ii)?;
 
                     // Set max distance.
                     out.max_vertex_gap = smos_max(out.max_vertex_gap, dist_to_edge);
 
-                    // (statuses not checked upstream; passed on here, WR-658)
-                    update_object_tolerance(
-                        k,
-                        b,
-                        Some(TopologyToUpdate::Vertex(v)),
-                        dist_to_edge,
-                        0.0,
-                        false,
-                    )?;
-                    update_object_tolerance(
-                        k,
-                        b,
-                        Some(TopologyToUpdate::Edge(e)),
-                        dist_to_edge,
-                        0.0,
-                        false,
-                    )?;
+                    // (statuses not checked)
+                    ignore_status(crate::error::passed_on(
+                        update_object_tolerance(
+                            k,
+                            b,
+                            Some(TopologyToUpdate::Vertex(v)),
+                            dist_to_edge,
+                            0.0,
+                            false,
+                        ),
+                        k.fixes.brep_edit_statuses_pass_on,
+                    )?)?;
+                    ignore_status(crate::error::passed_on(
+                        update_object_tolerance(
+                            k,
+                            b,
+                            Some(TopologyToUpdate::Edge(e)),
+                            dist_to_edge,
+                            0.0,
+                            false,
+                        ),
+                        k.fixes.brep_edit_statuses_pass_on,
+                    )?)?;
                 } else if split.reason == SplitReason::FarFromGeom {
                     // Set min distance, if it didn't split due to being too far away
                     // (as opposed to being at a vertex).
@@ -1615,14 +1629,17 @@ impl Stitch<'_> {
                     out.new_edges.push(new_e);
 
                     let e_tol = edge::tolerance(b, e)?;
-                    update_object_tolerance(
-                        k,
-                        b,
-                        Some(TopologyToUpdate::Edge(new_e)),
-                        dist_to_edge,
-                        e_tol,
-                        false,
-                    )?;
+                    ignore_status(crate::error::passed_on(
+                        update_object_tolerance(
+                            k,
+                            b,
+                            Some(TopologyToUpdate::Edge(new_e)),
+                            dist_to_edge,
+                            e_tol,
+                            false,
+                        ),
+                        k.fixes.brep_edit_statuses_pass_on,
+                    )?)?;
 
                     // Also add to main Edges list: might still need processing here.
                     edges.push(Some(new_e));

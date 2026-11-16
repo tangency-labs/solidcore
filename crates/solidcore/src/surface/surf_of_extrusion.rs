@@ -8,7 +8,6 @@
 
 pub mod p1;
 pub mod p2;
-mod plane_patch;
 
 pub use p1::{CurveOrientType, GeneratorIntersection, SurfOfExtrusion};
 pub use p2::{ExtrusionIntersection, IntersectTarget};

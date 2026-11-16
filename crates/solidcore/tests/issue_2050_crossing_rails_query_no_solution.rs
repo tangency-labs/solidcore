@@ -13,6 +13,7 @@ use std::f64::consts::PI;
 
 use solidcore::blend::fillet_executive::session::FilletSession;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
+use solidcore::geom::object::ObjectRef;
 use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
 use solidcore::topology::brep::p10::TopologyEnv;
 use solidcore::topology::brep::p3::brep_copy;
@@ -20,7 +21,7 @@ use solidcore::topology::brep::p7::read_from_file;
 use solidcore::topology::database_io::FileType;
 use solidcore::topology::topology::NotifyRecords;
 use solidcore::topology::{edge, vertex, EdgeId};
-use solidcore::{Brep, Kernel, Result};
+use solidcore::{Brep, EntityRef, Kernel, Result};
 
 /// The top loop's edges, in the order the issue passes them.
 const TOP_LOOP: [u32; 8] = [20, 15, 1, 21, 23, 11, 7, 22];
@@ -31,7 +32,10 @@ fn body(k: &mut Kernel) -> Brep {
     let mut b = Brep::new_with_infinite_region().unwrap();
     let mut records = NotifyRecords::new();
     let mut attributes = AttributeStore::default();
-    let key = solidcore::topology::loopuse::notify_ref;
+    let key = |_: EntityRef| ObjectRef {
+        key: ObjectKey(0),
+        type_code: 0,
+    };
     let mut env = TopologyEnv {
         all_attributes: &[],
         attributes: &mut attributes,

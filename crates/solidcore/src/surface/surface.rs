@@ -10,7 +10,6 @@
 pub mod approximate;
 pub mod assert_valid;
 pub mod exact_pieces;
-pub mod fold_certificate;
 pub mod p1;
 pub mod p10;
 pub mod p11;

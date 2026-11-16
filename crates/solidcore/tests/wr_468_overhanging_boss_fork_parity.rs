@@ -1,7 +1,7 @@
-//! Overhanging bosses rounded with the fork's Nx1 corner fixes, now unconditional: WR-499
-//! (420e47d, part of WR-457's skip) and WR-457 (its flag `fillet_nx1_tangent_side_edge`
-//! is removed), without which a boss's base arc that runs on past a wall as the
-//! overhang's rim fails at its corner (#1021). These cases were written for
+//! Overhanging bosses rounded with the fork's Nx1 corner fixes on: WR-499
+//! (`fillet_nx1_opposite_continuation_side_edge`, 420e47d) and WR-457
+//! (`fillet_nx1_tangent_side_edge`), without which a boss's base arc that runs on past a
+//! wall as the overhang's rim fails at its corner (#1021). These cases were written for
 //! WR-468 (`fillet_through_extended_rail_end`, the fork's tangency-labs/smlib@d33890f),
 //! which is removed (#2500); both rounded the same with and without it.
 //!
@@ -42,9 +42,12 @@ fn volume(k: &Kernel, b: &mut Brep) -> f64 {
     brep_volume(k, b, 1e-9, &attrs).unwrap()
 }
 
-/// The default kernel, where the fork's Nx1 corner fixes are unconditional.
+/// The fork's Nx1 corner fixes on.
 fn kernel() -> Kernel {
-    Kernel::default()
+    let mut k = Kernel::default();
+    k.fixes.fillet_nx1_opposite_continuation_side_edge = true;
+    k.fixes.fillet_nx1_tangent_side_edge = true;
+    k
 }
 
 /// The distance from `p` to edge `e`, over 4001 points along it.

@@ -35,11 +35,7 @@
 //! built on those routines (`BSplineCurve`, `BSplineSurface`: fitting, skinning, Coons
 //! patches, trimming, evaluation); upstream they return an `SmStatus` (`SER(SM_ERR)`,
 //! `NER(...)`), which each records as its comparison status. A method whose NLib call
-//! fails keeps that call's failure as its cause ([`BSplineFailure::RoutineFailed`]). A
-//! check that refuses builds a typed cause with its numbers ([`BSplineFailure::EndsApart`],
-//! ...); a stage that fails with no reason the kernel names is a
-//! [`BSplineFailure::StageFailed`], a defect ([`ErrorKind::StageFailed`], #15034), keeping
-//! the error of the call it made as its cause where it has one.
+//! fails keeps that call's failure as its cause ([`BSplineFailure::RoutineFailed`]).
 //!
 //! Deviations: not upstream. A failure of a routine that has the data (a degree, an
 //! index, a parameter and its domain) carries it; the others are unit variants, and the
@@ -172,23 +168,8 @@ pub enum BSplineFailure {
         /// The end of the domain.
         hi: f64,
     },
-    /// The method failed, as the phrase says (e.g. "the end tangent is not given"): a site
-    /// not yet converted to a typed cause.
+    /// The method failed, as the phrase says (e.g. "the end tangent is not given").
     Failed(&'static str),
-    /// The curve's ends coincide (it is closed), so no scaling takes one end to the other.
-    EndsCoincide,
-    /// The ends to join are `distance` apart, farther than the tolerance.
-    EndsApart {
-        /// The distance between the ends.
-        distance: f64,
-        /// The tolerance they must be within.
-        tolerance: f64,
-    },
-    /// A stage of the method failed with no reason the kernel names: a defect
-    /// ([`ErrorKind::StageFailed`]). The failure holds the operation, the status the C++
-    /// reports (for the goldens only), where it was built, and the error of the call it made
-    /// where it has one.
-    StageFailed,
 }
 
 impl BSplineFailure {
@@ -201,14 +182,10 @@ impl BSplineFailure {
         }
     }
 
-    /// The failure's stable [`ErrorKind`]: [`ErrorKind::StageFailed`] for
-    /// [`BSplineFailure::StageFailed`], a defect; the kind of its status otherwise.
+    /// The failure's stable [`ErrorKind`].
     #[must_use]
     pub const fn kind(&self) -> ErrorKind {
-        match self {
-            Self::StageFailed => ErrorKind::StageFailed,
-            _ => ErrorKind::of_status(self.comparison_status()),
-        }
+        ErrorKind::of_status(self.comparison_status())
     }
 }
 
@@ -229,15 +206,6 @@ impl core::fmt::Display for BSplineFailure {
                 )
             }
             Self::Failed(what) => f.write_str(what),
-            Self::EndsCoincide => f.write_str("the curve's ends coincide"),
-            Self::EndsApart {
-                distance,
-                tolerance,
-            } => write!(
-                f,
-                "the ends to join are {distance} apart, farther than the tolerance {tolerance}"
-            ),
-            Self::StageFailed => write!(f, "{}", ErrorKind::StageFailed),
         }
     }
 }
@@ -385,9 +353,8 @@ impl crate::SolidError {
     /// [`crate::SolidError::Failed`] for a B-spline curve or surface method that fails
     /// with `failure`.
     #[must_use]
-    #[track_caller]
     pub(crate) fn b_spline(operation: &'static str, failure: BSplineFailure) -> Self {
-        Failure::new(operation, NurbsFailure::BSpline(failure)).into_error()
+        Self::nurbs(operation, NurbsFailure::BSpline(failure))
     }
 
     /// Maps the error of a failed NLib call inside a B-spline method (upstream
@@ -429,30 +396,6 @@ pub use super::upstream_status;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::SolidError;
-
-    #[test]
-    fn a_stage_failure_is_a_defect_and_a_typed_cause_keeps_its_status() {
-        super::super::tests::assert_stage_failure(
-            &SolidError::b_spline("nurbs::op", BSplineFailure::StageFailed),
-            "nurbs::op",
-            SM_ERR,
-        );
-        for cause in [
-            BSplineFailure::EndsCoincide,
-            BSplineFailure::EndsApart {
-                distance: 0.5,
-                tolerance: 0.01,
-            },
-        ] {
-            let e = SolidError::b_spline("nurbs::op", cause);
-            assert_eq!(e.upstream_status(), Some(SM_ERR), "{cause:?}");
-            assert_eq!(e.kind(), ErrorKind::Failed, "{cause:?}");
-            assert!(!e.is_defect() && e.is_status_answer(), "{cause:?}");
-        }
-    }
-
     /// The NURBS routines describe their failures: their library code builds no bare
     /// `Upstream` status, except the files listed (with the bare sites each may still hold)
     /// whose conversion waits on other open work.
@@ -460,7 +403,10 @@ mod tests {
     fn the_nurbs_routines_build_no_bare_statuses() {
         assert_eq!(
             super::super::query::tests::bare_statuses_in("nurbs", 60),
-            [("nurbs/b_spline_curve/p1.rs".to_owned(), 23)]
+            [
+                ("nurbs/b_spline_curve/p1.rs".to_owned(), 23),
+                ("nurbs/b_spline_curve/p3.rs".to_owned(), 5),
+            ]
         );
     }
 }

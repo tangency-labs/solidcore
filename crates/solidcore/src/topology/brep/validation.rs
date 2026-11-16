@@ -29,14 +29,12 @@ pub(crate) mod spatial;
 mod wide_vertices;
 
 pub use assert_valid::{
-    assert_valid, assert_valid_scoped, check_brep, check_brep_scoped, check_brep_with_keys,
-    check_brep_with_keys_scoped, curve_assert_valid, validate_and_update_tolerances, BrepCheck,
-    CheckLevel, FailureClass, ToleranceGaps, ValidityScope,
+    assert_valid, check_brep, check_brep_with_keys, curve_assert_valid,
+    validate_and_update_tolerances, BrepCheck, CheckLevel, FailureClass, ToleranceGaps,
 };
 pub use coincidence::{contains_coincident_topology, CoincidenceResult};
 pub(crate) use pointers::validate_geometry;
-pub(crate) use pointers::validate_pointers_excluding;
-pub use pointers::{edge_tube_reaches, validate_pointers, vertex_ball_reaches};
+pub use pointers::validate_pointers;
 pub(crate) use soundness::lost_manifold;
 pub use soundness::{soundness, standing, volume_sign, Soundness, Standing};
 pub use wide_vertices::update_tolerances_after_boolean;
@@ -112,7 +110,6 @@ fn object_info(b: &Brep, object: Object) -> Result<(ObjectKey, i64, &'static str
 struct Reports<'a> {
     array: Option<&'a mut AssertArray>,
     level: u8,
-    failed: bool,
 }
 
 impl Reports<'_> {
@@ -180,7 +177,6 @@ impl Reports<'_> {
         tol: f64,
         value: f64,
     ) -> Result<bool> {
-        self.failed |= !passed;
         let Some(array) = self.array.as_deref_mut() else {
             return Ok(passed);
         };

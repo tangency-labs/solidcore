@@ -15,8 +15,9 @@
 //! | the stop in `FilletExecutive::refuse_blends_larger_than_faces` | the `m_bClassifyOnly` / `m_bOverflowFirst` stop of `CreateFilletBrep` |
 //!
 //! Deviations: both settings are per session and off by default, so a session that does
-//! not set them is unchanged. They act where the fork's rail classification runs
-//! (`FilletExecutive::refuse_blends_larger_than_faces`).
+//! not set them is unchanged. They act only where the fork's rail classification runs in
+//! the port, with `fixes.fillet_refuse_rails_leaving_faces` and
+//! `fixes.fillet_cliff_overflow` on; without those flags the session builds as before.
 //! The stop is reported as `FilletErrorType::OverflowFirst` (11; the fork's
 //! `SM_FILERR_OVERFLOW_FIRST`). The overflowing edges come back as target edge ids
 //! rather than a pointer array. The ordering itself (blend the edges that overflow on
@@ -49,7 +50,8 @@ impl FilletSession<'_> {
     /// refusal of the cliff overflow applies: none adds material, none rounds into the
     /// body's material), `do_fillet` stops after classifying the rails, building nothing,
     /// with [`crate::blend::fillet_geom::p1::FilletErrorType::OverflowFirst`] in
-    /// [`Self::error_info`] and the overflowing edges in [`Self::overflow_edges`].
+    /// [`Self::error_info`] and the overflowing edges in [`Self::overflow_edges`]. Acts only
+    /// with `fixes.fillet_refuse_rails_leaving_faces` and `fixes.fillet_cliff_overflow`.
     /// Preparing the edges keeps it.
     pub fn set_overflow_first(&mut self, first: bool) {
         self.executive.set_overflow_first(first);
@@ -87,7 +89,7 @@ impl FilletSession<'_> {
     /// of each two blends mitred at a face's concave corner (an Nx2 corner whose
     /// `IsMitre` is set), two by two in corner order; empty otherwise (preparing the edges
     /// clears them). Mitres at such corners come from
-    /// the mixed-convexity mitre (WR-642) or a corner set to bevel.
+    /// `fixes.fillet_mitre_concave_face_corners` (WR-642) or a corner set to bevel.
     #[must_use]
     pub fn mitred_edges(&self) -> Vec<EdgeId> {
         self.executive

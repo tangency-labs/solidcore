@@ -14,7 +14,6 @@
 //! | [`DefeatureFailure::ExtensionRefused`]       | `SM_ERR` (WR-656)        |
 //! | [`DefeatureFailure::TangentNeighbours`]      | `SM_ERR` (WR-656)        |
 //! | [`DefeatureFailure::NotEnclosed`]            | `SM_ERR` (WR-656)        |
-//! | [`DefeatureFailure::ExtensionWithinTolerance`] | `SM_ERR` (WR-656)      |
 //!
 //! Deviations: not upstream. The failure's entity is the base loop edge of the hole the
 //! kept feature would have left open.
@@ -51,20 +50,6 @@ pub enum DefeatureFailure {
         /// How far the faces were extended, when the patch was built in this call.
         extended_by: Option<f64>,
     },
-    /// The faces along the loop, extended by `extended_by`, do not enclose it, and the
-    /// extension is no longer than `identity_radius`: the distance within which a vertex of
-    /// the loop and a vertex of the patch are one point (their zone tolerances summed, the
-    /// largest over the loop's vertices). The extended boundary is then the same point set
-    /// as the face's own to the kernel, so the extension is no feature it can resolve: an
-    /// extension longer than `identity_radius` is needed (argued from the identity radius,
-    /// not proved for every input; not sufficient either). The refusal is named so only after
-    /// the patch failed to enclose its loop.
-    ExtensionWithinTolerance {
-        /// How far the faces were extended.
-        extended_by: f64,
-        /// The identity radius at the loop's vertices: extend by more than this.
-        identity_radius: f64,
-    },
 }
 
 impl DefeatureFailure {
@@ -75,8 +60,7 @@ impl DefeatureFailure {
             Self::LoopNotPlanar
             | Self::ExtensionRefused { .. }
             | Self::TangentNeighbours { .. }
-            | Self::NotEnclosed { .. }
-            | Self::ExtensionWithinTolerance { .. } => SM_ERR,
+            | Self::NotEnclosed { .. } => SM_ERR,
         }
     }
 
@@ -87,8 +71,7 @@ impl DefeatureFailure {
             Self::LoopNotPlanar
             | Self::ExtensionRefused { .. }
             | Self::TangentNeighbours { .. }
-            | Self::NotEnclosed { .. }
-            | Self::ExtensionWithinTolerance { .. } => ErrorKind::Unsupported,
+            | Self::NotEnclosed { .. } => ErrorKind::Unsupported,
         }
     }
 }
@@ -114,15 +97,6 @@ impl core::fmt::Display for DefeatureFailure {
             Self::NotEnclosed { extended_by: None } => {
                 f.write_str("the faces along the loop, extended, do not enclose it")
             }
-            Self::ExtensionWithinTolerance {
-                extended_by,
-                identity_radius,
-            } => write!(
-                f,
-                "the faces along the loop, extended by {extended_by}, do not enclose it: the \
-                 extension is within {identity_radius}, where the loop's vertices are one point \
-                 with the patch's; extend by more than {identity_radius}"
-            ),
         }
     }
 }
