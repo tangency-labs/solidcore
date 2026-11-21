@@ -154,6 +154,8 @@ impl FilletSession<'_> {
                 *slot = Some(copy);
             }
         }
+        // Mark the solver as ending on outline so corner processing knows not to create section ends
+        self.objects.solver_mut(id)?.base_mut().ends_on_outline = true;
         Ok(())
     }
 }

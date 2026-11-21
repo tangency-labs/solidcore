@@ -1646,15 +1646,16 @@ impl FilletCorner {
     ///
     /// # Errors
     /// Those of [`FilletCorner::drop_end_rib`].
-    pub fn drop_end_rib_for_global_merge(
+    pub fn drop_end_rib_for_global_merge<'a>(
         &mut self,
         k: &mut Kernel,
         target: &mut Brep,
         pseudo: &mut FilletBrep,
+        solver: impl Fn(FilletSolverId) -> Result<&'a FilletSolver>,
     ) -> Result<bool> {
         let mut no_open_ends = |_, _, _, _| Ok(());
         Ok(
-            self.drop_end_rib(k, target, pseudo, false, false, &mut no_open_ends)?
+            self.drop_end_rib(k, target, pseudo, false, false, &mut no_open_ends, solver)?
                 == EndRibDrop::GlobalMerge,
         )
     }
@@ -1686,7 +1687,7 @@ impl FilletCorner {
     /// for an open end whose end face is a face of the filleted edge; those of the
     /// drops, the surface coincidence test and the deletion.
     #[allow(clippy::too_many_lines)] // one fork routine
-    pub fn drop_end_rib(
+    pub fn drop_end_rib<'a>(
         &mut self,
         k: &mut Kernel,
         target: &mut Brep,
@@ -1694,6 +1695,7 @@ impl FilletCorner {
         cliff_overflow: bool,
         tangent_ends: bool,
         note_open_end: &mut dyn FnMut(EdgeuseId, VertexId, FaceId, bool) -> Result<()>,
+        solver: impl Fn(FilletSolverId) -> Result<&'a FilletSolver>,
     ) -> Result<EndRibDrop> {
         const OP: &str = "blend::fillet_corner::p1::drop_end_rib";
         let [end_rib] = self.edges[..] else {
@@ -1868,10 +1870,21 @@ impl FilletCorner {
                 .vertex
                 .ok_or_else(|| SolidError::blend_missing(OP, "the corner's vertex"))?;
             if self.runs_on_past_fillet(k, target, pseudo, fil_eu, side_edge, vertex, miss_fv)? {
-                note_open_end(fil_eu, vertex, other_face, true)?;
-                pseudo.delete_wire_fillet_edge(k, end_rib)?;
-                self.edges.clear();
-                return Ok(EndRibDrop::OpenEnd);
+                // Not upstream (solidcore-native, WR-730): if the solver ends on outline,
+                // skip creating a section end; the round ends on the outline instead.
+                let fg = pseudo.fillet_edgeuse(fil_eu)?.fillet_geom.ok_or_else(|| {
+                    SolidError::blend_missing(OP, "the fillet edge use's fillet geometry")
+                })?;
+                let solver_id = pseudo.geom(fg)?.solver.ok_or_else(|| {
+                    SolidError::blend_missing(OP, "the fillet geometry's solver")
+                })?;
+                let fil_solver = solver(solver_id)?;
+                if !fil_solver.ends_on_outline {
+                    note_open_end(fil_eu, vertex, other_face, true)?;
+                    pseudo.delete_wire_fillet_edge(k, end_rib)?;
+                    self.edges.clear();
+                    return Ok(EndRibDrop::OpenEnd);
+                }
             }
         }
         if cliff_overflow {
@@ -1985,7 +1998,12 @@ impl FilletCorner {
     /// failed edge the merge cannot absorb; `SM_ERR_NULL_POINTER` for a processed edge
     /// without curve; those of the squeeze.
     pub fn calc_corner_edge_geom(&mut self, env: &mut CornerEnv<'_>) -> Result<()> {
-        if self.drop_end_rib_for_global_merge(env.k, env.target, env.pseudo)? {
+        const OP: &str = "blend::fillet_corner::p1::calc_corner_edge_geom";
+        if self.drop_end_rib_for_global_merge(env.k, env.target, env.pseudo, |id| {
+            env.solvers.get(id.0 as usize).ok_or_else(|| {
+                SolidError::invalid_input(OP, "solver id past the list")
+            })
+        })? {
             env.exec.do_global_merge = true;
         }
         self.calc_corner_edge_geom_with(

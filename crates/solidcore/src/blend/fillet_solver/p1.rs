@@ -712,6 +712,8 @@ pub struct FilletSolver {
     /// (`ball_section_at`) is solved, extended past it (as upstream) for every other solve, the
     /// trace's included.
     pub seam_domain: SeamDomain,
+    /// Not upstream (solidcore-native, WR-730): whether the fillet ends on an outline edge.
+    pub ends_on_outline: bool,
 }
 
 impl FilletSolver {
@@ -760,6 +762,7 @@ impl FilletSolver {
             rolled_faces: [None, None],
             rollover_proof: RolloverProof::AfterTrace,
             seam_domain: SeamDomain::Extended,
+            ends_on_outline: false,
             chamfer: None,
             law_corner_pieces: Vec::new(),
         }

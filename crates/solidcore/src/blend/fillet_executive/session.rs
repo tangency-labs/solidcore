@@ -3386,8 +3386,14 @@ impl CornerEdgeAccess<FilletObject> for SessionObjects<'_> {
             }
         } else {
             // WR-674: a round's end where its edge runs on tangentially is left open too.
-            let dropped =
-                corner.drop_end_rib(k, target, pseudo, cliff_overflow, true, &mut note_open_end)?;
+            let dropped = corner.drop_end_rib(
+                k, target, pseudo, cliff_overflow, true, &mut note_open_end,
+                |id| solvers
+                    .get(id.0 as usize)
+                    .ok_or_else(|| SolidError::blend_missing("drop_end_rib", "solver slot"))
+                    .and_then(|s| s.as_ref().ok_or_else(|| SolidError::blend_missing("drop_end_rib", "solver slot empty")))
+                    .map(|s| s.base()),
+            )?;
             executive.open_ends.append(&mut open_ends);
             if dropped == EndRibDrop::GlobalMerge {
                 executive.options.global_merge = true;
