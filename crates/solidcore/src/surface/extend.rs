@@ -731,8 +731,8 @@ fn solve(
     };
     // the longest ask known to give positive weights, and the shortest known not to
     let (good, bad) = (Cell::new(0.0_f64), Cell::new(f64::INFINITY));
-    // an ask, or the longest positive one below it when its weights are not: the ask made,
-    // its surface and its across length
+    // An ask and its measured extension. If the candidate cannot be built, bisect until
+    // a buildable candidate is proved to reach d or the buildable range is exhausted.
     let try_ask = |e: f64| -> Result<Option<Asked>> {
         let e = if e >= bad.get() {
             0.5 * (good.get() + bad.get())
@@ -746,14 +746,20 @@ fn solve(
             return Ok(Some((e, s, b)));
         }
         bad.set(e);
-        // the longest positive ask, by halving between it and the last good one
         let (mut lo, mut hi) = (good.get(), e);
         for _ in 0..BISECTIONS {
             let m = (0.5 * (lo + hi)).max(least);
             if !(m > lo && m < hi) {
                 break;
             }
-            if made(m)?.is_some() {
+            if let Some(s) = made(m)? {
+                let b = across(&s.0)?;
+                if matches!(says(b.as_ref(), s.1, d), Says::Met | Says::Past(_)) {
+                    // This candidate meets d or supplies the upper length bracket.
+                    good.set(m);
+                    bad.set(hi);
+                    return Ok(Some((m, s, b)));
+                }
                 lo = m;
             } else {
                 hi = m;
