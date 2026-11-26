@@ -1012,6 +1012,18 @@ impl Surface {
         if !(rel > 0.0 && rel < 1.0) {
             return Err(SolidError::invalid_input(OP_LENGTH, "rel is not in (0, 1)"));
         }
+        self.enclose_length_across_side(k, dom, side, Some(rel))
+    }
+
+    /// With no relative precision requested, enclose the length with the original Bézier
+    /// pieces' chords and control polygons, including the same rounding bounds.
+    pub(super) fn enclose_length_across_side(
+        &self,
+        k: &Kernel,
+        dom: &Extent2d,
+        side: BoxSide,
+        rel: Option<f64>,
+    ) -> Result<Across> {
         if matches!(self.kind(), SurfaceKind::ProceduralBlend(_)) {
             return Err(SolidError::invalid_input(
                 OP_LENGTH,
@@ -1173,7 +1185,7 @@ impl Surface {
                     .zip(pts.iter().skip(1))
                     .map(|(a, b)| a.distance(*b))
                     .sum();
-                if q - c > rel * c {
+                if rel.is_some_and(|rel| q - c > rel * c) {
                     if b - a > f64::EPSILON {
                         let m = 0.5 * (a + b);
                         work.push((m, b));

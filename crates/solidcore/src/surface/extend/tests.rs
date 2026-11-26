@@ -63,6 +63,60 @@ fn quarter() -> Surface {
     )
 }
 
+/// The quarter-circle iso has length pi and control polygon length 4. Above 4 the
+/// midpoint is already proved short; between pi and 4 the length needs refinement.
+#[test]
+fn a_midpoint_discards_only_a_length_proved_short_of_the_stop() {
+    let k = k();
+    let at = Extent2d::from_bounds(0.0, 0.0, 0.0, 1.0);
+    let measure = SideMeasure {
+        k: &k,
+        at: &at,
+        side: BoxSide::UMax,
+    };
+    let s = Some(quarter());
+    let coarse = measure.midpoint(s.as_ref(), 5.0).unwrap().unwrap();
+    assert!(coarse.enclosure.lower <= PI && coarse.enclosure.upper >= 4.0 - 1e-12);
+    assert!(matches!(says(Some(&coarse), 0.0, 5.0), Says::Short(_)));
+    let full = measure.across(s.as_ref(), Some(REL)).unwrap().unwrap();
+    assert!(full.enclosure.lower <= PI && full.enclosure.upper >= PI);
+    for target in [PI, 3.5, coarse.enclosure.upper * (1.0 + 0.5 * ROUNDING)] {
+        assert_eq!(measure.midpoint(s.as_ref(), target).unwrap(), Some(full));
+    }
+}
+
+/// A construction whose across length is sqrt(ask), buildable up to ask = 0.8.
+/// Scaling a past ask by target / length keeps landing above the root. The
+/// bisection that found 0.75 already proved 0.5 short, so it brackets the root.
+#[test]
+fn a_short_midpoint_brackets_the_root_with_the_first_past_midpoint() {
+    let k = k();
+    let face = Extent2d::from_bounds(0.0, 0.0, 0.0, 1.0);
+    let measure = SideMeasure {
+        k: &k,
+        at: &face,
+        side: BoxSide::UMax,
+    };
+    let strip = |length| {
+        let row = |x| vec![[x, 0.0, 0.0, 1.0], [x, 1.0, 0.0, 1.0]];
+        let knots = [0.0, 0.0, 1.0, 1.0];
+        spline(&[row(0.0), row(length)], 1, 1, &knots, &knots, false)
+    };
+    let reference = strip(1.0);
+    let SurfaceKind::BSpline(b) = reference.kind() else {
+        panic!()
+    };
+    let local = Local::of(b.gw_nurb().unwrap(), BoxSide::UMax).unwrap();
+    let asks = Cell::new(0);
+    let make = |e: f64| {
+        asks.set(asks.get() + 1);
+        Ok((e <= 0.8).then(|| (Some(strip(e.sqrt())), 0.0)))
+    };
+    let (_, length) = solve(&make, &measure, &local, 0.8).unwrap().unwrap();
+    assert!(matches!(says(Some(&length), 0.0, 0.8), Says::Met));
+    assert!(asks.get() <= 12, "{} constructions", asks.get());
+}
+
 fn dom(s: &Surface) -> Extent2d {
     s.natural_uv_domain_with_nurb(&k()).unwrap()
 }
