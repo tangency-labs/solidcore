@@ -3685,6 +3685,107 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         self.note_open_fit(access, size.is_some(), limit, kind, solver)
     }
 
+    /// Not the fork's (#20359): two constant rounds that roll on one face and meet at a corner
+    /// (the corner's blended edges hold both), where the corner, the ball touching that face
+    /// and the other face of each, has its contact with the shared face past that face's
+    /// boundary: each round's rail on the face runs from its End, where it leaves the face
+    /// across the boundary, to the corner, which lies past that End, so the rail's trim
+    /// failed (`failed`, a reversed interval). The two rounds have no length on the face
+    /// between their End and their corner: refused as larger than the face allows, naming the
+    /// least radius at which the corner's contact reaches the boundary
+    /// ([`BrepCreationAccess::creation_corner_leaves_face`]), open, so less the fit margin.
+    /// It is the size #20314's refusal names where the rounds overflow; here their rails are
+    /// judged to fit (their off-face runs lie past the edges' ends), so no overflow is chosen.
+    /// Any other failure, or one at a radius within that size, stays the solver's failure.
+    ///
+    /// # Errors
+    /// The refusal, or `failed`; those of the sizing and the corners' edge lookups.
+    fn refuse_corner_past_its_face(
+        &mut self,
+        k: &mut Kernel,
+        access: &mut impl BrepCreationAccess<O>,
+        failed: SolidError,
+    ) -> Result<()> {
+        // `trim_solver_rails` notes a trim failure as the solver's edge problem with status 7
+        // on that solver's edge
+        let edge = match self.error.edge {
+            Some(edge)
+                if !failed.is_cancelled()
+                    && self.error.code == FilletErrorType::EdgeProblem as i32
+                    && self.error.status == 7 =>
+            {
+                edge
+            }
+            _ => return Err(failed),
+        };
+        let mut index = 0;
+        while let Some(solver) = self.solvers.get(index).copied() {
+            index += 1;
+            if access.geometry_edge(solver)? != edge {
+                continue;
+            }
+            let Some(fit) = access.creation_solver_fit(solver)? else {
+                break;
+            };
+            let Some([d0, d1]) = fit.offsets else {
+                break;
+            };
+            // a ball: both offsets its radius
+            let radius = smos_max(d0.abs(), d1.abs());
+            let mut least: Option<f64> = None;
+            let mut c = 0;
+            while let Some(corner) = self.corners.get(c).copied() {
+                c += 1;
+                let blended = access.geometry_corner_blended_edges(corner)?;
+                if !blended.contains(&edge) {
+                    continue;
+                }
+                let mut o = 0;
+                while let Some(other) = self.solvers.get(o).copied() {
+                    o += 1;
+                    if other == solver || !blended.contains(&access.geometry_edge(other)?) {
+                        continue;
+                    }
+                    if let Some(limit) =
+                        access.creation_corner_leaves_face(k, corner, solver, other)?
+                    {
+                        if least.is_none_or(|l| limit < l) {
+                            least = Some(limit);
+                        }
+                    }
+                }
+            }
+            let Some(limit) = least else {
+                break;
+            };
+            // within the edge's tolerance of the bound, the corner is at the boundary, not
+            // past it; a NaN radius or bound refuses nothing
+            if radius.partial_cmp(&(limit + fit.tolerance)) != Some(std::cmp::Ordering::Greater) {
+                break;
+            }
+            let (code, status, comment) = (
+                self.error.code,
+                self.error.status,
+                self.error.comment.clone(),
+            );
+            self.note_open_fit(access, true, limit, FitKind::Radius, solver)?;
+            if self.fit_radius < 0.0 {
+                // nothing noted: the failure stays the solver's
+                self.error.code = code;
+                self.error.status = status;
+                self.error.comment = comment;
+                break;
+            }
+            let refused = self.record_no_room(
+                NoRoomReason::RailLeavesFace,
+                "Fillet Error: two rounds meet at a corner past the boundary of the face they both roll on (the blend is larger than the face allows)",
+            );
+            self.error.edge = Some(edge);
+            return refused;
+        }
+        Err(failed)
+    }
+
     /// Not the fork's (#15767): a constant round whose rail rolled over a smooth edge of its
     /// face partway along and could not be rolled (the rollover recovery failed, `failed`) is
     /// refused as larger than its faces where it is: where its radius exceeds the largest at
@@ -4810,7 +4911,9 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         self.refuse_overlapping_bands(k, access)?;
         self.ease_set_back_sections(k, access)?;
         self.calculate_corner_edges(k, access)?;
-        self.trim_solver_rails(k, access)?;
+        if let Err(failed) = self.trim_solver_rails(k, access) {
+            return self.refuse_corner_past_its_face(k, access, failed);
+        }
         if let Err(failed) = self.classify_solver_rails(k, access) {
             return self.refuse_rollover_past_its_fit(k, access, failed);
         }

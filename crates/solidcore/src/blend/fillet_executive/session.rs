@@ -10396,6 +10396,65 @@ mod tests {
         }
     }
 
+    /// #20359: the x|torus + y|torus pair alone at a corner of the box cut by a torus (the
+    /// upright edge x|y left sharp). The rails are judged to fit their faces (their runs off
+    /// the torus face lie past the edges' ends), so no overflow is chosen; but the corner where
+    /// the two rounds meet, the ball touching the +x and +y faces and the torus, has its
+    /// contact on the torus at z = 0.5 - d*0.6/(0.6 - r) (d = sqrt((0.6 - r)^2 - (rho - 1)^2),
+    /// rho = sqrt(2)*(1 - r)), past the torus face's rim from r* = 0.0958289 up, while each
+    /// round's End lies where its rail crosses that rim: at 0.1 the End (ball centre
+    /// y = 0.90508) lies past the corner (y = 0.9), so the round has no length on the face. It
+    /// failed in the rails' trim (a reversed interval); it is refused as leaving its face,
+    /// naming r* less the fit margin (the size #20314's refusal names), and builds valid at
+    /// that size and below.
+    #[test]
+    fn two_rounds_meeting_past_their_shared_face_s_rim_are_refused_naming_where_the_corner_leaves_it(
+    ) {
+        use TorusCornerEdge::{XTorus, YTorus};
+        let r_star = 0.095_828_866_164_137_94;
+        let which = &[XTorus, YTorus][..];
+        for near in [Point3::new(1.0, 1.0, 0.0659), Point3::new(1.0, 1.0, 0.934)] {
+            let margins = torus_corner_edge_tolerances(near);
+            for radius in [0.1, 0.0959] {
+                let TorusCornerFillet::Refused(reason, fit) =
+                    round_torus_corner(near, which, radius)
+                else {
+                    panic!("{near:?} r {radius}: not refused");
+                };
+                assert_eq!(
+                    reason,
+                    Some(crate::blend::fillet_executive::NoRoomReason::RailLeavesFace),
+                    "{near:?} r {radius}"
+                );
+                let fit = fit.unwrap_or_else(|| panic!("{near:?} r {radius}: no size named"));
+                // open: r* less the fit margin (a thousand of the edge's tolerances), to the
+                // bisection's and the balls' solve accuracy
+                assert!(
+                    margins
+                        .iter()
+                        .any(|tol| (fit - (r_star - 1000.0 * tol)).abs() < 1e-6),
+                    "{near:?} r {radius}: fit {fit}, r* {r_star}"
+                );
+                assert!(
+                    matches!(
+                        round_torus_corner(near, which, fit),
+                        TorusCornerFillet::Built(true)
+                    ),
+                    "{near:?} at its fit {fit}"
+                );
+            }
+            for radius in [0.09, 0.095] {
+                assert!(
+                    matches!(
+                        round_torus_corner(near, which, radius),
+                        TorusCornerFillet::Built(true)
+                    ),
+                    "{near:?} r {radius}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn the_unspoiled_cube_corner_builds() {
         let (result, error, _, _) = spoiled_cube_corner(|_, _| {});
