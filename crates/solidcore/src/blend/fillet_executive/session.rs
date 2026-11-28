@@ -8965,9 +8965,10 @@ impl SessionObjects<'_> {
     /// `FitMargin`, a thousand of that edge's tolerances, as the other open fits: at that
     /// radius the contact line only touches the edge), and the returned error the typed
     /// [`crate::error::blend::BlendFailure::NoRoom`]
-    /// ([`super::NoRoomReason::JoinRailMissesSideEdge`]) carrying that fit. Anything else
-    /// returns `error` as it is. Asked only after the failure, so it never refuses a Join
-    /// that builds.
+    /// ([`super::NoRoomReason::JoinRailMissesSideEdge`]) carrying that fit. When the missed
+    /// side edge is a closed round's seam on a perpendicular extrusion, the rail exceeds the
+    /// wall height, the closed fit bound. Asked only after the failure, so it never refuses
+    /// a Join that builds.
     ///
     /// # Errors
     /// Those of the side-edge check and of the topology queries.
@@ -8979,7 +8980,11 @@ impl SessionObjects<'_> {
         error: SolidError,
     ) -> Result<SolidError> {
         use crate::blend::fillet_corner::topology::join::JOIN_RAIL_MISSES_SIDE_EDGE;
+        use crate::blend::fillet_executive::NoRoomReason;
+        use crate::error::blend::BlendFailure;
         const OP_JOIN: &str = "SmBlendCorner::CalcCornerVertGeom";
+        const CLOSED_WALL_RAIL: &str =
+            "Fillet Error: the round's contact line on the wall lies past its cap rim";
         let Some(corner) = self.corners.get(id.0 as usize) else {
             return Ok(error);
         };
@@ -8997,21 +9002,60 @@ impl SessionObjects<'_> {
                 _ => None,
             });
         }
-        let Some(builds) = corner.join_rail_misses_side_edge(
-            k,
-            &mut *self.target,
-            &self.solvers,
-            &solver_eu_solvers,
-        )?
-        else {
-            return Ok(error);
-        };
         let Some(first) = corner
             .solver_eus
             .as_deref()
             .and_then(|eus| eus.first().copied())
         else {
             return Ok(error);
+        };
+        let closed_solver = match (
+            solver_eu_solvers.as_slice(),
+            error.root_cause().blend_failure(),
+        ) {
+            ([Some(id)], Some(BlendFailure::RailEndMissesSideEdge { edge: seam })) => self
+                .solvers
+                .get(id.0 as usize)
+                .and_then(Option::as_ref)
+                .map(|solver| (solver, *seam)),
+            _ => None,
+        };
+        let closed_fit = if let Some((solver, seam)) = closed_solver {
+            match fit_size::closed_wall_seam_fit(k, self.target, solver, seam) {
+                Ok(fit) => fit,
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+        let (fit, reason, comment) = if let Some(height) = closed_fit {
+            (height, NoRoomReason::RailLeavesFace, CLOSED_WALL_RAIL)
+        } else {
+            let Some(builds) = corner.join_rail_misses_side_edge(
+                k,
+                self.target,
+                &self.solvers,
+                &solver_eu_solvers,
+            )?
+            else {
+                return Ok(error);
+            };
+            (
+                builds,
+                NoRoomReason::JoinRailMissesSideEdge,
+                JOIN_RAIL_MISSES_SIDE_EDGE,
+            )
+        };
+        let edge = crate::topology::edgeuse::p1::edge(self.target, first)?;
+        let fit = if reason == NoRoomReason::JoinRailMissesSideEdge {
+            let margin = match edge {
+                Some(e) => 1000.0 * crate::topology::edge::tolerance(self.target, e)?,
+                None => 0.0,
+            };
+            (fit - margin).max(0.0)
+        } else {
+            fit
         };
         let vertex = corner.filleted_vertex();
         let location = match vertex {
@@ -9023,16 +9067,9 @@ impl SessionObjects<'_> {
             location,
             crate::blend::fillet_geom::p1::FilStatus::Failure,
             crate::blend::fillet_geom::p1::FilletErrorType::NoRoom,
-            Some(JOIN_RAIL_MISSES_SIDE_EDGE),
+            Some(comment),
         );
-        executive.error.no_room =
-            Some(crate::blend::fillet_executive::NoRoomReason::JoinRailMissesSideEdge);
-        let edge = crate::topology::edgeuse::p1::edge(self.target, first)?;
-        let margin = match edge {
-            Some(e) => 1000.0 * crate::topology::edge::tolerance(self.target, e)?,
-            None => 0.0,
-        };
-        let fit = (builds - margin).max(0.0);
+        executive.error.no_room = Some(reason);
         let edge_object =
             edge.map(|e| FilletObject::Topology(FilletBody::Target, EntityRef::Edge(e)));
         executive.note_fit_radius(
@@ -9040,19 +9077,14 @@ impl SessionObjects<'_> {
             edge_object,
             crate::blend::fillet_executive::p3::FitKind::Radius,
         );
-        let mut failure = crate::error::Failure::new(
-            OP_JOIN,
-            crate::error::blend::BlendFailure::NoRoom(
-                crate::blend::fillet_executive::NoRoomReason::JoinRailMissesSideEdge,
-            ),
-        )
-        .with_fit(crate::error::Fit::new(
-            fit,
-            crate::error::FitMeasure::Radius,
-            edge_object
-                .as_ref()
-                .and_then(crate::error::TargetEdge::of_fillet_object),
-        ));
+        let mut failure = crate::error::Failure::new(OP_JOIN, BlendFailure::NoRoom(reason))
+            .with_fit(crate::error::Fit::new(
+                fit,
+                crate::error::FitMeasure::Radius,
+                edge_object
+                    .as_ref()
+                    .and_then(crate::error::TargetEdge::of_fillet_object),
+            ));
         if let Some(v) = vertex {
             failure = failure.at(EntityRef::Vertex(v));
         }

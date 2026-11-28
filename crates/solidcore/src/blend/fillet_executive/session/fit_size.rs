@@ -35,7 +35,7 @@ use crate::blend::fillet_executive::session::ball_regular::{
 use crate::blend::fillet_executive::session::SolverObject;
 use crate::blend::fillet_executive::FitKind;
 use crate::blend::fillet_solver::p1::{
-    test_manifold_tangent_rollover, FilletSolverType, SeamDomain,
+    test_manifold_tangent_rollover, FilletSolverType, FilletSurfaceGeneratorType, SeamDomain,
 };
 use crate::error::blend::{BlendFailure, SolverFailure};
 use crate::error::{EntityRef, Failure, Result, SolidError, SM_ERR_NULL_POINTER};
@@ -45,6 +45,7 @@ use crate::intersect::surface_intersector::p1::{SrfIndex, TsectPnt};
 use crate::kernel::Kernel;
 use crate::math::det;
 use crate::math::{Point2, Point3, Vec3, BIG_DOUBLE, EFF_ZERO};
+use crate::query::api_queries::edge_bounding_box;
 use crate::surface::surface::p4::NoObject;
 use crate::surface::surface::p5::DropPointOptions;
 use crate::surface::surface::{Surface, SurfaceKind};
@@ -52,6 +53,150 @@ use crate::topology::edgeuse::p1 as eu;
 use crate::topology::{edge, Brep, EdgeId, EdgeuseId, FaceId, VertexId};
 
 const OP: &str = "blend::fillet_executive::session::fit_size";
+
+/// A constant concave round on a closed perpendicular extrusion loses its wall rail when
+/// the radius exceeds the wall's height. The centre is one radius above the base plane,
+/// and its wall contact is at the same height because the extrusion's normals are
+/// perpendicular to its axis. At equality the rail can use the cap rim, consuming the wall.
+/// This is a closed bound. Identify the failed side edge as the wall's axial seam, and
+/// require the whole wall to end at one coplanar rim.
+pub(super) fn closed_wall_seam_fit(
+    k: &Kernel,
+    target: &mut Brep,
+    solver: &SolverObject,
+    seam: EdgeId,
+) -> Result<Option<f64>> {
+    use crate::curve::curve::CurveKind;
+    let base = solver.base();
+    if rolls_a_ball(solver) != (true, false)
+        || !base.fillet_surface_generator().is_some_and(|generator| {
+            generator.fillet_surface_generator_type() == FilletSurfaceGeneratorType::Circular
+        })
+        || base.rolled_faces.iter().any(Option::is_some)
+    {
+        return Ok(None);
+    }
+    let (Some(first), Some(second), Some(offset)) =
+        (base.edgeuse(0)?, base.edgeuse(1)?, base.surface(0)?)
+    else {
+        return Ok(None);
+    };
+    let (Some(blended), Some(first_face), Some(second_face)) = (
+        eu::edge(target, first)?,
+        eu::face(target, first)?,
+        eu::face(target, second)?,
+    ) else {
+        return Ok(None);
+    };
+    if !edge::is_closed(target, blended)? {
+        return Ok(None);
+    }
+    let (Some(first_surface), Some(second_surface)) = (
+        crate::topology::face::p2::surface(target, first_face)?,
+        crate::topology::face::p2::surface(target, second_face)?,
+    ) else {
+        return Ok(None);
+    };
+    let (wall, wall_surface, floor_face, floor) =
+        match (first_surface.kind(), second_surface.kind()) {
+            (wall, SurfaceKind::Plane(floor)) => (first_face, wall, second_face, floor),
+            (SurfaceKind::Plane(floor), wall) => (second_face, wall, first_face, floor),
+            _ => return Ok(None),
+        };
+    // The record adapter can store the extrusion as its exact B-spline net.
+    let axis = match wall_surface {
+        SurfaceKind::SurfOfExtrusion(extrusion) => extrusion.extrusion_vector(),
+        SurfaceKind::BSpline(net) => {
+            use crate::surface::surf_of_extrusion::SurfOfExtrusion;
+            let Some(extrusion) = SurfOfExtrusion::is_nurb_surface_surf_of_extrusion(k, net, 1.0)?
+            else {
+                return Ok(None);
+            };
+            extrusion.extrusion_vector()
+        }
+        _ => return Ok(None),
+    };
+    let (floor_point, normal, _) = floor.is_planar();
+    let along_normal = |direction: Vec3| {
+        let length = direction.length();
+        length.is_finite()
+            && length > EFF_ZERO
+            && direction.cross(normal).length() <= EFF_ZERO * length
+    };
+    if !along_normal(axis) || !edge::face_on_both_sides(target, seam, wall)? {
+        return Ok(None);
+    }
+    let Some(seam_curve) = edge::evaluation_curve(target, seam)? else {
+        return Ok(None);
+    };
+    // An iso-curve of the extrusion can store the line as a degree-one spline.
+    let linear = match seam_curve.kind() {
+        CurveKind::Line(_) => true,
+        CurveKind::BSpline(curve) => curve.degree()? == 1 && curve.number_control_points()? == 2,
+        _ => false,
+    };
+    let ends = seam_curve.ends(k)?;
+    if !linear || !along_normal(ends.end - ends.start) {
+        return Ok(None);
+    }
+    let wall_edges = crate::topology::face::p4::edges(target, wall, None, false, None)?;
+    let mut far_edges = wall_edges
+        .into_iter()
+        .filter(|&e| e != seam && e != blended);
+    let Some(rim) = far_edges.next() else {
+        return Ok(None);
+    };
+    if far_edges.next().is_some() || !edge::is_closed(target, rim)? {
+        return Ok(None);
+    }
+    let (Some(foot), Some(top)) = (
+        edge::start_vertex(target, blended)?,
+        edge::start_vertex(target, rim)?,
+    ) else {
+        return Ok(None);
+    };
+    let ends = edge::start_end_vertices(target, seam)?;
+    if foot == top || (ends != (Some(foot), Some(top)) && ends != (Some(top), Some(foot))) {
+        return Ok(None);
+    }
+    let mut caps = edge::faces(target, rim, None)?
+        .into_iter()
+        .filter(|&face| face != wall);
+    let Some(cap) = caps.next() else {
+        return Ok(None);
+    };
+    if caps.next().is_some()
+        || cap == floor_face
+        || crate::topology::face::p4::edges(target, cap, None, false, None)?.as_slice() != [rim]
+    {
+        return Ok(None);
+    }
+    let Some(cap_surface) = crate::topology::face::p2::surface(target, cap)? else {
+        return Ok(None);
+    };
+    let SurfaceKind::Plane(cap_plane) = cap_surface.kind() else {
+        return Ok(None);
+    };
+    let (cap_point, cap_normal, _) = cap_plane.is_planar();
+    if !along_normal(cap_normal) {
+        return Ok(None);
+    }
+    let height = (cap_point - floor_point).dot(normal).abs();
+    let radius = offset.surface.offset_distance().abs();
+    if !(height.is_finite() && height > 0.0 && radius > height) {
+        return Ok(None);
+    }
+    // The floor rail is at most one radius from the selected edge. Exclude a nearer
+    // floor rim using the exact edge geometry's enclosing boxes, without solving a blend.
+    let mut rail_bound = edge_bounding_box(k, target, blended, false)?;
+    rail_bound.expand_absolute(height);
+    for e in crate::topology::face::p4::edges(target, floor_face, None, false, None)? {
+        if e != blended && !rail_bound.are_disjoint(&edge_bounding_box(k, target, e, false)?, 0.0) {
+            return Ok(None);
+        }
+    }
+    Ok(crate::blend::fillet_solver::p5::is_concave_edge(k, target, blended)?.then_some(height))
+}
 
 /// Why a rail of [`Through`] has its base surface and domain: [`ball_through_at`] refuses a
 /// face index past 1, and both arrays hold one entry per face of the solver.
