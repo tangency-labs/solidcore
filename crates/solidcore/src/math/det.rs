@@ -15,6 +15,8 @@
 //!
 //! Not upstream (SMLib calls the platform's C library). Deviations: none. No recursion.
 
+#![allow(clippy::disallowed_methods)] // the one caller of the methods clippy.toml bans
+
 /// `sin x`.
 #[inline]
 #[must_use]

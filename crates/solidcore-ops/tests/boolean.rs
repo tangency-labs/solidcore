@@ -1831,8 +1831,8 @@ fn a_coil_cut_from_a_circle_on_a_shafts_end_face_builds_like_its_mirror_image() 
     let (pitch, turns) = (3.0, 6.0);
     // SolidCraft's coil tolerance: a ten-thousandth of the pitch
     let tolerance = pitch * 1e-4;
-    let lens = r * r * ((d * d + r * r - big * big) / (2.0 * d * r)).acos()
-        + big * big * ((d * d + big * big - r * r) / (2.0 * d * big)).acos()
+    let lens = r * r * det::acos((d * d + r * r - big * big) / (2.0 * d * r))
+        + big * big * det::acos((d * d + big * big - r * r) / (2.0 * d * big))
         - ((-d + r + big) * (d + r - big) * (d - r + big) * (d + r + big)).sqrt() / 2.0;
     let exact = PI * big * big * height - pitch * turns * lens;
     let cut = |s: f64| {

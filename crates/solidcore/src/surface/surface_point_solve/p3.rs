@@ -50,6 +50,7 @@ use crate::geom::solution_array::{Solution, SolutionArray, SolutionObject, Solut
 use crate::geom::vector2d::Point2;
 use crate::geom::vector3d::Point3;
 use crate::kernel::Kernel;
+use crate::math::det;
 use crate::math::{EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT};
 use crate::nurbs::b_spline_surface::SurfParamType;
 use crate::surface::surface::p1::zone_tol_3d;
@@ -300,17 +301,17 @@ impl SurfPtSolveStepper<'_> {
         let c = sv.dot(sv) + g.dot(svv);
         // the smaller eigenvalue of [[a, b], [b, c]] and its eigenvector, the longer of the
         // two rows of the matrix less it, turned a quarter
-        let low = 0.5 * (a + c) - (0.5 * (a - c)).hypot(b);
+        let low = 0.5 * (a + c) - det::hypot(0.5 * (a - c), b);
         if low.is_nan() || low >= 0.0 {
             return Ok(false);
         }
         let (e1, e2) = (Point2::new(b, low - a), Point2::new(low - c, b));
-        let e = if e1.x.hypot(e1.y) >= e2.x.hypot(e2.y) {
+        let e = if det::hypot(e1.x, e1.y) >= det::hypot(e2.x, e2.y) {
             e1
         } else {
             e2
         };
-        let len = e.x.hypot(e.y);
+        let len = det::hypot(e.x, e.y);
         if len.is_nan() {
             return Ok(false);
         }

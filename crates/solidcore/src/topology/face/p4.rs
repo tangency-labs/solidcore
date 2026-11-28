@@ -3172,6 +3172,7 @@ fn on_natural_domain_side(k: &Kernel, b: &Brep, f: FaceId, uv: Point2) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::math::det;
     use crate::math::{Point3, Vec3};
     use crate::nurbs::b_spline_curve::BSplineCurve;
     use crate::nurbs::nurbs_crv::allocate_nurb_curve;
@@ -3765,8 +3766,8 @@ mod tests {
         let mut failed = false;
         for (place, azimuth_deg, phi) in cases {
             let azimuth = azimuth_deg.to_radians();
-            let (sin_a, cos_a) = azimuth.sin_cos();
-            let (sin_p, cos_p) = phi.sin_cos();
+            let (sin_a, cos_a) = det::sin_cos(azimuth);
+            let (sin_p, cos_p) = det::sin_cos(phi);
             let through = Point3::new(20.0 * cos_a, 20.0 * sin_a, 20.0);
             let direction = Vec3::new(sin_p * cos_a, sin_p * sin_a, cos_p);
             let line = match global_line_intersect(

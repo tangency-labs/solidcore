@@ -175,12 +175,12 @@ pub fn compose_turn(first: Vec3, radians: f64, world: Vec3, turn: f64) -> Option
         return Some((b, turn));
     }
     // Quaternion product: the new world turn acts last, hence multiplies on the left.
-    let (s, c) = (radians * 0.5).sin_cos();
-    let (t, d) = (turn * 0.5).sin_cos();
+    let (s, c) = det::sin_cos(radians * 0.5);
+    let (t, d) = det::sin_cos(turn * 0.5);
     let (u, v) = (a * s, b * t);
     let vector = u * d + v * c + v.cross(u);
     Some(match vector.length_and_unit() {
-        Some((len, axis)) => (axis, 2.0 * len.atan2(c * d - v.dot(u))),
+        Some((len, axis)) => (axis, 2.0 * det::atan2(len, c * d - v.dot(u))),
         None => (b, 0.0),
     })
 }

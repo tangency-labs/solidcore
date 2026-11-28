@@ -81,6 +81,7 @@ use crate::geom::solution_array::{ObjectKind, SolutionObject, SolutionType};
 use crate::geom::tol::{size_estimate_to_zone_tol_3d, zone_tol3d, TOL_GAP_GAIN};
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
+use crate::math::det;
 use crate::math::{EFF_ZERO, EFF_ZERO_DEG, EFF_ZERO_SQRT, PI};
 use crate::nurbs::b_spline_curve::{BSplineCurve, NurbCircleParam};
 use crate::nurbs::b_spline_curve_n_lib::TrimMode;
@@ -241,7 +242,7 @@ pub(crate) fn omitted_corner_band(feature_scale: f64) -> f64 {
 /// twice that chord times [`TOL_GAP_GAIN`].
 #[must_use]
 pub(crate) fn chord_cover_tolerance(k: &Kernel, dist: f64, angle: f64) -> f64 {
-    let chord = dist * 2.0 * (angle * 0.5).sin().abs();
+    let chord = dist * 2.0 * det::sin(angle * 0.5).abs();
     zone_tol3d(k, 2.0 * chord * TOL_GAP_GAIN)
 }
 
@@ -1443,7 +1444,6 @@ fn remove_first(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::math::det;
     use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
     use crate::topology::{
         Edge, Edgeuse, EdgeuseId, EdgeuseOwner, Region, Shell, Vertex, Vertexuse, VertexuseOwner,

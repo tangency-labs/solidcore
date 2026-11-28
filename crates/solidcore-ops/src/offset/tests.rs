@@ -4925,7 +4925,7 @@ fn a_ringed_countersinks_cone_moves_within_the_ring() {
 fn turned_pad(cx: f64, cy: f64, z: f64, side: f64) -> Body {
     let half = side / 2.0;
     let pad = make_box([cx - half, cy - half, z], [side, side, side]).unwrap();
-    let (s, c) = (PI / 4.0).sin_cos();
+    let (s, c) = det::sin_cos(PI / 4.0);
     pad.transform(&[
         [c, s, 0.0, 0.0],
         [-s, c, 0.0, 0.0],
@@ -4999,7 +4999,7 @@ fn a_pads_corner_on_its_faces_edge_shells_to_its_closed_form() {
                 25.0 - 2.0 * t
             };
             let inner = (4.8_f64 - 2.0 * t).max(0.0);
-            let want = 60000.0 + 4.8_f64.powi(3)
+            let want = 60000.0 + det::powi(4.8_f64, 3)
                 - (60.0 - 2.0 * t) * (40.0 - 2.0 * t) * high
                 - inner * inner * 4.8;
             shells_to(&b, &open, t, want, &format!("pad {gap} from the edge"));
@@ -5024,9 +5024,9 @@ fn a_pads_corner_on_a_cylinders_rim_shells_to_its_closed_form() {
             .unwrap()
             .unwrap();
         let t = 0.05;
-        let want = PI * 2.25 * 4.0 + 0.36_f64.powi(3)
-            - PI * 1.45_f64.powi(2) * 3.9
-            - 0.26_f64.powi(2) * 0.36;
+        let want = PI * 2.25 * 4.0 + det::powi(0.36_f64, 3)
+            - PI * det::powi(1.45_f64, 2) * 3.9
+            - det::powi(0.26_f64, 2) * 0.36;
         shells_to(&b, &[], t, want, &format!("peg pad {gap} from the rim"));
     }
 }

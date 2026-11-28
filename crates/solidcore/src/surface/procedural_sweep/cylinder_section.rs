@@ -174,7 +174,7 @@ pub(crate) fn intersect(
         let y_axis = c_axis.cross(x_axis);
         let angle = |q: f64| -> Result<f64> {
             let r = point(q)? - c_origin;
-            Ok(r.dot(y_axis).atan2(r.dot(x_axis)))
+            Ok(crate::math::det::atan2(r.dot(y_axis), r.dot(x_axis)))
         };
         let samples = 8 * sweep.stations().len() + 64;
         let Some(cuts) = seam_cuts(&angle, q0, q1, samples)? else {

@@ -1690,7 +1690,7 @@ mod tests {
         let mut plate = make_drilled_block(&mut k, 0.0, 10.0);
         let mut spacer = make_drilled_block(&mut k, 10.0, 5.0);
         // Rotate spacer 180 degrees around Z using sin(pi)/cos(pi) to exercise transform rounding.
-        let (s, c) = std::f64::consts::PI.sin_cos();
+        let (s, c) = det::sin_cos(std::f64::consts::PI);
         let rot_180 = Axis2Placement::new(
             Point3::new(0.0, 0.0, 0.0),
             Vec3::new(c, s, 0.0),

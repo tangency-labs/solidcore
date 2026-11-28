@@ -4,11 +4,7 @@
 //! the origin, so a profile drawn in the `xy` plane is the section at its start; its first
 //! corner is at `c = (0, 0, L1)`, where it turns to the direction `t1`.
 
-#![allow(
-    clippy::unwrap_used,
-    clippy::indexing_slicing,
-    clippy::disallowed_methods
-)] // test: the closed forms use trigonometry
+#![allow(clippy::unwrap_used, clippy::indexing_slicing)] // test helpers
 
 use solidcore::curve::arc::ArcDefinition;
 use solidcore::curve::curve::Curve;

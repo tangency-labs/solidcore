@@ -849,7 +849,7 @@ fn wall_of(
     let continued = Nurb::new(net, p, 1, nurb.u_knots().to_vec(), vec![va, va, vb, vb])?;
     // the net normal S_u x S_v against the face's outward one, the transpose reversing it
     let sense = if outward == swapped { -1.0 } else { 1.0 };
-    let tan = draft.angle.tan();
+    let tan = det::tan(draft.angle);
     let d = [-sense * at(va) * tan, -sense * at(vb) * tan];
     if d.iter().any(|x| !(x.abs() > 0.0 && x.is_finite())) {
         return Ok(Err(DraftRefusal::NotExtrusionAlongPull));

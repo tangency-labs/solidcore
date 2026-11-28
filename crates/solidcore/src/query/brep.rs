@@ -2506,7 +2506,7 @@ mod tests {
                 continue;
             };
             let (side, top, within) = (*side, *top, *within);
-            let (sin, cos) = degrees.to_radians().sin_cos();
+            let (sin, cos) = det::sin_cos(degrees.to_radians());
             let radial = Vec3::new(cos, sin, 0.0);
             let tangent = Vec3::new(-sin, cos, 0.0);
             let p = Point3::new(r * cos, r * sin, 2.0 * r);
@@ -2521,8 +2521,8 @@ mod tests {
                     .into_iter()
                     .filter(|&k1| k1 > -r)
                     .fold(f64::INFINITY, f64::min);
-                let (p1, p2) = roots(a, b, (r + within).powi(2) - r * r).unwrap();
-                let (lo, hi) = match roots(a, b, (r - within).powi(2) - r * r) {
+                let (p1, p2) = roots(a, b, det::powi(r + within, 2) - r * r).unwrap();
+                let (lo, hi) = match roots(a, b, det::powi(r - within, 2) - r * r) {
                     Some((q1, _)) if first <= q1 => (p1, q1),
                     Some((_, q2)) if first >= q2 => (q2, p2),
                     Some(_) => (first, first),

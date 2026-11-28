@@ -2550,7 +2550,7 @@ fn ray_fire_selects_nearest_hit_over_farther_face_with_smaller_u_param() {
     let make_disk = |k: &mut Kernel, seam_deg: f64, rot180: bool| -> Brep {
         let mut disk = api::create_cylinder(k, Point3::ZERO, 6.0, 2.0).unwrap();
         let rad = seam_deg.to_radians();
-        let (s, c) = rad.sin_cos();
+        let (s, c) = det::sin_cos(rad);
         let (dx, dy) = if rot180 { (-cx, -cy) } else { (cx, cy) };
         let place = Axis2Placement::new(
             Point3::new(dx, dy, 3.0),
@@ -2571,7 +2571,7 @@ fn ray_fire_selects_nearest_hit_over_farther_face_with_smaller_u_param() {
         // top plane z = 5.0.
         for z in [3.05, 4.0, 4.95, 5.0] {
             for deg in [0.0_f64, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0] {
-                let (s, c) = deg.to_radians().sin_cos();
+                let (s, c) = det::sin_cos(deg.to_radians());
                 let pt = Point3::new(dx + 5.9 * c, dy + 5.9 * s, z);
                 let pc = query
                     .point_3d_classify(&k, &mut housing, pt, solidcore::math::EFF_ZERO, false)

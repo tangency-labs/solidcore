@@ -33,6 +33,7 @@
 //!
 //! Deviations: none (no upstream counterpart). No recursion: the pairs wait on a heap.
 
+use crate::math::det;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BinaryHeap};
 
@@ -1124,7 +1125,7 @@ fn face_edges_max_along(brep: &Brep, f: FaceId, p0: Point3, n: Vec3, limit: f64)
                     {
                         return Ok(false);
                     }
-                    let amp = (rx * xa.dot(n)).hypot(ry * ya.dot(n));
+                    let amp = det::hypot(rx * xa.dot(n), ry * ya.dot(n));
                     let d_max = (c - p0).dot(n) + amp + gamma(8) * (rx + ry + (c - p0).length());
                     if !(d_max.is_finite() && d_max <= limit) {
                         return Ok(false);
@@ -1310,7 +1311,7 @@ impl CylSpec {
 
     fn radial_dist(&self, p: Point3) -> f64 {
         let [x, y] = self.radial_uv(p);
-        x.hypot(y)
+        det::hypot(x, y)
     }
 }
 
@@ -1321,7 +1322,7 @@ fn ellipse_2d_radius_bounds(a: [f64; 2], b: [f64; 2]) -> (f64, f64) {
     let dot_ab = a[0] * b[0] + a[1] * b[1];
     let half_sum = 0.5 * (a2 + b2);
     let half_diff = 0.5 * (a2 - b2);
-    let swing = half_diff.hypot(dot_ab);
+    let swing = det::hypot(half_diff, dot_ab);
     (
         (half_sum - swing).max(0.0).sqrt(),
         (half_sum + swing).max(0.0).sqrt(),
@@ -1344,13 +1345,13 @@ fn aabb_radial_bounds(lo: Point3, hi: Point3, pad: f64, cyl: &CylSpec) -> Option
                 u_hi = u_hi.max(pu);
                 v_lo = v_lo.min(pv);
                 v_hi = v_hi.max(pv);
-                r_max = r_max.max(pu.hypot(pv));
+                r_max = r_max.max(det::hypot(pu, pv));
             }
         }
     }
     let dx = 0.0_f64.max(u_lo).max(-u_hi);
     let dy = 0.0_f64.max(v_lo).max(-v_hi);
-    let r_min = (dx.hypot(dy) - pad).max(0.0);
+    let r_min = (det::hypot(dx, dy) - pad).max(0.0);
     let r_max = r_max + pad;
     (r_min.is_finite() && r_max.is_finite()).then_some((r_min, r_max))
 }
@@ -1573,7 +1574,7 @@ fn origin_to_segment_2d(a: [f64; 2], b: [f64; 2]) -> f64 {
     } else {
         0.0
     };
-    (a[0] + t * ab[0]).hypot(a[1] + t * ab[1])
+    det::hypot(a[0] + t * ab[0], a[1] + t * ab[1])
 }
 
 /// Whether every face of `brep` is certified to lie outside the open cylinder

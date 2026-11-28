@@ -9,6 +9,8 @@
 //! radius `R` centred at `(tx + c, R)`, `c = sqrt(R^2 - (R - h)^2)`, from its lowest point
 //! `(tx + c, 0)` round to `T` ([`round_section`]).
 
+use crate::math::det;
+
 type V3 = [f64; 3];
 
 fn dot(a: V3, b: V3) -> f64 {
@@ -114,7 +116,7 @@ pub fn round_section(length: f64, wx: f64, wy: f64, r: f64) -> Option<Section> {
         tx,
         c,
         cx: tx + c,
-        theta: c.atan2(r - h),
+        theta: det::atan2(c, r - h),
     })
 }
 
@@ -124,7 +126,7 @@ pub fn round_section(length: f64, wx: f64, wy: f64, r: f64) -> Option<Section> {
 pub fn arc_clears_wall(section: &Section, wx: f64, wy: f64, r: f64, tol: f64) -> bool {
     (0..=16).all(|i| {
         let ang = -std::f64::consts::FRAC_PI_2 - section.theta * f64::from(i) / 16.0;
-        let (px, py) = (section.cx + r * ang.cos(), r + r * ang.sin());
+        let (px, py) = (section.cx + r * det::cos(ang), r + r * det::sin(ang));
         px * wy - py * wx >= -tol
     })
 }
@@ -193,7 +195,7 @@ mod tests {
         let s = round_section(1.0, 0.0, 1.0, 2.0).unwrap();
         assert!((s.c - 3f64.sqrt()).abs() < 1e-12);
         assert!((s.cx - 3f64.sqrt()).abs() < 1e-12);
-        assert!((s.theta - 3f64.sqrt().atan2(1.0)).abs() < 1e-12);
+        assert!((s.theta - det::atan2(3f64.sqrt(), 1.0)).abs() < 1e-12);
         assert!(arc_clears_wall(&s, 0.0, 1.0, 2.0, 1e-9));
         assert!(round_section(5.0, 0.0, 1.0, 2.0).is_none());
     }

@@ -384,8 +384,8 @@ fn issue_22577_a_lead_screw_coil_of_281_turns_decides_positive_volume() {
     assert_eq!(p1::faces(&b, None).unwrap().len(), 3 * halves + 2);
     let (area, centroid) = (0.5 * 1.2 * 1.3, (7.2 + 8.5 + 8.5) / 3.0);
     let expected = area * 2.0 * PI * centroid * turns;
-    let flank = 0.6f64.hypot(1.3);
-    let helix = (2.0 * PI * 8.5).hypot(p) * turns;
+    let flank = det::hypot(0.6f64, 1.3);
+    let helix = det::hypot(2.0 * PI * 8.5, p) * turns;
     let bound = tol * (1.2 + 2.0 * flank) * helix;
     match volume_sign(&k, &mut b).unwrap() {
         VolumeSign::Positive(e) => {

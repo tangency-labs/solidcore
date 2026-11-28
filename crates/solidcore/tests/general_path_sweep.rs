@@ -1285,26 +1285,28 @@ fn a_circle_along_tangent_3d_arcs_with_tiny_rounded_bridge_does_not_double_back(
     let c1 = Point3::new(lead, bend_r, 0.0);
     let p1_mid = c1
         + Vec3::new(
-            bend_r * (ang1 * 0.5).sin(),
-            -bend_r * (ang1 * 0.5).cos(),
+            bend_r * det::sin(ang1 * 0.5),
+            -bend_r * det::cos(ang1 * 0.5),
             0.0,
         );
-    let p1_end = c1 + Vec3::new(bend_r * ang1.sin(), -bend_r * ang1.cos(), 0.0);
-    let t1 = Vec3::new(ang1.cos(), ang1.sin(), 0.0);
+    let p1_end = c1 + Vec3::new(bend_r * det::sin(ang1), -bend_r * det::cos(ang1), 0.0);
+    let t1 = Vec3::new(det::cos(ang1), det::sin(ang1), 0.0);
 
     let p2_start = p1_end + t1 * bridge_len;
     let n2 = Vec3::Z;
-    let p2_mid =
-        p2_start + t1 * (bend_r * (ang2 * 0.5).sin()) + n2 * (bend_r * (1.0 - (ang2 * 0.5).cos()));
-    let p2_end = p2_start + t1 * (bend_r * ang2.sin()) + n2 * (bend_r * (1.0 - ang2.cos()));
-    let t2 = t1 * ang2.cos() + n2 * ang2.sin();
+    let p2_mid = p2_start
+        + t1 * (bend_r * det::sin(ang2 * 0.5))
+        + n2 * (bend_r * (1.0 - det::cos(ang2 * 0.5)));
+    let p2_end = p2_start + t1 * (bend_r * det::sin(ang2)) + n2 * (bend_r * (1.0 - det::cos(ang2)));
+    let t2 = t1 * det::cos(ang2) + n2 * det::sin(ang2);
 
     // Third arc directly contiguous (no straight segment) in a plane perpendicular to the first two.
-    let n3 = Vec3::new(-ang1.sin(), ang1.cos(), 0.0);
-    let p3_mid =
-        p2_end + t2 * (bend_r * (ang3 * 0.5).sin()) + n3 * (bend_r * (1.0 - (ang3 * 0.5).cos()));
-    let p3_end = p2_end + t2 * (bend_r * ang3.sin()) + n3 * (bend_r * (1.0 - ang3.cos()));
-    let t3 = t2 * ang3.cos() + n3 * ang3.sin();
+    let n3 = Vec3::new(-det::sin(ang1), det::cos(ang1), 0.0);
+    let p3_mid = p2_end
+        + t2 * (bend_r * det::sin(ang3 * 0.5))
+        + n3 * (bend_r * (1.0 - det::cos(ang3 * 0.5)));
+    let p3_end = p2_end + t2 * (bend_r * det::sin(ang3)) + n3 * (bend_r * (1.0 - det::cos(ang3)));
+    let t3 = t2 * det::cos(ang3) + n3 * det::sin(ang3);
     let p_out = p3_end + t3 * lead;
 
     let line = |a: Point3, b: Point3| BSplineCurve::create_line_segment(3, a, b).unwrap();
@@ -1402,7 +1404,11 @@ fn a_tight_bend_smaller_than_pipe_radius_still_doubles_back() {
         arc_through(
             &k,
             Point3::new(10.0, 0.0, 0.0),
-            Point3::new(10.0 + bend_r * half.sin(), bend_r * (1.0 - half.cos()), 0.0),
+            Point3::new(
+                10.0 + bend_r * det::sin(half),
+                bend_r * (1.0 - det::cos(half)),
+                0.0,
+            ),
             Point3::new(10.0 + bend_r, bend_r, 0.0),
         ),
         line(
