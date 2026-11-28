@@ -101,7 +101,7 @@ const OP_CURVE_FACE: &str = "intersect::api_intersectors::intersect_curve_face";
 const OP_CURVE_BREP: &str = "intersect::api_intersectors::intersect_curve_brep";
 
 /// `SmApiIntersectCurves`' fixed tolerance (`dTol`).
-const CURVE_TOLERANCE: f64 = 0.001;
+pub(crate) const CURVE_TOLERANCE: f64 = 0.001;
 
 /// `SmApiIntersectFaces`' and `SmApiIntersectBreps`' angle tolerance (`dAngTol`, degrees).
 const ANGLE_TOLERANCE_DEG: f64 = 20.0;

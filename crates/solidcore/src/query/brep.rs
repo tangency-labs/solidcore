@@ -108,7 +108,7 @@ use crate::geom::global_solver::{SolutionRequested, SolverOperation};
 use crate::geom::object::ObjectRef;
 use crate::geom::tol::{brep_zone_tol_3d, SmallTopoType};
 use crate::intersect::api_intersectors::{
-    intersect_curve_face, intersect_curve_face_within, CurveHits,
+    intersect_curve_face, intersect_curve_face_within, CurveHits, CURVE_TOLERANCE,
 };
 use crate::intersect::point_class::{PointClassType, PointClassification};
 use crate::intersect::topology_solver::p1::TopologySolver;
@@ -121,7 +121,7 @@ use crate::primitive::api_curves::create_line_segment;
 use crate::query::api_queries::surface_closest_point;
 use crate::query::edge as qe;
 use crate::query::face::{p1 as qf1, p3 as qf3};
-use crate::surface::surface::Surface;
+use crate::surface::surface::{Surface, SurfaceKind};
 use crate::topology::brep::{p1 as bp1, p2 as bp2};
 use crate::topology::brep_cache::{
     arena_identity, make_brep_cache, BrepCache, BrepObjects, CacheObject, CacheSource,
@@ -132,6 +132,7 @@ const OP_TIGHT_BOX: &str = "query::brep::calculate_tight_bounding_box";
 const OP_CLASSIFY: &str = "query::brep::BrepQuery::point_3d_classify";
 const OP_RAY: &str = "query::brep::Ray::new";
 const OP_FIRST_HIT: &str = "query::brep::BrepQuery::first_face_hit";
+const OP_FACE_HITS: &str = "query::brep::face_hits";
 const OP_EVAL_POINT: &str = "query::brep::evaluate_surface_point";
 const OP_EVAL_NORMAL: &str = "query::brep::evaluate_surface_normal";
 const OP_EVAL_DERIVS: &str = "query::brep::evaluate_surface_derivatives";
@@ -632,25 +633,37 @@ pub struct FaceHit {
 /// inside the face, one on its own seam or pole where no other stretch of it goes on, or one
 /// on an edge whose other face the ray lies along there too (a rim grazed); not one at the
 /// segment's ends. So a ray grazing a curved face within the tolerance meets it twice. Empty
-/// when the ray meets no face, including a ray that starts past the box. The solves may make
-/// missing UV trim curves on `b`.
+/// when the ray meets no face, including a ray that starts past the box. A face whose own box
+/// the ray passes clear of, by ten times the solves' larger tolerance at least, is not
+/// solved: it has no hit. The solves may make missing UV trim curves on `b`.
 ///
 /// [`intersect_curve_face`]: crate::intersect::api_intersectors::intersect_curve_face
 ///
 /// # Errors
 ///
-/// Those of the box, the segment and the solves (a face without a surface among them),
-/// except a face's [`IntersectFailure::NoIntersection`], which is no hit; those of the
-/// stretches' evaluations, the cache, the boundary solve of each point, the faces of its
-/// vertex or edge and the seam and pole checks.
+/// [`SolidError::InvalidInput`] for a corner of `b`'s box at no finite distance from the
+/// ray's origin (a box with a NaN or infinite corner, or an origin so far off that the
+/// distance overflows): no segment reaches past such a box. Those of the box, the segment and
+/// the solves (a face without a surface among them), except a face's
+/// [`IntersectFailure::NoIntersection`], which is no hit; those of the stretches'
+/// evaluations, the cache, the boundary solve of each point, the faces of its vertex or edge
+/// and the seam and pole checks; [`QueryFailure::Defect`] for a solved point at no finite
+/// distance along the ray.
 pub fn face_hits(k: &Kernel, b: &mut Brep, ray: Ray) -> Result<Vec<FaceHit>> {
     let corners = calculate_bounding_box(k, &mut *b, BoundingBoxOptions::default())?.corners();
-    let reach = corners
-        .iter()
-        .fold(0.0_f64, |m, c| m.max(c.distance(ray.origin)));
+    let distances = corners.map(|c| c.distance(ray.origin));
+    // (checked one by one: `f64::max` below passes a NaN over)
+    if distances.iter().any(|d| !d.is_finite()) {
+        return Err(SolidError::invalid_input(
+            OP_FACE_HITS,
+            "a corner of the box at no finite distance from the ray's origin",
+        ));
+    }
+    let reach = distances.iter().copied().fold(0.0_f64, f64::max);
     if reach <= EFF_ZERO {
         return Ok(Vec::new());
     }
+    // (finite: a finite distance is a square root, far below half the floating range)
     let far = 2.0 * reach;
     let segment: Curve = create_line_segment(ray.origin, ray.origin + ray.direction * far)?.into();
     let tolerance = brep_zone_tol_3d(k, b, SmallTopoType::NormalSize);
@@ -660,7 +673,12 @@ pub fn face_hits(k: &Kernel, b: &mut Brep, ray: Ray) -> Result<Vec<FaceHit>> {
     // each stretch the ray lies along a face: the face and its range along the ray
     let mut stretches: Vec<(FaceId, f64, f64)> = Vec::new();
     let mut ends: Vec<(FaceId, Point3)> = Vec::new();
+    // how far from a face a point either solve gives can lie: the larger of their tolerances
+    let solve_reach = tolerance.max(CURVE_TOLERANCE);
     for &f in &faces {
+        if ray_clear_of_face(k, b, f, ray, solve_reach)? {
+            continue;
+        }
         if let Some(found) = solved(intersect_curve_face_within(k, &segment, b, f, tolerance))? {
             for curve in &found.curves {
                 let interval = curve.natural_interval();
@@ -726,7 +744,7 @@ pub fn face_hits(k: &Kernel, b: &mut Brep, ray: Ray) -> Result<Vec<FaceHit>> {
         }
     }
     for point in points {
-        let distance = along_ray(point).max(0.0);
+        let distance = hit_distance(along_ray(point))?;
         let faces_there = match query.entity_at(k, b, point, tolerance)? {
             Some(EntityRef::Vertex(v)) => vertex::faces(b, v)?,
             Some(EntityRef::Edge(e)) => edge::faces(b, e, None)?,
@@ -741,6 +759,60 @@ pub fn face_hits(k: &Kernel, b: &mut Brep, ray: Ray) -> Result<Vec<FaceHit>> {
     }
     hits.sort_by(|(r, p), (s, q)| p.distance.total_cmp(&q.distance).then(r.cmp(s)));
     Ok(hits.into_iter().map(|(_, h)| h).collect())
+}
+
+/// Whether `ray` passes clear of a box that holds face `f`, grown by
+/// [`Extent3d::meets_ray`]'s margin for `reach`, which is ten times `reach` at least. No point
+/// of the ray is then within `reach` of the face, so [`face_hits`]' solves of it would find
+/// neither a point nor a stretch. The box of a face on a plane is that of its vertices and
+/// edges ([`qf1::calculate_bounding_box`]), grown by the face's tolerance as the B-rep's box
+/// grows it ([`calculate_bounding_box`]): the face lies between its edges, which may lie off
+/// its plane by that much. That of any other face is its surface's certified box over the
+/// face's UV domain ([`Surface::certified_bounding_box`]), the domain the solves run over.
+/// Only ever a saving: a face with no such box, or an empty one, is not ruled out.
+///
+/// # Errors
+///
+/// A cancellation.
+fn ray_clear_of_face(k: &Kernel, b: &Brep, f: FaceId, ray: Ray, reach: f64) -> Result<bool> {
+    let Some(Some(surface)) = qf1::probe(face::p2::surface(b, f))? else {
+        return Ok(false);
+    };
+    let face_box = if matches!(surface.kind(), SurfaceKind::Plane(_)) {
+        let Some(tolerance) = qf1::probe(face::p2::tolerance(b, f))? else {
+            return Ok(false);
+        };
+        qf1::probe(qf1::calculate_bounding_box(k, b, f, false))?.map(|mut face_box| {
+            face_box.expand_absolute(tolerance.max(0.0));
+            face_box
+        })
+    } else {
+        let Some(domain) = qf1::probe(face::p2::uv_domain(b, f))? else {
+            return Ok(false);
+        };
+        qf1::probe(surface.certified_bounding_box(k, &domain))?.flatten()
+    };
+    Ok(face_box.is_some_and(|face_box| {
+        !face_box.has_negative_volume() && !face_box.meets_ray(ray.origin, ray.direction, reach)
+    }))
+}
+
+/// The distance of a hit from `along`, a solved point's distance along the ray: at least 0 (a
+/// point within the solve's zero behind the origin is at the origin).
+///
+/// # Errors
+///
+/// [`QueryFailure::Defect`] for a distance that is not finite.
+fn hit_distance(along: f64) -> Result<f64> {
+    if !along.is_finite() {
+        return Err(SolidError::query(
+            OP_FACE_HITS,
+            QueryFailure::Defect {
+                why: "a point a curve/face solve gave on the ray's finite segment is at no finite distance along the ray",
+            },
+        ));
+    }
+    Ok(along.max(0.0))
 }
 
 /// Adds the hit of `face` at `point` to [`face_hits`]' `hits`, with the face's place in
@@ -2713,6 +2785,118 @@ mod tests {
             misses.len(),
             misses.join("\n")
         );
+    }
+
+    /// #21621: a corner of the body's box at no finite distance from the ray's origin is
+    /// refused, not answered with no hits: an origin at -1e155 on x, whose squared distance
+    /// from the 10 x 10 x 10 box at (-5, -5, 0) overflows, and a locked box with a NaN or an
+    /// infinite corner. The same box and ray from x = -20 give the two hits at 15 and 25
+    /// before the box is locked and after it is unlocked. A solved point at no finite
+    /// distance along the ray is a defect; one behind the origin is at it.
+    #[test]
+    fn a_reach_or_a_hit_distance_that_is_not_finite_is_refused() {
+        let mut k = Kernel::default();
+        let mut b = crate::primitive::api_primitives::create_box(
+            &mut k,
+            Point3::new(-5.0, -5.0, 0.0),
+            10.0,
+            10.0,
+            10.0,
+        )
+        .unwrap();
+        let x = Vec3::new(1.0, 0.0, 0.0);
+        let refused = |r: Result<Vec<FaceHit>>| matches!(r, Err(SolidError::InvalidInput { .. }));
+        let far_off = Ray::new(Point3::new(-1e155, 0.0, 5.0), x).unwrap();
+        assert!(refused(face_hits(&k, &mut b, far_off)));
+        let ray = Ray::new(Point3::new(-20.0, 0.0, 5.0), x).unwrap();
+        let met_at_15_and_25 = |k: &Kernel, b: &mut Brep| {
+            let met: Vec<f64> = face_hits(k, b, ray)
+                .unwrap()
+                .iter()
+                .map(|h| h.distance)
+                .collect();
+            met.len() == 2 && (met[0] - 15.0).abs() < 1e-9 && (met[1] - 25.0).abs() < 1e-9
+        };
+        assert!(met_at_15_and_25(&k, &mut b));
+        for corner in [f64::NAN, f64::INFINITY] {
+            b.set_locked_bounding_box(Some(Extent3d::from_points(
+                Point3::ZERO,
+                Point3::new(corner, 1.0, 1.0),
+            )));
+            assert!(refused(face_hits(&k, &mut b, ray)), "{corner}");
+        }
+        unlock_bounding_box(&mut b);
+        assert!(met_at_15_and_25(&k, &mut b));
+
+        for along in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let error = hit_distance(along).unwrap_err();
+            assert!(
+                matches!(error.query_failure(), Some(QueryFailure::Defect { .. })),
+                "{along}: {error:?}"
+            );
+        }
+        assert_eq!(hit_distance(-1e-13), Ok(0.0));
+        assert_eq!(hit_distance(3.0), Ok(3.0));
+    }
+
+    /// #21621: a face whose box the ray passes clear of is not solved. Along +x at z = 5
+    /// past the 10 x 10 x 10 box at (-5, -5, 0): through its middle (y = 0) the ray is clear
+    /// of the four faces beside it and meets the two it is not clear of; 0.005 outside the
+    /// side y = 5 (y = 5.005, within the margin of ten times the solves' 0.001) it is clear
+    /// of the far side and of the bottom and top only, and meets nothing; 0.02 outside it is
+    /// clear of all six. With a tolerance of 0.5 on each of its faces (their edges keep
+    /// theirs), the ray 0.3 outside that side is clear of the far side, the bottom and the
+    /// top only: a planar face's box is grown by its tolerance. Along +x at z = 10 past the
+    /// radius-5 cylinder about z from 0 to 20: at y = 3 the ray is clear of both caps and
+    /// meets the side, twice; at y = 12, past the side's control net, it is clear of all
+    /// three.
+    #[test]
+    fn a_ray_is_clear_of_the_faces_whose_boxes_it_passes() {
+        let mut k = Kernel::default();
+        // the faces the ray along +x from (-20, y, z) is not clear of, and the face of each hit
+        let near_and_met = |k: &Kernel, b: &mut Brep, y: f64, z: f64| {
+            let ray = Ray::new(Point3::new(-20.0, y, z), Vec3::new(1.0, 0.0, 0.0)).unwrap();
+            let reach = brep_zone_tol_3d(k, b, SmallTopoType::NormalSize).max(CURVE_TOLERANCE);
+            assert!((reach - 0.001).abs() < 1e-15, "{reach}");
+            let near: Vec<FaceId> = bp1::faces(b, None)
+                .unwrap()
+                .into_iter()
+                .filter(|&f| !ray_clear_of_face(k, b, f, ray, reach).unwrap())
+                .collect();
+            let met: Vec<FaceId> = face_hits(k, b, ray)
+                .unwrap()
+                .iter()
+                .map(|h| h.face)
+                .collect();
+            assert!(met.iter().all(|f| near.contains(f)), "{near:?} {met:?}");
+            (near.len(), met.len())
+        };
+        let mut block = crate::primitive::api_primitives::create_box(
+            &mut k,
+            Point3::new(-5.0, -5.0, 0.0),
+            10.0,
+            10.0,
+            10.0,
+        )
+        .unwrap();
+        assert_eq!(near_and_met(&k, &mut block, 0.0, 5.0), (2, 2));
+        assert_eq!(near_and_met(&k, &mut block, 5.005, 5.0), (3, 0));
+        assert_eq!(near_and_met(&k, &mut block, 5.02, 5.0), (0, 0));
+        let faces = bp1::faces(&block, None).unwrap();
+        for &f in &faces {
+            face::p3::set_tolerance(&mut block, f, 0.5, true, false).unwrap();
+        }
+        let ray = Ray::new(Point3::new(-20.0, 5.3, 5.0), Vec3::new(1.0, 0.0, 0.0)).unwrap();
+        let near = faces
+            .iter()
+            .filter(|&&f| !ray_clear_of_face(&k, &block, f, ray, CURVE_TOLERANCE).unwrap())
+            .count();
+        assert_eq!(near, 3);
+        let mut cylinder =
+            crate::primitive::api_primitives::create_cylinder(&mut k, Point3::ZERO, 5.0, 20.0)
+                .unwrap();
+        assert_eq!(near_and_met(&k, &mut cylinder, 3.0, 10.0), (1, 2));
+        assert_eq!(near_and_met(&k, &mut cylinder, 12.0, 10.0), (0, 0));
     }
 
     /// A ray's direction is made unit whatever its finite length: (1e200, 0, 0), whose squared
