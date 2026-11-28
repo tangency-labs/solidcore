@@ -1730,3 +1730,64 @@ fn exact_phase_open_endpoints_survive_projection_and_sign() {
             .is_empty());
     }
 }
+
+/// One wall of a full section through a revolved part whose bore steps from R4 to R11 by 1 every
+/// 5 mm, as a drawing view hands it to the hatcher: on paper round the part's middle, its
+/// coordinates a few ulps off the nominal ones (#23449). A 135-degree hatch line passes the
+/// corner at (10, -10) by a few ulps and crosses both of its edges inside overlapping
+/// enclosures; the sweep must order them exactly, and the strokes must be the nominal wall's.
+fn stepped_bore_wall(nominal: bool) -> Loop2 {
+    let y = |v: f64, drawn: f64| if nominal { v } else { drawn };
+    polygon(&[
+        (14.0, y(20.0, 20.000000000000004)),
+        (4.0, y(20.0, 20.000000000000004)),
+        (4.0, y(15.0, 15.000000000000004)),
+        (5.0, y(15.0, 15.000000000000004)),
+        (5.0, y(10.0, 10.000000000000004)),
+        (6.0, y(10.0, 10.000000000000004)),
+        (6.0, y(5.0, 5.0000000000000036)),
+        (7.0, y(5.0, 5.0000000000000036)),
+        (7.0, y(0.0, 3.552713678800501e-15)),
+        (8.0, y(0.0, 3.552713678800501e-15)),
+        (8.0, y(-5.0, -4.9999999999999964)),
+        (9.0, y(-5.0, -4.9999999999999964)),
+        (9.0, -10.0),
+        (10.0, y(-10.0, -9.999999999999996)),
+        (10.0, y(-15.0, -14.999999999999996)),
+        (11.0, y(-15.0, -14.999999999999996)),
+        (11.0, y(-20.0, -19.999999999999996)),
+        (14.0, y(-20.0, -19.999999999999996)),
+    ])
+}
+
+#[test]
+fn a_hatch_line_through_a_stepped_bore_corner_orders_its_contacts_exactly() {
+    let pattern = [LineFamily {
+        angle: 2.356194490192345,
+        origin: Vec2::ZERO,
+        delta_x: 0.0,
+        delta_y: 1.5,
+        dashes: vec![],
+    }];
+    let lines = |nominal: bool| -> Vec<Segment> {
+        let marks = clip(
+            &pattern,
+            &Region2 {
+                outer: stepped_bore_wall(nominal),
+                holes: vec![],
+            },
+        )
+        .unwrap_or_else(|e| panic!("nominal {nominal}: {e:?}"));
+        marks
+            .into_iter()
+            .map(|mark| match mark {
+                Mark::Line { a, b } => (a, b),
+                Mark::Dot { .. } => panic!("a continuous family must not produce dots"),
+            })
+            .collect()
+    };
+    let (drawn, nominal) = (lines(false), lines(true));
+    assert!(!nominal.is_empty());
+    let length: f64 = nominal.iter().map(|(a, b)| a.dist(*b)).sum();
+    assert_segments(&drawn, &nominal, length);
+}

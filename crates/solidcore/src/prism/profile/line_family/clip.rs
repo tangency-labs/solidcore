@@ -500,7 +500,13 @@ impl PreparedRegion {
                 let h = height.sub(offset)?;
                 let sign = h.sign()?;
                 let key = base.checked_add(i).ok_or(UNCERTAIN)?;
-                let vertex = Projected { t, h, sign, key };
+                let vertex = Projected {
+                    point: p,
+                    t,
+                    h,
+                    sign,
+                    key,
+                };
                 if sign == 0 {
                     event(
                         &mut events,
@@ -509,6 +515,7 @@ impl PreparedRegion {
                             key: Key::Vertex(key),
                             toggle: false,
                             boundary: 0,
+                            site: Site::Point(p),
                         },
                         budget,
                     )?;
@@ -536,6 +543,7 @@ impl PreparedRegion {
                             key: Key::Vertex(first.key),
                             toggle: false,
                             boundary: 1,
+                            site: Site::Point(first.point),
                         },
                         budget,
                     )?;
@@ -546,17 +554,27 @@ impl PreparedRegion {
                             key: Key::Vertex(last.key),
                             toggle: false,
                             boundary: -1,
+                            site: Site::Point(last.point),
                         },
                         budget,
                     )?;
                 } else if (a.sign > 0) != (b.sign > 0) {
-                    let (at, key) = if a.sign == 0 {
-                        (a.t, Key::Vertex(a.key))
+                    let (at, key, site) = if a.sign == 0 {
+                        (a.t, Key::Vertex(a.key), Site::Point(a.point))
                     } else if b.sign == 0 {
-                        (b.t, Key::Vertex(b.key))
+                        (b.t, Key::Vertex(b.key), Site::Point(b.point))
                     } else {
                         let fraction = a.h.neg().div(b.h.sub(a.h)?)?;
-                        (a.t.add(b.t.sub(a.t)?.mul(fraction)?)?, Key::Edge(a.key))
+                        let (below, above) = if a.sign < 0 {
+                            (a.point, b.point)
+                        } else {
+                            (b.point, a.point)
+                        };
+                        (
+                            a.t.add(b.t.sub(a.t)?.mul(fraction)?)?,
+                            Key::Edge(a.key),
+                            Site::Crossing { below, above },
+                        )
                     };
                     event(
                         &mut events,
@@ -565,6 +583,7 @@ impl PreparedRegion {
                             key,
                             toggle: true,
                             boundary: 0,
+                            site,
                         },
                         budget,
                     )?;
@@ -823,6 +842,7 @@ impl ClippedLine {
 
 #[derive(Clone, Copy)]
 struct Projected {
+    point: Vec2,
     t: Bound,
     h: Bound,
     sign: i8,
@@ -842,6 +862,75 @@ struct Event {
     key: Key,
     toggle: bool,
     boundary: i32,
+    site: Site,
+}
+
+/// Where a polygon contact lies, in the region's own represented coordinates.
+/// The line itself is not needed: each site is certified to touch or cross it.
+#[derive(Clone, Copy)]
+enum Site {
+    /// A boundary vertex on the line.
+    Point(Vec2),
+    /// An edge crossing the line strictly, `below` on the negative normal side
+    /// and `above` on the positive one.
+    Crossing { below: Vec2, above: Vec2 },
+    /// A contact that only its enclosure orders.
+    Enclosed,
+}
+
+const UNORDERED: Invalid = Invalid("unresolved boundary contact ordering");
+
+/// The side of the directed line `below -> above` that a site's contact lies on.
+/// A crossing lies strictly inside its edge, so it shares the side of an endpoint
+/// off that line. Endpoints on opposite strict sides would mean two boundary
+/// edges cross, which prepared regions exclude.
+fn side_of(site: Site, below: Vec2, above: Vec2) -> Result<i8> {
+    match site {
+        Site::Point(p) => orient(below, above, p),
+        Site::Crossing { below: c, above: d } => {
+            let (sc, sd) = (orient(below, above, c)?, orient(below, above, d)?);
+            if sc == 0 || sc == sd {
+                Ok(sd)
+            } else if sd == 0 {
+                Ok(sc)
+            } else {
+                Err(UNORDERED)
+            }
+        }
+        Site::Enclosed => Err(UNORDERED),
+    }
+}
+
+/// Whether `a`'s contact strictly precedes `b`'s along the frame tangent, decided
+/// from the input coordinates alone. In the frame's right-handed (t, h)
+/// coordinates a contact on the line left of an upward crossing edge comes
+/// before that crossing.
+fn exactly_before(a: Event, b: Event) -> Result<bool> {
+    let side = match (a.site, b.site) {
+        (_, Site::Crossing { below, above }) => side_of(a.site, below, above)?,
+        (Site::Crossing { below, above }, _) => -side_of(b.site, below, above)?,
+        _ => return Err(UNORDERED),
+    };
+    match side {
+        1 => Ok(true),
+        -1 => Ok(false),
+        // Another contact exactly at a crossing makes the boundary non-simple.
+        _ => Err(UNORDERED),
+    }
+}
+
+/// One key's repeated events coincide; disjoint enclosures order themselves;
+/// overlapping ones are ordered by the exact predicate or refused.
+fn precedes(a: Event, b: Event) -> Result<bool> {
+    if a.key == b.key {
+        Ok(false)
+    } else if a.at.hi < b.at.lo {
+        Ok(true)
+    } else if b.at.hi < a.at.lo {
+        Ok(false)
+    } else {
+        exactly_before(a, b)
+    }
 }
 
 fn event(events: &mut Vec<Event>, e: Event, budget: &mut Budget) -> Result<()> {
@@ -860,13 +949,7 @@ fn sort(events: &mut [Event], budget: &mut Budget) -> Result<()> {
         while j > 0 {
             budget.work(1)?;
             let previous = events.get(j - 1).copied().ok_or(UNCERTAIN)?;
-            if previous
-                .at
-                .lo
-                .total_cmp(&current.at.lo)
-                .then(previous.key.cmp(&current.key))
-                .is_le()
-            {
+            if !precedes(current, previous)? {
                 break;
             }
             *events.get_mut(j).ok_or(UNCERTAIN)? = previous;
@@ -888,10 +971,12 @@ fn sweep(mut events: Vec<Event>, budget: &mut Budget) -> Result<ClippedLine> {
     while let Some(first) = events.next() {
         budget.work(1)?;
         if let Some(start) = previous {
-            if start.hi >= first.at.lo {
-                return Err(Invalid("unresolved boundary contact ordering"));
-            }
+            // `sort` ordered every adjacent pair. Ink between two contacts also
+            // needs enclosures that certify a positive length.
             if parity && boundary == 0 {
+                if start.hi >= first.at.lo {
+                    return Err(UNORDERED);
+                }
                 push(
                     &mut spans,
                     Span {

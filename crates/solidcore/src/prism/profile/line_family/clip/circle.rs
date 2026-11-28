@@ -8,7 +8,7 @@ use crate::prism::profile::Loop2;
 
 use super::{
     event, product, sweep, Bound, Budget, ClippedLine, Event, Frame, Invalid, Key, Region2, Result,
-    Seg2, Vec2, MAX_LENGTH_MM, UNCERTAIN,
+    Seg2, Site, Vec2, MAX_LENGTH_MM, UNCERTAIN,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -180,6 +180,7 @@ impl Circle {
                     key: Key::Circle(boundary, 0),
                     toggle: false,
                     boundary: 0,
+                    site: Site::Enclosed,
                 },
                 budget,
             ),
@@ -197,6 +198,7 @@ impl Circle {
                         key: Key::Circle(boundary, 0),
                         toggle: true,
                         boundary: 0,
+                        site: Site::Enclosed,
                     },
                     budget,
                 )?;
@@ -207,6 +209,7 @@ impl Circle {
                         key: Key::Circle(boundary, 1),
                         toggle: true,
                         boundary: 0,
+                        site: Site::Enclosed,
                     },
                     budget,
                 )
