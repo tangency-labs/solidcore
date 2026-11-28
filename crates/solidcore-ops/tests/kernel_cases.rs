@@ -4626,6 +4626,22 @@ fn replay_entry(entry: &Path, e: &Value) -> Value {
     })
 }
 
+/// #655 / #710: the tangent bore seam's two chamfers (the corpus case
+/// `fillets/14283-chamfer-tangent-bore-edges`, #20026) build and grade. Their rails share the
+/// seam's end vertices, which is what sets them apart from the square-to-circle loft's creases:
+/// a trace start rule that misses the seam refuses the case with "Corner Edge Computation
+/// Failure". The whole corpus is slow and ignored; this one case is not.
+#[test]
+fn the_tangent_bore_seam_chamfers_still_build() {
+    session::set_thread_fixes(solidcraft_fixes::solidcraft_fix_names()).unwrap();
+    let entry = corpus().join("fillets/14283-chamfer-tangent-bore-edges.json");
+    let text = std::fs::read_to_string(&entry).unwrap();
+    let e: Value = serde_json::from_str(&text).unwrap();
+    if let Err(stop) = run_case(&entry, &e) {
+        panic!("the bore seam case is refused: {stop:?}");
+    }
+}
+
 /// `KERNEL_CASES_ENTRY`: one entry from outside the corpus, replayed against its failure code
 /// ([`replay_entry`]). Without it, nothing runs.
 #[test]

@@ -2394,10 +2394,48 @@ fn c3_make_intersector<'s>(
     Ok(fi)
 }
 
+/// The vertices a tip's rails run to.
+fn rail_far_ends(
+    fillets: &FilletBrep,
+    tip: crate::topology::VertexId,
+) -> Result<Vec<crate::topology::VertexId>> {
+    let mut ends = Vec::new();
+    for e in crate::topology::vertex::edges(fillets.brep(), tip, None)? {
+        let (a, b) = crate::topology::vertex::edge_vertex_pair(fillets.brep(), e)?;
+        ends.extend([a, b].into_iter().flatten().filter(|v| *v != tip));
+    }
+    Ok(ends)
+}
+
+/// Another blend's on-vertex tip shares a rail end with this one.
+///
+/// The tangent bore seam (#20026) chamfers two edges that meet at one point on the
+/// periodic seam: their rails start at the same pair of vertices, and each tip is
+/// on-vertex at its own original vertex. Two loft creases also each end on-vertex, but
+/// their rails are their own, and each trace still starts at its own tip. Decided on the
+/// rails' vertices, not on distances.
+fn another_on_vertex_tip_shares_a_rail_end(
+    fillets: &FilletBrep,
+    vertex: crate::topology::VertexId,
+) -> Result<bool> {
+    let ends = rail_far_ends(fillets, vertex)?;
+    for (id, other) in fillets.fillet_vertices() {
+        if id != vertex
+            && other.fillet_vertex_type()
+                == crate::blend::fillet_geom::p1::FilletVertexType::OnVertex
+            && rail_far_ends(fillets, id)?.iter().any(|v| ends.contains(v))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// :2054-2090: the trace locals (tolerances, `sDir = sPVSt[1]`); a TANGENT last point
 /// reverses `st.tsect_pnts`, sets `sDir = -sPVEn[1]` and `bReverseTracing`; the local
 /// extension flags from the solver's. Not upstream (WR-603): a TANGENT first point starts
-/// the trace toward the next point.
+/// the trace toward the next point. Not upstream (#20026): when another blend's
+/// on-vertex tip shares a rail end with this one, the trace starts at the regular end.
 fn c3_trace_start(
     ops: &mut dyn FilletSolverOps,
     cx: &mut Cx<'_>,
@@ -2413,6 +2451,11 @@ fn c3_trace_start(
 
     // Check the last TsectPnt to see if it is degenerate (at a surf/surf tangency
     // point). If so, reverse the tracing to avoid its early termination.
+    // #20026: two linear chamfers whose on-vertex tips share a rail end (the inner edges of a
+    // tangent bore seam) start at the regular end. The offsets admit more than one
+    // intersection direction there, and the regular end's edge tangent selects the
+    // branch. A loft ruling's tip is the only on-vertex point there, even when other
+    // creases are chamfered with it, and the intersection leaves along the chord.
     st.trace.reverse_tracing = false;
     let mut start_from = st.tsect_pnts.last();
     if matches!(solver.fsg, Some(super::p1::FilletSurfaceGenerator::Linear)) {
@@ -2428,10 +2471,8 @@ fn c3_trace_start(
                     if let Some(vertex) = vertex {
                         if cx.fillets.fillet_vertex(vertex)?.fillet_vertex_type()
                             == crate::blend::fillet_geom::p1::FilletVertexType::OnVertex
+                            && another_on_vertex_tip_shares_a_rail_end(cx.fillets, vertex)?
                         {
-                            // The rails meet at the original vertex. At this contact the
-                            // offsets admit multiple intersection directions. The regular
-                            // end and its edge tangent identify the intended branch.
                             start_from = Some(first);
                         }
                     }
