@@ -17,16 +17,23 @@ use solidcore::topology::brep::p1::faces;
 use solidcore::Kernel;
 use std::f64::consts::PI;
 
-/// `boolean.api_brep`'s `rotational_sweep_face0`: box 5, its first face swept 90 degrees
-/// round the z axis through the origin.
+/// The four edges of `boolean.api_brep`'s `rotational_sweep_face0`'s face (box 5, its first
+/// face) swept 90 degrees round the z axis through the origin. (The face itself, turned in
+/// its own plane, sweeps no volume and is refused, #22068; its edges sweep the same
+/// quarter annuli.)
 #[test]
 fn quarter_annuli_hold_every_requested_accuracy() {
     let mut k = Kernel::default();
     let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 5.0, 5.0, 5.0).unwrap();
     let face = b.face_list()[0];
-    let selected = [Some(face)];
+    let selected: Vec<_> = solidcore::topology::topology_traverser::face_edges(&b, face)
+        .unwrap()
+        .into_iter()
+        .map(Some)
+        .collect();
+    assert_eq!(selected.len(), 4);
     let selection = SweepSelection {
-        faces: Some(&selected),
+        edges: Some(&selected),
         ..SweepSelection::default()
     };
     non_manifold_rotational_sweep(

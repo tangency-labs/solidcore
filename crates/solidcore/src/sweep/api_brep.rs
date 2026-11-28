@@ -113,7 +113,7 @@ use crate::sweep::topology_sweep::{TopologySweep, TopologySweepOptions};
 use crate::sweep::trans_sweep_geometry::TranslationalSweepGeometry;
 use crate::topology::brep::p1::is_live_topology_member;
 use crate::topology::face::p2 as face;
-use crate::topology::{Brep, EdgeId, FaceId, VertexId};
+use crate::topology::{Brep, EdgeId, FaceId, RegionId, VertexId};
 
 const OP_COPY: &str = "sweep::api_brep::copy_curves_for_consuming_sweep";
 const OP_SWEEP: &str = "sweep::api_brep";
@@ -946,16 +946,45 @@ fn selection_is_owned_by(brep: &Brep, selection: &SweepSelection<'_>) -> bool {
         && owned(brep, selection.vertices, EntityRef::Vertex)
 }
 
+/// The outward unit normal of face `f` of `brep` (`infinite` its infinite region), when `f`
+/// is a planar face of a solid: its surface is a plane and exactly one of its face uses
+/// bounds the infinite region (a sheet's face, bounded by the infinite region on both
+/// sides, has no outward side). That face use's normal, the plane's normal signed by its
+/// orientation, points out of the body.
+fn outward_plane_normal(brep: &Brep, f: FaceId, infinite: RegionId) -> Result<Option<Vec3>> {
+    let Some(SurfaceKind::Plane(plane)) = brep.face(f)?.surface.as_ref().map(Surface::kind) else {
+        return Ok(None);
+    };
+    let (Some(up), Some(mate)) = face::faceuses(brep, f)? else {
+        return Ok(None);
+    };
+    let outside = |fu| -> Result<bool> {
+        Ok(match brep.faceuse(fu)?.shell {
+            Some(shell) => brep.shell(shell)?.region == Some(infinite),
+            None => false,
+        })
+    };
+    let outer = match (outside(up)?, outside(mate)?) {
+        (true, false) => up,
+        (false, true) => mate,
+        _ => return Ok(None),
+    };
+    let sign = match brep.faceuse(outer)?.orientation {
+        OrientType::Same => 1.0,
+        OrientType::Opposite => -1.0,
+        OrientType::Unknown => return Ok(None),
+    };
+    Ok(Some(plane.evaluate_normal() * sign))
+}
+
 /// The first of `faces` that a translation by `sweep_vec` carries into its own body (not
 /// upstream, #21673), with how far, and the tolerance it was measured against.
 ///
-/// A face is checked when its surface is a plane and exactly one of its face uses bounds
-/// the infinite region (a face of a solid: a sheet's face, bounded by the infinite region
-/// on both sides, sweeps into it either way). That face use's normal, the plane's normal
-/// signed by its orientation, points out of the body, and the translation's component
-/// along it is exact up to one rounding of a dot product: a component below `-tolerance`
-/// moves the whole face into the body. One within the tolerance slides the face in its
-/// own plane, which this check leaves to the sweep.
+/// A face is checked when it is a planar face of a solid ([`outward_plane_normal`]: a
+/// sheet's face sweeps into the infinite region either way). The translation's component
+/// along its outward normal is exact up to one rounding of a dot product: a component
+/// below `-tolerance` moves the whole face into the body. One within the tolerance slides
+/// the face in its own plane, which this check leaves to the sweep.
 fn face_swept_into_body(
     brep: &Brep,
     faces: Option<&[Option<FaceId>]>,
@@ -967,32 +996,105 @@ fn face_swept_into_body(
     };
     let tolerance = brep.tolerance();
     for f in faces.unwrap_or_default().iter().flatten().copied() {
+        let Some(normal) = outward_plane_normal(brep, f, infinite)? else {
+            continue;
+        };
+        let along = sweep_vec.dot(normal);
+        if along < -tolerance {
+            return Ok(Some((f, -along, tolerance)));
+        }
+    }
+    Ok(None)
+}
+
+/// The first of `edges` that a translation by `sweep_vec` carries into its own body or
+/// along one of its faces (not upstream, #22068), with the larger of the translation's
+/// components along its faces' outward normals, and the tolerance it was measured against.
+///
+/// An edge is checked when it bounds exactly two faces and both are planar faces of a
+/// solid ([`outward_plane_normal`]). Near the edge the body lies on the inner side of both
+/// planes where the edge is convex, and of at least one where it is concave: a translation
+/// whose components along both outward normals are at most `tolerance` stays on the inner
+/// side of both, so it moves the edge into the body, or (a component within the tolerance)
+/// along a face, building the swept face on it. A component above the tolerance along
+/// either normal leaves the body at a convex edge; at a concave edge it may still enter
+/// the body, which this check leaves to the sweep.
+fn edge_swept_onto_body(
+    brep: &Brep,
+    edges: Option<&[Option<EdgeId>]>,
+    sweep_vec: Vec3,
+) -> Result<Option<(EdgeId, f64, f64)>> {
+    let Some(infinite) = brep.infinite_region() else {
+        // the sweep refuses a B-rep without infinite region itself
+        return Ok(None);
+    };
+    let tolerance = brep.tolerance();
+    for e in edges.unwrap_or_default().iter().flatten().copied() {
+        let faces = crate::query::edge::edge_faces(brep, e)?;
+        let [first, second] = faces.as_slice() else {
+            continue;
+        };
+        let (Some(n1), Some(n2)) = (
+            outward_plane_normal(brep, *first, infinite)?,
+            outward_plane_normal(brep, *second, infinite)?,
+        ) else {
+            continue;
+        };
+        let outward = sweep_vec.dot(n1).max(sweep_vec.dot(n2));
+        if outward <= tolerance {
+            return Ok(Some((e, outward, tolerance)));
+        }
+    }
+    Ok(None)
+}
+
+/// The first of `faces` that a rotation about the axis through `base_pt` along `axis` turns
+/// in its own plane (not upstream, #22068), with a bound on how far it moves a point of the
+/// face out of that plane, and the tolerance it was measured against.
+///
+/// A face is checked when its surface is a plane (of a solid or a sheet: either sweeps no
+/// volume turned in its plane). A rotation moves a point `p` by a vector `d` perpendicular
+/// to the axis `a`, of length at most twice `p`'s distance `r` from the axis, so `d`'s
+/// component along the plane's unit normal `n` is at most `2 r |n x a|` in size. `r` is
+/// bounded by the farthest corner of the B-rep's box from `base_pt`. Where that bound is
+/// within the tolerance, the whole face stays in its plane.
+fn face_turned_in_its_plane(
+    k: &Kernel,
+    brep: &Brep,
+    faces: Option<&[Option<FaceId>]>,
+    base_pt: Point3,
+    axis: Vec3,
+) -> Result<Option<(FaceId, f64, f64)>> {
+    let faces = faces.unwrap_or_default();
+    if faces.iter().flatten().next().is_none() {
+        return Ok(None);
+    }
+    let Ok(axis) = axis.unitize() else {
+        // the sweep refuses a zero axis itself
+        return Ok(None);
+    };
+    let tolerance = brep.tolerance();
+    let bbox = crate::query::brep::calculate_bounding_box(
+        k,
+        brep,
+        crate::query::brep::BoundingBoxOptions::default(),
+    )?;
+    let mut reach = 0.0_f64;
+    for corner in 0..8_u8 {
+        let at = |bit: u8| if corner & bit == 0 { 0.0 } else { 1.0 };
+        reach = reach.max(bbox.evaluate(at(1), at(2), at(4)).distance(base_pt));
+    }
+    if !reach.is_finite() {
+        return Ok(None);
+    }
+    for f in faces.iter().flatten().copied() {
         let Some(SurfaceKind::Plane(plane)) = brep.face(f)?.surface.as_ref().map(Surface::kind)
         else {
             continue;
         };
-        let (Some(up), Some(mate)) = face::faceuses(brep, f)? else {
-            continue;
-        };
-        let outside = |fu| -> Result<bool> {
-            Ok(match brep.faceuse(fu)?.shell {
-                Some(shell) => brep.shell(shell)?.region == Some(infinite),
-                None => false,
-            })
-        };
-        let outer = match (outside(up)?, outside(mate)?) {
-            (true, false) => up,
-            (false, true) => mate,
-            _ => continue,
-        };
-        let sign = match brep.faceuse(outer)?.orientation {
-            OrientType::Same => 1.0,
-            OrientType::Opposite => -1.0,
-            OrientType::Unknown => continue,
-        };
-        let along = sweep_vec.dot(plane.evaluate_normal() * sign);
-        if along < -tolerance {
-            return Ok(Some((f, -along, tolerance)));
+        let drift = 2.0 * reach * plane.evaluate_normal().cross(axis).length();
+        if drift <= tolerance {
+            return Ok(Some((f, drift, tolerance)));
         }
     }
     Ok(None)
@@ -1090,6 +1192,20 @@ pub fn non_manifold_sweep(
             },
         ));
     }
+    // (not upstream, #22068) an edge swept into the body or along its face builds its
+    // face there, not in the infinite region
+    if let Some((edge, outward, tolerance)) =
+        edge_swept_onto_body(brep, selection.edges, sweep_vec)?
+    {
+        return Err(SolidError::sweep(
+            OP_NON_MANIFOLD,
+            SweepFailure::EdgeSweptOntoBody {
+                edge,
+                outward,
+                tolerance,
+            },
+        ));
+    }
     let translation = TranslationalSweepGeometry::new(sweep_vec);
     let geometry = SweepGeometry::Translation(translation);
     non_manifold_sweep_with(k, brep, &geometry, do_stitching, do_merge, selection)
@@ -1122,6 +1238,19 @@ pub fn non_manifold_rotational_sweep(
         return Err(SolidError::invalid_input(
             OP_NON_MANIFOLD,
             "selection entry not live topology of the B-rep",
+        ));
+    }
+    // (not upstream, #22068) a face turned in its own plane sweeps no volume
+    if let Some((face, drift, tolerance)) =
+        face_turned_in_its_plane(k, brep, selection.faces, base_pt, axis)?
+    {
+        return Err(SolidError::sweep(
+            OP_NON_MANIFOLD,
+            SweepFailure::FaceTurnedInItsPlane {
+                face,
+                drift,
+                tolerance,
+            },
         ));
     }
     let rotation = RotationalSweepGeometry::new(base_pt, axis, angle_deg, ZONE_TOL_3D);
@@ -1872,5 +2001,129 @@ mod tests {
         let volume =
             crate::mass::integrator::properties::brep_volume_default(&k, &mut b, 1e-9).unwrap();
         assert!((volume - 1500.0).abs() <= 1e-6, "{volume}");
+    }
+
+    /// #22068: each edge of the box `[0,10]³` swept 5 along `+z` (`boolean.api_brep`'s
+    /// `sweep_edge` sweeps edge 3, a top edge, which builds). A bottom edge (z 0) would build its face on the
+    /// side face beside it, and a vertical edge would slide along itself: both are refused,
+    /// the box unchanged. A top edge (z 10) leaves the box and builds a fin of area 50, a
+    /// seventh face. Swept along `(0,-1,1)`, out through the side `y = 0`, the bottom edge
+    /// on that side builds too.
+    #[test]
+    fn issue_22068_an_edge_swept_along_its_box_face_is_refused() {
+        use crate::primitive::api_primitives::create_box;
+        let mut k = Kernel::default();
+        let origin = Point3::new(0.0, 0.0, 0.0);
+        let sweep = |k: &mut Kernel, b: &mut Brep, edge: EdgeId, dir: Vec3| {
+            let edges = [Some(edge)];
+            let selection = SweepSelection {
+                edges: Some(&edges),
+                ..SweepSelection::default()
+            };
+            non_manifold_sweep(k, b, None, dir, 5.0, true, false, selection)
+        };
+        let midpoint = |b: &Brep, e: EdgeId| {
+            let ends = crate::query::edge::edge_vertices(b, e).unwrap();
+            assert_eq!(ends.len(), 2);
+            (b.vertex(ends[0]).unwrap().point + b.vertex(ends[1]).unwrap().point) * 0.5
+        };
+        let count = create_box(&mut k, origin, 10.0, 10.0, 10.0)
+            .unwrap()
+            .edge_list()
+            .len();
+        assert_eq!(count, 12);
+        // `sweep_edge`'s edge 3 is a top edge: its fin leaves the box, and it builds
+        {
+            let b = create_box(&mut k, origin, 10.0, 10.0, 10.0).unwrap();
+            let mid = midpoint(&b, b.edge_list()[3]);
+            assert!((mid.z - 10.0).abs() < 1e-9, "{mid:?}");
+        }
+        let (mut refused, mut built) = (0, 0);
+        for i in 0..count {
+            let mut b = create_box(&mut k, origin, 10.0, 10.0, 10.0).unwrap();
+            let edge = b.edge_list()[i];
+            let mid = midpoint(&b, edge);
+            let r = sweep(&mut k, &mut b, edge, Vec3::new(0.0, 0.0, 1.0));
+            if mid.z > 9.0 {
+                r.unwrap_or_else(|e| panic!("top edge {i} at {mid:?}: {e}"));
+                assert_eq!(b.face_list().len(), 7, "top edge {i}");
+                built += 1;
+                continue;
+            }
+            let Err(e) = &r else {
+                panic!("edge {i} at {mid:?}: {r:?}")
+            };
+            let Some(&SweepFailure::EdgeSweptOntoBody {
+                edge: named,
+                outward,
+                tolerance,
+            }) = e.sweep_failure()
+            else {
+                panic!("edge {i} at {mid:?}: {e}")
+            };
+            assert_eq!(named, edge);
+            assert!(outward.abs() <= 1e-12, "{outward}");
+            assert!(tolerance > 0.0 && tolerance < 1e-3);
+            assert_eq!(e.kind(), crate::error::ErrorKind::InvalidInput);
+            assert_eq!(b.face_list().len(), 6, "the box is unchanged");
+            refused += 1;
+            // the bottom edge on the side y = 0, swept out through that side
+            if mid.z < 1.0 && mid.y < 1.0 {
+                let mut b = create_box(&mut k, origin, 10.0, 10.0, 10.0).unwrap();
+                let edge = b.edge_list()[i];
+                sweep(&mut k, &mut b, edge, Vec3::new(0.0, -1.0, 1.0))
+                    .unwrap_or_else(|e| panic!("edge {i} swept out: {e}"));
+                assert_eq!(b.face_list().len(), 7, "edge {i} swept out");
+            }
+        }
+        assert_eq!((refused, built), (8, 4));
+    }
+
+    /// #22068: `boolean.api_brep`'s `rotational_sweep_face0` turns the box `[0,5]³`'s face
+    /// 0, the plane `z = 0`, 90 degrees about the z axis: in its own plane, so it sweeps no
+    /// volume and its edges' faces lie in that plane. It is refused, the box unchanged, as
+    /// is an axis tilted by 1e-9 (the drift stays within the tolerance). Turned about the x
+    /// axis instead, which lies in its plane, the face sweeps a quarter cylinder.
+    #[test]
+    fn issue_22068_a_face_turned_in_its_own_plane_is_refused() {
+        use crate::primitive::api_primitives::create_box;
+        let mut k = Kernel::default();
+        let origin = Point3::new(0.0, 0.0, 0.0);
+        let turn = |k: &mut Kernel, b: &mut Brep, axis: Vec3, angle: f64| {
+            let faces = [Some(b.face_list()[0])];
+            let selection = SweepSelection {
+                faces: Some(&faces),
+                ..SweepSelection::default()
+            };
+            non_manifold_rotational_sweep(k, b, None, origin, axis, angle, true, false, selection)
+        };
+        for axis in [
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.0, 0.0, -2.0),
+            Vec3::new(1e-9, 0.0, 1.0),
+        ] {
+            let mut b = create_box(&mut k, origin, 5.0, 5.0, 5.0).unwrap();
+            let face = b.face_list()[0];
+            let r = turn(&mut k, &mut b, axis, 90.0);
+            let Err(e) = &r else {
+                panic!("{axis:?}: {r:?}")
+            };
+            let Some(&SweepFailure::FaceTurnedInItsPlane {
+                face: refused,
+                drift,
+                tolerance,
+            }) = e.sweep_failure()
+            else {
+                panic!("{axis:?}: {e}")
+            };
+            assert_eq!(refused, face);
+            assert!(drift <= tolerance, "{drift} {tolerance}");
+            assert_eq!(e.kind(), crate::error::ErrorKind::InvalidInput);
+            assert_eq!(b.face_list().len(), 6, "the box is unchanged");
+        }
+        // the control: about the x axis, out of the box (z below 0)
+        let mut b = create_box(&mut k, origin, 5.0, 5.0, 5.0).unwrap();
+        turn(&mut k, &mut b, Vec3::new(1.0, 0.0, 0.0), -90.0).unwrap();
+        assert!(b.face_list().len() > 6);
     }
 }

@@ -78,11 +78,12 @@ fn lists(l: &[&[u64]]) -> Vec<Vec<u64>> {
     l.iter().map(|x| x.to_vec()).collect()
 }
 
-// The expected origins (ids less `BASE_ID`; edges from 500) are those of
+// The expected linear origins (ids less `BASE_ID`; edges from 500) are those of
 // `fixtures/boolean.api_brep/with_attributes_nm_sweeps.json`'s
-// `attributed_sweep_negative_dist` and `attributed_rotational_sweep_face0`. (The C++
-// reference's `attributed_sweep_face0` sweeps face 0 into the box, which solidcore
-// refuses, #21673.)
+// `attributed_sweep_negative_dist`. (The C++ reference's `attributed_sweep_face0` sweeps
+// face 0 into the box, which solidcore refuses, #21673, and its
+// `attributed_rotational_sweep_face0` turns face 0 in its own plane, which solidcore
+// refuses too, #22068.)
 
 /// Box faces keep their origins; the swept block's cap and four sides have none.
 const LINEAR_FACES: &[&[u64]] = &[&[], &[], &[], &[], &[], &[0], &[1], &[2], &[3], &[4], &[5]];
@@ -109,8 +110,12 @@ const LINEAR_EDGES: &[&[u64]] = &[
     &[510],
     &[511],
 ];
+/// Box faces keep their origins; the swept block's cap and four sides have none.
 const REVOLVE_FACES: &[&[u64]] = &[&[], &[], &[], &[], &[], &[0], &[1], &[2], &[3], &[4], &[5]];
+/// Each box edge keeps its origin; the block's own eight edges have none.
 const REVOLVE_EDGES: &[&[u64]] = &[
+    &[],
+    &[],
     &[],
     &[],
     &[],
@@ -166,7 +171,9 @@ fn linear_sweep_of_a_tagged_face_carries_its_origins() {
     assert_eq!(edges, lists(LINEAR_EDGES));
 }
 
-/// A revolve of one tagged face of a box (in place).
+/// A revolve of one tagged face of a box (in place), out of the box: a quarter turn about
+/// the line `y = -1, z = 0`, parallel to the face (the face's own turn about the z axis
+/// stays in its plane, which solidcore refuses, #22068).
 #[test]
 fn revolve_of_a_tagged_face_carries_its_origins() {
     let mut k = Kernel::default();
@@ -182,9 +189,9 @@ fn revolve_of_a_tagged_face_carries_its_origins() {
         &mut k,
         &mut b,
         None,
-        Point3::new(0.0, 0.0, 0.0),
-        Vec3::new(0.0, 0.0, 1.0),
-        90.0,
+        Point3::new(0.0, -1.0, 0.0),
+        Vec3::new(1.0, 0.0, 0.0),
+        -90.0,
         true,
         false,
         selection,
