@@ -488,13 +488,11 @@ fn frame(
             .surface
             .clone()
             .ok_or_else(|| SolidError::invalid_input(OP, "a face with no surface"))?;
-        // a B-spline edge only lies within tolerance of the line the bead runs along: its
-        // tangent may lean off it, so its binormal is taken square to the line (the section's
-        // plane, as `BeadArc::new` reads it)
-        let binormal = match curve.kind() {
-            CurveKind::Line(_) => eval.binormal,
-            _ => eval.binormal - dir * eval.binormal.dot(dir),
-        };
+        // into the face square to the line the bead runs along (the section's plane, as
+        // `BeadArc::new` reads it): a B-spline edge's tangent may lean off that line, so the
+        // edge use's binormal gives only the side
+        let across = eval.face_normal.cross(dir);
+        let binormal = across * across.dot(eval.binormal).signum();
         sides.push((
             face,
             binormal.unitize()?,
@@ -577,7 +575,9 @@ fn frame(
         uv: [uv1, uv2],
         offsets: signed,
         centre,
-        tol: edge::tolerance(target, edge_id)?,
+        // the field's contract: placements are decided within the body's tolerance (the
+        // faces'), not the edge's, which may be 0 or an import's loose one
+        tol: target.tolerance(),
         ball_on_collapsed: false,
         radii_can_change: false,
     };

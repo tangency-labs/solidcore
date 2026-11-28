@@ -1538,3 +1538,35 @@ fn a_b_spline_edge_is_straight_within_the_body_s_tolerance() {
         }
     }
 }
+
+/// The bead face's definition decides its placements within the part's tolerance, whatever
+/// the edge's own (brett19 on #22603): with the edge's own at 0 (a new or split edge) or 50
+/// times the body's (a loose import), the flat and the convex bead store the body's tolerance
+/// and keep their section along the edge.
+#[test]
+fn a_bead_s_definition_reads_the_body_s_tolerance_not_the_edge_s() {
+    let size = ChamferSize::Distances([SETBACK; 2]);
+    for times in [0.0, 50.0] {
+        for h in [0.0, 1.0] {
+            let mut k = kernel();
+            let (mut b, at) = corner(&mut k, FRAC_PI_2);
+            let e = pick(&k, &b, at);
+            let tol = b.tolerance();
+            b.edge_mut(e).unwrap().tolerance = times * tol;
+            let mut body = beads_apart(&mut k, &mut b, &[e], &[size], h, &[])
+                .unwrap()
+                .remove(0);
+            let face = bead_face(&body);
+            let BlendRef::Exact { round, .. } = face.procedural_blend().unwrap() else {
+                panic!("{times} {h}: the bead face is exact");
+            };
+            assert_eq!(round.inputs().tol, tol, "{times} {h}");
+            let want = bead([SETBACK; 2], FRAC_PI_2, h).section_area() * LENGTH;
+            let v = volume(&k, &mut body);
+            assert!(
+                ((v - want) / want).abs() <= 1e-6,
+                "{times} {h}: {v} against {want}"
+            );
+        }
+    }
+}
