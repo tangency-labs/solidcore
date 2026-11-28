@@ -68,7 +68,12 @@ use crate::nurbs::b_spline_curve::ControlPointForm;
 use crate::nurbs::b_spline_surface::p1::SurfParamType;
 use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
-use crate::nurbs::math::gamma;
+use crate::nurbs::math::{gamma, CPoint, NOW};
+use crate::nurbs::srf_basic::{Direction, Surface as Nurb};
+use crate::nurbs::srf_tool::p1::insert_knots;
+use crate::offset::construction::sheets::{
+    certified_offset, certify_regular, offset_bound, Regularity,
+};
 use crate::surface::cone::Cone;
 use crate::surface::implicit::{lies_on, AnalyticSupport, Implicit};
 use crate::surface::surface::{Surface, SurfaceKind};
@@ -155,7 +160,8 @@ pub struct Draft {
 /// Why a face cannot be drafted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DraftRefusal {
-    /// The face's surface is neither a plane nor a cone or cylinder.
+    /// The face's surface is neither a plane nor a cone or cylinder, nor straight in one
+    /// direction (a sweep, whose drafted wall is [`DraftRefusal::NotExtrusionAlongPull`]'s).
     NotPlaneOrCone,
     /// The face is a plane not parallel to the pull.
     PlaneAcrossPull,
@@ -185,6 +191,17 @@ pub enum DraftRefusal {
     /// The drafted cone would close within the face's span (its radius at a control point
     /// not positive, its slope infinite), or its net could not be edited.
     ConeCloses,
+    /// The face's surface is straight in one direction but not swept along the pull from a
+    /// section across it: only such a side is drafted as a ruled wall so far (#22809).
+    NotExtrusionAlongPull,
+    /// The face is swept along the pull and the neutral plane does not run across the pull.
+    NeutralNotAcrossPull,
+    /// The face is swept along the pull and its drafted wall folds: the draft moves a section
+    /// past a centre of its curvature within the wall's span.
+    WallFolds,
+    /// The face is swept along the pull and its drafted wall is not certified within its
+    /// bound (its offset sections not proved regular, or not reached).
+    WallNotCertified,
 }
 
 impl Draft {
@@ -672,9 +689,363 @@ impl Cone {
     }
 }
 
+/// How far past the face's own span along the pull a drafted extrusion's wall is built, as a
+/// fraction of that span, at each end: its two rows of rulings stand off the face, so the
+/// faces beside it meet the wall inside its net rather than on its edge.
+const WALL_MARGIN: f64 = 0.125;
+
+/// The bound a drafted extrusion's wall is built and certified to: a tenth of the kernel's
+/// zone tolerance, as a blend's spans are (`target = 0.1 * tol`).
+fn wall_target(k: &Kernel) -> f64 {
+    0.1 * k.tolerances.zone_tol_3d
+}
+
+/// The source of a drafted extrusion's wall ([`wall_of`]): the face's surface, a surface
+/// swept straight along the pull, as its net with the straight direction as v (two columns),
+/// continued straight to the wall's two rows.
+struct Wall {
+    /// The source's net continued to `[v_a, v_b]`, its straight direction v.
+    net: Nurb,
+    /// Whether the source's straight direction is its u (the net above is its transpose).
+    swapped: bool,
+    /// The signed distances along the net's normal (`S_u x S_v`) of the two rows'
+    /// sections: `-h tan(angle)` outward, `h` a row's height along the pull above the
+    /// neutral plane.
+    d: [f64; 2],
+    /// The rounding of continuing the source's rows to the wall's.
+    rounding: f64,
+}
+
+/// The Euclidean point of a control point (its weight divided out).
+fn euclid(c: CPoint) -> Point3 {
+    if c.w == NOW {
+        Point3::new(c.x, c.y, c.z)
+    } else {
+        Point3::new(c.x / c.w, c.y / c.w, c.z / c.w)
+    }
+}
+
+/// The wall a face on `source` drafted by `draft` stands on, when `source` is swept straight
+/// along the pull from a section across it (the side of an extruded outline) and the neutral
+/// plane runs across the pull. The section is the net's rows' first points: each row's two
+/// points one vector along the pull apart, all to the zone tolerance, every row's first
+/// point at one height along the pull. `span`, the wall's `[v_a, v_b]` in the source's straight parameter,
+/// is the net's when re-certifying one; `None` builds a new one, past the source's span by
+/// [`WALL_MARGIN`] of it at each end, and a further margin at an end whose row would stand
+/// on the neutral plane (a row is the section moved by its height, which must not be 0).
+///
+/// # Errors
+///
+/// Those of the source's NURB form and of making the net. A source that is not such a
+/// sweep, or a neutral plane not across the pull, is an `Ok(Err(refusal))`.
+fn wall_of(
+    k: &Kernel,
+    source: &Surface,
+    outward: bool,
+    draft: &Draft,
+    span: Option<[f64; 2]>,
+) -> Result<std::result::Result<Wall, DraftRefusal>> {
+    let (pull, normal) = (draft.pull, draft.neutral_normal);
+    let Some(form) = as_b_spline(k, source)? else {
+        return Ok(Err(DraftRefusal::NotPlaneOrCone));
+    };
+    let Some(nurb) = form.gw_nurb() else {
+        return Ok(Err(DraftRefusal::NotPlaneOrCone));
+    };
+    let mut nurb = nurb.clone();
+    let (p, q) = nurb.degrees();
+    let swapped = if q == 1 && nurb.m() == 1 {
+        false
+    } else if p == 1 && nurb.n() == 1 {
+        nurb.swap_uv();
+        true
+    } else {
+        return Ok(Err(DraftRefusal::NotPlaneOrCone));
+    };
+    // the degree across the straight direction
+    let p = nurb.degrees().0;
+    let (Some(&v0), Some(&v1), 4) = (
+        nurb.v_knots().first(),
+        nurb.v_knots().last(),
+        nurb.v_knots().len(),
+    ) else {
+        return Ok(Err(DraftRefusal::NotExtrusionAlongPull));
+    };
+    if v1.partial_cmp(&v0) != Some(std::cmp::Ordering::Greater) {
+        return Ok(Err(DraftRefusal::NotExtrusionAlongPull));
+    }
+    let zone = k.tolerances.zone_tol_3d;
+    let mut rows = Vec::new();
+    for row in nurb.rows() {
+        let (Some(&a), Some(&b)) = (row.first(), row.get(1)) else {
+            return Ok(Err(DraftRefusal::NotExtrusionAlongPull));
+        };
+        if (a.w == NOW) != (b.w == NOW) || (a.w != NOW && !(a.w > 0.0 && a.w == b.w)) {
+            return Ok(Err(DraftRefusal::NotExtrusionAlongPull));
+        }
+        rows.push((a, b));
+    }
+    let Some(&(a0, b0)) = rows.first() else {
+        return Ok(Err(DraftRefusal::NotExtrusionAlongPull));
+    };
+    let e0 = euclid(b0) - euclid(a0);
+    let mut size: f64 = 0.0;
+    for &(a, b) in &rows {
+        let (pa, pb) = (euclid(a), euclid(b));
+        let e = pb - pa;
+        let lateral = e - pull * e.dot(pull);
+        if !((e - e0).length() <= zone
+            && lateral.length() <= zone
+            && (pa - euclid(a0)).dot(pull).abs() <= zone)
+        {
+            return Ok(Err(DraftRefusal::NotExtrusionAlongPull));
+        }
+        size = size.max(pa.length()).max(pb.length());
+    }
+    // a swept side, so the refusal of an oblique neutral plane is its own
+    let across = pull.dot(normal);
+    if across
+        .abs()
+        .partial_cmp(&(1.0 - AXIS_ALONG_PULL))
+        .is_none_or(std::cmp::Ordering::is_lt)
+    {
+        return Ok(Err(DraftRefusal::NeutralNotAcrossPull));
+    }
+    let height = |x: Point3| (x - draft.neutral_origin).dot(normal) / across;
+    let (h0, h1) = (height(euclid(a0)), height(euclid(b0)));
+    if !(h1 - h0).is_finite() || (h1 - h0).abs() <= zone {
+        return Ok(Err(DraftRefusal::NotExtrusionAlongPull));
+    }
+    // the heights of the rows at v, affine in v
+    let dv = v1 - v0;
+    let at = |v: f64| h0 + (v - v0) / dv * (h1 - h0);
+    let [va, vb] = if let Some(s) = span {
+        s
+    } else {
+        let mut va = v0 - WALL_MARGIN * dv;
+        let mut vb = v1 + WALL_MARGIN * dv;
+        if at(va) == 0.0 {
+            va -= WALL_MARGIN * dv;
+        }
+        if at(vb) == 0.0 {
+            vb += WALL_MARGIN * dv;
+        }
+        [va, vb]
+    };
+    if !(va < vb && va.is_finite() && vb.is_finite()) {
+        return Ok(Err(DraftRefusal::NotExtrusionAlongPull));
+    }
+    let (ta, tb) = ((va - v0) / dv, (vb - v0) / dv);
+    let towards = |c: CPoint, d: CPoint, t: f64| CPoint {
+        x: c.x + t * (d.x - c.x),
+        y: c.y + t * (d.y - c.y),
+        z: c.z + t * (d.z - c.z),
+        w: c.w,
+    };
+    let net: Vec<Vec<CPoint>> = rows
+        .iter()
+        .map(|&(a, b)| vec![towards(a, b, ta), towards(a, b, tb)])
+        .collect();
+    let continued = Nurb::new(net, p, 1, nurb.u_knots().to_vec(), vec![va, va, vb, vb])?;
+    // the net normal S_u x S_v against the face's outward one, the transpose reversing it
+    let sense = if outward == swapped { -1.0 } else { 1.0 };
+    let tan = draft.angle.tan();
+    let d = [-sense * at(va) * tan, -sense * at(vb) * tan];
+    if d.iter().any(|x| !(x.abs() > 0.0 && x.is_finite())) {
+        return Ok(Err(DraftRefusal::NotExtrusionAlongPull));
+    }
+    // three roundings a coordinate (a difference, a product, a sum), at the rows' size
+    // times the stretch
+    let rounding = gamma(4) * 3f64.sqrt() * size * (1.0 + ta.abs() + tb.abs());
+    Ok(Ok(Wall {
+        net: continued,
+        swapped,
+        d,
+        rounding,
+    }))
+}
+
+/// The certified distance of `net` (the wall's straight direction as v, two columns, on
+/// the wall's own v knots) from the drafted surface of `wall`: the ruled surface between the
+/// wall's two rows' sections each offset by its distance along the net's normal. That
+/// surface is linear across, so the distance is the larger of the two rows', each a row of
+/// `net` against its offset section ([`offset_bound`] of the row swept along the wall's
+/// straight direction, against the wall's net offset by the row's distance), plus the
+/// rounding of continuing the source to the wall. Infinite where a row is not certified.
+///
+/// # Errors
+///
+/// `InvalidInput` for a net not of that shape; those of [`offset_bound`].
+fn wall_distance(k: &Kernel, wall: &Wall, net: &Nurb) -> Result<f64> {
+    let shape = |why| SolidError::invalid_input(OP, why);
+    let (pg, qg) = net.degrees();
+    if qg != 1 || net.m() != 1 || net.v_knots() != wall.net.v_knots() || net.is_rational() {
+        return Err(shape("a drafted wall's net is ruled between two rows"));
+    }
+    let (Some(&a0), Some(&b0)) = (wall.net.row(0)?.first(), wall.net.row(0)?.get(1)) else {
+        return Err(shape("a drafted wall's source has no row"));
+    };
+    let along = euclid(b0) - euclid(a0);
+    let mut worst: f64 = 0.0;
+    for (column, &d) in wall.d.iter().enumerate() {
+        let mut lifted = Vec::new();
+        for row in net.rows() {
+            let c = *row
+                .get(column)
+                .ok_or_else(|| shape("a drafted wall's net is ruled between two rows"))?;
+            // the row stands at its own end of the wall: swept to the other end
+            let s = if column == 0 { 1.0 } else { -1.0 };
+            let other = CPoint {
+                x: c.x + s * along.x,
+                y: c.y + s * along.y,
+                z: c.z + s * along.z,
+                w: c.w,
+            };
+            lifted.push(if column == 0 {
+                vec![c, other]
+            } else {
+                vec![other, c]
+            });
+        }
+        let lifted = Nurb::new(
+            lifted,
+            pg,
+            1,
+            net.u_knots().to_vec(),
+            wall.net.v_knots().to_vec(),
+        )?;
+        let bound = offset_bound(k, &wall.net, &lifted, d)?;
+        if bound
+            .partial_cmp(&worst)
+            .is_none_or(std::cmp::Ordering::is_gt)
+        {
+            worst = bound;
+        }
+    }
+    Ok(worst + wall.rounding)
+}
+
+/// The knots of `from` past those of `to`, interior values only, each as many times as
+/// `from` has it more than `to` (to make `to`'s knot vector hold `from`'s).
+fn missing_knots(to: &[f64], from: &[f64]) -> Vec<f64> {
+    let (Some(&lo), Some(&hi)) = (from.first(), from.last()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(&x) = from.get(i) {
+        let run = from.iter().skip(i).take_while(|&&y| y == x).count().max(1);
+        if x > lo && x < hi {
+            let have = to.iter().filter(|&&y| y == x).count();
+            out.extend(std::iter::repeat_n(x, run.saturating_sub(have)));
+        }
+        i += run;
+    }
+    out
+}
+
+/// Not upstream (#22809): the drafted surface of a face on `source`, a surface swept
+/// straight along the pull (the side of an extruded outline), about a neutral plane across
+/// the pull. Each point C(u) of the section on the neutral plane moves along the section's
+/// outward normal n(u) by `-h tan(angle)` at height h along the pull, so every ruling turns
+/// by the draft angle about the section's tangent: S(u, h) = C(u) + h (p - tan(angle) n(u)).
+/// The offset of a spline section is no spline, so the net is certified, not exact: the
+/// ruled net between the wall's two rows, each the boundary row of the certified offset
+/// ([`certified_offset`]) of the source continued to the wall by that row's distance, their
+/// knots merged, then certified as a whole ([`wall_distance`]) within [`wall_target`]. The
+/// net keeps the source's parameters (its straight direction stretched past the face by
+/// [`WALL_MARGIN`]), so the face's trims stay on it. Both rows' offsets must be proved
+/// regular ([`certify_regular`]): the offset distance is linear in the height and each
+/// point's regularity `1 - d k` linear in the distance, so the two rows prove the wall.
+///
+/// # Errors
+///
+/// Those of [`wall_of`], the offsets and the certificate. A source not swept along the pull,
+/// a wall that folds or one not certified is an `Ok(Err(refusal))`.
+fn drafted_extrusion(
+    k: &Kernel,
+    source: &Surface,
+    outward: bool,
+    draft: &Draft,
+) -> Result<std::result::Result<Surface, DraftRefusal>> {
+    let wall = match wall_of(k, source, outward, draft, None)? {
+        Ok(w) => w,
+        Err(refusal) => return Ok(Err(refusal)),
+    };
+    for &d in &wall.d {
+        match certify_regular(k, &wall.net, d, None)? {
+            Regularity::Regular => {}
+            Regularity::Folds { .. } => return Ok(Err(DraftRefusal::WallFolds)),
+            Regularity::NotCertified => return Ok(Err(DraftRefusal::WallNotCertified)),
+        }
+    }
+    let target = wall_target(k);
+    // each row's offset is built to a quarter of the wall's bound: the wall's certificate
+    // bounds the row, swept along the pull, by its own Bernstein forms, which are looser
+    // than the offset's (a factor of about 2 on the issue's outline)
+    let row_target = 0.25 * target;
+    let [da, db] = wall.d;
+    let ga = match certified_offset(k, &wall.net, da, row_target) {
+        Ok(g) => g.surface,
+        Err(SolidError::NotConverged { .. }) => return Ok(Err(DraftRefusal::WallNotCertified)),
+        Err(e) => return Err(e),
+    };
+    let gb = match certified_offset(k, &wall.net, db, row_target) {
+        Ok(g) => g.surface,
+        Err(SolidError::NotConverged { .. }) => return Ok(Err(DraftRefusal::WallNotCertified)),
+        Err(e) => return Err(e),
+    };
+    // both offsets on one knot vector: each refined by the knots the other has more of
+    let refined = |g: &Nurb, other: &Nurb| -> Result<Nurb> {
+        let extra = missing_knots(g.u_knots(), other.u_knots());
+        if extra.is_empty() {
+            Ok(g.clone())
+        } else {
+            insert_knots(g, &extra, Direction::U)
+        }
+    };
+    let (ga, gb) = (refined(&ga, &gb)?, refined(&gb, &ga)?);
+    if ga.u_knots() != gb.u_knots() || ga.degrees().0 != gb.degrees().0 {
+        return Err(SolidError::invalid_input(
+            OP,
+            "a drafted wall's two offsets are not on one knot vector",
+        ));
+    }
+    let mut rows = Vec::new();
+    for (ra, rb) in ga.rows().zip(gb.rows()) {
+        let (Some(&a), Some(&b)) = (ra.first(), rb.last()) else {
+            return Err(SolidError::invalid_input(
+                OP,
+                "a drafted wall's offset has no row",
+            ));
+        };
+        rows.push(vec![a, b]);
+    }
+    let net = Nurb::new(
+        rows,
+        ga.degrees().0,
+        1,
+        ga.u_knots().to_vec(),
+        wall.net.v_knots().to_vec(),
+    )?;
+    let bound = wall_distance(k, &wall, &net)?;
+    if bound
+        .partial_cmp(&target)
+        .is_none_or(std::cmp::Ordering::is_gt)
+    {
+        return Ok(Err(DraftRefusal::WallNotCertified));
+    }
+    let mut net = net;
+    if wall.swapped {
+        net.swap_uv();
+    }
+    Ok(Ok(Surface::from(BSplineSurface::from_nurb(net, false))))
+}
+
 /// A drafted surface's definition: the face's surface before the draft, whether the face's
 /// outer faceuse runs with its normal, and the draft. Its net is the drafted plane or cone,
-/// which is the definition's surface (bound 0).
+/// which is the definition's surface (bound 0), or for a face swept along the pull the
+/// certified ruled wall of [`drafted_extrusion`] (bound [`wall_target`]).
 #[derive(Debug, Clone)]
 pub struct DraftDefinition {
     /// The face's surface before the draft (a plane, cone or cylinder), without a
@@ -684,6 +1055,9 @@ pub struct DraftDefinition {
     pub(crate) outward: bool,
     /// The draft.
     pub(crate) draft: Draft,
+    /// The net's bound from the definition: 0 for a plane or cone, [`wall_target`] for a
+    /// face swept along the pull.
+    pub(crate) bound: f64,
 }
 
 impl DraftDefinition {
@@ -695,10 +1069,15 @@ impl DraftDefinition {
     pub fn create(k: &Kernel, source: &Surface, outward: bool, draft: Draft) -> Result<Self> {
         let mut s = source.copy(k)?;
         s.clear_definition();
+        let bound = match s.kind_with_nurb(k)? {
+            SurfaceKind::Plane(_) | SurfaceKind::Cone(_) => 0.0,
+            _ => wall_target(k),
+        };
         Ok(Self {
             source: Box::new(s),
             outward,
             draft,
+            bound,
         })
     }
 
@@ -720,10 +1099,11 @@ impl DraftDefinition {
         &self.draft
     }
 
-    /// The net's certified distance from the definition: 0, the net is its surface.
+    /// The net's certified distance from the definition: 0 for a plane or cone, the net is
+    /// its surface; for a face swept along the pull, the bound its wall is certified to.
     #[must_use]
     pub const fn bound(&self) -> f64 {
-        0.0
+        self.bound
     }
 
     /// The analytic surface the definition derives, as its implicit equation.
@@ -769,6 +1149,12 @@ impl DraftDefinition {
     /// `InvalidInput` naming what fails; those of the derivation and of making the forms.
     pub fn recertify(&self, k: &Kernel, net: &Surface) -> Result<f64> {
         let refuse = |why| SolidError::invalid_input(OP_RECERTIFY, why);
+        if !matches!(
+            self.source.kind_with_nurb(k)?,
+            SurfaceKind::Plane(_) | SurfaceKind::Cone(_)
+        ) {
+            return self.recertify_wall(k, net);
+        }
         let derived = self.derived(k)?;
         let label = match (AnalyticSupport::of(net), &derived) {
             (Some(a @ AnalyticSupport::Plane { .. }), Implicit::Plane { .. })
@@ -786,6 +1172,44 @@ impl DraftDefinition {
             return Err(refuse("a drafted surface is not its definition's"));
         }
         Ok(0.0)
+    }
+
+    /// [`DraftDefinition::recertify`] of a face swept along the pull: the net is a B-spline
+    /// ruled between two rows in the source's parameters, and its certified distance from
+    /// the ruled wall the definition derives over the net's own span ([`wall_distance`]) is
+    /// within the definition's bound. Returns that distance.
+    fn recertify_wall(&self, k: &Kernel, net: &Surface) -> Result<f64> {
+        let refuse = |why| SolidError::invalid_input(OP_RECERTIFY, why);
+        let SurfaceKind::BSpline(form) = net.kind() else {
+            return Err(refuse("a drafted wall is a B-spline surface"));
+        };
+        let Some(mut nurb) = form.gw_nurb().cloned() else {
+            return Err(refuse("a drafted wall has a net"));
+        };
+        // the wall's straight direction is the source's: v, or u when the source's is
+        let swapped = match wall_of(k, &self.source, self.outward, &self.draft, None)? {
+            Ok(w) => w.swapped,
+            Err(_) => return Err(refuse("the definition no longer drafts its surface")),
+        };
+        if swapped {
+            nurb.swap_uv();
+        }
+        let (Some(&va), Some(&vb)) = (nurb.v_knots().first(), nurb.v_knots().last()) else {
+            return Err(refuse("a drafted wall has knots"));
+        };
+        let Ok(wall) = wall_of(k, &self.source, self.outward, &self.draft, Some([va, vb]))? else {
+            return Err(refuse("the definition no longer drafts its surface"));
+        };
+        let distance = wall_distance(k, &wall, &nurb)?;
+        if distance
+            .partial_cmp(&self.bound)
+            .is_none_or(std::cmp::Ordering::is_gt)
+        {
+            return Err(refuse(
+                "a drafted wall is not within its bound of its definition",
+            ));
+        }
+        Ok(distance)
     }
 
     /// Moves the definition with its net (`Transform`): the source surface, the neutral
@@ -878,7 +1302,10 @@ pub fn draft_surface(
             tilted.transform(k, &turn, None)?;
             tilted
         }
-        _ => return Ok(Err(DraftRefusal::NotPlaneOrCone)),
+        _ => match drafted_extrusion(k, surf, outward, draft)? {
+            Ok(wall) => wall,
+            Err(refusal) => return Ok(Err(refusal)),
+        },
     };
     let definition = DraftDefinition::create(k, surf, outward, *draft)?;
     definition.recertify(k, &drafted)?;

@@ -853,6 +853,98 @@ impl ErrorForms {
     }
 }
 
+/// The error forms of the patch `gpatch` of `G` over `range` against the base patch of
+/// `S` (patches `ps` on the breakpoints `ub`, `vb`) under it, restricted to `range`. The
+/// range lies in one patch of `S`: `G`'s breakpoints hold `S`'s.
+fn error_forms(
+    ub: &[f64],
+    vb: &[f64],
+    ps: &[Vec<Patch>],
+    range: [f64; 4],
+    gpatch: &Bernstein3,
+    d: f64,
+    b: &Binomials,
+) -> Result<ErrorForms> {
+    let [a, bb, c, e] = range;
+    let spatch = ps
+        .get(span_of(ub, 0.5 * (a + bb)))
+        .and_then(|r| r.get(span_of(vb, 0.5 * (c + e))))
+        .ok_or_else(|| invalid("no base patch under an offset patch"))?;
+    let (s0, t0) = local(spatch.range, a, c);
+    let (s1, t1) = local(spatch.range, bb, e);
+    let restricted = Patch {
+        range,
+        p: restrict3(&spatch.p, s0, s1, t0, t1),
+        w: spatch.w.as_ref().map(|w| w.restrict(s0, s1, t0, t1)),
+    };
+    ErrorForms::new(&restricted, gpatch, d, b)
+}
+
+/// Not upstream (#22809): the certified bound of `|G(u, v) - (S + d n)(u, v)|` over `G`'s
+/// domain for a given polynomial B-spline `G` in `S`'s parametrisation, by the forms
+/// [`certified_offset`] certifies its own `G` with (Elber and Cohen's bound on every
+/// Bezier patch of `G`); infinite where a patch is not certified (its side or a
+/// denominator not proved). Every breakpoint of `S` inside `G`'s domain must be one of
+/// `G`'s, and `G`'s domain inside `S`'s, so each patch of `G` lies on one patch of `S`.
+///
+/// # Errors
+///
+/// `InvalidInput` for a zero distance, a rational `G`, a `G` whose breakpoints do not
+/// refine `S`'s or whose domain leaves it; those of the decompositions.
+pub fn offset_bound(k: &Kernel, s: &Nurb, g: &Nurb, d: f64) -> Result<f64> {
+    if !positive(d.abs()) {
+        return Err(invalid("a zero offset distance"));
+    }
+    if g.is_rational() {
+        return Err(invalid("a rational offset net"));
+    }
+    let b = Binomials::new();
+    let (ub, vb, ps) = patches(s)?;
+    let (gp_deg, gq_deg) = g.degrees();
+    let (gub, _) = breakpoints(g.u_knots(), gp_deg)?;
+    let (gvb, _) = breakpoints(g.v_knots(), gq_deg)?;
+    // each of S's breakpoints inside G's domain is one of G's, and G's domain is inside S's
+    let refines = |sb: &[f64], gb: &[f64]| match (sb.first(), sb.last(), gb.first(), gb.last()) {
+        (Some(&s0), Some(&s1), Some(&g0), Some(&g1)) => {
+            s0 <= g0
+                && g1 <= s1
+                && sb
+                    .iter()
+                    .filter(|&&x| x > g0 && x < g1)
+                    .all(|x| gb.contains(x))
+        }
+        _ => false,
+    };
+    if !refines(&ub, &gub) || !refines(&vb, &gvb) {
+        return Err(invalid(
+            "an offset net whose patches do not refine its base's",
+        ));
+    }
+    let gp = offset_patches(g)?;
+    let mut worst: f64 = 0.0;
+    for (iu, row) in gp.iter().enumerate() {
+        let (Some(&a), Some(&bb)) = (gub.get(iu), gub.get(iu + 1)) else {
+            return Err(invalid("offset u breakpoint"));
+        };
+        k.check_cancelled(OP)?;
+        for (iv, gpatch) in row.iter().enumerate() {
+            let (Some(&c), Some(&e)) = (gvb.get(iv), gvb.get(iv + 1)) else {
+                return Err(invalid("offset v breakpoint"));
+            };
+            let forms = error_forms(&ub, &vb, &ps, [a, bb, c, e], gpatch, d, &b)?;
+            let bound = forms.bound(d);
+            // (a NaN bound stays NaN, which no acceptance passes)
+            if bound
+                .partial_cmp(&worst)
+                .is_none_or(std::cmp::Ordering::is_gt)
+            {
+                worst = bound;
+            }
+        }
+    }
+    Ok(worst)
+}
+
 /// The non-rational Bezier patches of `g` (whose breakpoints are `gu`, `gv`).
 fn offset_patches(g: &Nurb) -> Result<Vec<Vec<Bernstein3>>> {
     let mut out = Vec::new();
@@ -953,18 +1045,7 @@ pub fn certified_offset(k: &Kernel, s: &Nurb, d: f64, tol: f64) -> Result<Certif
                 };
                 let um = 0.5 * (a + bb);
                 let vm = 0.5 * (c + e);
-                let spatch = ps
-                    .get(span_of(&ub, um))
-                    .and_then(|r| r.get(span_of(&vb, vm)))
-                    .ok_or_else(|| invalid("no base patch under an offset patch"))?;
-                let (s0, t0) = local(spatch.range, a, c);
-                let (s1, t1) = local(spatch.range, bb, e);
-                let restricted = Patch {
-                    range: [a, bb, c, e],
-                    p: restrict3(&spatch.p, s0, s1, t0, t1),
-                    w: spatch.w.as_ref().map(|w| w.restrict(s0, s1, t0, t1)),
-                };
-                let forms = ErrorForms::new(&restricted, gpatch, d, &b)?;
+                let forms = error_forms(&ub, &vb, &ps, [a, bb, c, e], gpatch, d, &b)?;
                 let mut bound = forms.bound(d);
                 if bound > tol {
                     let (quarters, by_u, by_v) = forms.split_bounds(d);

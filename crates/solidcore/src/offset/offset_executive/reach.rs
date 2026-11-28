@@ -3027,9 +3027,10 @@ pub fn local_extension_reach(
                     &mut horizons,
                 )?;
             }
-            let radial = match eu::radial(b, edgeuse)? {
-                Some(r) if r != edgeuse && eu::face(b, r)? != own_face => Some(r),
-                _ => None,
+            let (radial, seam) = match eu::radial(b, edgeuse)? {
+                Some(r) if r != edgeuse && eu::face(b, r)? != own_face => (Some(r), false),
+                Some(r) if r != edgeuse => (None, true),
+                _ => (None, false),
             };
             let other_face = match radial {
                 Some(r) => eu::face(b, r)?,
@@ -3090,7 +3091,11 @@ pub fn local_extension_reach(
                 }
             }
             if radial.is_none() {
-                if net_moved {
+                // a moved net's move is bounded by its meetings with its neighbours; across a
+                // seam the face meets itself, its own surface on both sides, so the seam adds
+                // no meeting to bound (#22809: a drafted extrusion's closed side), but a lamina
+                // edge leaves the move unbounded
+                if net_moved && !seam {
                     return Err(uncertified());
                 }
                 continue;
@@ -3553,6 +3558,13 @@ fn corner(
     let torus_moved = |f: Option<FaceId>, c: &Exact| matches!(c, Exact::Torus(_)) && is_moved(f);
     if torus_moved(at.own, &a) || others.iter().any(|(f, c)| torus_moved(Some(*f), c)) {
         return Err(refuse());
+    }
+    // one face besides the own one (a seam's end, the own face on both sides of the seam):
+    // no three surfaces meet here, only the two along the edges through the vertex, whose
+    // pieces bound the meeting up to their ends, the vertex included (#22809: a drafted
+    // extrusion's closed side under its cap)
+    if others.len() < 2 {
+        return Ok(());
     }
     // the largest meeting on each moved net, `None` until one is found
     let mut on_nets: Vec<Option<f64>> = vec![None; moved_nets.len()];

@@ -1,0 +1,288 @@
+{
+  "area": "booleans",
+  "bodies": {},
+  "calls": [
+    {
+      "inputs": [],
+      "op": "extrude",
+      "outputs": [
+        "b1"
+      ],
+      "params": {
+        "cap": true,
+        "corner": "curvature",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "distance": 20.0,
+        "draft": 0.0,
+        "profile": [
+          {
+            "nurbs": {
+              "degree": 3,
+              "knots": [
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                1.0,
+                2.0,
+                2.0,
+                2.0,
+                3.0,
+                3.0,
+                3.0,
+                4.0,
+                4.0,
+                4.0,
+                5.0,
+                5.0,
+                5.0,
+                6.0,
+                6.0,
+                6.0,
+                7.0,
+                7.0,
+                7.0,
+                8.0,
+                8.0,
+                8.0,
+                8.0
+              ],
+              "points": [
+                [
+                  26.666666666666668,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  26.666666666666668,
+                  5.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  23.333333333333332,
+                  10.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  18.333333333333332,
+                  13.333333333333334,
+                  0.0,
+                  1.0
+                ],
+                [
+                  13.333333333333334,
+                  16.666666666666668,
+                  0.0,
+                  1.0
+                ],
+                [
+                  6.666666666666667,
+                  18.333333333333332,
+                  0.0,
+                  1.0
+                ],
+                [
+                  0.0,
+                  18.333333333333332,
+                  0.0,
+                  1.0
+                ],
+                [
+                  -6.666666666666667,
+                  18.333333333333332,
+                  0.0,
+                  1.0
+                ],
+                [
+                  -13.333333333333334,
+                  16.666666666666668,
+                  0.0,
+                  1.0
+                ],
+                [
+                  -18.333333333333332,
+                  13.333333333333334,
+                  0.0,
+                  1.0
+                ],
+                [
+                  -23.333333333333332,
+                  10.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  -26.666666666666668,
+                  5.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  -26.666666666666668,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  -26.666666666666668,
+                  -5.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  -23.333333333333332,
+                  -10.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  -18.333333333333332,
+                  -13.333333333333334,
+                  0.0,
+                  1.0
+                ],
+                [
+                  -13.333333333333334,
+                  -16.666666666666668,
+                  0.0,
+                  1.0
+                ],
+                [
+                  -6.666666666666667,
+                  -18.333333333333332,
+                  0.0,
+                  1.0
+                ],
+                [
+                  0.0,
+                  -18.333333333333332,
+                  0.0,
+                  1.0
+                ],
+                [
+                  6.666666666666667,
+                  -18.333333333333332,
+                  0.0,
+                  1.0
+                ],
+                [
+                  13.333333333333334,
+                  -16.666666666666668,
+                  0.0,
+                  1.0
+                ],
+                [
+                  18.333333333333332,
+                  -13.333333333333334,
+                  0.0,
+                  1.0
+                ],
+                [
+                  23.333333333333332,
+                  -10.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  26.666666666666668,
+                  -5.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  26.666666666666668,
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "inputs": [
+        "b1"
+      ],
+      "op": "draft",
+      "outputs": [
+        "b2"
+      ],
+      "params": {
+        "angle": 0.05235987755982989,
+        "faces": {
+          "kind": "face",
+          "picked": [
+            {
+              "at": [],
+              "index": 0
+            }
+          ],
+          "points": [
+            [
+              26.666666666666668,
+              0.0,
+              10.0
+            ]
+          ],
+          "tolerance": 0.001
+        },
+        "neutral_normal": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "neutral_origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "pull": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "case": "22809-draft-spline-extrusion-side",
+  "expected": {
+    "body_count": 1,
+    "edges": 3,
+    "faces": 3,
+    "method": "At height z the section is the outline moved inward by d = z tan 3 deg (at most 1.048, below the outline's least radius of curvature 11.25, at the knots on (+-80/3, 0)). A smooth closed curve moved inward by d along its normal bounds A(d) = A0 - L d + pi d^2 (Green's theorem on C + d N, N' = -k T, total turning 2 pi), so V = A0 H - L t H^2 / 2 + pi t^2 H^3 / 3, t = tan 3 deg, H = 20. A0 = 1535 exactly (Green's theorem on the eight cubic Bezier pieces in rational arithmetic); L = 142.483578807329 (composite 16-point Gauss-Legendre on the pieces' speed, 64 sub-intervals each, agreeing with 12-point on 32 to 6e-13). V = 30700 - 1493.449590 + 23.009656 = 29229.560066. Tolerance 1e-6: the drafted wall is certified within a tenth of the zone tolerance (1e-6 mm) of the ruled surface, over a side of under 5900 mm^2, which moves the volume by at most 6e-3 mm^3 (2e-7 relative). Faces: the drafted side, the bottom (on the neutral plane, unchanged) and the shrunken top: 3; edges: the seam and the two rims: 3; vertices: the seam's two ends: 2.",
+    "source": "analytic",
+    "sources": [
+      "tangency-labs/solidcraft#22809"
+    ],
+    "tolerance": {
+      "rel": 1e-06
+    },
+    "vertices": 2,
+    "volume_mm3": 29229.560065754373,
+    "what": "the side of a prism on a closed curvature-continuous outline in z = 0, 20 tall: the outline is the uniform periodic cubic B-spline on the control points (30, 0), (20, 15), (0, 20), (-20, 15), (-30, 0), (-20, -15), (0, -20), (20, -15), given as one clamped cubic of its eight Bezier pieces, so the prism has one side face with a seam. The side is drafted 3 degrees about the bottom, pulled up, leaning in. It was refused, 'a drafted face is neither a plane nor a cone or cylinder' (#22809)."
+  },
+  "expressible": true,
+  "operation_expressible": true,
+  "records": null,
+  "result": [
+    {
+      "body": "Part",
+      "made": "b2"
+    }
+  ],
+  "sources": [
+    "tangency-labs/solidcraft#22809"
+  ],
+  "what": "the side of a prism on a closed curvature-continuous outline in z = 0, 20 tall: the outline is the uniform periodic cubic B-spline on the control points (30, 0), (20, 15), (0, 20), (-20, 15), (-30, 0), (-20, -15), (0, -20), (20, -15), given as one clamped cubic of its eight Bezier pieces, so the prism has one side face with a seam. The side is drafted 3 degrees about the bottom, pulled up, leaning in. It was refused, 'a drafted face is neither a plane nor a cone or cylinder' (#22809)."
+}

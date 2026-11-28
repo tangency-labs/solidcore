@@ -769,6 +769,18 @@ pub fn draft_refused(r: DraftRefusal) -> Error {
         DraftRefusal::SenseNotProved => Error::Unsupported(
             "whether a drafted cone or cylinder faces away from its axis is not proved",
         ),
+        DraftRefusal::NotExtrusionAlongPull => {
+            Error::Unsupported("a drafted face is not an extrusion along the pull")
+        }
+        DraftRefusal::NeutralNotAcrossPull => Error::Unsupported(
+            "the neutral plane of a drafted extrusion's side does not run across the pull",
+        ),
+        DraftRefusal::WallFolds => Error::Unsupported(
+            "a drafted side would fold: the draft moves its outline past where it curves most              tightly",
+        ),
+        DraftRefusal::WallNotCertified => {
+            Error::Unsupported("a drafted side's wall is not certified within the tolerance")
+        }
     }
 }
 

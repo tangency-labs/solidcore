@@ -230,7 +230,9 @@ impl Net {
     /// `surface` as a bare net: a B-spline surface, an extrusion (its net is made from its
     /// generator's exact form) or a surface of revolution (its net is its generator turned
     /// and weighted, exactly), with no analytic label and no definition (a blend's or sweep's
-    /// net is only its approximation); or an offset surface of such a net ([`Net::offset`]);
+    /// net is only its approximation), or a drafted extrusion's wall (#22809: its certified
+    /// ruled net is the surface the local operation moves the face onto, so the neighbours
+    /// are extended to meet that net); or an offset surface of such a net ([`Net::offset`]);
     /// `None` for any other. A revolution's sides round its axis are not extended, as the
     /// executive leaves them (`SideExtension::AroundAxis`; one of a single circle arc it turns
     /// on, which only makes this enclosure short of it):
@@ -287,7 +289,9 @@ impl Net {
                 | SurfaceKind::SurfOfExtrusion(_)
                 | SurfaceKind::SurfOfRevolution(_)
         ) || crate::surface::implicit::AnalyticSupport::of(surface).is_some()
-            || surface.procedural_blend().is_some()
+            || surface
+                .procedural_blend()
+                .is_some_and(|blend| blend.draft().is_none())
             || (!as_offset_base && surface.procedural_sweep().is_some())
         {
             return Ok(None);
