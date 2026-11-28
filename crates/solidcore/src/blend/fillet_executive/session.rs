@@ -8696,13 +8696,42 @@ impl SessionObjects<'_> {
         let corner = corners
             .get_mut(id.0 as usize)
             .ok_or_else(|| invalid("corner is not live"))?;
-        corner.make_nx2_corner_topology(crate::blend::fillet_corner::topology::Nx2TopologyEnv {
-            k,
-            target,
-            pseudo,
-            corner: id,
-            solvers,
-        })
+        let vertex = corner.vertex;
+        let location = match vertex {
+            Some(v) => crate::topology::vertex::point(target, v).ok(),
+            None => None,
+        };
+        let made = corner.make_nx2_corner_topology(
+            crate::blend::fillet_corner::topology::Nx2TopologyEnv {
+                k,
+                target,
+                pseudo,
+                corner: id,
+                solvers,
+            },
+        );
+        // Not the fork's (#17600): two blends side by side round a vertex of four edges have
+        // no corner (only opposite ones are mitred); refused at the vertex with that reason
+        // (`CornerUnsupported`), which the executive keeps, rather than as a bare topology
+        // failure
+        if let Err(e) = &made {
+            if matches!(
+                e.blend_failure(),
+                Some(crate::error::blend::BlendFailure::CornerShapeNotBuilt(
+                    crate::error::blend::CornerShape::AdjacentBlendedEdges
+                ))
+            ) {
+                executive.error.note_vertex_error(
+                    vertex
+                        .map(|v| FilletObject::Topology(FilletBody::Target, EntityRef::Vertex(v))),
+                    location,
+                    crate::blend::fillet_geom::p1::FilStatus::Failure,
+                    crate::blend::fillet_geom::p1::FilletErrorType::CornerUnsupported,
+                    Some(NX2_BLENDS_SIDE_BY_SIDE),
+                );
+            }
+        }
+        made
     }
     /// The support change's topology (#19089) with the solvers of its three rounds, as its
     /// classification found them.
@@ -9351,6 +9380,9 @@ impl SessionObjects<'_> {
             .ok_or_else(|| invalid("corner is not live"))
     }
 }
+
+/// The Nx2 corner of four edges refused where its two blends are side by side (#17600).
+const NX2_BLENDS_SIDE_BY_SIDE: &str = "Fillet Error: two rounds side by side round a vertex of four edges would meet in a step there, a corner that is not built yet; round only one of the two edges";
 
 /// The Nx1 corner refused at a cusp (solidcraft#13156).
 const NX1_CUSP_SIDE_EDGE: &str = "Fillet Error: the blend's band runs off its face, which comes to a point at the vertex (a side edge leaves it along the blended edge)";
