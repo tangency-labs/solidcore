@@ -351,15 +351,7 @@ impl Surface {
                 bound,
             )))
         };
-        // a length past the measure's leaf budget is no measurement, as a leaf not converged
-        let across = |m: &Option<Surface>| match m
-            .as_ref()
-            .map(|s| s.length_across_side(k, at, side, REL))
-        {
-            None | Some(Err(SolidError::NotConverged { .. })) => Ok(None),
-            Some(Ok(a)) => Ok(Some(a)),
-            Some(Err(e)) => Err(e),
-        };
+        let measure = SideMeasure { k, at, side };
         if analytic && (how == Continuity::Natural || degree == 1) {
             // the one rule on every path: a distance the side's least step is proved past
             // is below its resolution, the side left as it is (where the face box ends at
@@ -374,7 +366,12 @@ impl Surface {
                     -source.end()?
                 };
                 if fixed == end
-                    && below_least_step(&|e| made(source, false, e), &across, source, distance)?
+                    && below_least_step(
+                        &|e| made(source, false, e),
+                        &|s| measure.across(s.as_ref(), Some(REL)),
+                        source,
+                        distance,
+                    )?
                 {
                     return Ok(None);
                 }
@@ -397,7 +394,7 @@ impl Surface {
                 "the side is not the end of the surface's B-spline form",
             ));
         }
-        let solved = match solve(&|e| made(&source, false, e), &across, &source, distance) {
+        let solved = match solve(&|e| made(&source, false, e), &measure, &source, distance) {
             // past the rows' reach: the ruled surface itself (#2878), or the refusal naming
             // the longer of the two forms' distances
             Err(SolidError::ExtendRefused {
@@ -405,7 +402,7 @@ impl Surface {
                 distance: named,
                 ..
             }) if how == Continuity::Ruled && source.has_product_form() => {
-                match solve(&|e| made(&source, true, e), &across, &source, distance) {
+                match solve(&|e| made(&source, true, e), &measure, &source, distance) {
                     Err(SolidError::ExtendRefused {
                         refusal: ExtendRefusal::NotExact,
                         distance: reached,
@@ -563,6 +560,33 @@ fn widened(
     })
 }
 
+/// Measures the same iso on each candidate for a distance solve.
+struct SideMeasure<'a> {
+    k: &'a Kernel,
+    at: &'a Extent2d,
+    side: BoxSide,
+}
+
+impl SideMeasure<'_> {
+    fn across(&self, surface: Option<&Surface>, rel: Option<f64>) -> Result<Option<Across>> {
+        let Some(s) = surface else { return Ok(None) };
+        match s.enclose_length_across_side(self.k, self.at, self.side, rel) {
+            Err(SolidError::NotConverged { .. }) => Ok(None),
+            result => result.map(Some),
+        }
+    }
+
+    /// The control polygons alone can prove the midpoint short. Allow the largest stop
+    /// that `exact` permits so a midpoint that could count as `Met` is always refined.
+    fn midpoint(&self, surface: Option<&Surface>, d: f64) -> Result<Option<Across>> {
+        let coarse = self.across(surface, None)?;
+        if coarse.is_none_or(|b| b.enclosure.upper < d - (STOP * d + ROUNDING * d)) {
+            return Ok(coarse);
+        }
+        self.across(surface, Some(REL))
+    }
+}
+
 /// Whether the across length `b` of an extension whose construction bound is `extension` is
 /// measured to the stop at the distance `d`: every leaf converged, its truncation part at most
 /// `1e-9 d`, and its rounding part and the extension's rounding bound each at most `1e-6 d`
@@ -677,11 +701,12 @@ fn not_exact(distance: Option<f64>) -> SolidError {
 /// `d` otherwise meets it, with its own measured enclosure and bound.
 fn solve(
     made: &dyn Fn(f64) -> Result<Option<Made>>,
-    across: &dyn Fn(&Option<Surface>) -> Result<Option<Across>>,
+    measure: &SideMeasure<'_>,
     source: &Local,
     d: f64,
 ) -> Result<Option<(Made, Across)>> {
-    if below_least_step(made, across, source, d)? {
+    let across = |s: &Option<Surface>| measure.across(s.as_ref(), Some(REL));
+    if below_least_step(made, &across, source, d)? {
         return Ok(None);
     }
     let least = source.least_step()?;
@@ -731,9 +756,9 @@ fn solve(
     };
     // the longest ask known to give positive weights, and the shortest known not to
     let (good, bad) = (Cell::new(0.0_f64), Cell::new(f64::INFINITY));
-    // an ask, or the longest positive one below it when its weights are not: the ask made,
-    // its surface and its across length
-    let try_ask = |e: f64| -> Result<Option<Asked>> {
+    // An ask and its measured extension. If the candidate cannot be built, bisect until
+    // a buildable candidate is proved to reach d or the buildable range is exhausted.
+    let try_ask = |e: f64, short_midpoint: &mut Try| -> Result<Option<Asked>> {
         let e = if e >= bad.get() {
             0.5 * (good.get() + bad.get())
         } else {
@@ -746,14 +771,26 @@ fn solve(
             return Ok(Some((e, s, b)));
         }
         bad.set(e);
-        // the longest positive ask, by halving between it and the last good one
         let (mut lo, mut hi) = (good.get(), e);
         for _ in 0..BISECTIONS {
             let m = (0.5 * (lo + hi)).max(least);
             if !(m > lo && m < hi) {
                 break;
             }
-            if made(m)?.is_some() {
+            if let Some(s) = made(m)? {
+                let b = measure.midpoint(s.0.as_ref(), d)?;
+                let decision = says(b.as_ref(), s.1, d);
+                match (decision, b) {
+                    (Says::Short(_), Some(b)) => {
+                        *short_midpoint = Some((m, b.enclosure.upper - d));
+                    }
+                    (Says::Met | Says::Past(_), _) => {
+                        good.set(m);
+                        bad.set(hi);
+                        return Ok(Some((m, s, b)));
+                    }
+                    _ => {}
+                }
                 lo = m;
             } else {
                 hi = m;
@@ -840,7 +877,8 @@ fn solve(
     let mut reach: Option<f64> = None;
     let mut overshoot = 1e-6;
     for _ in 0..BRACKET_TRIES {
-        let Some((made_ask, s, b)) = try_ask(ask)? else {
+        let mut short_midpoint = None;
+        let Some((made_ask, s, b)) = try_ask(ask, &mut short_midpoint)? else {
             break;
         };
         ask = made_ask;
@@ -858,6 +896,10 @@ fn solve(
             }
             Says::Past(f) => {
                 past = Some((ask, f));
+                // A short midpoint and this past midpoint already bracket d. Its
+                // residual supplies an interpolation estimate; acceptance still needs
+                // the full length measurement at the proposed solution.
+                short = short.or(short_midpoint);
                 f
             }
             Says::Unproved => {
@@ -899,6 +941,7 @@ fn solve(
             iterations: u32::try_from(BRACKET_TRIES).unwrap_or(u32::MAX),
         });
     };
+    let initial_lo = lo;
     let mut moved = Moved::Neither;
     // the bracket closed on two neighbouring asks, one short of d and one past it, none
     // meeting it: the net's lengths jump over d (its points' ulp moves the length by more
@@ -915,7 +958,7 @@ fn solve(
             closed = true;
             break;
         }
-        let Some((x, s, b)) = try_ask(x)? else {
+        let Some((x, s, b)) = try_ask(x, &mut None)? else {
             break;
         };
         let (x, f) = match says(b.as_ref(), s.1, d) {
@@ -944,6 +987,13 @@ fn solve(
         }
     }
     if closed {
+        // The lower bracket may have come from just a polygon bound. A distance
+        // named in a refusal must itself work, so measure it before reporting it.
+        if reach.is_none() {
+            if let Some(s) = made(initial_lo)? {
+                reach = workable(across(&s.0)?.as_ref(), s.1);
+            }
+        }
         return Err(not_exact(reach));
     }
     Err(SolidError::NotConverged {

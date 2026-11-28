@@ -58,7 +58,7 @@
 //!
 //! Deviations: none (no upstream counterpart). No recursion.
 
-use super::{keeps, op_err, solve, Continuity, Extended, Local, Made, H, OP, REL};
+use super::{keeps, op_err, solve, Continuity, Extended, Local, Made, SideMeasure, H, OP};
 use crate::blend::fillet_section::continuation::{
     growth, net_weights, section_degree, section_weight_range,
 };
@@ -330,14 +330,9 @@ fn along(
             bound,
         )))
     };
-    let across =
-        |m: &Option<Surface>| match m.as_ref().map(|s| s.length_across_side(k, at, side, REL)) {
-            None | Some(Err(SolidError::NotConverged { .. })) => Ok(None),
-            Some(Ok(a)) => Ok(Some(a)),
-            Some(Err(e)) => Err(e),
-        };
+    let measure = SideMeasure { k, at, side };
     // a distance below the side's resolution: none (the blend as it is)
-    let Some(((surface, extension), enclosure)) = solve(&made, &across, &source, distance)? else {
+    let Some(((surface, extension), enclosure)) = solve(&made, &measure, &source, distance)? else {
         return Ok(None);
     };
     let surface = surface.ok_or_else(op_err)?;
