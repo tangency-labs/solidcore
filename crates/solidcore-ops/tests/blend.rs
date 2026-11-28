@@ -296,6 +296,50 @@ fn rounds_and_chamfers_take_their_closed_forms() {
     assert!(rel(volume(&b), ABC - (1.0 - PI / 4.0) * 4.0 * 30.0) < 1e-6);
 }
 
+/// #18204: a round on a box's top edge, beside a chamfer of 0.8 on the neighbouring top edge,
+/// with a radius a hair over the chamfer's size. The round's lower rail then passes the
+/// chamfer's lower corner by `g`, inside the blend's tolerance, and the round's end on the
+/// chamfer closes onto that corner. Every radius builds a valid solid; none fails to map the
+/// end edge.
+///
+/// The round takes (1 - pi/4) r^2 off per unit length of its edge, which the chamfer ends
+/// between x = 32.2 (at the top) and x = 33 (at the chamfer's foot), so what it removes lies
+/// between those two lengths' worth. A larger radius removes more.
+#[test]
+fn a_round_just_over_a_neighbouring_chamfer_builds() {
+    all_fixes();
+    let (l, w, h) = (33.0_f64, 8.3_f64, 9.7_f64);
+    let chamfer = 0.8_f64;
+    let chamfered = l * w * h - chamfer.powi(2) / 2.0 * w;
+    let mut last = f64::INFINITY;
+    for g in [1.3e-5, 1.5e-5, 1.8e-5, 2.0e-5, 2.5e-5] {
+        let b = make_box([0.0, -w / 2.0, 0.0], [l, w, h]).unwrap();
+        blend(
+            &b,
+            Blend::Chamfer,
+            &[edge_at(&b, [l, 0.0, h])],
+            &[chamfer],
+            &[],
+            Corners::Filled,
+        )
+        .unwrap();
+        assert!(rel(volume(&b), chamfered) < 1e-9, "g {g}");
+        let r = chamfer + g;
+        let e = edge_at(&b, [l / 2.0, w / 2.0, h]);
+        let made = blend(&b, Blend::Round, &[e], &[r], &[], Corners::Filled);
+        assert!(made.is_ok(), "g {g}: {:?}", made.err());
+        assert!(b.check(CheckLevel::All).unwrap().is_valid(), "g {g}");
+        let section = (1.0 - PI / 4.0) * r.powi(2);
+        let v = volume(&b);
+        assert!(
+            v < chamfered - section * (l - chamfer) && v > chamfered - section * l,
+            "g {g}: volume {v}"
+        );
+        assert!(v < last, "g {g}: volume {v} after {last}");
+        last = v;
+    }
+}
+
 /// A post on a plate. The aperture starts exactly at the shared endpoint of the foot edges.
 fn post_foot(cutout: bool) -> Body {
     use solidcore_ops::{boolean::boolean, BooleanOp};
